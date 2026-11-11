@@ -1,0 +1,2544 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f19" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="PokeSwipe" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;700;800;900&family=Lilita+One&display=swap" />
+  <title>PokeSwipe & Radar | Die Pokémon TCG Community & Preis-Arena</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+
+  <style>
+    :root {
+      --poke-yellow: #ffcb05;
+      --poke-blue: #2a75bb;
+      --poke-red: #ef4444;
+    }
+    body {
+      background-color: #070a14;
+      background-image:
+        radial-gradient(circle at 12% 18%, rgba(255, 203, 5, 0.16), transparent 32%),
+        radial-gradient(circle at 88% 15%, rgba(239, 68, 68, 0.16), transparent 34%),
+        radial-gradient(circle at 82% 82%, rgba(168, 85, 247, 0.15), transparent 36%),
+        radial-gradient(circle at 18% 85%, rgba(16, 185, 129, 0.14), transparent 36%),
+        url("data:image/svg+xml,%3Csvg width='90' height='90' viewBox='0 0 90 90' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='rgba(255,203,5,0.04)' stroke-width='2'%3E%3Ccircle cx='45' cy='45' r='28'/%3E%3Ccircle cx='45' cy='45' r='9'/%3E%3Cpath d='M17 45h19M54 45h19'/%3E%3C/g%3E%3C/svg%3E");
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+      overflow-x: hidden;
+    }
+
+    /* SCHWEBENDE BELIEBTE POKÉMON IM HINTERGRUND */
+    .poke-bg-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .bg-poke-art {
+      position: absolute;
+      opacity: 0.13;
+      filter: drop-shadow(0 0 25px rgba(255, 203, 5, 0.35));
+      animation: floatPoke 9s ease-in-out infinite;
+      user-select: none;
+    }
+    .bg-poke-art:nth-child(2) { animation-delay: -3s; animation-duration: 11s; }
+    .bg-poke-art:nth-child(3) { animation-delay: -5s; animation-duration: 10s; }
+    .bg-poke-art:nth-child(4) { animation-delay: -2s; animation-duration: 12s; }
+    @keyframes floatPoke {
+      0%, 100% { transform: translateY(0px) rotate(-2deg) scale(1); }
+      50% { transform: translateY(-14px) rotate(2deg) scale(1.03); }
+    }
+
+    .poke-glass {
+      background: rgba(15, 23, 42, 0.86);
+      backdrop-filter: blur(16px);
+      border: 1.5px solid rgba(255, 203, 5, 0.22);
+      box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.5);
+    }
+    .holo-border {
+      background: linear-gradient(135deg, #ffcb05, #ef4444, #a855f7, #3b82f6, #10b981);
+      background-size: 200% 200%;
+      animation: holoShift 6s ease infinite;
+      padding: 2.5px;
+      border-radius: 1.5rem;
+    }
+    @keyframes holoShift {
+      0%, 100% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+    }
+    #radarMap { height: 320px; width: 100%; border-radius: 1rem; z-index: 10; }
+    .pulse-dot { animation: pulseGreen 2s infinite; }
+    @keyframes pulseGreen {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.8); }
+      70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+    .pack-shake { animation: shakePack 0.45s ease-in-out; }
+    @keyframes shakePack {
+      0%, 100% { transform: rotate(0deg) scale(1); }
+      25% { transform: rotate(-6deg) scale(1.06); }
+      50% { transform: rotate(6deg) scale(1.1); }
+      75% { transform: rotate(-4deg) scale(1.06); }
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+  <link rel="stylesheet" href="/theme.css" />
+</head>
+<body class="min-h-screen flex flex-col justify-between relative">
+
+  <!-- HINTERGRUND-LAYER MIT BELIEBTEN POKÉMON (GLURAK, PIKACHU, GENGAR, MEWTU) -->
+  <div class="poke-bg-layer" aria-hidden="true">
+    <!-- Glurak oben links -->
+    <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/6.png" alt="" class="bg-poke-art w-64 sm:w-80 -top-6 -left-10" />
+    <!-- Pikachu oben rechts -->
+    <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" alt="" class="bg-poke-art w-56 sm:w-72 top-16 -right-8" />
+    <!-- Gengar unten links -->
+    <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/94.png" alt="" class="bg-poke-art w-60 sm:w-72 bottom-16 -left-8" />
+    <!-- Rayquaza unten rechts -->
+    <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/384.png" alt="" class="bg-poke-art w-64 sm:w-80 bottom-10 -right-10" />
+  </div>
+
+  <!-- LIVE IN-APP PUSH TOAST BANNER (FÜR SOFORT-ALARME) -->
+  <div id="live-push-toast" class="hidden fixed top-16 right-4 left-4 sm:left-auto sm:w-96 z-50 holo-border shadow-2xl transition-all duration-300">
+    <div class="bg-slate-950/95 rounded-[1.35rem] p-3.5 flex items-start justify-between gap-3">
+      <div class="flex items-start gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-yellow-400 text-slate-950 flex items-center justify-center font-black text-lg shrink-0">🔔</div>
+        <div class="text-xs">
+          <p id="toast-title" class="font-black text-yellow-400">⚡ Live Push-Alarm</p>
+          <p id="toast-body" class="text-slate-200 mt-0.5">Neuer Deal entdeckt!</p>
+          <a id="toast-link" href="#" target="_blank" rel="noopener" class="inline-block mt-1.5 text-[11px] font-black text-emerald-400 underline">Jetzt prüfen &rarr;</a>
+        </div>
+      </div>
+      <button onclick="hideLiveToast()" class="text-slate-400 hover:text-white font-bold text-sm px-1">✕</button>
+    </div>
+  </div>
+
+  <!-- 1. TOP HEADER MIT POKÉBALL-OPTIK & LIVE-ZÄHLER -->
+  <header class="dex-header sticky top-0 z-40 px-3 sm:px-6 py-2.5">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-3">
+        <!-- Pokédex-Linse (öffnet "Als App installieren") -->
+        <button type="button" onclick="openModal('install-modal')" class="dex-lens shrink-0" title="Als App installieren" aria-label="Als App installieren"></button>
+        <div class="hidden sm:flex gap-1 self-start mt-1" aria-hidden="true"><span class="dex-led r"></span><span class="dex-led y"></span><span class="dex-led g"></span></div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="dex-title text-xl sm:text-2xl leading-none">PokeSwipe <span class="accent">Radar</span></h1>
+            <span class="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-[#1a1420]/70 text-[#f5c84b] hidden sm:inline">Pokémon TCG</span>
+            <span id="pro-badge" class="hidden text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-500 text-white">👑 PRO VIP</span>
+          </div>
+          <p class="dex-sub text-[11px] hidden sm:block font-semibold">Der Pokédex für deine Sammelkarten – Preise, Sammlung, Tausch</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+        <!-- Echter Live-Ticker -->
+        <div class="dex-ticker hidden md:flex items-center gap-1.5 bg-slate-950/90 border border-yellow-400/30 px-2.5 py-1.5 rounded-xl text-xs">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot"></span>
+          <strong id="liveVisitorCount" class="text-emerald-400 font-bold">1</strong>
+          <span class="text-slate-400 hidden md:inline">online</span>
+          <span class="text-slate-600">|</span>
+          <strong id="totalVisitsCount" class="text-yellow-400 font-bold">1</strong>
+          <span class="text-slate-400 hidden sm:inline">Aufrufe</span>
+        </div>
+
+        <!-- Push-Zentrale Button -->
+        <button data-dex="push" onclick="openModal('push-modal')" class="bg-slate-900 hover:bg-slate-800 text-yellow-300 border border-yellow-400/40 font-extrabold text-xs px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition">
+          🔔 <span id="pushStatusLabel">Push-Radar</span>
+        </button>
+
+        <button onclick="openModal('install-modal')" class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-bold text-xs px-2.5 py-1.5 rounded-xl hidden sm:flex items-center gap-1">
+          📲 <span>App</span>
+        </button>
+
+        <button onclick="openModal('auth-modal')" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-2.5 py-1.5 rounded-xl border border-slate-600">
+          👤 <span id="authBtnText">Profil</span>
+        </button>
+
+        <button onclick="openModal('pro-modal')" class="bg-gradient-to-r from-yellow-400 via-amber-500 to-red-500 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl shadow-md">
+          👑 PRO
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 2. ATTRAKTIVES POKÉMON-HERO-DASHBOARD & NAVIGATION -->
+  <div class="dex-reveal relative z-10 max-w-7xl w-full mx-auto px-3 sm:px-6 mt-5 space-y-3">
+    <!-- Hero: Pokédex-Startbildschirm mit Holo-Kartenfächer -->
+    <section class="dex-hero p-5 sm:p-7 grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+      <div class="md:col-span-7 space-y-4 relative z-10">
+        <div class="flex flex-wrap gap-1.5">
+          <span class="type-chip" style="--c:var(--t-electric)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></i>Live-Preise</span>
+          <span class="type-chip" style="--c:var(--t-fire)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M12 2c1 4 6 6 6 12a6 6 0 0 1-12 0c0-3 2-5 3-6 0 2 1 3 2 3 0-3-1-6 1-9z"/></svg></i>Preisalarme</span>
+          <span class="type-chip" style="--c:var(--t-water)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M12 2s7 8 7 13a7 7 0 0 1-14 0c0-5 7-13 7-13z"/></svg></i>KI-Scan</span>
+          <span class="type-chip" style="--c:var(--t-grass)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M20 4C9 4 4 9 4 16c0 1 0 2 .3 3L8 15c2-2 5-3 8-3-3 1-6 3-8 6l-1 2c8 1 13-5 13-16z"/></svg></i>Sets</span>
+          <span class="type-chip" style="--c:var(--t-psychic)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><circle cx="12" cy="12" r="4"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zm10 4a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" fill-rule="evenodd"/></svg></i>Sicher tauschen</span>
+        </div>
+        <h2>Schnapp dir jede Karte –<br />zum <span class="hl">richtigen Preis.</span></h2>
+        <p class="text-sm text-[#d7d3e6] max-w-xl">Scanne deine Pokémon-Karten mit der Kamera, verfolge echte Cardmarket-Preise und tausche sicher mit Sammlern aus ganz Deutschland. Alarme kommen per Push, auch wenn die App zu ist.</p>
+        <div class="flex flex-wrap gap-2.5 pt-1">
+          <button onclick="PS.openScanner()" class="dex-cta primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><rect x="8.5" y="7" width="7" height="10" rx="1.2"/></svg>Karte scannen</button>
+          <button onclick="PS.showSub('flip', 'alerts')" class="dex-cta ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 20a1.9 1.9 0 0 0 3.4 0"/></svg>Preisalarm</button>
+          <button onclick="PS.showSub('map', 'market')" class="dex-cta ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></svg>Tauschen</button>
+        </div>
+      </div>
+      <div class="md:col-span-5 relative">
+        <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" alt="Pikachu" class="absolute -top-6 -left-2 w-24 sm:w-28 z-20 drop-shadow-2xl pointer-events-none" loading="eager" />
+        <div class="card-fan" aria-label="Beliebte Karten">
+          <div class="tcg"><img src="https://images.pokemontcg.io/sv8pt5/161.png" alt="Evoli-Karte" loading="lazy" /></div>
+          <div class="tcg"><img src="https://images.pokemontcg.io/sv3pt5/199.png" alt="Glurak-ex-Karte" loading="lazy" /></div>
+          <div class="tcg"><img src="https://images.pokemontcg.io/sv8/238.png" alt="Pikachu-ex-Karte" loading="lazy" /></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 Übersichts-Kacheln (Bento-Stats) -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+      <div onclick="switchTab('swipe')" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
+        <div>
+          <p class="text-[10px] uppercase font-bold text-slate-400">💚 Merkliste & Deals</p>
+          <p class="text-base sm:text-lg font-black text-white"><span id="statMatches">0</span> Karten</p>
+        </div>
+        <span class="text-2xl">🃏</span>
+      </div>
+      <div onclick="switchTab('swipe'); document.getElementById('pack-simulator-box').scrollIntoView({behavior:'smooth'});" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
+        <div>
+          <p class="text-[10px] uppercase font-bold text-amber-300">🎁 Geöffnete Booster</p>
+          <p class="text-base sm:text-lg font-black text-yellow-400"><span id="statPacksOpened">0</span> Packs</p>
+        </div>
+        <span class="text-2xl">✨</span>
+      </div>
+      <div onclick="switchTab('map')" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
+        <div>
+          <p class="text-[10px] uppercase font-bold text-emerald-300">🤝 Aktive Inserate</p>
+          <p class="text-base sm:text-lg font-black text-emerald-400"><span id="statMarketCount">0</span> Angebote</p>
+        </div>
+        <span class="text-2xl">📦</span>
+      </div>
+      <div onclick="switchTab('portfolio')" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
+        <div>
+          <p class="text-[10px] uppercase font-bold text-purple-300">💼 Dein Portfolio</p>
+          <p id="statPortfolioVal" class="text-base sm:text-lg font-black text-white">0,00 €</p>
+        </div>
+        <span class="text-2xl">💎</span>
+      </div>
+    </div>
+
+    <!-- Desktop 5-Reiter-Navigation -->
+    <div class="dex-nav hidden lg:grid grid-cols-5 gap-2 p-1.5 rounded-2xl">
+      <button onclick="switchTab('swipe')" id="tab-swipe" class="tab-btn bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow">
+        🃏 <span>Arena, Swipe & Pack-Opener</span>
+      </button>
+      <button onclick="switchTab('flip')" id="tab-flip" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
+        ⚡ <span>Flip-Radar & Zubehör-Deals</span>
+      </button>
+      <button onclick="switchTab('community')" id="tab-community" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
+        📸 <span>Pull-Wall & Live-Chat</span>
+      </button>
+      <button onclick="switchTab('map')" id="tab-map" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
+        🤝 <span>Tausch-Hub (Unbegrenzt) & Map</span>
+      </button>
+      <button onclick="switchTab('portfolio')" id="tab-portfolio" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
+        💼 <span>Portfolio & Grading-Tools</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- 3. HAUPTINHALT -->
+  <main class="relative z-10 max-w-7xl w-full mx-auto px-3 sm:px-6 mt-4 flex-grow">
+
+    <!-- =================================================================== -->
+    <!-- REITER 1: STARTSEITE / ARENA (SWIPE + BOOSTER-OPENER + TOP-DEALS)   -->
+    <!-- =================================================================== -->
+    <section id="view-swipe" class="space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+        <!-- LINKE SPALTE (7 Cols): POKESWIPE HOLO-ARENA -->
+        <div class="lg:col-span-7 holo-border">
+          <div class="poke-glass rounded-[1.35rem] p-4 sm:p-6">
+            <div class="flex flex-wrap justify-between items-center mb-3 gap-2">
+              <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
+                <button onclick="filterSwipeDeck('all')" class="bg-yellow-400 text-slate-950 font-black text-xs px-3 py-1 rounded-xl">Alle Sets</button>
+                <button onclick="filterSwipeDeck('Stürmische Funken')" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl">⚡ Stürmische Funken</button>
+                <button onclick="filterSwipeDeck('151')" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl">🔥 K&P 151</button>
+                <button onclick="filterSwipeDeck('Evo & Vintage')" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl">🌙 Drachenwandel</button>
+              </div>
+              <span id="swipe-rarity" class="text-[11px] font-black bg-yellow-400 text-slate-950 px-2.5 py-1 rounded-lg">SIR Highlight</span>
+            </div>
+
+            <div class="bg-gradient-to-b from-slate-950 via-indigo-950/70 to-slate-950 rounded-2xl p-4 sm:p-5 border border-yellow-400/30">
+              <div class="relative mx-auto w-52 sm:w-60 h-72 sm:h-80 flex items-center justify-center">
+                <div class="absolute inset-0 bg-gradient-to-tr from-yellow-400/25 via-red-500/20 to-purple-500/25 rounded-3xl blur-xl"></div>
+                <img id="swipe-img" src="https://images.pokemontcg.io/sv8/238_hires.png" alt="Pokémon Karte"
+                     class="relative z-10 max-h-full max-w-full object-contain rounded-xl shadow-2xl border-2 border-yellow-400/50 transition duration-300 hover:scale-105" />
+              </div>
+
+              <div class="text-center mt-3">
+                <h2 id="swipe-title" class="text-xl sm:text-2xl font-black text-white">Pikachu ex SIR (238/191)</h2>
+                <p id="swipe-set" class="text-xs text-amber-200/80 mt-0.5">Karmesin & Purpur – Stürmische Funken</p>
+              </div>
+
+              <div class="grid grid-cols-3 gap-2 mt-4 bg-slate-950/90 p-3 rounded-2xl border border-yellow-400/20 text-center">
+                <div>
+                  <p class="text-[10px] text-slate-400">Cardmarket-Trend</p>
+                  <p id="swipe-cm" class="text-sm sm:text-base font-bold text-slate-400 line-through">420,00 €</p>
+                </div>
+                <div>
+                  <p class="text-[10px] text-slate-400">Schnäppchen-Ziel</p>
+                  <p id="swipe-price" class="text-base sm:text-lg font-black text-emerald-400">340,00 €</p>
+                </div>
+                <div>
+                  <p class="text-[10px] text-slate-400">Potenzial</p>
+                  <p id="swipe-margin" class="text-sm sm:text-base font-extrabold text-yellow-400">+80,00 € (-19%)</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Swipe-Steuerung -->
+            <div class="grid grid-cols-3 gap-2.5 mt-4">
+              <button onclick="nextSwipeCard('skip')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold py-3 rounded-xl text-xs sm:text-sm">❌ Weiter</button>
+              <button onclick="addCurrentSwipeToPortfolio()" class="bg-purple-600 hover:bg-purple-500 text-white font-extrabold py-3 rounded-xl text-xs sm:text-sm">💼 + Portfolio</button>
+              <button onclick="nextSwipeCard('match')" class="bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 font-black py-3 rounded-xl text-xs sm:text-sm shadow-lg">💚 Merken & Deal</button>
+            </div>
+
+            <!-- Monetarisierungs-Leiste direkt unter jeder Karte -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-3 border-t border-slate-800 text-xs">
+              <a id="swipe-ebay-buy" href="#" target="_blank" rel="noopener" class="text-center bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-2 px-2 rounded-xl shadow">🔎 eBay Sofortkauf</a>
+              <a id="swipe-ebay-auction" href="#" target="_blank" rel="noopener" class="text-center bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2 px-2 rounded-xl shadow">🔨 eBay Auktion</a>
+              <a id="swipe-cm-link" href="#" target="_blank" rel="noopener" class="text-center bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold py-2 px-2 rounded-xl shadow">📊 Cardmarket</a>
+              <a id="swipe-psa-link" href="#" target="_blank" rel="noopener" class="text-center bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/40 font-bold py-2 px-2 rounded-xl">💎 PSA 10 Check</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- RECHTE SPALTE (5 Cols): BOOSTER-PACK-SIMULATOR (BINDUNG & AFFILIATE-MAGNET) + MERKLISTE -->
+        <div class="lg:col-span-5 space-y-5">
+
+          <!-- NEU: INTERAKTIVER BOOSTER-PACK-OPENER -->
+          <div id="pack-simulator-box" class="poke-glass rounded-3xl p-4 sm:p-5 border-2 border-yellow-400/50 space-y-3.5">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-[10px] font-black uppercase bg-gradient-to-r from-yellow-400 to-red-500 text-slate-950 px-2.5 py-0.5 rounded-full">🎁 Täglicher Pack-Opener</span>
+                <h3 class="text-base font-black text-white mt-1">Gratis Booster-Simulator öffnen!</h3>
+              </div>
+              <select id="pack-set-select" class="bg-slate-900 border border-yellow-400/40 rounded-xl px-2.5 py-1.5 text-xs text-yellow-300 font-bold">
+                <option value="sv8">⚡ Stürmische Funken</option>
+                <option value="sv3pt5">🔥 Karmesin & Purpur 151</option>
+                <option value="swsh7">🌙 Drachenwandel (Evolving Skies)</option>
+              </select>
+            </div>
+
+            <div id="pack-stage" class="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 text-center space-y-3">
+              <img id="pack-visual-img" src="https://images.pokemontcg.io/sv8/238_hires.png" alt="Booster Hit" class="w-36 h-48 mx-auto object-contain rounded-xl shadow-xl border border-yellow-400/40 transition" />
+              <div>
+                <span id="pack-hit-badge" class="text-[10px] font-black uppercase bg-yellow-400/20 text-yellow-300 px-2.5 py-0.5 rounded-full">Bereit zum Öffnen</span>
+                <h4 id="pack-hit-name" class="text-sm font-black text-white mt-1">Teste dein Zieh-Glück!</h4>
+                <p id="pack-hit-val" class="text-xs text-emerald-400 font-bold">Ziehe SIR-Hits & prüfe sofort den echten eBay-Preis</p>
+              </div>
+
+              <button onclick="openVirtualBooster()" class="w-full bg-gradient-to-r from-yellow-400 via-amber-500 to-red-500 hover:opacity-95 text-slate-950 font-black py-3 rounded-xl text-xs sm:text-sm shadow-lg">
+                ✨ Booster jetzt aufreißen!
+              </button>
+
+              <div class="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                <a id="pack-buy-card-link" href="#" target="_blank" rel="noopener" class="bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 font-bold py-2 px-2 rounded-xl">
+                  🔎 Gezogene Karte auf eBay
+                </a>
+                <a id="pack-buy-display-link" href="#" target="_blank" rel="noopener" class="bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-bold py-2 px-2 rounded-xl">
+                  📦 Echtes Display sichern
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- GEMERKTE KARTEN -->
+          <div class="poke-glass rounded-3xl p-4 space-y-3">
+            <div class="flex justify-between items-center">
+              <h3 class="font-black text-sm text-white">💚 Deine gemerkten Karten (<span id="matchCountBadge">0</span>)</h3>
+              <button onclick="clearMatches()" class="text-xs text-slate-400 hover:text-rose-400">Alle löschen</button>
+            </div>
+            <div id="match-list-box" class="space-y-2 max-h-56 overflow-y-auto text-xs"></div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- REITER 2: FLIP-RADAR, PREIS-WÄCHTER & SAMMLER-ZUBEHÖR-SHOP          -->
+    <!-- =================================================================== -->
+    <section id="view-flip" class="hidden space-y-5">
+      <div class="poke-glass rounded-3xl p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base sm:text-lg font-black text-white">⚡ Live Flip-Radar & Arbitrage-Sniper</h2>
+          <p class="text-xs text-slate-300">Finde eBay-Sofortkäufe und Auktionen deutlich unter dem Cardmarket-Trend</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button onclick="filterFlipDeals('all')" class="bg-yellow-400 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl">Alle Deals</button>
+          <button onclick="filterFlipDeals('singles')" class="bg-slate-800 text-white font-bold text-xs px-3 py-1.5 rounded-xl">🃏 Einzelkarten</button>
+          <button onclick="filterFlipDeals('sealed')" class="bg-slate-800 text-white font-bold text-xs px-3 py-1.5 rounded-xl">📦 Displays & TTBs</button>
+          <button onclick="openModal('push-modal')" class="bg-emerald-500 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl">🔔 Push-Filter</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <div class="lg:col-span-7 poke-glass rounded-2xl p-4 space-y-3">
+          <h3 class="text-xs font-black uppercase text-yellow-400">🎯 Persönlicher Preis- & Push-Wächter (Wishlist)</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input id="wish-card" type="text" placeholder="Karte (z. B. Glurak ex 199/165)" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
+            <input id="wish-max" type="number" placeholder="Zielpreis in €" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
+            <button onclick="addWishlistRule()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black text-xs px-4 py-2 rounded-xl">🤖 Überwachen</button>
+          </div>
+          <div id="wishlist-rules-box" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <div class="lg:col-span-5 poke-glass rounded-2xl p-4 space-y-2.5">
+          <h3 class="text-xs font-black uppercase text-emerald-400">🚨 Community-Schnäppchen melden</h3>
+          <div class="flex gap-2">
+            <input id="rep-title" type="text" placeholder="Karte / Display..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
+            <input id="rep-price" type="number" placeholder="€" class="w-20 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
+            <button onclick="submitCommunityDeal()" class="bg-emerald-500 text-slate-950 font-black text-xs px-3.5 py-2 rounded-xl">Melden</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="flip-list" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+
+      <!-- MONETARISIERUNGS-BOOSTER: SAMMLER-ZUBEHÖR & GRADING-SCHUTZ DEALS -->
+      <div class="poke-glass rounded-3xl p-5 space-y-3 border border-yellow-400/40">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="text-[10px] font-black uppercase bg-yellow-400 text-slate-950 px-2.5 py-0.5 rounded-full">🛡️ Sammler-Ausrüstung</span>
+            <h3 class="text-base font-black text-white mt-1">Beliebtes Karten-Zubehör & Acryl-Cases im Preisvergleich</h3>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <a data-epn-query="Ultra Pro Toploader 100 Stück Penny Sleeves Pokemon" href="#" target="_blank" rel="noopener" class="epn-dynamic-link bg-slate-900/90 hover:bg-slate-800 border border-slate-700 p-3 rounded-2xl flex flex-col justify-between gap-2">
+            <span class="text-xl">🛡️</span>
+            <div>
+              <p class="font-bold text-white">100x Toploader + Sleeves</p>
+              <p class="text-[11px] text-emerald-400 font-bold mt-0.5">Bestseller auf eBay &rarr;</p>
+            </div>
+          </a>
+          <a data-epn-query="One Touch Magnet Holder 35pt UV Schutz Pokemon" href="#" target="_blank" rel="noopener" class="epn-dynamic-link bg-slate-900/90 hover:bg-slate-800 border border-slate-700 p-3 rounded-2xl flex flex-col justify-between gap-2">
+            <span class="text-xl">💎</span>
+            <div>
+              <p class="font-bold text-white">UV Magnet-Holder (35pt)</p>
+              <p class="text-[11px] text-emerald-400 font-bold mt-0.5">Für SIR & Grails &rarr;</p>
+            </div>
+          </a>
+          <a data-epn-query="Pokemon Display Acryl Case Magnet Schutzbox" href="#" target="_blank" rel="noopener" class="epn-dynamic-link bg-slate-900/90 hover:bg-slate-800 border border-slate-700 p-3 rounded-2xl flex flex-col justify-between gap-2">
+            <span class="text-xl">📦</span>
+            <div>
+              <p class="font-bold text-white">Acryl-Cases für Displays</p>
+              <p class="text-[11px] text-emerald-400 font-bold mt-0.5">Schutz für Sealed OVP &rarr;</p>
+            </div>
+          </a>
+          <a data-epn-query="Vault X Binder 9 Pocket Zipper Sammelmappe Pokemon" href="#" target="_blank" rel="noopener" class="epn-dynamic-link bg-slate-900/90 hover:bg-slate-800 border border-slate-700 p-3 rounded-2xl flex flex-col justify-between gap-2">
+            <span class="text-xl">📘</span>
+            <div>
+              <p class="font-bold text-white">Pro Zipper-Binder (9-Pocket)</p>
+              <p class="text-[11px] text-emerald-400 font-bold mt-0.5">Master-Set Schutz &rarr;</p>
+            </div>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- REITER 3: PULL-WALL & LIVE-CHAT                                     -->
+    <!-- =================================================================== -->
+    <section id="view-community" class="hidden space-y-5">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div class="lg:col-span-7 space-y-4">
+          <div class="poke-glass rounded-3xl p-4 sm:p-5 space-y-3">
+            <h2 class="text-base font-black text-white">📸 Eigenen Pull / Hit in die Community posten</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+              <div>
+                <label class="block text-slate-300 font-bold mb-1">Foto deiner Karte:</label>
+                <input id="wall-file" type="file" accept="image/*" onchange="previewWallImage(event)" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-1.5 text-slate-300" />
+              </div>
+              <div>
+                <label class="block text-slate-300 font-bold mb-1">Oder Kartennummer (z. B. 238/191):</label>
+                <input id="wall-cardnum" type="text" placeholder="Optional für Auto-Kartenbild" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+              </div>
+            </div>
+            <img id="wall-preview" src="" alt="Vorschau" class="hidden max-h-40 rounded-xl border border-yellow-400 mx-auto object-contain" />
+            <div class="flex gap-2">
+              <input id="wall-caption" type="text" maxlength="300" placeholder="Beschreibung zu deinem Pull..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
+              <button onclick="publishWallPost()" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black px-4 py-2 rounded-xl text-xs shrink-0">🚀 Posten</button>
+            </div>
+          </div>
+
+          <div id="pullwall-feed" class="space-y-3"></div>
+        </div>
+
+        <div class="lg:col-span-5 poke-glass rounded-3xl p-4 sm:p-5 space-y-3">
+          <div class="flex justify-between items-center">
+            <h3 class="font-black text-sm text-white">💬 Live Sammler-Chat</h3>
+            <span class="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold">Echtzeit</span>
+          </div>
+          <div id="chat-messages" class="space-y-2 h-80 overflow-y-auto bg-slate-950/90 p-3 rounded-xl border border-slate-800 text-xs"></div>
+          <div class="flex gap-2">
+            <input id="chat-name" type="text" maxlength="35" placeholder="Dein Name" class="w-1/3 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white" />
+            <input id="chat-input" type="text" maxlength="500" placeholder="Nachricht schreiben..." onkeydown="if(event.key==='Enter')sendChatMessage()" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
+            <button onclick="sendChatMessage()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black text-xs px-3.5 py-2 rounded-xl">Senden</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- REITER 4: TAUSCH-HUB (UNBEGRENZT KARTEN INSERIEREN) & RADAR-KARTE   -->
+    <!-- =================================================================== -->
+    <section id="view-map" class="hidden space-y-6">
+
+      <!-- NEU: UNBEGRENZT KARTEN AUF EINMAL INSERIEREN (STAPEL- & MASSEN-UPLOAD) -->
+      <div id="batch-card-box" class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div class="lg:col-span-6 poke-glass rounded-3xl p-5 space-y-4 border-2 border-yellow-400/50">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span class="text-[10px] font-black uppercase bg-yellow-400 text-slate-950 px-2.5 py-0.5 rounded-full">🚀 Stapel- & Massen-Inserat</span>
+              <h2 class="text-base sm:text-lg font-black text-white mt-1">Unbegrenzt viele Karten auf einmal inserieren!</h2>
+            </div>
+            <div class="flex gap-1 bg-slate-900 p-1 rounded-xl text-xs">
+              <button onclick="toggleBatchMode('rows')" id="modebtn-rows" class="bg-yellow-400 text-slate-950 font-black px-2.5 py-1 rounded-lg">📋 Zeilen / Multi-Foto</button>
+              <button onclick="toggleBatchMode('text')" id="modebtn-text" class="text-slate-300 font-bold px-2.5 py-1 rounded-lg">⚡ Text-Massenimport</button>
+            </div>
+          </div>
+
+          <!-- Gemeinsame Absender-Daten -->
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <input id="batch-city" type="text" placeholder="Deine PLZ / Ort (für alle Karten)" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+            <input id="batch-want-default" type="text" placeholder="Standard-Suche (z. B. Tausch / Gebot)" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+          </div>
+
+          <!-- MODUS A: UNBEGRENZTE KARTEN-ZEILEN & MULTI-FOTO-AUSWAHL -->
+          <div id="batch-mode-rows" class="space-y-3 text-xs">
+            <div class="bg-slate-950/90 border border-yellow-400/30 rounded-2xl p-3 space-y-1.5">
+              <label class="block font-bold text-yellow-300">📸 Mehrere Kartenfotos gleichzeitig auswählen (optional):</label>
+              <input type="file" accept="image/*" multiple onchange="handleMultiPhotoSelect(event)" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-1.5 text-slate-300" />
+              <p class="text-[11px] text-slate-400">Jedes ausgewählte Foto erzeugt automatisch eine eigene Kartenzeile!</p>
+            </div>
+
+            <div id="dynamic-rows-container" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
+
+            <div class="flex gap-2">
+              <button onclick="addCardRow()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-yellow-300 border border-yellow-400/40 font-extrabold py-2.5 rounded-xl">
+                ➕ Weitere Karte hinzufügen
+              </button>
+              <button onclick="addFiveCardRows()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-2.5 rounded-xl">
+                +5 Zeilen
+              </button>
+            </div>
+
+            <button onclick="submitAllCardRows()" class="w-full bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 font-black py-3 rounded-xl text-xs sm:text-sm shadow-lg">
+              🚀 Alle eingetragenen Karten jetzt gleichzeitig veröffentlichen
+            </button>
+          </div>
+
+          <!-- MODUS B: UNBEGRENZTER TEXT-MASSENIMPORT -->
+          <div id="batch-mode-text" class="hidden space-y-3 text-xs">
+            <p class="text-slate-300">Füge beliebig viele Karten ein (<strong>eine Karte pro Zeile</strong>). Format: <code class="text-yellow-300">Kartenname oder Nummer ; Preis ; Gesucht</code></p>
+            <textarea id="batch-textarea" rows="6" placeholder="Pikachu ex 238/191 ; 340 ; Suche Glurak ex&#10;Glurak ex 199/165 ; 155 ; Tausch oder Verkauf&#10;Donnersichel ex 251/182 ; 65 ; Gebot" class="w-full bg-slate-950 border border-slate-700 rounded-2xl p-3 text-white font-mono text-xs"></textarea>
+            <button onclick="submitBulkTextListings()" class="w-full bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-3 rounded-xl text-xs sm:text-sm shadow-lg">
+              ⚡ Komplette Liste jetzt auf einmal inserieren
+            </button>
+          </div>
+        </div>
+
+        <!-- RECHTE SPALTE: AKTIVE COMMUNITY-INSERATE -->
+        <div class="lg:col-span-6 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-base font-black text-white">📋 Live Tausch- & Verkaufs-Angebote (<span id="marketTotalBadge">0</span>)</h3>
+            <input id="market-search" type="text" oninput="renderMarket()" placeholder="Inserate filtern..." class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div id="market-list" class="space-y-2.5 max-h-[540px] overflow-y-auto pr-1"></div>
+        </div>
+      </div>
+
+      <!-- INTERAKTIVE SAMMLER-KARTE -->
+      <div class="poke-glass rounded-3xl p-4 sm:p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-black text-white">🗺️ Live Sammler-Radar & Treffpunkte</h2>
+            <p class="text-xs text-slate-300">Trage deinen Standort-Pin ein oder starte die Google-Maps-Route zu Sammlern</p>
+          </div>
+          <button onclick="locateUserOnMap()" class="bg-slate-800 hover:bg-slate-700 text-yellow-400 border border-yellow-400/40 font-bold text-xs px-3 py-1.5 rounded-xl">🎯 Mein GPS</button>
+        </div>
+
+        <div id="radarMap" class="border-2 border-yellow-400/30"></div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs pt-1">
+          <input id="radar-my-name" type="text" maxlength="35" placeholder="Dein @Name" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+          <input id="radar-my-city" type="text" maxlength="60" placeholder="PLZ & Stadt" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+          <input id="radar-my-cards" type="text" maxlength="120" placeholder="Was bietest/suchst du?" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+          <button onclick="registerMyRadarPin()" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-2 px-3 rounded-xl">📍 Pin setzen</button>
+        </div>
+
+        <div id="radar-user-list" class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2"></div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- REITER 5: PORTFOLIO, KARTEN-SCANNER & RECHNER                       -->
+    <!-- =================================================================== -->
+    <section id="view-portfolio" class="hidden space-y-5">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div class="lg:col-span-7 poke-glass rounded-3xl p-4 sm:p-5 space-y-4">
+          <div class="flex justify-between items-center">
+            <div>
+              <h2 class="text-base sm:text-lg font-black text-white">💼 Mein Sammler-Portfolio</h2>
+              <p class="text-xs text-slate-300">Scanne Karten per Nummer oder speichere deine Sammlung</p>
+            </div>
+            <div class="bg-emerald-500/20 border border-emerald-500/40 px-4 py-1.5 rounded-2xl text-right">
+              <p class="text-[10px] uppercase text-emerald-300 font-bold">Gesamtwert</p>
+              <p id="portfolio-total" class="text-lg font-black text-emerald-400">0,00 €</p>
+            </div>
+          </div>
+
+          <div class="bg-slate-950 p-3 rounded-2xl border border-yellow-400/30 flex gap-2 text-xs">
+            <input id="scan-card-number" type="text" placeholder="Kartennummer eintippen (z. B. 238/191, 199/165, 251/182)..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+            <button onclick="addCardByNumber()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black px-4 py-2 rounded-xl shrink-0">⚡ Scannen</button>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <input id="port-name" type="text" placeholder="Kartenname" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+            <input id="port-value" type="number" step="0.01" placeholder="Wert in €" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+            <button onclick="addPortfolioItem()" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-2 rounded-xl">+ Hinzufügen</button>
+          </div>
+
+          <div id="portfolio-list" class="space-y-2 max-h-80 overflow-y-auto"></div>
+        </div>
+
+        <div class="lg:col-span-5 space-y-4">
+          <div class="poke-glass rounded-3xl p-4 space-y-3 text-xs">
+            <h3 class="text-sm font-black text-white">📦 Bulk-Konvolut Rechner</h3>
+            <div class="space-y-2">
+              <div class="flex justify-between items-center">
+                <span class="text-slate-300">Commons / Uncommons (0,02 €):</span>
+                <input id="bulk-commons" type="number" value="0" min="0" oninput="calcBulk()" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-slate-300">Reverse / Holos (0,06 €):</span>
+                <input id="bulk-holos" type="number" value="0" min="0" oninput="calcBulk()" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-slate-300">ex / V / Full Art Hits (0,80 €):</span>
+                <input id="bulk-hits" type="number" value="0" min="0" oninput="calcBulk()" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
+              </div>
+            </div>
+            <div class="flex justify-between items-center pt-2 border-t border-slate-800">
+              <span class="text-slate-400">Geschätzter Wert:</span>
+              <strong id="bulk-result" class="text-base font-black text-yellow-400">0,00 €</strong>
+            </div>
+          </div>
+
+          <div class="poke-glass rounded-3xl p-4 space-y-3 text-xs">
+            <h3 class="text-sm font-black text-white">🏆 PSA 10 Grading-Gewinnrechner</h3>
+            <div class="flex justify-between items-center">
+              <span class="text-slate-300">Rohkarten-Einkaufspreis (€):</span>
+              <input id="grade-raw-price" type="number" value="100" min="0" oninput="calcGradingProfit()" class="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
+            </div>
+            <div class="grid grid-cols-3 gap-2 bg-slate-950 p-2.5 rounded-xl text-center">
+              <div><p class="text-[10px] text-slate-400">Inkl. Grading</p><p id="grade-cost" class="font-bold text-white">125,00 €</p></div>
+              <div><p class="text-[10px] text-slate-400">PSA 10 (~1.9x)</p><p id="grade-psa10" class="font-bold text-purple-400">190,00 €</p></div>
+              <div><p class="text-[10px] text-slate-400">Netto-Plus</p><p id="grade-profit" class="font-bold text-emerald-400">+65,00 €</p></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 4. MOBILE BOTTOM-NAVIGATION -->
+  <nav class="dex-bottom fixed bottom-0 left-0 right-0 z-40 lg:hidden" style="padding-bottom: env(safe-area-inset-bottom);">
+    <div class="max-w-md mx-auto grid grid-cols-5 gap-1 px-2 py-1.5">
+      <button onclick="switchTab('swipe')" id="mob-swipe" class="mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🃏</span><span class="text-[10px]">Arena</span></button>
+      <button onclick="switchTab('flip')" id="mob-flip" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">⚡</span><span class="text-[10px]">Deals</span></button>
+      <button onclick="switchTab('community')" id="mob-community" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">📸</span><span class="text-[10px]">Pulls</span></button>
+      <button onclick="switchTab('map')" id="mob-map" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🤝</span><span class="text-[10px]">Inserieren</span></button>
+      <button onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">💼</span><span class="text-[10px]">Portfolio</span></button>
+    </div>
+  </nav>
+
+  <!-- ===================================================================== -->
+  <!-- 5. MODALS: PUSH-ZENTRALE 2.0, APP-INSTALL, PROFIL, PRO & RECHT        -->
+  <!-- ===================================================================== -->
+
+  <!-- NEU: ERWEITERTE PUSH-ZENTRALE 2.0 -->
+  <div id="push-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="poke-glass max-w-md w-full rounded-3xl p-6 space-y-4 border-2 border-yellow-400">
+      <div class="flex justify-between items-center">
+        <span class="bg-yellow-400 text-slate-950 text-xs font-black px-3 py-1 rounded-full">🔔 PUSH-ZENTRALE 2.0</span>
+        <button onclick="closeModal('push-modal')" class="text-slate-400 hover:text-white font-bold text-lg">✕</button>
+      </div>
+      <h3 class="text-base font-black text-white">Echtzeit-Alarme & Schnäppchen-Radar</h3>
+      <p class="text-xs text-slate-300">Wähle aus, worüber dich der Push-Bot sofort per Browser-Push, Live-Banner und Ton informieren soll:</p>
+
+      <div class="space-y-2.5 bg-slate-950 p-3.5 rounded-2xl border border-slate-800 text-xs">
+        <label class="flex items-center justify-between cursor-pointer">
+          <span class="font-bold text-slate-200">🤝 Neue Marktplatz-Inserate (Live)</span>
+          <input id="push-opt-market" type="checkbox" checked onchange="savePushSettings()" class="w-4 h-4 accent-yellow-400" />
+        </label>
+        <label class="flex items-center justify-between cursor-pointer">
+          <span class="font-bold text-slate-200">📸 Neue Pull-Wall Hits der Community</span>
+          <input id="push-opt-wall" type="checkbox" checked onchange="savePushSettings()" class="w-4 h-4 accent-yellow-400" />
+        </label>
+        <label class="flex items-center justify-between cursor-pointer">
+          <span class="font-bold text-slate-200">🔊 Poké-Sound-Ping bei neuem Alarm</span>
+          <input id="push-opt-sound" type="checkbox" checked onchange="savePushSettings()" class="w-4 h-4 accent-yellow-400" />
+        </label>
+        <div class="pt-2 border-t border-slate-800">
+          <label class="block text-yellow-300 font-bold mb-1">🎯 Lieblings-Pokémon / Suchfilter (optional):</label>
+          <input id="push-opt-keywords" type="text" oninput="savePushSettings()" placeholder="z. B. Glurak, Pikachu, Nachtara, Display" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white" />
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <button onclick="enableBrowserPush()" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 rounded-xl shadow">
+          🔔 Browser-Push freigeben
+        </button>
+        <button onclick="sendTestPushNotification()" class="bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl shadow">
+          ⚡ Test-Alarm senden
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP INSTALL MODAL -->
+  <div id="install-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="poke-glass max-w-sm w-full rounded-3xl p-6 text-center space-y-4">
+      <h3 class="text-lg font-black text-white">📲 Als App auf dem Handy speichern</h3>
+      <div class="bg-slate-950 p-3.5 rounded-2xl text-left text-xs space-y-2 text-slate-300 border border-slate-800">
+        <p>📱 <strong>Android (Chrome):</strong> Tippe unten auf „Jetzt installieren“ oder oben rechts auf <strong>⋮ &rarr; App installieren</strong>.</p>
+        <p>🍏 <strong>iPhone (Safari):</strong> Tippe unten auf <strong>Teilen (⬆️) &rarr; Zum Home-Bildschirm</strong>.</p>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="triggerNativeInstall()" class="flex-1 bg-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">Jetzt installieren</button>
+        <button onclick="closeModal('install-modal')" class="bg-slate-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROFIL MODAL -->
+  <div id="auth-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="poke-glass max-w-sm w-full rounded-3xl p-6 space-y-4">
+      <div class="flex justify-between items-center">
+        <h3 class="text-base font-black text-white">👤 Sammler-Profil</h3>
+        <button onclick="closeModal('auth-modal')" class="text-slate-400 font-bold">✕</button>
+      </div>
+      <input id="auth-username" type="text" maxlength="30" placeholder="Dein Sammlername (z. B. @PokeTrainer)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white" />
+      <button onclick="saveUserProfile()" class="w-full bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">Name speichern</button>
+    </div>
+  </div>
+
+  <!-- PRO VIP MODAL -->
+  <div id="pro-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="poke-glass max-w-lg w-full rounded-3xl p-6 space-y-4 border-2 border-yellow-400">
+      <div class="flex justify-between items-center">
+        <span class="bg-yellow-400 text-slate-950 text-xs font-black px-3 py-1 rounded-full">👑 POKESWIPE PRO VIP</span>
+        <button onclick="closeModal('pro-modal')" class="text-slate-400 font-bold">✕</button>
+      </div>
+      <h3 class="text-lg font-black text-white">Hole das Maximum aus deinen Tausch-Deals & Schnäppchen</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div class="bg-slate-950 border border-yellow-400/40 rounded-2xl p-4 space-y-2">
+          <p class="text-yellow-400 font-black uppercase text-[10px]">Starter PRO</p>
+          <p class="text-xl font-black text-white">4,99 € <span class="text-xs font-normal text-slate-400">/ Mo</span></p>
+          <ul class="text-slate-300 space-y-1">
+            <li>✅ Unbegrenzte Swipes & Pack-Opener</li>
+            <li>✅ Echtzeit Push-Sniper Alarme</li>
+            <li>✅ Goldenes PRO-Badge im Tausch-Hub</li>
+          </ul>
+          <button onclick="activatePro('PRO')" class="w-full bg-yellow-400 text-slate-950 font-black py-2 rounded-xl mt-2">4,99 € Abo aktivieren</button>
+        </div>
+        <div class="bg-slate-950 border-2 border-purple-500 rounded-2xl p-4 space-y-2">
+          <p class="text-purple-400 font-black uppercase text-[10px]">Trader VIP</p>
+          <p class="text-xl font-black text-white">9,99 € <span class="text-xs font-normal text-slate-400">/ Mo</span></p>
+          <ul class="text-slate-300 space-y-1">
+            <li>✅ Alle Starter PRO Vorteile</li>
+            <li>✅ Unbegrenzte Stapel-Inserate mit VIP-Rahmen</li>
+            <li>✅ Priorisierte Arbitrage-Deals</li>
+          </ul>
+          <button onclick="activatePro('VIP')" class="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white font-black py-2 rounded-xl mt-2">9,99 € VIP aktivieren</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMPRESSUM & DATENSCHUTZ -->
+  <div id="legal-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="poke-glass max-w-lg w-full rounded-3xl p-6 space-y-3 text-xs text-slate-300">
+      <div class="flex justify-between items-center">
+        <h3 class="text-base font-black text-white">Impressum & Datenschutz</h3>
+        <button onclick="closeModal('legal-modal')" class="text-slate-400 font-bold">✕</button>
+      </div>
+      <p><strong>Projekt:</strong> PokeSwipe & Radar (pokeswipe-radar.de)<br>Kontakt: info@pokeswipe-radar.de</p>
+      <p><strong>Affiliate-Hinweis (*):</strong> Als Partner des eBay Partner Networks (CampID: 5339244109) verdienen wir an qualifizierten Käufen über gekennzeichnete eBay-Links eine kleine Provision, ohne Mehrkosten für dich.</p>
+      <p><strong>Datenschutz:</strong> Ohne Konto bleiben Portfolio-, Merklisten- und Push-Einstellungen lokal im Browser (LocalStorage). Mit Konto werden Login (Netlify Identity), Portfolio, Preisalarme, Inserate, Tausche, private Tausch-Nachrichten und Bewertungen verschlüsselt übertragen und bei unserem Hosting-Anbieter Netlify gespeichert. Zahlungen wickelt Stripe ab – wir sehen keine Kartendaten. Öffentliche Community-Beiträge (Live-Chat, Pull-Wall, Radar-Pins) laufen über die Google Firebase Realtime Database (<code>europe-west1</code>). Kartenpreise stammen von Cardmarket über TCGdex.</p>
+      <p><strong>Abos:</strong> Premium (4,99 €/Monat) und Pro Trader (9,99 €/Monat) sind monatlich kündbar – im Konto unter „Abo kündigen“. Die Vorteile bleiben bis zum Ende des bezahlten Zeitraums aktiv.</p>
+    </div>
+  </div>
+
+  <footer class="relative z-10 border-t border-yellow-400/20 bg-slate-950/90 py-4 px-4 text-xs text-slate-400 mt-8">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+      <p>© 2026 PokeSwipe & Radar (pokeswipe-radar.de) • *eBay Partner Network ID: 5339244109</p>
+      <button onclick="openModal('legal-modal')" class="hover:text-white underline">Impressum & Datenschutz</button>
+    </div>
+  </footer>
+
+  <!-- ===================================================================== -->
+  <!-- 6. VOLLSTÄNDIGER JAVASCRIPT-KERN                                      -->
+  <!-- ===================================================================== -->
+  <script>
+    const EPN_CAMPAIGN_ID = "5339244109";
+    const firebaseConfig = {
+      databaseURL: "https://pyro-planer-web-app-default-rtdb.europe-west1.firebasedatabase.app"
+    };
+
+    function sanitizeHTML(str) {
+      if (str === null || str === undefined) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function getOwnerId() {
+      let id = localStorage.getItem("pokeswipe_uid");
+      if (!id) {
+        id = "u_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now();
+        localStorage.setItem("pokeswipe_uid", id);
+      }
+      return id;
+    }
+
+    function getCurrentUser() {
+      return localStorage.getItem("pokeswipe_user") || "";
+    }
+
+    function openModal(id) { document.getElementById(id).classList.remove("hidden"); }
+    function closeModal(id) { document.getElementById(id).classList.add("hidden"); }
+
+    // PWA INSTALLER
+    let deferredInstallPrompt = null;
+    window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstallPrompt = e; });
+    function triggerNativeInstall() {
+      if (deferredInstallPrompt) { deferredInstallPrompt.prompt(); closeModal("install-modal"); }
+      else alert("Wähle im Browser-Menü 'Zum Startbildschirm hinzufügen'.");
+    }
+
+    // AFFILIATE & CARDMARKET URLS
+    function buildEbayUrl(query, mode = "bin") {
+      const encoded = encodeURIComponent(query);
+      const sort = mode === "auction" ? "&LH_Auction=1&_sop=1" : "&LH_BIN=1&_sop=15";
+      return `https://www.ebay.de/sch/i.html?_nkw=${encoded}${sort}&mkcid=1&mkrid=707-53477-19255-0&siteid=77&campid=${EPN_CAMPAIGN_ID}&customid=pokeswipe&toolid=10001&mkevt=1`;
+    }
+
+    function buildCardmarketUrl(query) {
+      return `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(query)}`;
+    }
+
+    function hydrateStaticAffiliateLinks() {
+      document.querySelectorAll(".epn-dynamic-link").forEach(el => {
+        el.href = buildEbayUrl(el.getAttribute("data-epn-query") || "Pokemon TCG", "bin");
+      });
+    }
+
+    // BILD-KOMPRIMIERUNG
+    function compressImage(file, callback) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const max = 460;
+          let w = img.width, h = img.height;
+          if (w > h && w > max) { h = Math.round(h * (max / w)); w = max; }
+          else if (h > max) { w = Math.round(w * (max / h)); h = max; }
+          canvas.width = w; canvas.height = h;
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+          callback(canvas.toDataURL("image/jpeg", 0.72));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // KARTEN-KATALOG FÜR SCANNER & BOOSTER-OPENER
+    const cardCatalog = {
+      "238/191": { name: "Pikachu ex SIR (238/191)", set: "Stürmische Funken", setCode: "sv8", value: 420, img: "https://images.pokemontcg.io/sv8/238_hires.png" },
+      "247/191": { name: "Latias ex SIR (247/191)", set: "Stürmische Funken", setCode: "sv8", value: 185, img: "https://images.pokemontcg.io/sv8/239_hires.png" },
+      "199/165": { name: "Glurak ex SIR (199/165)", set: "Karmesin & Purpur 151", setCode: "sv3pt5", value: 195, img: "https://images.pokemontcg.io/sv3pt5/199_hires.png" },
+      "200/165": { name: "Turtok ex SIR (200/165)", set: "Karmesin & Purpur 151", setCode: "sv3pt5", value: 72, img: "https://images.pokemontcg.io/sv3pt5/200_hires.png" },
+      "201/165": { name: "Simsala ex SIR (201/165)", set: "Karmesin & Purpur 151", setCode: "sv3pt5", value: 48, img: "https://images.pokemontcg.io/sv3pt5/201_hires.png" },
+      "251/182": { name: "Donnersichel ex SIR (251/182)", set: "Paradoxrift", setCode: "sv4", value: 78, img: "https://images.pokemontcg.io/sv4/251_hires.png" },
+      "203/162": { name: "Eisenblatt ex SIR (203/162)", set: "Gewalten der Zeit", setCode: "sv5", value: 68, img: "https://images.pokemontcg.io/sv5/203_hires.png" },
+      "215/203": { name: "Nachtara VMAX Alt Art (215/203)", set: "Drachenwandel", setCode: "swsh7", value: 890, img: "https://images.pokemontcg.io/swsh7/215_hires.png" },
+      "218/203": { name: "Rayquaza VMAX Alt Art (218/203)", set: "Drachenwandel", setCode: "swsh7", value: 460, img: "https://images.pokemontcg.io/swsh7/218_hires.png" }
+    };
+
+    function resolveCard(input) {
+      const clean = (input || "").trim();
+      if (cardCatalog[clean]) return cardCatalog[clean];
+      for (const k in cardCatalog) {
+        if (clean.toLowerCase().includes(k.toLowerCase()) || clean.toLowerCase().includes(cardCatalog[k].name.toLowerCase().split(" ")[0])) {
+          return cardCatalog[k];
+        }
+      }
+      return { name: clean || "Pokémon Karte", set: "Pokémon TCG", value: 25, img: "https://images.pokemontcg.io/sv8/238_hires.png" };
+    }
+
+    // ===================================================================
+    // ERWEITERTES PUSH-BENACHRICHTIGUNGS-SYSTEM 2.0 (TOAST + SOUND + BROWSER)
+    // ===================================================================
+    let pushSettings = JSON.parse(localStorage.getItem("pokeswipe_push_cfg") || JSON.stringify({
+      market: true,
+      wall: true,
+      sound: true,
+      keywords: ""
+    }));
+    let swRegistration = null;
+    let toastTimeout = null;
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").then(reg => { swRegistration = reg; }).catch(() => {});
+    }
+
+    function loadPushSettingsUI() {
+      document.getElementById("push-opt-market").checked = pushSettings.market !== false;
+      document.getElementById("push-opt-wall").checked = pushSettings.wall !== false;
+      document.getElementById("push-opt-sound").checked = pushSettings.sound !== false;
+      document.getElementById("push-opt-keywords").value = pushSettings.keywords || "";
+      if ("Notification" in window && Notification.permission === "granted") {
+        document.getElementById("pushStatusLabel").textContent = "Push Aktiv";
+      }
+    }
+
+    function savePushSettings() {
+      pushSettings = {
+        market: document.getElementById("push-opt-market").checked,
+        wall: document.getElementById("push-opt-wall").checked,
+        sound: document.getElementById("push-opt-sound").checked,
+        keywords: document.getElementById("push-opt-keywords").value.trim()
+      };
+      localStorage.setItem("pokeswipe_push_cfg", JSON.stringify(pushSettings));
+    }
+
+    function playPokePingSound() {
+      if (!pushSettings.sound) return;
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(784, ctx.currentTime); // G5
+        osc.frequency.setValueAtTime(1046.5, ctx.currentTime + 0.09); // C6
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+      } catch (e) {}
+    }
+
+    function triggerSmartPush(title, body, linkUrl = "") {
+      playPokePingSound();
+
+      // 1. In-App Live Toast Banner anzeigen (funktioniert auf jedem Smartphone & PC sofort)
+      const toast = document.getElementById("live-push-toast");
+      document.getElementById("toast-title").textContent = title;
+      document.getElementById("toast-body").textContent = body;
+      const linkEl = document.getElementById("toast-link");
+      if (linkUrl) {
+        linkEl.href = linkUrl;
+        linkEl.classList.remove("hidden");
+      } else {
+        linkEl.classList.add("hidden");
+      }
+      toast.classList.remove("hidden");
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(hideLiveToast, 6500);
+
+      // 2. Nativer Browser- / ServiceWorker-Push (falls freigegeben)
+      if ("Notification" in window && Notification.permission === "granted") {
+        if (swRegistration && swRegistration.showNotification) {
+          swRegistration.showNotification(title, { body, icon: "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" });
+        } else {
+          try { new Notification(title, { body }); } catch (e) {}
+        }
+      }
+    }
+
+    function hideLiveToast() {
+      document.getElementById("live-push-toast").classList.add("hidden");
+    }
+
+    function enableBrowserPush() {
+      if (!("Notification" in window)) {
+        triggerSmartPush("🔔 In-App Live-Push aktiv!", "Dein Browser nutzt ab sofort das Live-Toast-Banner inkl. Sound-Ping.");
+        return;
+      }
+      Notification.requestPermission().then(perm => {
+        if (perm === "granted") {
+          document.getElementById("pushStatusLabel").textContent = "Push Aktiv";
+          triggerSmartPush("🔔 Push-Radar aktiviert!", "Du erhältst ab sofort Echtzeit-Alarme bei neuen Deals & Inseraten!");
+        } else {
+          triggerSmartPush("🔔 In-App Alarm aktiv!", "Alarme werden dir direkt hier oben als Live-Banner eingeblendet.");
+        }
+      });
+    }
+
+    function sendTestPushNotification() {
+      closeModal("push-modal");
+      triggerSmartPush(
+        "⚡ DEAL-SNIPER ALARM (-29%)",
+        "Pikachu ex SIR (238/191) unter Zielpreis entdeckt! Jetzt auf eBay prüfen.",
+        buildEbayUrl("Pikachu ex 238/191", "bin")
+      );
+    }
+
+    // ===================================================================
+    // 1. SWIPE-ARENA & GRATIS BOOSTER-PACK-SIMULATOR
+    // ===================================================================
+    const swipeCatalog = [
+      { title: "Pikachu ex SIR (238/191)", setTag: "Stürmische Funken", setFull: "Karmesin & Purpur – Stürmische Funken", rarity: "SIR Highlight", cm: 420, price: 340, img: "https://images.pokemontcg.io/sv8/238_hires.png", query: "Pikachu ex 238/191" },
+      { title: "Glurak ex SIR (199/165)", setTag: "151", setFull: "Karmesin & Purpur – 151", rarity: "SIR Grail", cm: 195, price: 155, img: "https://images.pokemontcg.io/sv3pt5/199_hires.png", query: "Glurak ex 199/165" },
+      { title: "Nachtara VMAX Alt Art (215/203)", setTag: "Evo & Vintage", setFull: "Schwert & Schild – Drachenwandel", rarity: "Moonbreon Alt Art", cm: 890, price: 740, img: "https://images.pokemontcg.io/swsh7/215_hires.png", query: "Nachtara VMAX 215/203" },
+      { title: "Donnersichel ex SIR (251/182)", setTag: "Stürmische Funken", setFull: "Karmesin & Purpur – Paradoxrift", rarity: "SIR", cm: 78, price: 59, img: "https://images.pokemontcg.io/sv4/251_hires.png", query: "Donnersichel ex 251/182" }
+    ];
+
+    let activeDeck = [...swipeCatalog];
+    let swipeIdx = 0;
+    let savedMatches = JSON.parse(localStorage.getItem("pokeswipe_matches_clean") || "[]");
+    let packsOpenedCount = parseInt(localStorage.getItem("pokeswipe_packs_count") || "0", 10);
+
+    function renderSwipeCard() {
+      if (!activeDeck.length) activeDeck = [...swipeCatalog];
+      const item = activeDeck[swipeIdx % activeDeck.length];
+      const diff = item.cm - item.price;
+      const pct = Math.round((diff / item.cm) * 100);
+
+      document.getElementById("swipe-rarity").textContent = item.rarity;
+      document.getElementById("swipe-title").textContent = item.title;
+      document.getElementById("swipe-set").textContent = item.setFull;
+      document.getElementById("swipe-cm").textContent = `${item.cm},00 €`;
+      document.getElementById("swipe-price").textContent = `${item.price},00 €`;
+      document.getElementById("swipe-margin").textContent = `+${diff},00 € (-${pct}%)`;
+      document.getElementById("swipe-img").src = item.img;
+
+      document.getElementById("swipe-ebay-buy").href = buildEbayUrl(item.query, "bin");
+      document.getElementById("swipe-ebay-auction").href = buildEbayUrl(item.query, "auction");
+      document.getElementById("swipe-cm-link").href = buildCardmarketUrl(item.query);
+      document.getElementById("swipe-psa-link").href = buildEbayUrl(item.query + " PSA 10", "bin");
+    }
+
+    function filterSwipeDeck(tag) {
+      activeDeck = tag === "all" ? [...swipeCatalog] : swipeCatalog.filter(c => c.setTag === tag);
+      swipeIdx = 0;
+      renderSwipeCard();
+    }
+
+    function nextSwipeCard(mode) {
+      const item = activeDeck[swipeIdx % activeDeck.length];
+      if (mode === "match") {
+        if (!savedMatches.some(m => m.title === item.title)) {
+          savedMatches.unshift({ title: item.title, price: item.price, query: item.query });
+          localStorage.setItem("pokeswipe_matches_clean", JSON.stringify(savedMatches));
+          renderMatches();
+        }
+      }
+      swipeIdx = (swipeIdx + 1) % activeDeck.length;
+      renderSwipeCard();
+    }
+
+    function renderMatches() {
+      document.getElementById("matchCountBadge").textContent = savedMatches.length;
+      document.getElementById("statMatches").textContent = savedMatches.length;
+      const box = document.getElementById("match-list-box");
+      if (!savedMatches.length) {
+        box.innerHTML = `<p class="text-slate-500 py-2">Noch keine Karten gemerkt. Klicke beim Swipen auf „💚 Merken & Deal“.</p>`;
+        return;
+      }
+      box.innerHTML = savedMatches.map((m, i) => `
+        <div class="flex items-center justify-between bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl">
+          <div class="truncate pr-2">
+            <p class="font-bold text-white truncate">${sanitizeHTML(m.title)}</p>
+            <p class="text-[11px] text-emerald-400 font-bold">Zielpreis: ${Number(m.price)},00 €</p>
+          </div>
+          <div class="flex gap-1.5 shrink-0">
+            <a href="${buildCardmarketUrl(m.query)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-[11px] font-bold px-2 py-1 rounded-lg">CM</a>
+            <a href="${buildEbayUrl(m.query, 'bin')}" target="_blank" rel="noopener" class="bg-blue-600 text-white text-[11px] font-bold px-2 py-1 rounded-lg">eBay</a>
+            <button onclick="savedMatches.splice(${i},1);localStorage.setItem('pokeswipe_matches_clean',JSON.stringify(savedMatches));renderMatches();" class="text-slate-500 hover:text-rose-400 px-1">✕</button>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function clearMatches() { savedMatches = []; localStorage.removeItem("pokeswipe_matches_clean"); renderMatches(); }
+
+    // GRATIS BOOSTER-PACK-SIMULATOR (HÄLT SAMMLER AUF DER SEITE & GENERIERT AFFILIATE-KLICKS)
+    const boosterPools = {
+      sv8: {
+        displayQuery: "Pokemon Stürmische Funken Display 36 Booster OVP",
+        cards: [
+          { name: "Pikachu ex SIR (238/191)", rarity: "⚡ GOD HIT! Special Illustration Rare", val: 420, img: "https://images.pokemontcg.io/sv8/238_hires.png" },
+          { name: "Latias ex SIR (239/191)", rarity: "🔥 Special Illustration Rare", val: 185, img: "https://images.pokemontcg.io/sv8/239_hires.png" },
+          { name: "Donnersichel ex SIR (251/182)", rarity: "✨ Illustration Rare Hit", val: 78, img: "https://images.pokemontcg.io/sv4/251_hires.png" }
+        ]
+      },
+      sv3pt5: {
+        displayQuery: "Pokemon Karmesin Purpur 151 Top Trainer Box Display",
+        cards: [
+          { name: "Glurak ex SIR (199/165)", rarity: "🔥 GRAIL HIT! Special Illustration Rare", val: 195, img: "https://images.pokemontcg.io/sv3pt5/199_hires.png" },
+          { name: "Turtok ex SIR (200/165)", rarity: "💧 Special Illustration Rare", val: 72, img: "https://images.pokemontcg.io/sv3pt5/200_hires.png" },
+          { name: "Simsala ex SIR (201/165)", rarity: "🔮 Special Illustration Rare", val: 48, img: "https://images.pokemontcg.io/sv3pt5/201_hires.png" }
+        ]
+      },
+      swsh7: {
+        displayQuery: "Pokemon Drachenwandel Evolving Skies Display Booster",
+        cards: [
+          { name: "Nachtara VMAX Alt Art (215/203)", rarity: "🌙 JACKPOT! Moonbreon Alternate Art", val: 890, img: "https://images.pokemontcg.io/swsh7/215_hires.png" },
+          { name: "Rayquaza VMAX Alt Art (218/203)", rarity: "🐉 Alternate Art Secret Rare", val: 460, img: "https://images.pokemontcg.io/swsh7/218_hires.png" }
+        ]
+      }
+    };
+
+    function openVirtualBooster() {
+      const setKey = document.getElementById("pack-set-select").value || "sv8";
+      const pool = boosterPools[setKey] || boosterPools.sv8;
+      const pulled = pool.cards[Math.floor(Math.random() * pool.cards.length)];
+
+      const imgEl = document.getElementById("pack-visual-img");
+      imgEl.classList.remove("pack-shake");
+      void imgEl.offsetWidth;
+      imgEl.classList.add("pack-shake");
+
+      imgEl.src = pulled.img;
+      document.getElementById("pack-hit-badge").textContent = pulled.rarity;
+      document.getElementById("pack-hit-name").textContent = pulled.name;
+      document.getElementById("pack-hit-val").textContent = `Aktueller Marktwert: ~${pulled.val},00 €`;
+      document.getElementById("pack-buy-card-link").href = buildEbayUrl(pulled.name, "bin");
+      document.getElementById("pack-buy-display-link").href = buildEbayUrl(pool.displayQuery, "bin");
+
+      packsOpenedCount += 1;
+      localStorage.setItem("pokeswipe_packs_count", String(packsOpenedCount));
+      document.getElementById("statPacksOpened").textContent = packsOpenedCount;
+      playPokePingSound();
+    }
+
+    // ===================================================================
+    // 2. FLIP-RADAR & WISHLIST
+    // ===================================================================
+    let wishlist = JSON.parse(localStorage.getItem("pokeswipe_wishlist_clean") || "[]");
+    function renderWishlist() {
+      const box = document.getElementById("wishlist-rules-box");
+      if (!wishlist.length) {
+        box.innerHTML = `<span class="text-xs text-slate-500">Noch kein Preis-Wächter aktiv.</span>`;
+        return;
+      }
+      box.innerHTML = wishlist.map((w, i) => `
+        <div class="flex items-center gap-2 bg-slate-900 border border-yellow-400/40 px-3 py-1 rounded-full text-xs">
+          <span class="text-yellow-300 font-bold">🎯 ${sanitizeHTML(w.card)} &le; ${Number(w.max)} €</span>
+          <a href="${buildEbayUrl(w.card, 'bin')}" target="_blank" rel="noopener" class="text-blue-400 underline font-bold">eBay</a>
+          <a href="${buildCardmarketUrl(w.card)}" target="_blank" rel="noopener" class="text-purple-400 underline font-bold">CM</a>
+          <button onclick="wishlist.splice(${i},1);localStorage.setItem('pokeswipe_wishlist_clean',JSON.stringify(wishlist));renderWishlist();" class="text-slate-400 hover:text-rose-400">✕</button>
+        </div>
+      `).join("");
+    }
+
+    function addWishlistRule() {
+      const card = document.getElementById("wish-card").value.trim();
+      const max = parseInt(document.getElementById("wish-max").value, 10);
+      if (!card || isNaN(max)) return alert("Bitte Karte und Zielpreis eingeben.");
+      wishlist.push({ card, max });
+      localStorage.setItem("pokeswipe_wishlist_clean", JSON.stringify(wishlist));
+      document.getElementById("wish-card").value = "";
+      document.getElementById("wish-max").value = "";
+      renderWishlist();
+      triggerSmartPush("🎯 Preis-Wächter aktiv!", `Wir überwachen "${card}" unter ${max} € für dich.`, buildEbayUrl(card, "bin"));
+    }
+
+    let flipDeals = [
+      { name: "Pikachu ex SIR (238/191) Stürmische Funken", category: "singles", cmPrice: 420, ebayPrice: 315, query: "Pikachu ex 238/191" },
+      { name: "Karmesin & Purpur 151 Top-Trainer-Box (OVP)", category: "sealed", cmPrice: 115, ebayPrice: 89, query: "Pokemon 151 Top Trainer Box deutsch" },
+      { name: "Glurak ex SIR (199/165) K&P 151 Deutsch", category: "singles", cmPrice: 195, ebayPrice: 149, query: "Glurak ex 199/165 deutsch" },
+      { name: "Stürmische Funken 36er Booster Display (OVP)", category: "sealed", cmPrice: 165, ebayPrice: 129, query: "Stürmische Funken Display 36 Booster" }
+    ];
+
+    function filterFlipDeals(cat = "all") {
+      const items = cat === "all" ? flipDeals : flipDeals.filter(d => d.category === cat);
+      document.getElementById("flip-list").innerHTML = items.map(d => {
+        const diff = d.cmPrice - d.ebayPrice;
+        const pct = Math.round((diff / d.cmPrice) * 100);
+        return `
+          <div class="poke-glass rounded-2xl p-4 flex flex-col justify-between gap-3">
+            <div class="flex justify-between items-start gap-2">
+              <div>
+                <span class="text-[11px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">🔥 -${pct}% unter CM-Trend (+${diff} €)</span>
+                <h3 class="font-bold text-white text-sm mt-2">${sanitizeHTML(d.name)}</h3>
+              </div>
+              <span class="text-xs text-slate-400 shrink-0">CM: <del>${Number(d.cmPrice)} €</del></span>
+            </div>
+            <div class="flex items-center justify-between pt-3 border-t border-slate-800">
+              <p class="text-lg font-black text-emerald-400">${Number(d.ebayPrice)},00 €</p>
+              <div class="flex gap-1.5">
+                <a href="${buildCardmarketUrl(d.query)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl">Cardmarket</a>
+                <a href="${buildEbayUrl(d.query, 'auction')}" target="_blank" rel="noopener" class="bg-amber-400 text-slate-950 text-xs font-bold px-2.5 py-1.5 rounded-xl">Auktion</a>
+                <a href="${buildEbayUrl(d.query, 'bin')}" target="_blank" rel="noopener" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">eBay-Deal</a>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function submitCommunityDeal() {
+      const title = document.getElementById("rep-title").value.trim();
+      const price = parseInt(document.getElementById("rep-price").value, 10);
+      if (!title || isNaN(price)) return alert("Bitte Titel und Preis angeben.");
+      flipDeals.unshift({ name: title, category: "singles", cmPrice: Math.round(price * 1.25), ebayPrice: price, query: title });
+      document.getElementById("rep-title").value = "";
+      document.getElementById("rep-price").value = "";
+      filterFlipDeals("all");
+      triggerSmartPush("🚨 Neuer Community-Deal!", `${title} für ${price} € gemeldet!`, buildEbayUrl(title, "bin"));
+    }
+
+    // ===================================================================
+    // 3. PULL-WALL & LIVE-CHAT
+    // ===================================================================
+    let pendingWallImg = "";
+    let dbRefWall = null;
+    let dbRefChat = null;
+    let wallPosts = [];
+    let initialWallLoaded = false;
+
+    function previewWallImage(e) {
+      compressImage(e.target.files[0], data => {
+        pendingWallImg = data;
+        const prev = document.getElementById("wall-preview");
+        prev.src = data;
+        prev.classList.remove("hidden");
+      });
+    }
+
+    function publishWallPost() {
+      const user = (getCurrentUser() || "Sammler").slice(0, 35);
+      const caption = document.getElementById("wall-caption").value.trim().slice(0, 300);
+      const num = document.getElementById("wall-cardnum").value.trim();
+      if (!caption && !pendingWallImg && !num) return alert("Bitte Foto, Kartennummer oder Beschreibung eingeben.");
+
+      let img = pendingWallImg;
+      if (!img && num) img = resolveCard(num).img;
+      if (!img) img = "https://images.pokemontcg.io/sv8/238_hires.png";
+
+      const postObj = {
+        user,
+        caption: caption || "Neuer Community-Hit!",
+        img,
+        timestamp: Date.now()
+      };
+
+      if (dbRefWall) dbRefWall.push(postObj).catch(err => alert("Fehler beim Senden: " + err.message));
+      pendingWallImg = "";
+      document.getElementById("wall-caption").value = "";
+      document.getElementById("wall-cardnum").value = "";
+      document.getElementById("wall-preview").classList.add("hidden");
+    }
+
+    function likeWallPost(key) {
+      if (!dbRefWall || !key) return;
+      dbRefWall.child(key).child("likes").transaction(c => (c === null ? 1 : c + 1));
+    }
+
+    function addWallComment(key, idx) {
+      const inp = document.getElementById(`wall-cmt-${idx}`);
+      if (!inp || !dbRefWall || !key) return;
+      const text = inp.value.trim().slice(0, 300);
+      if (!text) return;
+      const author = (getCurrentUser() || "Sammler").slice(0, 35);
+      dbRefWall.child(key).child("comments").push({ author, text, timestamp: Date.now() });
+      inp.value = "";
+    }
+
+    function renderPullWall() {
+      const box = document.getElementById("pullwall-feed");
+      if (!wallPosts.length) {
+        box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">Noch keine Pulls gepostet – teile jetzt deinen ersten Hit!</div>`;
+        return;
+      }
+      box.innerHTML = wallPosts.map((p, idx) => {
+        const comments = p.comments ? Object.values(p.comments) : [];
+        return `
+          <div class="poke-glass rounded-2xl p-4 space-y-3">
+            <div class="flex justify-between items-center text-xs">
+              <strong class="text-yellow-400">${sanitizeHTML(p.user)}</strong>
+              <span class="text-slate-500">${new Date(p.timestamp || Date.now()).toLocaleDateString("de-DE")}</span>
+            </div>
+            <p class="text-xs sm:text-sm text-white">${sanitizeHTML(p.caption)}</p>
+            <div class="bg-slate-950 rounded-xl p-2 flex justify-center">
+              <img src="${sanitizeHTML(p.img)}" alt="Pull" class="max-h-56 rounded-lg object-contain" />
+            </div>
+            <div class="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
+              <button onclick="likeWallPost('${p.firebaseKey}')" class="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold px-3 py-1 rounded-lg">
+                ❤️ Gefällt mir (${Number(p.likes || 0)})
+              </button>
+              <span class="text-slate-400">💬 ${comments.length} Kommentare</span>
+            </div>
+            ${comments.length ? `<div class="space-y-1 bg-slate-950 p-2.5 rounded-xl text-xs">${comments.map(c => `<div><strong class="text-yellow-400">${sanitizeHTML(c.author)}:</strong> <span class="text-slate-200">${sanitizeHTML(c.text)}</span></div>`).join("")}</div>` : ""}
+            <div class="flex gap-2">
+              <input id="wall-cmt-${idx}" type="text" maxlength="300" placeholder="Kommentar schreiben..." onkeydown="if(event.key==='Enter')addWallComment('${p.firebaseKey}', ${idx})" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white" />
+              <button onclick="addWallComment('${p.firebaseKey}', ${idx})" class="bg-slate-800 hover:bg-slate-700 text-yellow-400 font-bold text-xs px-3 py-1.5 rounded-xl">Senden</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderChatList(messages) {
+      const box = document.getElementById("chat-messages");
+      if (!box) return;
+      if (!messages || !messages.length) {
+        box.innerHTML = `<p class="text-slate-500 text-center py-6">Noch keine Chat-Nachrichten vorhanden. Schreibe die erste Nachricht!</p>`;
+        return;
+      }
+      box.innerHTML = messages.map(m => `
+        <div class="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
+          <strong class="text-yellow-400">${sanitizeHTML(m.user)}:</strong>
+          <span class="text-slate-200 ml-1">${sanitizeHTML(m.text)}</span>
+        </div>
+      `).join("");
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function sendChatMessage() {
+      const nameInp = document.getElementById("chat-name");
+      const textInp = document.getElementById("chat-input");
+      const rawName = (nameInp.value.trim() || getCurrentUser() || "Sammler").slice(0, 35);
+      const text = textInp.value.trim().slice(0, 500);
+      if (!text) return;
+      if (rawName) localStorage.setItem("pokeswipe_user", rawName);
+
+      if (dbRefChat) dbRefChat.push({ user: rawName, text, timestamp: Date.now() }).catch(err => alert("Chat-Fehler: " + err.message));
+      textInp.value = "";
+    }
+
+    // ===================================================================
+    // 4. UNBEGRENZTER TAUSCH-HUB (MASSEN- & STAPEL-INSERATE) + MAP
+    // ===================================================================
+    let batchRows = [
+      { card: "", price: "", want: "", img: "" },
+      { card: "", price: "", want: "", img: "" }
+    ];
+    let mapInstance = null;
+    let dbRefRadar = null;
+    let dbRefMarket = null;
+    let radarUsers = [];
+    let marketListings = [];
+    let initialMarketLoaded = false;
+
+    function toggleBatchMode(mode) {
+      document.getElementById("batch-mode-rows").classList.toggle("hidden", mode !== "rows");
+      document.getElementById("batch-mode-text").classList.toggle("hidden", mode !== "text");
+      document.getElementById("modebtn-rows").className = mode === "rows" ? "bg-yellow-400 text-slate-950 font-black px-2.5 py-1 rounded-lg" : "text-slate-300 font-bold px-2.5 py-1 rounded-lg";
+      document.getElementById("modebtn-text").className = mode === "text" ? "bg-yellow-400 text-slate-950 font-black px-2.5 py-1 rounded-lg" : "text-slate-300 font-bold px-2.5 py-1 rounded-lg";
+    }
+
+    function syncBatchRowsFromDOM() {
+      batchRows.forEach((r, idx) => {
+        const cEl = document.getElementById(`brow-card-${idx}`);
+        const pEl = document.getElementById(`brow-price-${idx}`);
+        const wEl = document.getElementById(`brow-want-${idx}`);
+        if (cEl) r.card = cEl.value;
+        if (pEl) r.price = pEl.value;
+        if (wEl) r.want = wEl.value;
+      });
+    }
+
+    function renderBatchRows() {
+      const container = document.getElementById("dynamic-rows-container");
+      container.innerHTML = batchRows.map((r, idx) => `
+        <div class="bg-slate-900/95 border border-slate-700 rounded-xl p-2.5 flex flex-wrap sm:flex-nowrap items-center gap-2">
+          <span class="text-[11px] font-black text-yellow-400 w-5">#${idx + 1}</span>
+          ${r.img ? `<img src="${sanitizeHTML(r.img)}" class="w-8 h-10 object-contain rounded border border-yellow-400 shrink-0" />` : ""}
+          <input id="brow-card-${idx}" type="text" maxlength="120" value="${sanitizeHTML(r.card)}" placeholder="Karte oder Nr. (z. B. 238/191)" class="flex-1 min-w-[130px] bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs" />
+          <input id="brow-price-${idx}" type="number" min="0" value="${sanitizeHTML(r.price)}" placeholder="€" class="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs" />
+          <input id="brow-want-${idx}" type="text" value="${sanitizeHTML(r.want)}" placeholder="Suche (optional)" class="w-28 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs" />
+          <button onclick="removeCardRow(${idx})" class="text-slate-400 hover:text-rose-400 font-bold px-1.5">✕</button>
+        </div>
+      `).join("");
+    }
+
+    function addCardRow() {
+      syncBatchRowsFromDOM();
+      batchRows.push({ card: "", price: "", want: "", img: "" });
+      renderBatchRows();
+    }
+
+    function addFiveCardRows() {
+      syncBatchRowsFromDOM();
+      for (let i = 0; i < 5; i++) batchRows.push({ card: "", price: "", want: "", img: "" });
+      renderBatchRows();
+    }
+
+    function removeCardRow(idx) {
+      syncBatchRowsFromDOM();
+      batchRows.splice(idx, 1);
+      if (!batchRows.length) batchRows.push({ card: "", price: "", want: "", img: "" });
+      renderBatchRows();
+    }
+
+    function handleMultiPhotoSelect(e) {
+      syncBatchRowsFromDOM();
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      // Leere Standardzeilen entfernen, wenn Fotos geladen werden
+      batchRows = batchRows.filter(r => r.card.trim() !== "" || r.img !== "");
+      let processed = 0;
+      files.forEach((file, i) => {
+        compressImage(file, dataUrl => {
+          const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").slice(0, 80);
+          batchRows.push({ card: cleanName || `Pokémon Karte #${i + 1}`, price: "25", want: "", img: dataUrl });
+          processed++;
+          if (processed === files.length) renderBatchRows();
+        });
+      });
+    }
+
+    function publishSingleMarketObject(cardStr, priceNum, wantStr, cityStr, customImg = "") {
+      const cleanCard = cardStr.trim().slice(0, 120);
+      if (!cleanCard) return false;
+      const resolved = resolveCard(cleanCard);
+      const finalPrice = isNaN(priceNum) || priceNum < 0 ? resolved.value : priceNum;
+      const seller = (getCurrentUser() || "Sammler").slice(0, 35);
+
+      const offer = {
+        card: cleanCard,
+        want: (wantStr || "Tausch / Gebot").slice(0, 120),
+        price: Number(finalPrice),
+        seller,
+        city: (cityStr || "Deutschland").slice(0, 60),
+        img: customImg || resolved.img,
+        ownerId: getOwnerId(),
+        timestamp: Date.now()
+      };
+
+      if (dbRefMarket) dbRefMarket.push(offer);
+      return true;
+    }
+
+    function submitAllCardRows() {
+      syncBatchRowsFromDOM();
+      const city = document.getElementById("batch-city").value.trim() || "Deutschland";
+      const defaultWant = document.getElementById("batch-want-default").value.trim() || "Tausch / Gebot";
+      let count = 0;
+
+      batchRows.forEach(r => {
+        if (r.card && r.card.trim()) {
+          const p = parseInt(r.price, 10);
+          if (publishSingleMarketObject(r.card, p, r.want || defaultWant, city, r.img)) count++;
+        }
+      });
+
+      if (count === 0) return alert("Bitte mindestens eine Karte in den Zeilen eintragen!");
+      batchRows = [{ card: "", price: "", want: "", img: "" }, { card: "", price: "", want: "", img: "" }];
+      renderBatchRows();
+      triggerSmartPush("🚀 Stapel-Inserat live!", `${count} Karten wurden gleichzeitig im Tausch-Hub veröffentlicht!`);
+    }
+
+    function submitBulkTextListings() {
+      const rawText = document.getElementById("batch-textarea").value.trim();
+      if (!rawText) return alert("Bitte mindestens eine Zeile eingeben.");
+      const city = document.getElementById("batch-city").value.trim() || "Deutschland";
+      const defaultWant = document.getElementById("batch-want-default").value.trim() || "Tausch / Gebot";
+
+      const lines = rawText.split(/\r?\n/);
+      let count = 0;
+      lines.forEach(line => {
+        if (!line.trim()) return;
+        const parts = line.split(/[;|]/).map(s => s.trim());
+        const cardName = parts[0];
+        const priceVal = parts[1] ? parseInt(parts[1].replace(/[^\d]/g, ""), 10) : NaN;
+        const wantVal = parts[2] || defaultWant;
+        if (publishSingleMarketObject(cardName, priceVal, wantVal, city)) count++;
+      });
+
+      if (count > 0) {
+        document.getElementById("batch-textarea").value = "";
+        triggerSmartPush("⚡ Massen-Import erfolgreich!", `${count} Karten wurden auf einen Schlag veröffentlicht!`);
+      }
+    }
+
+    function deleteMarketItem(key) {
+      if (dbRefMarket && key) dbRefMarket.child(key).remove();
+    }
+
+    function renderMarket() {
+      const box = document.getElementById("market-list");
+      const filterStr = (document.getElementById("market-search")?.value || "").toLowerCase().trim();
+      const filtered = filterStr
+        ? marketListings.filter(m => (m.card || "").toLowerCase().includes(filterStr) || (m.city || "").toLowerCase().includes(filterStr))
+        : marketListings;
+
+      document.getElementById("marketTotalBadge").textContent = marketListings.length;
+      document.getElementById("statMarketCount").textContent = marketListings.length;
+
+      if (!filtered.length) {
+        box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">Noch keine passenden Inserate vorhanden. Nutze links das Stapel-Inserat!</div>`;
+        return;
+      }
+      const myUid = getOwnerId();
+      box.innerHTML = filtered.map(item => `
+        <div class="poke-glass rounded-2xl p-3.5 flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3 truncate">
+            <img src="${sanitizeHTML(item.img || 'https://images.pokemontcg.io/sv8/238_hires.png')}" alt="Karte" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
+            <div class="truncate text-xs">
+              <span class="font-black text-emerald-400">${Number(item.price || 0)} €</span> • <span class="text-slate-400">📍 ${sanitizeHTML(item.city)} (${sanitizeHTML(item.seller)})</span>
+              <h4 class="font-black text-white text-sm truncate">${sanitizeHTML(item.card)}</h4>
+              <p class="text-amber-300 truncate">Sucht: ${sanitizeHTML(item.want)}</p>
+            </div>
+          </div>
+          <div class="flex gap-1.5 shrink-0 text-xs">
+            <a href="${buildCardmarketUrl(item.card)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2.5 py-1.5 rounded-xl">CM</a>
+            <a href="${buildEbayUrl(item.card, 'bin')}" target="_blank" rel="noopener" class="bg-blue-600 text-white font-bold px-2.5 py-1.5 rounded-xl">eBay</a>
+            ${item.ownerId === myUid && item.firebaseKey ? `<button onclick="deleteMarketItem('${item.firebaseKey}')" class="bg-rose-500/20 text-rose-300 font-bold px-2.5 py-1.5 rounded-xl">🗑️</button>` : ""}
+          </div>
+        </div>
+      `).join("");
+    }
+
+    // KARTE & RADAR
+    function initOrUpdateMap() {
+      if (!mapInstance) {
+        mapInstance = L.map("radarMap").setView([51.1657, 10.4515], 6);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap" }).addTo(mapInstance);
+      }
+      radarUsers.forEach(u => {
+        if (u.lat && u.lng) {
+          L.marker([Number(u.lat), Number(u.lng)]).addTo(mapInstance)
+            .bindPopup(`<b>${sanitizeHTML(u.name)}</b> (${sanitizeHTML(u.city)})<br>${sanitizeHTML(u.cards)}`);
+        }
+      });
+      setTimeout(() => mapInstance.invalidateSize(), 150);
+    }
+
+    function locateUserOnMap() {
+      if (!navigator.geolocation) return alert("GPS nicht unterstützt.");
+      navigator.geolocation.getCurrentPosition(pos => {
+        if (mapInstance) {
+          mapInstance.setView([pos.coords.latitude, pos.coords.longitude], 12);
+          L.marker([pos.coords.latitude, pos.coords.longitude]).addTo(mapInstance).bindPopup("📍 Dein Standort").openPopup();
+        }
+      });
+    }
+
+    function registerMyRadarPin() {
+      const name = (document.getElementById("radar-my-name").value.trim() || getCurrentUser() || "Sammler").slice(0, 35);
+      const city = document.getElementById("radar-my-city").value.trim().slice(0, 60);
+      const cards = document.getElementById("radar-my-cards").value.trim().slice(0, 120);
+      if (!city || !cards) return alert("Bitte Ort und Karten angeben.");
+
+      const savePin = (lat, lng) => {
+        const pin = { name, city, lat: Number(lat), lng: Number(lng), cards, timestamp: Date.now() };
+        if (dbRefRadar) dbRefRadar.child(getOwnerId()).set(pin);
+        triggerSmartPush("📍 Radar-Pin gesetzt!", `${name} (${city}) ist jetzt auf der Sammler-Karte sichtbar.`);
+      };
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          pos => savePin(pos.coords.latitude, pos.coords.longitude),
+          () => savePin(51.1657 + (Math.random() - 0.5), 10.4515 + (Math.random() - 0.5))
+        );
+      } else {
+        savePin(51.1657, 10.4515);
+      }
+    }
+
+    function renderRadarUsers() {
+      const box = document.getElementById("radar-user-list");
+      if (!radarUsers.length) {
+        box.innerHTML = `<p class="text-xs text-slate-500 col-span-2">Noch keine Sammler-Pins eingetragen. Setze jetzt den ersten Pin!</p>`;
+        return;
+      }
+      box.innerHTML = radarUsers.map(u => `
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex justify-between items-center text-xs">
+          <div>
+            <p class="font-bold text-white">${sanitizeHTML(u.name)} <span class="text-yellow-400">(${sanitizeHTML(u.city)})</span></p>
+            <p class="text-slate-400 mt-0.5">🃏 ${sanitizeHTML(u.cards)}</p>
+          </div>
+          <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(u.city)}" target="_blank" rel="noopener" class="bg-blue-600/20 text-blue-300 border border-blue-500/30 font-bold px-2.5 py-1.5 rounded-lg shrink-0">🗺️ Route</a>
+        </div>
+      `).join("");
+    }
+
+    // ===================================================================
+    // 5. PORTFOLIO & RECHNER
+    // ===================================================================
+    let portfolio = JSON.parse(localStorage.getItem("pokeswipe_portfolio_clean") || "[]");
+
+    function renderPortfolio() {
+      const total = portfolio.reduce((sum, item) => sum + Number(item.value || 0), 0);
+      const formatted = `${total.toFixed(2).replace(".", ",")} €`;
+      document.getElementById("portfolio-total").textContent = formatted;
+      document.getElementById("statPortfolioVal").textContent = formatted;
+
+      const box = document.getElementById("portfolio-list");
+      if (!portfolio.length) {
+        box.innerHTML = `<p class="text-xs text-slate-500 py-4 text-center">Dein Portfolio startet bei 0,00 €. Scanne oben eine Kartennummer oder füge Karten hinzu.</p>`;
+        return;
+      }
+      box.innerHTML = portfolio.map((item, idx) => `
+        <div class="flex items-center justify-between bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs">
+          <div class="flex items-center gap-2.5 truncate">
+            <img src="${sanitizeHTML(item.img)}" alt="Card" class="w-8 h-11 object-contain rounded shrink-0" />
+            <div class="truncate">
+              <p class="font-bold text-white truncate">${sanitizeHTML(item.name)}</p>
+              <p class="text-emerald-400 font-bold">${Number(item.value).toFixed(2).replace(".", ",")} €</p>
+            </div>
+          </div>
+          <div class="flex gap-1.5 shrink-0">
+            <a href="${buildCardmarketUrl(item.name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2 py-1 rounded-lg">CM</a>
+            <a href="${buildEbayUrl(item.name, 'bin')}" target="_blank" rel="noopener" class="bg-blue-600 text-white font-bold px-2 py-1 rounded-lg">eBay</a>
+            <button onclick="portfolio.splice(${idx},1);localStorage.setItem('pokeswipe_portfolio_clean',JSON.stringify(portfolio));renderPortfolio();" class="text-slate-400 hover:text-rose-400 px-1.5">✕</button>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function addCardByNumber() {
+      const num = document.getElementById("scan-card-number").value.trim();
+      if (!num) return alert("Bitte eine Kartennummer eingeben (z. B. 238/191).");
+      const found = resolveCard(num);
+      portfolio.unshift({ name: found.name, value: found.value, img: found.img });
+      localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
+      document.getElementById("scan-card-number").value = "";
+      renderPortfolio();
+      triggerSmartPush("💼 Karte gescannt!", `${found.name} (${found.value} €) ins Portfolio aufgenommen.`);
+    }
+
+    function addPortfolioItem() {
+      const name = document.getElementById("port-name").value.trim();
+      const val = parseFloat(document.getElementById("port-value").value);
+      if (!name || isNaN(val)) return alert("Bitte Kartenname und Wert eingeben.");
+      const found = resolveCard(name);
+      portfolio.unshift({ name, value: val, img: found.img });
+      localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
+      document.getElementById("port-name").value = "";
+      document.getElementById("port-value").value = "";
+      renderPortfolio();
+    }
+
+    function addCurrentSwipeToPortfolio() {
+      const item = activeDeck[swipeIdx % activeDeck.length];
+      portfolio.unshift({ name: item.title, value: item.cm, img: item.img });
+      localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
+      renderPortfolio();
+      triggerSmartPush("💼 Zum Portfolio hinzugefügt!", `${item.title} (${item.cm} €) wurde gespeichert.`);
+    }
+
+    function calcBulk() {
+      const c = parseInt(document.getElementById("bulk-commons").value || 0, 10);
+      const h = parseInt(document.getElementById("bulk-holos").value || 0, 10);
+      const ex = parseInt(document.getElementById("bulk-hits").value || 0, 10);
+      document.getElementById("bulk-result").textContent = `${(c * 0.02 + h * 0.06 + ex * 0.80).toFixed(2).replace(".", ",")} €`;
+    }
+
+    function calcGradingProfit() {
+      const raw = parseFloat(document.getElementById("grade-raw-price").value || 0);
+      const cost = raw + 25;
+      const psa10 = Math.round(raw * 1.9);
+      document.getElementById("grade-cost").textContent = `${cost.toFixed(2).replace(".", ",")} €`;
+      document.getElementById("grade-psa10").textContent = `${psa10.toFixed(2).replace(".", ",")} €`;
+      document.getElementById("grade-profit").textContent = `+${(psa10 - cost).toFixed(2).replace(".", ",")} €`;
+    }
+
+    // PROFIL & PRO
+    function saveUserProfile() {
+      const raw = document.getElementById("auth-username").value.trim().slice(0, 30);
+      if (!raw) return;
+      const clean = raw.startsWith("@") ? raw : "@" + raw;
+      localStorage.setItem("pokeswipe_user", clean);
+      document.getElementById("authBtnText").textContent = clean;
+      closeModal("auth-modal");
+    }
+
+    function activatePro(plan) {
+      localStorage.setItem("pokeswipe_pro", plan);
+      document.getElementById("pro-badge").classList.remove("hidden");
+      closeModal("pro-modal");
+      triggerSmartPush("👑 PRO VIP Status aktiv!", `Dein ${plan}-Zugang inkl. Echtzeit-Push-Sniper ist freigeschaltet.`);
+    }
+
+    // ===================================================================
+    // 6. FIREBASE REALTIME SYNC + ECHTZEIT-PUSH-TRIGGER
+    // ===================================================================
+    function matchesKeywordFilter(textStr) {
+      if (!pushSettings.keywords) return true;
+      const keys = pushSettings.keywords.toLowerCase().split(",").map(k => k.trim()).filter(Boolean);
+      if (!keys.length) return true;
+      return keys.some(k => (textStr || "").toLowerCase().includes(k));
+    }
+
+    function initFirebase() {
+      try {
+        if (typeof firebase === "undefined") return;
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // 1. Echter Besucherzähler
+        const visitsRef = db.ref("pokeswipe_radar/stats/totalVisits");
+        if (!sessionStorage.getItem("pokeswipe_counted")) {
+          visitsRef.transaction(current => (current === null ? 1 : current + 1), (err, committed) => {
+            if (!err && committed) sessionStorage.setItem("pokeswipe_counted", "1");
+          });
+        }
+        visitsRef.on("value", snap => {
+          const val = snap.val();
+          document.getElementById("totalVisitsCount").textContent = val ? Number(val).toLocaleString("de-DE") : "1";
+        });
+
+        // 2. Echte Online-Präsenz
+        const myPresence = db.ref("pokeswipe_radar/presence/" + getOwnerId());
+        myPresence.set({ online: true, ts: Date.now() }).catch(() => {});
+        myPresence.onDisconnect().remove();
+        db.ref("pokeswipe_radar/presence").on("value", snap => {
+          const count = snap.val() ? Object.keys(snap.val()).length : 1;
+          document.getElementById("liveVisitorCount").textContent = Math.max(1, count);
+        });
+
+        // 3. Live-Chat
+        dbRefChat = db.ref("pokeswipe_radar/chat");
+        dbRefChat.limitToLast(30).on("value", snap => {
+          renderChatList(snap.val() ? Object.values(snap.val()) : []);
+        });
+
+        // 4. Pull-Wall inkl. Echtzeit-Push bei neuen Hits
+        dbRefWall = db.ref("pokeswipe_radar/pullwall");
+        dbRefWall.limitToLast(20).on("value", snap => {
+          const prevCount = wallPosts.length;
+          wallPosts = snap.val() ? Object.entries(snap.val()).map(([k, v]) => ({ firebaseKey: k, ...v })).reverse() : [];
+          renderPullWall();
+          if (initialWallLoaded && wallPosts.length > prevCount && pushSettings.wall) {
+            const newest = wallPosts[0];
+            if (newest && matchesKeywordFilter(newest.caption)) {
+              triggerSmartPush("📸 Neuer Pull-Wall Hit!", `${newest.user}: ${newest.caption}`);
+            }
+          }
+          initialWallLoaded = true;
+        });
+
+        // 5. Tausch-Hub: läuft jetzt sicher über die eigene API (/api/listings), siehe /assets/app.js
+
+        // 6. Radar-Pins
+        dbRefRadar = db.ref("pokeswipe_radar/radar_users");
+        dbRefRadar.limitToLast(30).on("value", snap => {
+          radarUsers = snap.val() ? Object.values(snap.val()).reverse() : [];
+          renderRadarUsers();
+          if (mapInstance) initOrUpdateMap();
+        });
+      } catch (e) {
+        console.warn("Firebase Info:", e);
+      }
+    }
+
+    // NAVIGATION (5 REITER)
+    function switchTab(tab) {
+      const tabs = ["swipe", "flip", "community", "map", "portfolio"];
+      tabs.forEach(t => {
+        document.getElementById(`view-${t}`).classList.add("hidden");
+        const desk = document.getElementById(`tab-${t}`);
+        if (desk) desk.className = "tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5";
+        const mob = document.getElementById(`mob-${t}`);
+        if (mob) mob.className = "mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center";
+      });
+
+      document.getElementById(`view-${tab}`).classList.remove("hidden");
+      const activeDesk = document.getElementById(`tab-${tab}`);
+      if (activeDesk) activeDesk.className = "tab-btn bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow";
+      const activeMob = document.getElementById(`mob-${tab}`);
+      if (activeMob) activeMob.className = "mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center";
+
+      if (tab === "map") initOrUpdateMap();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    // START-INITIALISIERUNG
+    (function init() {
+      const u = getCurrentUser();
+      if (u) document.getElementById("authBtnText").textContent = u;
+      if (localStorage.getItem("pokeswipe_pro")) document.getElementById("pro-badge").classList.remove("hidden");
+      document.getElementById("statPacksOpened").textContent = packsOpenedCount;
+
+      // Booster-Links initial befüllen
+      document.getElementById("pack-buy-card-link").href = buildEbayUrl("Pikachu ex 238/191", "bin");
+      document.getElementById("pack-buy-display-link").href = buildEbayUrl("Pokemon Stürmische Funken Display 36 Booster OVP", "bin");
+
+      loadPushSettingsUI();
+      hydrateStaticAffiliateLinks();
+      renderSwipeCard();
+      renderMatches();
+      filterFlipDeals("all");
+      renderWishlist();
+      renderPullWall();
+      renderChatList([]);
+      renderBatchRows();
+      renderRadarUsers();
+      renderMarket();
+      renderPortfolio();
+      calcBulk();
+      calcGradingProfit();
+      initFirebase();
+    })();
+  </script>
+<style>
+  .sniper-blur {
+    filter: blur(6px);
+    user-select: none;
+    pointer-events: none;
+  }
+  .laser-line-v {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    pointer-events: none;
+    z-index: 20;
+  }
+  .laser-line-h {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    pointer-events: none;
+    z-index: 20;
+  }
+</style>
+
+<script>
+(function initPokeSwipeExpansionV2() {
+  // =========================================================================
+  // KONFIGURATION FÜR ECHTE ABO-ZAHLUNGSLINKS (STRIPE / PAYPAL)
+  // Trage hier deine echten Checkout-Links ein (leer = Demo-Freischaltung)
+  // =========================================================================
+  const STRIPE_PRO_499_URL = ""; // z.B. "https://buy.stripe.com/dein_499_link"
+  const STRIPE_VIP_999_URL = ""; // z.B. "https://buy.stripe.com/dein_999_link"
+
+  const FREE_DAILY_SWIPE_LIMIT = 15;
+  const FREE_PORTFOLIO_LIMIT = 15;
+  const FREE_WISHLIST_LIMIT = 2;
+
+  function isProUser() {
+    return Boolean(localStorage.getItem("pokeswipe_pro"));
+  }
+
+  function getTodayKey() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function getRemainingFreeSwipes() {
+    if (isProUser()) return Infinity;
+    const savedDate = localStorage.getItem("pokeswipe_swipe_date");
+    const today = getTodayKey();
+    if (savedDate !== today) {
+      localStorage.setItem("pokeswipe_swipe_date", today);
+      localStorage.setItem("pokeswipe_swipe_used", "0");
+      return FREE_DAILY_SWIPE_LIMIT;
+    }
+    const used = parseInt(localStorage.getItem("pokeswipe_swipe_used") || "0", 10);
+    return Math.max(0, FREE_DAILY_SWIPE_LIMIT - used);
+  }
+
+  function consumeFreeSwipe() {
+    if (isProUser()) return true;
+    const rem = getRemainingFreeSwipes();
+    if (rem <= 0) {
+      triggerSmartPush("🔒 Tageslimit erreicht (15/15 Swipes)", "Hol dir PRO (4,99 €/Mo) für unbegrenzte Swipes & Sniper-Deals!");
+      openModal("pro-modal");
+      return false;
+    }
+    const used = parseInt(localStorage.getItem("pokeswipe_swipe_used") || "0", 10) + 1;
+    localStorage.setItem("pokeswipe_swipe_used", String(used));
+    updateSwipeCounterBadge();
+    return true;
+  }
+
+  function updateSwipeCounterBadge() {
+    let badge = document.getElementById("v2-swipe-limit-badge");
+    if (!badge) {
+      const headerRight = document.querySelector("header .flex.items-center.gap-1\\.5.sm\\:gap-2");
+      if (headerRight) {
+        badge = document.createElement("div");
+        badge.id = "v2-swipe-limit-badge";
+        badge.className = "bg-slate-950/90 border border-rose-500/40 px-2.5 py-1.5 rounded-xl text-xs flex items-center gap-1 cursor-pointer";
+        badge.onclick = () => openModal("pro-modal");
+        headerRight.prepend(badge);
+      }
+    }
+    if (badge) {
+      badge.innerHTML = isProUser()
+        ? `<span>🔥 Swipes:</span><strong class="text-emerald-400 font-black">∞ PRO</strong>`
+        : `<span>🔥 Frei-Swipes:</span><strong class="text-rose-400 font-black">${getRemainingFreeSwipes()}/${FREE_DAILY_SWIPE_LIMIT}</strong>`;
+    }
+  }
+
+  // =========================================================================
+  // POSITION 1: DEUTSCHE LIVE-KARTENDATENBANK (TCGDEX API) + RIP OR KEEP
+  // =========================================================================
+  function injectArenaUpgrades() {
+    const viewSwipe = document.getElementById("view-swipe");
+    if (!viewSwipe) return;
+
+    const arenaAddon = document.createElement("div");
+    arenaAddon.className = "grid grid-cols-1 lg:grid-cols-12 gap-6 items-start mt-6";
+    arenaAddon.innerHTML = `
+      <!-- LIVE TCGDEX DEUTSCHE KARTEN-SUCHE -->
+      <div class="lg:col-span-7 poke-glass rounded-3xl p-4 sm:p-5 space-y-3 border border-yellow-400/40">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="text-[10px] font-black uppercase bg-emerald-400 text-slate-950 px-2.5 py-0.5 rounded-full">🌐 Live TCGdex API (Deutsch)</span>
+            <h3 class="text-base font-black text-white mt-1">Alle deutschen Pokémon-Karten live durchsuchen</h3>
+          </div>
+        </div>
+        <div class="flex gap-2 text-xs">
+          <input id="tcgdex-search-inp" type="text" placeholder="Kartenname oder Nummer (z. B. Glurak, Nachtara, Lugia, Pikachu)..." onkeydown="if(event.key==='Enter')window.searchTCGdexLive()" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+          <button onclick="window.searchTCGdexLive()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black px-4 py-2 rounded-xl shrink-0">🔎 Live suchen</button>
+        </div>
+        <div id="tcgdex-results" class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-80 overflow-y-auto pt-1 text-xs">
+          <p class="text-slate-400 col-span-3 text-center py-3">Tippe oben einen beliebigen deutschen Pokémon-Namen ein, um echte Karten-Scans zu laden.</p>
+        </div>
+      </div>
+
+      <!-- POSITION 7A: VIRALER "RIP OR KEEP" DISPLAY-SIMULATOR -->
+      <div class="lg:col-span-5 poke-glass rounded-3xl p-4 sm:p-5 space-y-3.5 border border-purple-500/40">
+        <div>
+          <span class="text-[10px] font-black uppercase bg-purple-500 text-white px-2.5 py-0.5 rounded-full">🎲 Viraler TikTok-Check</span>
+          <h3 class="text-base font-black text-white mt-1">„Rip or Keep“ – Display öffnen oder OVP lassen?</h3>
+        </div>
+        <select id="ripkeep-select" onchange="window.calcRipOrKeep()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-bold">
+          <option value="sv8">⚡ Stürmische Funken (36er Display) – Markt: ~139 €</option>
+          <option value="sv3pt5">🔥 Karmesin & Purpur 151 (Display/Bundle-Case) – Markt: ~420 €</option>
+          <option value="sv8pt5">💎 Prismatische Entwicklungen (Top-Trainer-Box) – Markt: ~95 €</option>
+          <option value="swsh7">🌙 Drachenwandel / Evolving Skies Display – Markt: ~890 €</option>
+        </select>
+        <div id="ripkeep-box" class="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2 text-xs"></div>
+      </div>
+    `;
+    viewSwipe.appendChild(arenaAddon);
+    window.calcRipOrKeep();
+  }
+
+  window.searchTCGdexLive = async function() {
+    const q = (document.getElementById("tcgdex-search-inp")?.value || "").trim();
+    const box = document.getElementById("tcgdex-results");
+    if (!q) return alert("Bitte einen Kartennamen eingeben (z. B. Glurak).");
+    box.innerHTML = `<p class="text-yellow-400 col-span-3 text-center py-4 font-bold">⏳ Lade deutsche Karten aus der TCGdex-Datenbank...</p>`;
+    try {
+      const res = await fetch(`https://api.tcgdex.net/v2/de/cards?name=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      const withImg = (Array.isArray(data) ? data : []).filter(c => c.image).slice(0, 18);
+      if (!withImg.length) {
+        box.innerHTML = `<p class="text-slate-400 col-span-3 text-center py-4">Keine Karte mit Bild gefunden. Versuche z. B. „Pikachu“, „Glurak“ oder „Mew“.</p>`;
+        return;
+      }
+      box.innerHTML = withImg.map(c => {
+        const imgUrl = `${c.image}/high.png`;
+        const safeName = sanitizeHTML(`${c.name} (${c.localId || ""})`);
+        return `
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-2 flex flex-col justify-between gap-2 text-center">
+            <img src="${imgUrl}" onerror="this.src='https://images.pokemontcg.io/sv8/238_hires.png'" class="h-32 mx-auto object-contain rounded" />
+            <div>
+              <p class="font-bold text-white truncate text-[11px]">${safeName}</p>
+            </div>
+            <div class="grid grid-cols-2 gap-1">
+              <button onclick="window.addApiCardToPortfolio('${safeName.replace(/'/g, "")}', '${imgUrl}')" class="bg-emerald-500 text-slate-950 font-black py-1 rounded text-[10px]">+ Portfolio</button>
+              <a href="${buildEbayUrl(c.name + ' ' + (c.localId || ''), 'bin')}" target="_blank" rel="noopener" class="bg-blue-600 text-white font-bold py-1 rounded text-[10px]">eBay ↗</a>
+            </div>
+          </div>
+        `;
+      }).join("");
+    } catch (e) {
+      box.innerHTML = `<p class="text-rose-400 col-span-3 text-center py-4">API aktuell nicht erreichbar.</p>`;
+    }
+  };
+
+  window.addApiCardToPortfolio = function(cardTitle, imgUrl) {
+    if (!isProUser() && portfolio.length >= FREE_PORTFOLIO_LIMIT) {
+      triggerSmartPush("🔒 Portfolio-Limit (15 Karten)", "Schalte PRO frei für unbegrenzte Portfolio-Karten!");
+      openModal("pro-modal");
+      return;
+    }
+    const estVal = parseFloat(prompt(`Geschätzter Marktwert in € für "${cardTitle}":`, "25") || "25");
+    if (isNaN(estVal)) return;
+    portfolio.unshift({ name: cardTitle, value: estVal, img: imgUrl });
+    localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
+    renderPortfolio();
+    triggerSmartPush("✅ Live-Karte gespeichert!", `${cardTitle} (${estVal} €) liegt jetzt im Portfolio.`);
+  };
+
+  const ripKeepData = {
+    sv8: { name: "Stürmische Funken Display", cost: 139, ev: 98, topHit: "Pikachu ex SIR (420 €)", verdict: "🔥 RIP IT! Hohe Chance auf SIR-Grails bei noch moderatem Display-Preis.", query: "Pokemon Stürmische Funken Display 36 Booster" },
+    sv3pt5: { name: "Karmesin & Purpur 151 Bundle-Case", cost: 420, ev: 245, topHit: "Glurak ex SIR (195 €) + God Packs", verdict: "🔒 KEEP SEALED! 151 steigt versiegelt deutlich stabiler als der Einzelkarten-Schnitt.", query: "Pokemon 151 Top Trainer Box Display" },
+    sv8pt5: { name: "Prismatische Entwicklungen TTB", cost: 95, ev: 78, topHit: "Nachtara ex SIR / Masterball-Holos", verdict: "⚡ RIP BEI UVP! Durch die Evoli-Entwicklungen und Masterbälle extrem hohes Hit-Potenzial.", query: "Pokemon Prismatische Entwicklungen Top Trainer Box" },
+    swsh7: { name: "Drachenwandel (Evolving Skies) Display", cost: 890, ev: 210, topHit: "Nachtara VMAX Alt Art (890 €)", verdict: "💎 STRENG OVP LASSEN (KEEP)! Selbst mit Top-Hit erreichst du kaum den versiegelten Display-Wert.", query: "Pokemon Drachenwandel Display OVP" }
+  };
+
+  window.calcRipOrKeep = function() {
+    const sel = document.getElementById("ripkeep-select")?.value || "sv8";
+    const d = ripKeepData[sel] || ripKeepData.sv8;
+    const roi = Math.round((d.ev / d.cost) * 100);
+    const box = document.getElementById("ripkeep-box");
+    if (!box) return;
+    box.innerHTML = `
+      <div class="grid grid-cols-3 gap-2 text-center pb-2 border-b border-slate-800">
+        <div><p class="text-[10px] text-slate-400">OVP-Preis</p><p class="font-black text-white text-sm">${d.cost} €</p></div>
+        <div><p class="text-[10px] text-slate-400">Ø Pull-Wert (EV)</p><p class="font-black text-amber-400 text-sm">~${d.ev} € (${roi}%)</p></div>
+        <div><p class="text-[10px] text-slate-400">Chase-Hit</p><p class="font-bold text-emerald-400 text-[11px]">${d.topHit}</p></div>
+      </div>
+      <p class="text-yellow-300 font-bold">${d.verdict}</p>
+      <a href="${buildEbayUrl(d.query, 'bin')}" target="_blank" rel="noopener" class="block text-center bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2 rounded-xl mt-1">📦 Aktuelle OVP-Preise auf eBay prüfen</a>
+    `;
+  };
+
+  // =========================================================================
+  // POSITION 3: PRO-EXKLUSIVE SNIPER-DEALS (>25% UNTER TREND VERSCHWOMMEN)
+  // =========================================================================
+  const origFilterFlipDeals = window.filterFlipDeals;
+  window.filterFlipDeals = function(cat = "all") {
+    const items = cat === "all" ? flipDeals : flipDeals.filter(d => d.category === cat);
+    const proActive = isProUser();
+    const listEl = document.getElementById("flip-list");
+    if (!listEl) return origFilterFlipDeals && origFilterFlipDeals(cat);
+
+    listEl.innerHTML = items.map(d => {
+      const diff = d.cmPrice - d.ebayPrice;
+      const pct = Math.round((diff / d.cmPrice) * 100);
+      const isSniperDeal = pct >= 25;
+      const lockedForFree = isSniperDeal && !proActive;
+
+      return `
+        <div class="poke-glass rounded-2xl p-4 flex flex-col justify-between gap-3 relative overflow-hidden ${isSniperDeal ? 'border-2 border-yellow-400/70' : ''}">
+          <div class="flex justify-between items-start gap-2">
+            <div>
+              <span class="text-[11px] font-black ${isSniperDeal ? 'bg-yellow-400 text-slate-950' : 'bg-emerald-500/20 text-emerald-300'} px-2.5 py-0.5 rounded-full">
+                ${isSniperDeal ? '👑 VIP SNIPER-DEAL: ' : '🔥 '}-${pct}% unter CM-Trend (+${diff} €)
+              </span>
+              <h3 class="font-bold text-white text-sm mt-2 ${lockedForFree ? 'sniper-blur' : ''}">${sanitizeHTML(d.name)}</h3>
+            </div>
+            <span class="text-xs text-slate-400 shrink-0">CM: <del>${Number(d.cmPrice)} €</del></span>
+          </div>
+
+          <div class="flex items-center justify-between pt-3 border-t border-slate-800 ${lockedForFree ? 'sniper-blur' : ''}">
+            <p class="text-lg font-black text-emerald-400">${Number(d.ebayPrice)},00 €</p>
+            <div class="flex gap-1.5">
+              <a href="${buildCardmarketUrl(d.query)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl">Cardmarket</a>
+              <a href="${buildEbayUrl(d.query, 'auction')}" target="_blank" rel="noopener" class="bg-amber-400 text-slate-950 text-xs font-bold px-2.5 py-1.5 rounded-xl">Auktion</a>
+              <a href="${buildEbayUrl(d.query, 'bin')}" target="_blank" rel="noopener" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">eBay-Deal</a>
+            </div>
+          </div>
+
+          ${lockedForFree ? `
+            <div class="absolute inset-0 bg-slate-950/75 backdrop-blur-[3px] flex flex-col items-center justify-center p-4 text-center z-10">
+              <p class="text-xs font-black text-yellow-400 uppercase">🔒 PRO Sniper-Deal (-${pct}% unter Trend)</p>
+              <p class="text-[11px] text-slate-200 mt-1">Deals mit über 25 % Marge sind die ersten 15 Min. exklusiv für PRO-Mitglieder sichtbar.</p>
+              <button onclick="openModal('pro-modal')" class="mt-2.5 bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black text-xs px-4 py-2 rounded-xl shadow-lg">
+                👑 Jetzt mit PRO sofort aufdecken
+              </button>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join("");
+  };
+
+  // =========================================================================
+  // POSITION 4 & 8: 1:1 TRADE-ANALYZER (ZUSTAND/SPRACHE) + UVP RESTOCK-MELDER
+  // =========================================================================
+  function injectMapAndTradeUpgrades() {
+    const viewMap = document.getElementById("view-map");
+    if (!viewMap) return;
+
+    // 1:1 Trade Analyzer einfügen
+    const tradeBox = document.createElement("div");
+    tradeBox.className = "poke-glass rounded-3xl p-5 space-y-4 border-2 border-emerald-400/50";
+    tradeBox.innerHTML = `
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <span class="text-[10px] font-black uppercase bg-emerald-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚖️ 1:1 Fair-Trade-Analyzer</span>
+          <h3 class="text-base sm:text-lg font-black text-white mt-1">Tausch-Rechner inkl. Zustand (NM/EX/PL) & Sprache (DE/EN/JP)</h3>
+        </div>
+        <div id="trade-verdict-badge" class="bg-slate-900 border border-slate-700 px-3.5 py-1.5 rounded-xl text-xs font-black text-emerald-400">
+          ⚖️ Differenz: 0,00 € (Fairer 1:1 Tausch)
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        <!-- Seite A: Ich gebe -->
+        <div class="bg-slate-950/90 border border-slate-800 rounded-2xl p-3.5 space-y-2.5">
+          <div class="flex justify-between items-center">
+            <strong class="text-yellow-400 uppercase">📤 Ich gebe ab:</strong>
+            <strong id="trade-sum-a" class="text-sm font-black text-white">0,00 €</strong>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-1.5">
+            <input id="tr-a-name" type="text" placeholder="Karte..." class="sm:col-span-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white" />
+            <input id="tr-a-val" type="number" placeholder="Basis €" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white" />
+            <select id="tr-a-cond" class="bg-slate-900 border border-slate-700 rounded-lg px-1.5 py-1.5 text-white">
+              <option value="1.0">NM (100%)</option>
+              <option value="1.15">Mint (115%)</option>
+              <option value="0.8">EX (80%)</option>
+              <option value="0.6">PL (60%)</option>
+            </select>
+          </div>
+          <div class="flex justify-between items-center gap-2">
+            <select id="tr-a-lang" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+              <option value="1.0">🇩🇪 Deutsch (100%)</option>
+              <option value="0.92">🇬🇧 Englisch (92%)</option>
+              <option value="0.75">🇯🇵 Japanisch (75%)</option>
+            </select>
+            <button onclick="window.addTradeSideItem('A')" class="bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-lg">+ Hinzufügen</button>
+          </div>
+          <div id="trade-list-a" class="space-y-1 pt-1"></div>
+        </div>
+
+        <!-- Seite B: Du gibst -->
+        <div class="bg-slate-950/90 border border-slate-800 rounded-2xl p-3.5 space-y-2.5">
+          <div class="flex justify-between items-center">
+            <strong class="text-emerald-400 uppercase">📥 Tauschpartner gibt:</strong>
+            <strong id="trade-sum-b" class="text-sm font-black text-white">0,00 €</strong>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-1.5">
+            <input id="tr-b-name" type="text" placeholder="Karte..." class="sm:col-span-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white" />
+            <input id="tr-b-val" type="number" placeholder="Basis €" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white" />
+            <select id="tr-b-cond" class="bg-slate-900 border border-slate-700 rounded-lg px-1.5 py-1.5 text-white">
+              <option value="1.0">NM (100%)</option>
+              <option value="1.15">Mint (115%)</option>
+              <option value="0.8">EX (80%)</option>
+              <option value="0.6">PL (60%)</option>
+            </select>
+          </div>
+          <div class="flex justify-between items-center gap-2">
+            <select id="tr-b-lang" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+              <option value="1.0">🇩🇪 Deutsch (100%)</option>
+              <option value="0.92">🇬🇧 Englisch (92%)</option>
+              <option value="0.75">🇯🇵 Japanisch (75%)</option>
+            </select>
+            <button onclick="window.addTradeSideItem('B')" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-lg">+ Hinzufügen</button>
+          </div>
+          <div id="trade-list-b" class="space-y-1 pt-1"></div>
+        </div>
+      </div>
+    `;
+    viewMap.prepend(tradeBox);
+
+    // Position 8: UVP Restock-Button bei der Radar-Eingabe ergänzen
+    const radarBtn = document.querySelector("button[onclick='registerMyRadarPin()']");
+    if (radarBtn && radarBtn.parentElement) {
+      const restockBtn = document.createElement("button");
+      restockBtn.className = "bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2 px-3 rounded-xl text-xs sm:col-span-4";
+      restockBtn.textContent = "🛒 UVP-Restock / Karten-Automat auf der Karte melden (z. B. Smyths, Müller, Kiosk)";
+      restockBtn.onclick = function() {
+        const store = prompt("Welcher Laden / Automat hat gerade UVP-Ware? (z. B. Müller, Smyths Toys, Kiosk):", "Smyths Toys");
+        const city = prompt("In welcher Stadt / PLZ?", "50667 Köln");
+        const setInfo = prompt("Welches Set ist zur UVP vorrätig?", "K&P 151 / Prismatische Entwicklungen zur UVP!");
+        if (!store || !city) return;
+        document.getElementById("radar-my-name").value = "🛒 UVP-RESTOCK: " + store;
+        document.getElementById("radar-my-city").value = city;
+        document.getElementById("radar-my-cards").value = "🔥 VORRÄTIG: " + (setInfo || "Displays & TTBs zur UVP");
+        registerMyRadarPin();
+      };
+      radarBtn.parentElement.appendChild(restockBtn);
+    }
+  }
+
+  let tradeSideA = [];
+  let tradeSideB = [];
+
+  window.addTradeSideItem = function(side) {
+    const prefix = side === "A" ? "tr-a" : "tr-b";
+    const name = (document.getElementById(`${prefix}-name`)?.value || "").trim() || "Pokémon Karte";
+    const baseVal = parseFloat(document.getElementById(`${prefix}-val`)?.value || "0");
+    const condMult = parseFloat(document.getElementById(`${prefix}-cond`)?.value || "1");
+    const langMult = parseFloat(document.getElementById(`${prefix}-lang`)?.value || "1");
+    if (isNaN(baseVal) || baseVal <= 0) return alert("Bitte einen gültigen Basiswert in € eingeben.");
+
+    const realVal = Math.round(baseVal * condMult * langMult * 100) / 100;
+    const targetArr = side === "A" ? tradeSideA : tradeSideB;
+    targetArr.push({ name, realVal });
+    document.getElementById(`${prefix}-name`).value = "";
+    document.getElementById(`${prefix}-val`).value = "";
+    window.renderTradeAnalyzer();
+  };
+
+  window.renderTradeAnalyzer = function() {
+    const sumA = tradeSideA.reduce((s, i) => s + i.realVal, 0);
+    const sumB = tradeSideB.reduce((s, i) => s + i.realVal, 0);
+    document.getElementById("trade-sum-a").textContent = `${sumA.toFixed(2).replace(".", ",")} €`;
+    document.getElementById("trade-sum-b").textContent = `${sumB.toFixed(2).replace(".", ",")} €`;
+
+    document.getElementById("trade-list-a").innerHTML = tradeSideA.map((item, idx) => `
+      <div class="flex justify-between items-center bg-slate-900 px-2.5 py-1 rounded">
+        <span class="truncate text-slate-200">${sanitizeHTML(item.name)}</span>
+        <span class="font-bold text-yellow-400">${item.realVal.toFixed(2)} € <button onclick="window.removeTradeItem('A',${idx})" class="text-slate-500 ml-1">✕</button></span>
+      </div>
+    `).join("");
+
+    document.getElementById("trade-list-b").innerHTML = tradeSideB.map((item, idx) => `
+      <div class="flex justify-between items-center bg-slate-900 px-2.5 py-1 rounded">
+        <span class="truncate text-slate-200">${sanitizeHTML(item.name)}</span>
+        <span class="font-bold text-emerald-400">${item.realVal.toFixed(2)} € <button onclick="window.removeTradeItem('B',${idx})" class="text-slate-500 ml-1">✕</button></span>
+      </div>
+    `).join("");
+
+    const diff = sumB - sumA;
+    const badge = document.getElementById("trade-verdict-badge");
+    if (Math.abs(diff) < 1) {
+      badge.textContent = "⚖️ Perfekter 1:1 Tausch (0,00 € Differenz)";
+      badge.className = "bg-emerald-500/20 border border-emerald-500/40 px-3.5 py-1.5 rounded-xl text-xs font-black text-emerald-300";
+    } else if (diff > 0) {
+      badge.textContent = `✅ +${diff.toFixed(2).replace(".", ",")} € Vorteil für dich (Du müsstest ${diff.toFixed(2).replace(".", ",")} € zuzahlen)`;
+      badge.className = "bg-emerald-500/20 border border-emerald-500/40 px-3.5 py-1.5 rounded-xl text-xs font-black text-emerald-300";
+    } else {
+      badge.textContent = `⚠️ ${diff.toFixed(2).replace(".", ",")} € Nachteil (Tauschpartner muss ${Math.abs(diff).toFixed(2).replace(".", ",")} € zuzahlen)`;
+      badge.className = "bg-rose-500/20 border border-rose-500/40 px-3.5 py-1.5 rounded-xl text-xs font-black text-rose-300";
+    }
+  };
+
+  window.removeTradeItem = function(side, idx) {
+    if (side === "A") tradeSideA.splice(idx, 1);
+    else tradeSideB.splice(idx, 1);
+    window.renderTradeAnalyzer();
+  };
+
+  // =========================================================================
+  // POSITION 5, 6 & 7B: INTERAKTIVES PSA-CENTERING-TOOL, 9:16 FLEX-CARD & MASTER-SET
+  // =========================================================================
+  function injectPortfolioUpgrades() {
+    const viewPort = document.getElementById("view-portfolio");
+    if (!viewPort) return;
+
+    const portAddon = document.createElement("div");
+    portAddon.className = "grid grid-cols-1 lg:grid-cols-12 gap-6 items-start mt-6";
+    portAddon.innerHTML = `
+      <!-- POSITION 5: INTERAKTIVES PSA 10 CENTERING-LASER-TOOL -->
+      <div class="lg:col-span-6 poke-glass rounded-3xl p-5 space-y-3.5 border border-yellow-400/40">
+        <div>
+          <span class="text-[10px] font-black uppercase bg-yellow-400 text-slate-950 px-2.5 py-0.5 rounded-full">🎯 Interaktiver PSA-10-Laser</span>
+          <h3 class="text-base font-black text-white mt-1">Karten-Centering live abmessen (PSA 10 Check)</h3>
+          <p class="text-xs text-slate-300">Lade ein Foto deiner Karte hoch und schiebe die 4 Laser-Linien auf die Kartenränder:</p>
+        </div>
+
+        <input type="file" accept="image/*" onchange="window.loadCenteringPhoto(event)" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-1.5 text-xs text-slate-300" />
+
+        <div class="relative mx-auto w-56 h-76 bg-slate-950 rounded-2xl overflow-hidden border-2 border-slate-700 flex items-center justify-center">
+          <img id="centering-img" src="https://images.pokemontcg.io/sv8/238_hires.png" class="max-w-full max-h-full object-contain select-none" />
+          <div id="laser-left" class="laser-line-v bg-yellow-400" style="left: 9%;"></div>
+          <div id="laser-right" class="laser-line-v bg-yellow-400" style="left: 91%;"></div>
+          <div id="laser-top" class="laser-line-h bg-rose-500" style="top: 8%;"></div>
+          <div id="laser-bottom" class="laser-line-h bg-rose-500" style="top: 92%;"></div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-[11px]">
+          <div>
+            <label class="text-yellow-300 font-bold">Linker Rand (%):</label>
+            <input id="sl-left" type="range" min="2" max="25" step="0.5" value="9" oninput="window.updateCenteringCalc()" class="w-full accent-yellow-400" />
+          </div>
+          <div>
+            <label class="text-yellow-300 font-bold">Rechter Rand (%):</label>
+            <input id="sl-right" type="range" min="2" max="25" step="0.5" value="9" oninput="window.updateCenteringCalc()" class="w-full accent-yellow-400" />
+          </div>
+          <div>
+            <label class="text-rose-400 font-bold">Oberer Rand (%):</label>
+            <input id="sl-top" type="range" min="2" max="25" step="0.5" value="8" oninput="window.updateCenteringCalc()" class="w-full accent-rose-500" />
+          </div>
+          <div>
+            <label class="text-rose-400 font-bold">Unterer Rand (%):</label>
+            <input id="sl-bottom" type="range" min="2" max="25" step="0.5" value="8" oninput="window.updateCenteringCalc()" class="w-full accent-rose-500" />
+          </div>
+        </div>
+
+        <div id="centering-result-box" class="bg-slate-950 p-3 rounded-2xl border border-emerald-500/40 text-center text-xs font-bold text-emerald-400">
+          🎯 Links/Rechts: 50 / 50 • Oben/Unten: 50 / 50 &rarr; 🏆 PSA 10 GEM MINT KANDIDAT!
+        </div>
+      </div>
+
+      <!-- POSITION 6 & 7B: VIRALER 9:16 STORY FLEX-GENERATOR & MASTER-SET TRACKER -->
+      <div class="lg:col-span-6 space-y-5">
+        <!-- 9:16 Story Flex-Card Generator -->
+        <div class="poke-glass rounded-3xl p-5 space-y-3 border-2 border-purple-500/50">
+          <span class="text-[10px] font-black uppercase bg-gradient-to-r from-purple-500 to-pink-500 text-white px-2.5 py-0.5 rounded-full">📲 Virales TikTok / Insta-Story Feature</span>
+          <h3 class="text-base font-black text-white">9:16 Portfolio „Flex-Card“ als Bild herunterladen</h3>
+          <p class="text-xs text-slate-300">Generiert auf Knopfdruck eine edle Story-Grafik deiner besten Hits inkl. Gesamtwert & <code class="text-yellow-300">pokeswipe-radar.de</code> Branding zum Teilen!</p>
+          <button onclick="window.downloadStoryFlexCard()" class="w-full bg-gradient-to-r from-yellow-400 via-amber-500 to-red-500 text-slate-950 font-black py-3 rounded-xl text-xs sm:text-sm shadow-lg">
+            📸 Story Flex-Card (PNG) jetzt erstellen & herunterladen
+          </button>
+          <canvas id="flex-card-canvas" width="720" height="1280" class="hidden"></canvas>
+        </div>
+
+        <!-- Master-Set & Reverse-Holo Tracker -->
+        <div class="poke-glass rounded-3xl p-5 space-y-3">
+          <div class="flex justify-between items-center">
+            <div>
+              <span class="text-[10px] font-black uppercase bg-emerald-400 text-slate-950 px-2.5 py-0.5 rounded-full">📘 Master-Set Checkliste</span>
+              <h3 class="text-sm font-black text-white mt-1">Stürmische Funken & 151 Chase-Tracker (inkl. Reverse-Holo)</h3>
+            </div>
+            <strong id="masterset-progress" class="text-xs text-yellow-400 font-black">0 / 6</strong>
+          </div>
+          <div id="masterset-list" class="space-y-1.5 text-xs"></div>
+        </div>
+      </div>
+    `;
+    viewPort.appendChild(portAddon);
+    window.renderMasterSetChecklist();
+  }
+
+  window.loadCenteringPhoto = function(e) {
+    compressImage(e.target.files[0], dataUrl => {
+      document.getElementById("centering-img").src = dataUrl;
+    });
+  };
+
+  window.updateCenteringCalc = function() {
+    const l = parseFloat(document.getElementById("sl-left").value);
+    const r = parseFloat(document.getElementById("sl-right").value);
+    const t = parseFloat(document.getElementById("sl-top").value);
+    const b = parseFloat(document.getElementById("sl-bottom").value);
+
+    document.getElementById("laser-left").style.left = l + "%";
+    document.getElementById("laser-right").style.left = (100 - r) + "%";
+    document.getElementById("laser-top").style.top = t + "%";
+    document.getElementById("laser-bottom").style.top = (100 - b) + "%";
+
+    const lrLeft = Math.round((l / (l + r)) * 100);
+    const lrRight = 100 - lrLeft;
+    const tbTop = Math.round((t / (t + b)) * 100);
+    const tbBottom = 100 - tbTop;
+
+    const maxDeviation = Math.max(lrLeft, lrRight, tbTop, tbBottom);
+    const resBox = document.getElementById("centering-result-box");
+    if (maxDeviation <= 55) {
+      resBox.textContent = `🎯 L/R: ${lrLeft}/${lrRight} • O/U: ${tbTop}/${tbBottom} → 🏆 PSA 10 GEM MINT KANDIDAT (≤ 55/45)!`;
+      resBox.className = "bg-slate-950 p-3 rounded-2xl border border-emerald-500/40 text-center text-xs font-bold text-emerald-400";
+    } else if (maxDeviation <= 60) {
+      resBox.textContent = `🎯 L/R: ${lrLeft}/${lrRight} • O/U: ${tbTop}/${tbBottom} → ✨ PSA 9 MINT KANDIDAT (≤ 60/40)`;
+      resBox.className = "bg-slate-950 p-3 rounded-2xl border border-yellow-400/40 text-center text-xs font-bold text-yellow-300";
+    } else {
+      resBox.textContent = `⚠️ L/R: ${lrLeft}/${lrRight} • O/U: ${tbTop}/${tbBottom} → Off-Center (PSA 8 oder niedriger – lieber roh verkaufen)`;
+      resBox.className = "bg-slate-950 p-3 rounded-2xl border border-rose-500/40 text-center text-xs font-bold text-rose-400";
+    }
+  };
+
+  // 9:16 STORY FLEX-CARD PNG GENERATOR
+  window.downloadStoryFlexCard = function() {
+    const canvas = document.getElementById("flex-card-canvas");
+    const ctx = canvas.getContext("2d");
+
+    // Dunkler Holo-Gradient Hintergrund
+    const grad = ctx.createLinearGradient(0, 0, 720, 1280);
+    grad.addColorStop(0, "#0b0f19");
+    grad.addColorStop(0.5, "#1e1b4b");
+    grad.addColorStop(1, "#090d1a");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 720, 1280);
+
+    // Goldener Rahmen
+    ctx.strokeStyle = "#ffcb05";
+    ctx.lineWidth = 10;
+    ctx.strokeRect(28, 28, 664, 1224);
+
+    // Header
+    ctx.fillStyle = "#ffcb05";
+    ctx.font = "900 42px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("⚡ POKESWIPE & RADAR ⚡", 360, 115);
+
+    const user = getCurrentUser() || "@Pokemon_Sammler";
+    ctx.fillStyle = "#e2e8f0";
+    ctx.font = "bold 28px system-ui, sans-serif";
+    ctx.fillText(`Sammler-Portfolio von ${user}`, 360, 165);
+
+    // Gesamtwert Box
+    const total = portfolio.reduce((s, i) => s + Number(i.value || 0), 0);
+    ctx.fillStyle = "rgba(16, 185, 129, 0.18)";
+    ctx.fillRect(70, 210, 580, 150);
+    ctx.strokeStyle = "#10b981";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(70, 210, 580, 150);
+
+    ctx.fillStyle = "#6ee7b7";
+    ctx.font = "bold 24px system-ui, sans-serif";
+    ctx.fillText("PORTFOLIO GESAMTWERT", 360, 260);
+    ctx.fillStyle = "#10b981";
+    ctx.font = "900 64px system-ui, sans-serif";
+    ctx.fillText(`${total.toFixed(2).replace(".", ",")} €`, 360, 332);
+
+    // Top 5 Karten auflisten
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "bold 30px system-ui, sans-serif";
+    ctx.fillText("🏆 MEINE TOP GRAILS & HITS:", 360, 430);
+
+    const topCards = [...portfolio].sort((a, b) => Number(b.value) - Number(a.value)).slice(0, 5);
+    if (!topCards.length) {
+      topCards.push({ name: "Pikachu ex SIR (238/191)", value: 420 }, { name: "Glurak ex SIR (199/165)", value: 195 });
+    }
+
+    ctx.textAlign = "left";
+    topCards.forEach((c, idx) => {
+      const y = 480 + idx * 105;
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.fillRect(70, y, 580, 82);
+      ctx.strokeStyle = "rgba(255, 203, 5, 0.4)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(70, y, 580, 82);
+
+      ctx.fillStyle = "#ffcb05";
+      ctx.font = "bold 26px system-ui, sans-serif";
+      ctx.fillText(`#${idx + 1}  ${String(c.name).slice(0, 28)}`, 95, y + 50);
+
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#34d399";
+      ctx.fillText(`${Number(c.value).toFixed(0)} €`, 625, y + 50);
+      ctx.textAlign = "left";
+    });
+
+    // Virales Wasserzeichen unten
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffcb05";
+    ctx.font = "900 34px system-ui, sans-serif";
+    ctx.fillText("🌐 pokeswipe-radar.de", 360, 1140);
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "bold 22px system-ui, sans-serif";
+    ctx.fillText("Kostenloser Preis-Radar • Tausch-Hub • Booster-Simulator", 360, 1185);
+
+    const link = document.createElement("a");
+    link.download = "pokeswipe-radar-story-flex.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+    triggerSmartPush("📸 Story Flex-Card heruntergeladen!", "Teile das Bild jetzt in deiner TikTok- oder Instagram-Story!");
+  };
+
+  // MASTER-SET & REVERSE-HOLO CHECKLISTE
+  const masterSetItems = [
+    { id: "ms1", name: "Pikachu ex (238/191) – Stürmische Funken" },
+    { id: "ms2", name: "Latias ex (239/191) – Stürmische Funken" },
+    { id: "ms3", name: "Glurak ex (199/165) – K&P 151" },
+    { id: "ms4", name: "Turtok ex (200/165) – K&P 151" },
+    { id: "ms5", name: "Bisaflor ex (198/165) – K&P 151" },
+    { id: "ms6", name: "Mew ex (205/165) – K&P 151" }
+  ];
+  let masterChecked = JSON.parse(localStorage.getItem("pokeswipe_masterset") || "{}");
+
+  window.toggleMasterSetCheck = function(id) {
+    masterChecked[id] = !masterChecked[id];
+    localStorage.setItem("pokeswipe_masterset", JSON.stringify(masterChecked));
+    window.renderMasterSetChecklist();
+  };
+
+  window.renderMasterSetChecklist = function() {
+    const box = document.getElementById("masterset-list");
+    if (!box) return;
+    let doneCount = 0;
+    box.innerHTML = masterSetItems.map(item => {
+      const hasNorm = Boolean(masterChecked[item.id + "_norm"]);
+      const hasRev = Boolean(masterChecked[item.id + "_rev"]);
+      if (hasNorm || hasRev) doneCount++;
+      return `
+        <div class="flex items-center justify-between bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl">
+          <span class="text-white font-semibold truncate pr-2">${item.name}</span>
+          <div class="flex items-center gap-2 shrink-0">
+            <label class="flex items-center gap-1 text-[11px] text-slate-300 cursor-pointer">
+              <input type="checkbox" ${hasNorm ? "checked" : ""} onchange="window.toggleMasterSetCheck('${item.id}_norm')" class="accent-yellow-400" /> Normal/SIR
+            </label>
+            <label class="flex items-center gap-1 text-[11px] text-purple-300 cursor-pointer">
+              <input type="checkbox" ${hasRev ? "checked" : ""} onchange="window.toggleMasterSetCheck('${item.id}_rev')" class="accent-purple-400" /> Reverse/Masterball
+            </label>
+          </div>
+        </div>
+      `;
+    }).join("");
+    const prog = document.getElementById("masterset-progress");
+    if (prog) prog.textContent = `${doneCount} / ${masterSetItems.length} komplett`;
+  };
+
+  // =========================================================================
+  // POSITION 2: FREEMIUM-HOOKS IN BESTEHENDE FUNKTIONEN EINBAUEN
+  // =========================================================================
+  const origNextSwipeCard = window.nextSwipeCard;
+  window.nextSwipeCard = function(mode) {
+    if (!consumeFreeSwipe()) return;
+    if (origNextSwipeCard) origNextSwipeCard(mode);
+  };
+
+  const origAddPortfolioItem = window.addPortfolioItem;
+  window.addPortfolioItem = function() {
+    if (!isProUser() && portfolio.length >= FREE_PORTFOLIO_LIMIT) {
+      triggerSmartPush("🔒 Gratis-Limit erreicht (15 Karten)", "Mit PRO (4,99 €) kannst du unbegrenzt viele Karten im Portfolio verwalten!");
+      openModal("pro-modal");
+      return;
+    }
+    if (origAddPortfolioItem) origAddPortfolioItem();
+  };
+
+  const origAddCardByNumber = window.addCardByNumber;
+  window.addCardByNumber = function() {
+    if (!isProUser() && portfolio.length >= FREE_PORTFOLIO_LIMIT) {
+      triggerSmartPush("🔒 Gratis-Limit erreicht (15 Karten)", "Mit PRO (4,99 €) scannst du unbegrenzt viele Karten ins Portfolio!");
+      openModal("pro-modal");
+      return;
+    }
+    if (origAddCardByNumber) origAddCardByNumber();
+  };
+
+  const origAddWishlistRule = window.addWishlistRule;
+  window.addWishlistRule = function() {
+    if (!isProUser() && wishlist.length >= FREE_WISHLIST_LIMIT) {
+      triggerSmartPush("🔒 Gratis-Limit (2 Preis-Wächter)", "Schalte PRO frei für unbegrenzte Echtzeit-Preiswächter!");
+      openModal("pro-modal");
+      return;
+    }
+    if (origAddWishlistRule) origAddWishlistRule();
+  };
+
+  const origActivatePro = window.activatePro;
+  window.activatePro = function(plan) {
+    if (plan === "PRO" && STRIPE_PRO_499_URL) {
+      window.open(STRIPE_PRO_499_URL, "_blank");
+    } else if (plan === "VIP" && STRIPE_VIP_999_URL) {
+      window.open(STRIPE_VIP_999_URL, "_blank");
+    }
+    if (origActivatePro) origActivatePro(plan);
+    updateSwipeCounterBadge();
+    window.filterFlipDeals("all");
+  };
+
+  // =========================================================================
+  // INITIALISIERUNG ALLER 8 ERWEITERUNGEN
+  // =========================================================================
+  updateSwipeCounterBadge();
+  injectArenaUpgrades();
+  injectMapAndTradeUpgrades();
+  injectPortfolioUpgrades();
+  window.filterFlipDeals("all");
+})();
+</script>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>
