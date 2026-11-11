@@ -1,0 +1,9 @@
+{
+  "name": "PokeSwipe & Radar",
+  "short_name": "PokeSwipe",
+  "description": "Pok\u00e9mon TCG Trading, Flip-Radar & Community App",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090d16",
+  "theme_color": "#00f3ff"
+}
