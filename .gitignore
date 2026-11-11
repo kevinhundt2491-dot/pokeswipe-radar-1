@@ -1,0 +1,12 @@
+# Abhängigkeiten
+/node_modules
+
+# Build-Ausgabe (wird bei jedem Deploy aus client/ erzeugt)
+/public/assets/app.js
+
+# Lokal
+.DS_Store
+*.pem
+.env
+.env*.local
+.netlify

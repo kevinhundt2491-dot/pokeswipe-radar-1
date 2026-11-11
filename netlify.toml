@@ -1,3 +1,39 @@
 [build]
   command = "npm run build"
-  publish = ".next"
+  publish = "public"
+
+[build.environment]
+  # Netlify Server (API unter /api/*) braucht Node.js 24
+  NODE_VERSION = "24"
+  # Die App ist statisches HTML + API – das in Netlify installierte Next.js-Plugin überspringen
+  NETLIFY_NEXT_PLUGIN_SKIP = "true"
+
+# Der API-Server beantwortet nur /api/* – alles andere ist die statische App
+[server]
+  path = "/api/*"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(self), microphone=(), geolocation=(self), payment=(self)"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=300, must-revalidate"
+
+# Händler-Shops: /shop/<name> öffnet die App, die den Shop anzeigt
+[[redirects]]
+  from = "/shop/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+    Service-Worker-Allowed = "/"

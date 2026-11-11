@@ -1,0 +1,124 @@
+{
+  "rules": {
+    "pokeswipe_radar": {
+      "stats": {
+        "totalVisits": {
+          ".read": true,
+          ".write": true,
+          ".validate": "newData.isNumber() && newData.val() === (data.exists() ? data.val() + 1 : 1)"
+        }
+      },
+      "presence": {
+        ".read": true,
+        "$uid": {
+          ".write": "$uid.matches(/^u_[a-z0-9]{4,12}_[0-9]{10,14}$/)",
+          ".validate": "!newData.exists() || (newData.hasChildren(['online', 'ts']) && newData.child('online').isBoolean() && newData.child('ts').isNumber())"
+        }
+      },
+      "chat": {
+        ".read": true,
+        ".indexOn": [
+          "timestamp"
+        ],
+        "$msg": {
+          ".write": "!data.exists() && newData.exists()",
+          ".validate": "newData.hasChildren(['user', 'text', 'timestamp'])",
+          "user": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 35"
+          },
+          "text": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 500"
+          },
+          "timestamp": {
+            ".validate": "newData.isNumber() && newData.val() <= now + 60000 && newData.val() >= now - 600000"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "pullwall": {
+        ".read": true,
+        ".indexOn": [
+          "timestamp"
+        ],
+        "$post": {
+          ".write": "!data.exists() && newData.exists()",
+          ".validate": "newData.hasChildren(['user', 'caption', 'img', 'timestamp'])",
+          "user": {
+            ".validate": "newData.isString() && newData.val().length <= 35"
+          },
+          "caption": {
+            ".validate": "newData.isString() && newData.val().length <= 300"
+          },
+          "img": {
+            ".validate": "newData.isString() && newData.val().length <= 400000 && (newData.val().beginsWith('data:image/') || newData.val().beginsWith('https://'))"
+          },
+          "timestamp": {
+            ".validate": "newData.isNumber() && newData.val() <= now + 60000 && newData.val() >= now - 600000"
+          },
+          "likes": {
+            ".write": true,
+            ".validate": "newData.isNumber() && newData.val() === (data.exists() ? data.val() + 1 : 1)"
+          },
+          "comments": {
+            "$c": {
+              ".write": "!data.exists() && newData.exists()",
+              ".validate": "newData.hasChildren(['author', 'text', 'timestamp'])",
+              "author": {
+                ".validate": "newData.isString() && newData.val().length <= 35"
+              },
+              "text": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 300"
+              },
+              "timestamp": {
+                ".validate": "newData.isNumber() && newData.val() <= now + 60000"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "radar_users": {
+        ".read": true,
+        ".indexOn": [
+          "timestamp"
+        ],
+        "$uid": {
+          ".write": "$uid.matches(/^u_[a-z0-9]{4,12}_[0-9]{10,14}$/)",
+          ".validate": "!newData.exists() || newData.hasChildren(['name', 'city', 'lat', 'lng', 'cards', 'timestamp'])",
+          "name": {
+            ".validate": "newData.isString() && newData.val().length <= 35"
+          },
+          "city": {
+            ".validate": "newData.isString() && newData.val().length <= 60"
+          },
+          "cards": {
+            ".validate": "newData.isString() && newData.val().length <= 120"
+          },
+          "lat": {
+            ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90"
+          },
+          "lng": {
+            ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180"
+          },
+          "timestamp": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "market": {
+        ".read": true,
+        ".write": false
+      }
+    }
+  }
+}

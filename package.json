@@ -1,23 +1,28 @@
 {
   "name": "pokeswipe-radar",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "build": "esbuild client/main.js --bundle --minify --format=esm --target=es2020 --outfile=public/assets/app.js",
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "next": "14.1.0",
-    "firebase": "^10.8.0",
-    "lucide-react": "^0.344.0"
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@netlify/blobs": "^11.1.9",
+    "@netlify/database": "^2.0.3",
+    "@netlify/functions": "^6.1.1",
+    "@netlify/identity": "^2.0.1",
+    "drizzle-orm": "^1.0.0-beta.22",
+    "hono": "^4.13.18",
+    "stripe": "^23.1.0",
+    "web-push": "^4.0.0"
   },
   "devDependencies": {
-    "autoprefixer": "^10.4.17",
-    "postcss": "^8.4.35",
-    "tailwindcss": "^3.4.1"
+    "@types/node": "^26.6.6",
+    "@types/web-push": "^3.6.4",
+    "drizzle-kit": "^1.0.0-beta.22",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   }
 }
