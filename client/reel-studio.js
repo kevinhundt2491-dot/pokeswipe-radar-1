@@ -1048,3 +1048,14 @@ export function initReelStudio() {
     if (e.key === "Escape" && ui.root && !ui.root.hidden) close();
   }, true);
 }
+
+// ---------------------------------------------------------------------------
+// Zeichen-Engine für den 10x-Auto-Reel-Generator (client/auto-reels.js) freigeben
+// ---------------------------------------------------------------------------
+export const reelEngine = {
+  W, H, FPS, BITRATE, C, disp, font, eur, km, clamp, prog, lerp, eOut, eIn, eInOut, eBack, rgba,
+  rr, circle, text, wrap, drawCard, drawBackground, dexBar, caption, watermark, pill, button, tapRipple,
+  SCENES, catalog, shuffle, pickLoaded, loadImg, cardSrc, dealOf, pickMime, prepare, buildPlan,
+  getPlan: () => plan, getIcon: () => icon, isAdmin,
+  isStudioBusy: () => mode === "rec",
+};

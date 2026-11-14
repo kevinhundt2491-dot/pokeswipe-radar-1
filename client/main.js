@@ -16,6 +16,7 @@ import { cardExtrasHtml, accountExtrasHtml } from "./growth.js";
 import { refreshDupes } from "./collector.js";
 import { groupDuplicates, surplusBadge } from "./collector-logic.js";
 import { initReelStudio, syncReelStudio } from "./reel-studio.js";
+import { initAutoReels, syncAutoReels } from "./auto-reels.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -44,6 +45,7 @@ function renderHeader() {
   const open = state.me?.usage?.open_trades || 0;
   if (tc) { tc.textContent = String(open); tc.classList.toggle("hidden", !open); }
   syncReelStudio();
+  syncAutoReels();
 }
 
 function openAccount(hint = "") {
@@ -1103,6 +1105,7 @@ async function boot() {
   overrideMarket();
   initFeatures();
   initReelStudio();
+  initAutoReels();
 
   try {
     const result = await handleAuthCallback();
