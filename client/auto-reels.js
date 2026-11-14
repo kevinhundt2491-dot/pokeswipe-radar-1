@@ -563,7 +563,10 @@ const batchSel = new Set(); // im Serien-Modus ausgewählte Episoden
 
 // Make.com-Webhook-URL (einmal eintragen, bleibt im localStorage)
 const HOOK_KEY = "pokeswipe.autoReels.webhook";
-const getHook = () => { try { return localStorage.getItem(HOOK_KEY) || ""; } catch { return ""; } };
+// Voreingestellter Make.com-Webhook – greift, solange im Browser nichts anderes gespeichert ist.
+// Wird das Feld geleert, bleibt das als "" gespeichert und Reels werden wieder lokal heruntergeladen.
+const DEFAULT_HOOK = "https://hook.eu1.make.com/pb4ym0nehyg8xdj8l6sobvyr0jwldhkt";
+const getHook = () => { try { const v = localStorage.getItem(HOOK_KEY); return v === null ? DEFAULT_HOOK : v; } catch { return DEFAULT_HOOK; } };
 function validHook(u) {
   try { const x = new URL(u); return x.protocol === "https:" ? x.href : null; } catch { return null; }
 }
@@ -627,7 +630,7 @@ function build() {
   const saveHook = () => {
     const raw = ui.hook.value.trim(), ok = !raw || validHook(raw);
     ui.hook.classList.toggle("bad", !ok);
-    if (ok) { try { raw ? localStorage.setItem(HOOK_KEY, raw) : localStorage.removeItem(HOOK_KEY); } catch { /* privater Modus */ } }
+    if (ok) { try { localStorage.setItem(HOOK_KEY, raw); } catch { /* privater Modus */ } }
     updateHookInfo();
   };
   ui.hook.addEventListener("input", saveHook);
