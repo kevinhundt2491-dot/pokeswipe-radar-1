@@ -16,7 +16,7 @@ import { cardExtrasHtml, accountExtrasHtml } from "./growth.js";
 import { refreshDupes } from "./collector.js";
 import { groupDuplicates, surplusBadge } from "./collector-logic.js";
 import { initReelStudio, syncReelStudio } from "./reel-studio.js";
-import { initAutoReels, syncAutoReels } from "./auto-reels.js";
+import { initAutoReels, syncAutoReels, openAutoReels, routeAutoReels } from "./auto-reels.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -85,6 +85,7 @@ function openAccount(hint = "") {
       ${btn("🤝 Meine Tausche", "PS.openTrades()", "bg-slate-800 text-white")}
       ${btn("🔔 Mitteilungen", "PS.openNotifications()", "bg-slate-800 text-white")}
       ${m?.isAdmin ? btn("🛡️ Admin-Zentrale", "PS.openAdmin()", "col-span-2 bg-purple-600 text-white") : ""}
+      ${m?.isAdmin ? btn("🎬 Auto-Reels-Generator", "PS.closeAll(); PS.openGenerator()", "col-span-2 bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950") : ""}
       ${btn("Abmelden", "PS.logout()", "col-span-2 bg-rose-500/20 text-rose-300 border border-rose-500/40")}
     </div>`);
 }
@@ -1088,7 +1089,7 @@ window.PS = {
   saveNewPassword, saveInvite, openPro, checkout, cancelPlan, boost, openCard, createAlert, addCardToPortfolio,
   listCard, submitCardListing, deleteAlert, editItem, saveItem, removeItem, setListingStatus, requestTrade,
   sendTradeRequest, openTrades, selectTrade, tradeAction, sendMsg, pickStars, sendReview, openUser, report,
-  openNotifications, openAdmin, resolveReport, runTracker: runTrackerNow, goMarket,
+  openNotifications, openAdmin, resolveReport, openGenerator: openAutoReels, runTracker: runTrackerNow, goMarket,
   loadPortfolio, loadListings, listingCard, refreshMe: async () => { await loadMe(); renderHeader(); },
   closeAll: () => ["ps-notifs", "ps-account"].forEach(closeModalEl),
   ...featureApi,
@@ -1129,6 +1130,7 @@ async function boot() {
   if (tab === "trades") openTrades();
   else if (["swipe", "flip", "community", "map", "portfolio"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
+  routeAutoReels();
 
   onAuthChange(async (event, user) => {
     if (event === "login" && user && !state.user) { state.user = user; await loadMe(); renderHeader(); refreshAll(); afterAuthFeatures(); }
