@@ -6,7 +6,7 @@
 // Nutzt die Zeichen-Engine, Farben, Schriften und echten Karten (REAL_CARDS) des Admin-Reel-Studios.
 import { reelEngine as E } from "./reel-studio.js";
 
-const { W, H, FPS, BITRATE, C, disp, font, eur, km, clamp, prog, lerp, eOut, eIn, eInOut, eBack, rgba,
+const { W, H, FPS, C, disp, font, eur, km, clamp, prog, lerp, eOut, eIn, eInOut, eBack, rgba,
   rr, circle, text, wrap, drawCard, drawBackground, dexBar, caption, watermark, pill, button, tapRipple } = E;
 
 // ---------------------------------------------------------------------------
@@ -550,6 +550,10 @@ const CSS = `
 #auto-reels .ar-hook label{font-size:13px;font-weight:800}
 #auto-reels .ar-hook input{font:600 13px var(--font-body,Figtree,sans-serif);border-radius:10px;padding:9px 11px;border:1px solid rgba(245,200,75,.25);background:var(--night-2,#131a33);color:var(--ink,#f3efe4);width:100%;box-sizing:border-box}
 #auto-reels .ar-hook input.bad{border-color:#fb7185}
+#auto-reels .ar-hook small.warn{color:#fb7185;font-weight:800}
+#auto-reels .ar-hook .ar-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;font-weight:800}
+#auto-reels .ar-hook .ar-row input{flex:1;min-width:0;width:auto}
+#auto-reels .ar-hook .ar-row .ar-btn{flex:none;padding:6px 9px}
 #auto-reels .ar-hook small{font-size:12px;color:var(--ink-soft,#b9b7c9)}
 #auto-reels li input[type=checkbox]{flex:none;margin-top:3px;width:16px;height:16px;accent-color:#ffcb05}
 #auto-reels button.ar-batch{background:#7c3aed;border-color:#7c3aed;color:#fff;flex:1}
@@ -570,6 +574,39 @@ const getHook = () => { try { const v = localStorage.getItem(HOOK_KEY); return v
 function validHook(u) {
   try { const x = new URL(u); return x.protocol === "https:" ? x.href : null; } catch { return null; }
 }
+const load = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, v); } catch { /* privater Modus */ } };
+
+// Video-Bitrate (Mbit/s) – bestimmt die Dateigröße: MB ≈ Mbit/s × Sekunden ÷ 8
+const BITRATES = [8, 5, 3, 2];
+const BITRATE_KEY = "pokeswipe.autoReels.mbit";
+let mbit = BITRATES.includes(Number(load(BITRATE_KEY, 8))) ? Number(load(BITRATE_KEY, 8)) : 8;
+// Maximale Dateigröße, die das Make.com-Szenario annimmt (je nach Make-Tarif). Größere Reels werden
+// gar nicht erst gesendet, sondern direkt lokal heruntergeladen.
+const LIMITS = [[5, "Free"], [100, "Core"], [250, "Pro"], [500, "Teams"], [1000, "Enterprise"]];
+const LIMIT_KEY = "pokeswipe.autoReels.limitMb";
+let limitMb = LIMITS.some(([mb]) => mb === Number(load(LIMIT_KEY, 100))) ? Number(load(LIMIT_KEY, 100)) : 100;
+const MB = 1024 * 1024;
+const estMb = (D = duration) => (mbit * D) / 8 * 1.05; // +5 % Container-Overhead
+
+// Geheimer Token: wird als Feld "token" mitgeschickt. Im Make-Szenario direkt nach dem Webhook einen
+// Filter "token = <Wert>" setzen – Aufrufe ohne passenden Token laufen dann ins Leere.
+// Liegt nur im localStorage dieses Browsers, nie im Code oder Repository.
+const TOKEN_KEY = "pokeswipe.autoReels.token";
+const newToken = () => (crypto.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, "");
+function getToken() {
+  let t = load(TOKEN_KEY, null);
+  if (t === null) { t = newToken(); save(TOKEN_KEY, t); }
+  return t;
+}
+
+/** URL aus dem Eingabefeld: { url } (leer → null) oder { error }, damit nie eine "alte" URL heimlich weiter benutzt wird. */
+function hookState() {
+  const raw = ui.hook.value.trim();
+  if (!raw) return { url: null };
+  const url = validHook(raw);
+  return url ? { url } : { error: "Die eingetragene Webhook-URL ist ungültig (nur https:// erlaubt). Bitte korrigieren oder das Feld leeren." };
+}
 
 function build() {
   if (built) return;
@@ -582,7 +619,7 @@ function build() {
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Auto-Reels (10x)");
   el.innerHTML = `
     <div class="ar-panel">
-      <div class="ar-head"><div class="ar-lens"></div><div><b>🎬 Auto-Reels (10x)</b><small>10 Feature-Episoden · 9:16 · 1080×1920 · 60 FPS · 8 Mbit/s · Dateiname = Instagram-Caption</small></div>
+      <div class="ar-head"><div class="ar-lens"></div><div><b>🎬 Auto-Reels (10x)</b><small>10 Feature-Episoden · 9:16 · 1080×1920 · 60 FPS · Dateiname = Instagram-Caption</small></div>
         <button type="button" class="ar-x" data-ar="close" aria-label="Schließen">✕</button></div>
       <div class="ar-body">
         <div class="ar-col">
@@ -594,6 +631,18 @@ function build() {
             <label for="ar-hook">🔗 Make.com Webhook-URL</label>
             <input id="ar-hook" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hook.eu1.make.com/…">
             <small id="ar-hook-info"></small>
+            <label for="ar-token">🔐 Sicherheits-Token (Feld <code>token</code>)</label>
+            <div class="ar-row"><input id="ar-token" type="text" autocomplete="off" spellcheck="false" placeholder="leer = kein Token senden">
+              <button type="button" class="ar-btn" data-ar="token-new" title="Neuen Token erzeugen">🎲</button>
+              <button type="button" class="ar-btn" data-ar="token-copy" title="Token kopieren">📋</button></div>
+            <small>Im Make-Szenario direkt nach dem Webhook einen Filter setzen: <code>token</code> = dieser Wert. Fremde Aufrufe ohne Token werden dann verworfen.</small>
+            <div class="ar-row">
+              <label for="ar-mbit">Qualität:</label>
+              <select id="ar-mbit">${BITRATES.map((b) => `<option value="${b}"${b === mbit ? " selected" : ""}>${b} Mbit/s</option>`).join("")}</select>
+              <label for="ar-limit">Make-Limit:</label>
+              <select id="ar-limit">${LIMITS.map(([mb, plan]) => `<option value="${mb}"${mb === limitMb ? " selected" : ""}>${mb} MB (${plan})</option>`).join("")}</select>
+            </div>
+            <small id="ar-size-info"></small>
           </div>
           <button type="button" class="ar-btn ar-go" data-ar="all">🚀 Alle 10 Episoden jetzt vollautomatisch generieren</button>
           <button type="button" class="ar-btn ar-stop" data-ar="stop" hidden>■ Generierung abbrechen</button>
@@ -606,7 +655,7 @@ function build() {
           <div class="ar-status" id="ar-status"></div>
           <ol id="ar-list"></ol>
           <p class="ar-hint" id="ar-format"></p>
-          <p class="ar-hint">Während der Generierung diesen Tab sichtbar lassen (nicht minimieren oder wechseln) – jedes Reel wird in Echtzeit gezeichnet, alle 10 dauern zusammen etwa <span id="ar-total"></span>. Wird der Tab verdeckt, wartet der Generator und nimmt die Episode danach neu auf. Ist eine Webhook-URL eingetragen, geht jedes fertige MP4 direkt an Make.com (Felder: <code>file</code>, <code>filename</code>, <code>episode</code>, <code>slogan</code>, <code>title</code>). Ohne URL oder bei einem Fehler landet die Datei im Download-Ordner – beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“, bitte erlauben.</p>
+          <p class="ar-hint">Während der Generierung diesen Tab sichtbar lassen (nicht minimieren oder wechseln) – jedes Reel wird in Echtzeit gezeichnet, alle 10 dauern zusammen etwa <span id="ar-total"></span>. Wird der Tab verdeckt, wartet der Generator und nimmt die Episode danach neu auf. Ist eine Webhook-URL eingetragen, geht jedes fertige MP4 direkt an Make.com (Felder: <code>file</code>, <code>filename</code>, <code>episode</code>, <code>slogan</code>, <code>title</code>, <code>token</code>, <code>upload_id</code> – über <code>upload_id</code> kann das Szenario Doppel-Lieferungen erkennen). Ohne URL oder bei einem Fehler landet die Datei im Download-Ordner – beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“, bitte erlauben.</p>
         </div>
         <div class="ar-stage"><canvas id="ar-canvas" width="${W}" height="${H}"></canvas><span class="ar-time" id="ar-time"></span></div>
       </div>
@@ -635,6 +684,14 @@ function build() {
   };
   ui.hook.addEventListener("input", saveHook);
   ui.hook.addEventListener("change", saveHook);
+  ui.token = el.querySelector("#ar-token");
+  ui.mbit = el.querySelector("#ar-mbit");
+  ui.limit = el.querySelector("#ar-limit");
+  ui.sizeInfo = el.querySelector("#ar-size-info");
+  ui.token.value = getToken();
+  ui.token.addEventListener("input", () => save(TOKEN_KEY, ui.token.value.trim()));
+  ui.mbit.addEventListener("change", () => { mbit = Number(ui.mbit.value) || 8; save(BITRATE_KEY, String(mbit)); updateSizeInfo(); });
+  ui.limit.addEventListener("change", () => { limitMb = Number(ui.limit.value) || 100; save(LIMIT_KEY, String(limitMb)); updateSizeInfo(); });
   ctx = ui.canvas.getContext("2d");
   renderList();
   el.addEventListener("click", (e) => {
@@ -649,6 +706,12 @@ function build() {
     if (act === "one") generateAll([EPISODES[n - 1]]);
     if (act === "sel-all") { EPISODES.forEach((ep) => batchSel.add(ep.n)); renderList(); }
     if (act === "sel-none") { batchSel.clear(); renderList(); }
+    if (act === "token-new") { ui.token.value = newToken(); save(TOKEN_KEY, ui.token.value); setStatus("🔐 Neuer Token erzeugt – den Filter im Make-Szenario entsprechend anpassen.", "ok"); }
+    if (act === "token-copy") {
+      navigator.clipboard?.writeText(ui.token.value.trim())
+        .then(() => setStatus("📋 Token kopiert – im Make-Filter einfügen.", "ok"))
+        .catch(() => { ui.token.select(); setStatus("Token markiert – bitte mit Strg+C kopieren.", ""); });
+    }
     if (act === "batch") {
       const list = EPISODES.filter((ep) => batchSel.has(ep.n));
       if (!list.length) return setStatus("Bitte zuerst Episoden für den Serien-Modus anhaken.", "err");
@@ -662,18 +725,28 @@ function build() {
     box.checked ? batchSel.add(n) : batchSel.delete(n);
     updateBatchLabel();
   });
-  ui.len.addEventListener("change", () => { duration = Number(ui.len.value) || 30; updateTotal(); if (previewEp) startPreview(previewEp); });
+  ui.len.addEventListener("change", () => { duration = Number(ui.len.value) || 30; updateTotal(); updateSizeInfo(); if (previewEp) startPreview(previewEp); });
   updateTotal();
   updateHookInfo();
 }
 
 function updateHookInfo() {
   const raw = ui.hook.value.trim();
+  ui.hookInfo.classList.toggle("warn", !!raw && !validHook(raw));
   ui.hookInfo.textContent = !raw
     ? "Keine URL eingetragen → fertige Reels werden lokal heruntergeladen."
     : validHook(raw)
       ? "✓ Gespeichert. Fertige MP4-Reels werden automatisch per POST an diesen Webhook geschickt."
-      : "⚠️ Bitte eine gültige https://-Adresse eintragen.";
+      : "⚠️ Ungültige URL – so wird nichts gesendet und der Start ist gesperrt. Bitte eine gültige https://-Adresse eintragen oder das Feld leeren.";
+  updateSizeInfo();
+}
+function updateSizeInfo() {
+  if (!ui.sizeInfo) return;
+  const est = estMb(), over = est > limitMb;
+  ui.sizeInfo.classList.toggle("warn", over);
+  ui.sizeInfo.textContent = over
+    ? `⚠️ ≈ ${est.toFixed(0)} MB pro Reel – über dem Make-Limit von ${limitMb} MB. Solche Reels werden nicht gesendet, sondern heruntergeladen. Qualität oder Länge reduzieren.`
+    : `✓ ≈ ${est.toFixed(1).replace(".", ",")} MB pro Reel (Limit ${limitMb} MB). Größere Dateien werden automatisch lokal gespeichert statt gesendet.`;
 }
 function updateBatchLabel() {
   if (ui.batch) ui.batch.textContent = `🎞️ Serien-Modus: ${batchSel.size} ausgewählte nacheinander`;
@@ -684,7 +757,8 @@ function setStatus(msg, kind = "") { ui.status.textContent = msg; ui.status.clas
 function setBusy(b) {
   ui.len.disabled = b; ui.go.disabled = b; ui.stop.hidden = !b;
   ui.batch.disabled = b; ui.hook.disabled = b;
-  ui.root.querySelectorAll('[data-ar^="sel-"]').forEach((x) => { x.disabled = b; });
+  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b;
+  ui.root.querySelectorAll('[data-ar^="sel-"],[data-ar^="token-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll("button").forEach((x) => { x.disabled = b; });
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -730,7 +804,7 @@ async function recordEpisode(ep, D, mime, onTick) {
   const ext = mime.startsWith("video/mp4") ? "mp4" : "webm";
   renderEpisode(ctx, 0, ep, D);
   const stream = ui.canvas.captureStream(FPS);
-  const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: BITRATE });
+  const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: mbit * 1_000_000 });
   const chunks = [];
   let aborted = false, error = null;
   const onHide = () => { if (document.hidden) { aborted = true; if (rec.state === "recording") rec.stop(); } };
@@ -777,7 +851,15 @@ function keep(ep, blob, ext, { click = false, sent = false } = {}) {
 }
 
 /** Fertiges Reel als multipart/form-data an den Make.com-Webhook schicken (mit Upload-Fortschritt). */
-function postToWebhook(url, ep, blob, ext, onProgress) {
+// Fehler beim Versand. retry = gefahrlos wiederholbar (Make hat das Reel sicher NICHT angenommen),
+// unconfirmed = Datei wurde komplett hochgeladen, aber die Antwort fehlt → evtl. schon angekommen, NICHT wiederholen.
+class HookError extends Error {
+  constructor(msg, { retry = false, unconfirmed = false } = {}) { super(msg); this.retry = retry; this.unconfirmed = unconfirmed; }
+}
+// Diese Antworten bedeuten "nicht verarbeitet" (überlastet/Gateway) – ein neuer Versuch erzeugt keinen Doppel-Post.
+const RETRY_STATUS = new Set([429, 502, 503, 504]);
+
+function postToWebhook(url, ep, blob, ext, uploadId, onProgress) {
   const name = `${fileBase(ep)}.${ext}`;
   const form = new FormData();
   form.append("file", blob, name);
@@ -785,25 +867,41 @@ function postToWebhook(url, ep, blob, ext, onProgress) {
   form.append("episode", String(ep.n));
   form.append("slogan", ep.slogan);
   form.append("title", ep.title);
+  form.append("upload_id", uploadId); // bleibt bei Wiederholungen gleich → Make kann Duplikate erkennen
+  const token = ui.token.value.trim();
+  if (token) form.append("token", token);
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
+    let uploaded = false; // true, sobald der komplette Body beim Server angekommen ist
     x.open("POST", url);
     x.timeout = 10 * 60 * 1000;
     x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
-    x.onload = () => (x.status >= 200 && x.status < 300 ? resolve(name) : reject(new Error(`Webhook antwortet mit ${x.status}`)));
-    x.onerror = () => reject(new Error("Netzwerkfehler"));
-    x.ontimeout = () => reject(new Error("Zeitüberschreitung"));
+    x.upload.onload = () => { uploaded = true; };
+    x.onload = () => {
+      if (x.status >= 200 && x.status < 300) return resolve(name);
+      if (x.status === 413) return reject(new HookError("Datei zu groß für den Webhook (413) – Qualität/Länge reduzieren oder Make-Limit prüfen"));
+      reject(new HookError(`Webhook antwortet mit ${x.status}`, { retry: RETRY_STATUS.has(x.status) }));
+    };
+    const fail = (what) => reject(uploaded
+      ? new HookError(`${what} nach vollständigem Upload – Eingang bei Make unbestätigt`, { unconfirmed: true })
+      : new HookError(`${what} vor Abschluss des Uploads`, { retry: true }));
+    x.onerror = () => fail("Netzwerkfehler");
+    x.ontimeout = () => fail("Zeitüberschreitung");
     x.send(form);
   });
 }
 
+/** Wiederholt nur, wenn sicher ist, dass Make das Reel nicht bekommen hat – so entstehen keine Doppel-Posts. */
 async function sendWithRetry(url, ep, blob, ext, onProgress) {
-  let err;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try { return await postToWebhook(url, ep, blob, ext, onProgress); }
-    catch (e) { err = e; if (/ 4\d\d$/.test(e.message)) break; await new Promise((r) => setTimeout(r, 1500 * attempt)); }
+  const uploadId = `ep${ep.n}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  for (let attempt = 1; ; attempt++) {
+    try { return await postToWebhook(url, ep, blob, ext, uploadId, onProgress); }
+    catch (e) {
+      if (!e.retry || attempt >= 3) throw e;
+      setStatus(`↻ ${e.message} – neuer Versuch ${attempt + 1}/3 für Episode ${ep.n} …`, "err");
+      await new Promise((r) => setTimeout(r, 2000 * attempt));
+    }
   }
-  throw err;
 }
 
 async function generateAll(list = EPISODES) {
@@ -813,6 +911,11 @@ async function generateAll(list = EPISODES) {
   if (mime === null || typeof ui.canvas.captureStream !== "function") {
     return setStatus("⚠️ Dieser Browser kann kein Canvas aufnehmen. Bitte aktuelles Chrome, Edge oder Safari verwenden.", "err");
   }
+  // Immer die URL verwenden, die gerade im Feld steht – eine ungültige Eingabe sperrt den Start.
+  const hs = hookState();
+  if (hs.error) { ui.hook.focus(); return setStatus(`⚠️ ${hs.error}`, "err"); }
+  const hook = hs.url;
+  if (hook && estMb(duration) > limitMb && !confirm(`Geschätzt ≈ ${estMb(duration).toFixed(0)} MB pro Reel – das liegt über dem eingestellten Make-Limit von ${limitMb} MB.\n\nZu große Reels werden nicht gesendet, sondern lokal heruntergeladen. Trotzdem starten?\n(Tipp: Qualität oder Länge reduzieren.)`)) return;
   stopPreview();
   mode = "rec"; stopAll = false; setBusy(true); ui.time.classList.add("rec");
   try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; }
@@ -820,7 +923,6 @@ async function generateAll(list = EPISODES) {
   list.forEach((ep) => { states[ep.n] = "wait"; });
   renderList(states);
   let ok = 0, sent = 0;
-  const hook = validHook(getHook());
   for (let i = 0; i < list.length && !stopAll; i++) {
     const ep = list[i];
     states[ep.n] = "on"; renderList(states); setBusy(true);
@@ -830,7 +932,9 @@ async function generateAll(list = EPISODES) {
       let res = null;
       while (!res && !stopAll) {
         await waitVisible();
-        setStatus(`⏺ Episode ${ep.n} (${i + 1}/${list.length}) wird aufgenommen (${mime.startsWith("video/mp4") ? "MP4" : "WebM"}, 60 FPS, 8 Mbit/s) – Tab sichtbar lassen …`);
+        // Displaysperre geht verloren, wenn der Tab verdeckt war – neu anfordern (Punkt D)
+        if (!wake || wake.released) { try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; } }
+        setStatus(`⏺ Episode ${ep.n} (${i + 1}/${list.length}) wird aufgenommen (${mime.startsWith("video/mp4") ? "MP4" : "WebM"}, 60 FPS, ${mbit} Mbit/s) – Tab sichtbar lassen …`);
         res = await recordEpisode(ep, D, mime, (t) => {
           ui.time.textContent = `⏺ Ep. ${ep.n} · ${fmt(t, D)}`;
           ui.bar.style.width = `${((i + t / D) / list.length) * 100}%`;
@@ -839,7 +943,11 @@ async function generateAll(list = EPISODES) {
       }
       if (!res) break;
       const mb = (res.blob.size / 1048576).toFixed(1);
-      if (hook && res.ext === "mp4") {
+      if (hook && res.ext === "mp4" && res.blob.size > limitMb * MB) {
+        const name = keep(ep, res.blob, res.ext, { click: true });
+        setStatus(`⚠️ ${name} ist ${mb} MB groß – über dem Make-Limit von ${limitMb} MB, daher nicht gesendet, sondern heruntergeladen.`, "err");
+        await new Promise((r) => setTimeout(r, 1500));
+      } else if (hook && res.ext === "mp4") {
         try {
           setStatus(`📤 Episode ${ep.n} wird an Make.com gesendet (${mb} MB) …`);
           const name = await sendWithRetry(hook, ep, res.blob, res.ext, (p) => { ui.time.textContent = `📤 Ep. ${ep.n} · ${Math.round(p * 100)} %`; });
@@ -847,7 +955,9 @@ async function generateAll(list = EPISODES) {
           setStatus(`✓ ${name} (${mb} MB) an Make.com übergeben.`, "ok");
         } catch (e) {
           const name = keep(ep, res.blob, res.ext, { click: true });
-          setStatus(`⚠️ Webhook fehlgeschlagen (${e.message}) – ${name} wurde stattdessen heruntergeladen.`, "err");
+          setStatus(e.unconfirmed
+            ? `❔ ${e.message} – kein erneuter Versand (vermeidet Doppel-Posts). ${name} wurde zur Sicherheit zusätzlich heruntergeladen; bitte in Make prüfen, ob es angekommen ist.`
+            : `⚠️ Webhook fehlgeschlagen (${e.message}) – ${name} wurde stattdessen heruntergeladen.`, "err");
           await new Promise((r) => setTimeout(r, 1500));
         }
       } else {
