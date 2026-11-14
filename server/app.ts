@@ -9,6 +9,7 @@ import { verifyIdentityToken, ensureProfile, isAdmin, type AuthUser } from "./au
 import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, effectivePlan, type PlanId } from "./plans.ts";
 import { registerFeatures, extraMe, applyShopUpdates, activeAlertCount, findSealed, notifySealedListing, trialDays } from "./features.ts";
 import { registerGrowth, notifyWishlistListing } from "./growth.ts";
+import { registerCollector } from "./collector.ts";
 import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker } from "./prices.ts";
 import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan } from "./billing.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
@@ -868,6 +869,7 @@ app.post("/api/admin/run-tracker", auth, adminOnly, async (c) => c.json(await ru
 
 registerFeatures(app, { auth, adminOnly, body, safeImage, storeDataUrlImage, ratingOf });
 registerGrowth(app, { auth, adminOnly, body, ratingOf });
+registerCollector(app, { auth, body });
 
 app.all("/api/*", (c) => c.json({ error: "Nicht gefunden" }, 404));
 

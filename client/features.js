@@ -4,6 +4,7 @@ import {
   $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart,
 } from "./core.js";
+import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml, collectorApi } from "./collector.js";
 import {
   injectGrowthPanels, afterAuthGrowth, routeGrowth, growthApi, loadWishlist, loadCalendar, loadRanks, adminGrowthHtml,
 } from "./growth.js";
@@ -182,16 +183,15 @@ export function openScanner() {
 // 3. Set-Fortschritt mit Marktwert
 // ===========================================================================
 let allSets = null;
-let currentSet = null;
-let setFilter = "all";
 
 function setsPanelHtml() {
   return `<div id="ps-sets" class="poke-glass rounded-3xl p-4 sm:p-5 space-y-4 border-2 border-emerald-500/40">
     <div>
       <span class="text-[10px] font-black uppercase bg-emerald-400 text-slate-950 px-2.5 py-0.5 rounded-full">📘 Set-Fortschritt</span>
       <h2 class="text-base sm:text-lg font-black text-white mt-1">Wie komplett ist dein Set – und was kostet der Rest?</h2>
-      <p class="text-xs text-slate-300">Tippe Karten an, die du besitzt. Wir rechnen live mit Cardmarket-Preisen: Wert deiner Karten und Kosten bis zum Master-Set.</p>
+      <p class="text-xs text-slate-300">Trag für jede Karte die genaue Stückzahl ein (0x, 1x, 2x, 5x …). Wir rechnen live mit Cardmarket-Preisen: Fortschritt, fehlende Karten, Restkosten und Überschuss.</p>
     </div>
+    ${quickSetsHtml()}
     <div id="ps-sets-tracked" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"></div>
     <div class="flex gap-2 text-xs">
       <input id="ps-set-q" placeholder="Set suchen (z. B. 151, Stürmische Funken, Drachenwandel) …" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
@@ -240,71 +240,20 @@ function renderSetList() {
 async function openSet(setId) {
   if (!requireLogin()) return;
   const box = $("ps-set-detail");
+  if (!box) return;
   box.innerHTML = `<p class="text-yellow-400 text-xs font-bold text-center py-6">⏳ Lade Set & Live-Preise …</p>`;
   box.scrollIntoView({ behavior: "smooth", block: "start" });
   try {
-    currentSet = await api(`/api/sets/${encodeURIComponent(setId)}`);
-    renderSetDetail();
+    showSet(await api(`/api/sets/${encodeURIComponent(setId)}`));
   } catch (e) { box.innerHTML = ""; handleError(e); }
 }
 
-function renderSetDetail() {
-  const s = currentSet, box = $("ps-set-detail");
-  if (!s || !box) return;
-  const pctDone = s.total ? Math.round((s.owned / s.total) * 100) : 0;
-  const list = s.cards.filter((c) => setFilter === "all" || (setFilter === "missing" ? !c.owned : c.owned));
-  box.innerHTML = `<div class="bg-slate-950 rounded-2xl p-3 sm:p-4 border border-emerald-500/30 space-y-3">
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <div class="flex items-center gap-3">${s.logo ? `<img src="${esc(s.logo)}" class="h-10 object-contain" onerror="this.remove()" />` : ""}
-        <div><h3 class="text-sm font-black text-white">${esc(s.name)}</h3><p class="text-[11px] text-slate-400">${s.owned} / ${s.total} Karten (${s.official} im Grundset)</p></div></div>
-      ${s.tracked ? btn("✓ Wird verfolgt", `PS.untrackSet('${esc(s.id)}')`, "bg-slate-800 text-emerald-300") : btn("📌 Set verfolgen", `PS.trackSet('${esc(s.id)}')`, "bg-emerald-500 text-slate-950")}
-    </div>
-    <div class="h-3 bg-slate-800 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-emerald-400 to-cyan-400" style="width:${pctDone}%"></div></div>
-    <div class="grid grid-cols-3 gap-2 text-xs text-center">
-      <div class="bg-slate-900 rounded-xl p-2"><p class="text-slate-400 text-[10px] uppercase font-bold">Fortschritt</p><p class="text-lg font-black text-white">${pctDone} %</p></div>
-      <div class="bg-slate-900 rounded-xl p-2"><p class="text-slate-400 text-[10px] uppercase font-bold">Wert deiner Karten</p><p class="text-lg font-black text-emerald-400">${eur(s.ownedValue)}</p></div>
-      <div class="bg-slate-900 rounded-xl p-2"><p class="text-slate-400 text-[10px] uppercase font-bold">Kosten bis komplett</p><p class="text-lg font-black text-yellow-300">${eur(s.missingCost)}</p></div>
-    </div>
-    ${s.priced < s.total ? `<p class="text-[11px] text-amber-300">⏳ Preise für ${s.total - s.priced} Karten werden noch geladen – öffne das Set später erneut für den vollständigen Wert.</p>` : ""}
-    <div class="flex gap-1.5 text-xs">${[["all", "Alle"], ["missing", "Fehlend"], ["owned", "Vorhanden"]].map(([k, l]) =>
-      `<button onclick="PS.setFilter('${k}')" class="px-3 py-1.5 rounded-xl font-bold ${setFilter === k ? "bg-emerald-400 text-slate-950" : "bg-slate-800 text-slate-300"}">${l}</button>`).join("")}
-      <span class="ml-auto text-[10px] text-slate-500 self-center">Antippen = besitze ich</span></div>
-    <div class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-7 gap-2 max-h-[34rem] overflow-y-auto">${list.map((c) => `
-      <div class="relative rounded-xl border ${c.owned ? "border-emerald-400 bg-emerald-500/10" : "border-slate-800 bg-slate-900"} p-1.5 text-center">
-        <button onclick="PS.toggleOwned('${esc(c.id)}')" class="block w-full" aria-label="${c.owned ? "Als fehlend markieren" : "Als vorhanden markieren"}">
-          <img src="${esc(cdn(c.image || FALLBACK_IMG, 180))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-24 mx-auto object-contain ${c.owned ? "" : "opacity-40 grayscale"}" />
-          <p class="text-[10px] font-bold text-white truncate">${esc(c.localId)} ${esc(c.name)}</p>
-          <p class="text-[10px] ${c.owned ? "text-emerald-400" : "text-slate-400"} font-bold">${c.price ? eur(c.price) : "–"}</p>
-        </button>
-        ${c.owned ? `<span class="absolute top-1 left-1 bg-emerald-400 text-slate-950 text-[9px] font-black rounded px-1">✓${c.qty > 1 ? c.qty : ""}</span>` : ""}
-        <button onclick="PS.openCard('${esc(c.id)}')" class="absolute top-1 right-1 bg-slate-950/80 text-white text-[10px] rounded px-1" aria-label="Details">ℹ</button>
-      </div>`).join("")}</div>
-  </div>`;
-}
-
-async function toggleOwned(cardId) {
-  const c = currentSet?.cards.find((x) => x.id === cardId);
-  if (!c) return;
-  try {
-    if (c.owned) {
-      await api(`/api/portfolio/by-card/${encodeURIComponent(cardId)}`, { method: "DELETE" });
-      c.qty = Math.max(0, c.qty - 1); c.owned = c.qty > 0;
-      if (!c.owned) { currentSet.owned--; currentSet.ownedValue -= c.price; currentSet.missingCost += c.price; }
-    } else {
-      await api("/api/portfolio", { method: "POST", body: { cardId } });
-      c.owned = true; c.qty = 1; currentSet.owned++; currentSet.ownedValue += c.price; currentSet.missingCost -= c.price;
-    }
-    renderSetDetail();
-    PS().loadPortfolio();
-  } catch (e) { handleError(e); }
-}
-
 async function trackSet(id) {
-  try { await api(`/api/sets/${encodeURIComponent(id)}/track`, { method: "POST", body: {} }); currentSet.tracked = true; renderSetDetail(); loadTrackedSets(); }
+  try { await api(`/api/sets/${encodeURIComponent(id)}/track`, { method: "POST", body: {} }); getCurrentSet().tracked = true; renderSetDetail(); loadTrackedSets(); }
   catch (e) { handleError(e); }
 }
 async function untrackSet(id) {
-  try { await api(`/api/sets/${encodeURIComponent(id)}/track`, { method: "DELETE" }); currentSet.tracked = false; renderSetDetail(); loadTrackedSets(); }
+  try { await api(`/api/sets/${encodeURIComponent(id)}/track`, { method: "DELETE" }); getCurrentSet().tracked = false; renderSetDetail(); loadTrackedSets(); }
   catch (e) { handleError(e); }
 }
 
@@ -756,6 +705,11 @@ function injectPanels() {
   };
   if (!$("ps-sealed")) add("flip", sealedPanelHtml());
   if (!$("ps-shops")) add("map", shopsPanelHtml());
+  if (!$("ps-dupes") && $("portfolio-list")) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = dupesPanelHtml();
+    $("portfolio-list").after(tmp.firstElementChild);
+  }
   if (!$("ps-scan")) add("portfolio", scanPanelHtml());
   if (!$("ps-sets")) add("portfolio", setsPanelHtml());
   if (!$("ps-grading")) add("portfolio", gradingPanelHtml());
@@ -803,8 +757,8 @@ function tidyLayout() {
 // Start
 // ===========================================================================
 export const featureApi = {
-  enablePush, disablePush, openScanner, openSet, toggleOwned, trackSet, untrackSet,
-  setFilter: (k) => { setFilter = k; renderSetDetail(); },
+  enablePush, disablePush, openScanner, openSet, trackSet, untrackSet,
+  ...collectorApi,
   sealedKind: (k) => { sealedKind = k; renderSealed(); },
   openSealed, createSealedAlert, deleteSealedAlert, listSealed, openShop, openShopSettings, saveShop, shareLink,
   adminSealedPrice, adminSealedHide, adminSealedAdd, showSub,

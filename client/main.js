@@ -13,6 +13,8 @@ import {
   initFeatures, featureApi, afterAuthFeatures, routeFeatures, beforeLogout, referralHtml, trialBanner, adminExtrasHtml,
 } from "./features.js";
 import { cardExtrasHtml, accountExtrasHtml } from "./growth.js";
+import { refreshDupes } from "./collector.js";
+import { groupDuplicates, surplusBadge } from "./collector-logic.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -557,7 +559,16 @@ function renderServerPortfolio() {
   if ($("statPortfolioVal")) $("statPortfolioVal").textContent = total;
   const box = $("portfolio-list");
   if (!box) return;
+  refreshDupes();
   if (!p.items.length) { box.innerHTML = `<p class="text-xs text-slate-500 py-4 text-center">Dein Portfolio ist leer. Suche oben eine Karte – der Wert wird automatisch live berechnet.</p>`; return; }
+  const dupeMap = new Map(groupDuplicates(p.items).map((d) => [d.cardId, d]));
+  const shownDupe = new Set();
+  const dupeBadge = (i) => {
+    const d = i.cardId && dupeMap.get(i.cardId);
+    if (!d || shownDupe.has(d.cardId)) return "";
+    shownDupe.add(d.cardId);
+    return `<button onclick="event.stopPropagation();PS.sellSurplus('${esc(d.cardId)}')" class="mt-0.5 inline-block bg-amber-400 text-slate-950 text-[10px] font-black rounded-md px-1.5 py-0.5 text-left">♻️ ${esc(surplusBadge(d, eur))} • verkaufen</button>`;
+  };
   box.innerHTML = p.items.map((i) => `
     <div class="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs">
       <div class="flex items-center gap-2.5 min-w-0 ${i.cardId ? "cursor-pointer" : ""}" ${i.cardId ? `onclick="PS.openCard('${esc(i.cardId)}')"` : ""}>
@@ -568,6 +579,7 @@ function renderServerPortfolio() {
             ${i.live ? `<span class="text-[10px] text-cyan-300 font-bold">• LIVE</span>` : `<span class="text-[10px] text-slate-500">• Schätzwert</span>`}
             ${i.change30 !== null ? `<span class="${i.change30 >= 0 ? "text-emerald-400" : "text-rose-400"} text-[10px] font-bold">${pct(i.change30)}</span>` : ""}
             ${i.purchasePrice !== null ? `<span class="text-slate-500 text-[10px]">• EK ${eur(i.purchasePrice)}</span>` : ""}</p>
+          ${dupeBadge(i)}
         </div>
       </div>
       <div class="flex gap-1.5 shrink-0">
@@ -580,7 +592,7 @@ function renderServerPortfolio() {
 }
 
 async function loadPortfolio() {
-  if (!state.user) { state.portfolio = null; renderPortfolioDash(); origRenderPortfolio?.(); return; }
+  if (!state.user) { state.portfolio = null; renderPortfolioDash(); origRenderPortfolio?.(); refreshDupes(); return; }
   try { state.portfolio = await api("/api/portfolio"); renderServerPortfolio(); }
   catch (e) { if (e.status === 401) { state.user = null; renderPortfolioDash(); } }
 }

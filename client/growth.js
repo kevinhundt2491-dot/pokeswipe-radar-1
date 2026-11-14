@@ -683,15 +683,15 @@ async function loadImpressum() {
   if (!box) return;
   try {
     const { impressum } = await api("/api/legal");
-    if (impressum) box.textContent = impressum;
-  } catch {}
+    box.textContent = impressum || "Das Impressum wird gerade vom Betreiber eingerichtet.";
+  } catch { box.textContent = "Impressum konnte nicht geladen werden – bitte später erneut öffnen."; }
 }
 
 export async function adminGrowthHtml() {
   let legal = { impressum: "" };
   try { legal = await api("/api/legal"); } catch {}
   return `<h4 class="text-sm font-black text-white">⚖️ Impressum (Pflichtangaben § 5 DDG)</h4>
-    <p class="text-[11px] text-slate-400">Das Impressum ist bereits fest hinterlegt. Hier kannst du es bei Bedarf überschreiben.</p>
+    <p class="text-[11px] text-slate-400">Wird nur hier gespeichert (nicht im Code) und im Fenster „Impressum &amp; Datenschutz“ angezeigt. Tipp: Statt der Privatadresse kann eine ladungsfähige Geschäfts- oder Impressums-Service-Adresse eingetragen werden.</p>
     <textarea id="ps-ad-legal" rows="6" maxlength="4000" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs" placeholder="Vor- und Nachname / Firma&#10;Straße Hausnummer&#10;PLZ Ort&#10;E-Mail: info@pokeswipe-radar.de&#10;(ggf. USt-IdNr., Verantwortlich nach § 18 MStV)">${esc(legal.impressum)}</textarea>
     <div class="grid grid-cols-2 gap-2">
       ${btn("Impressum speichern", "PS.adminSaveLegal()", "bg-emerald-500 text-slate-950")}
@@ -725,7 +725,7 @@ function offlineBanner() {
 function storageNotice() {
   if (localStorage.getItem("ps_notice_ok")) return;
   const el = document.createElement("div");
-  el.className = "fixed bottom-24 sm:bottom-4 inset-x-3 sm:left-auto sm:right-4 sm:max-w-sm z-[65] poke-glass border border-yellow-400/50 rounded-2xl p-3 text-xs text-slate-200 space-y-2";
+  el.className = "fixed bottom-24 sm:bottom-4 inset-x-3 sm:left-auto sm:right-4 sm:max-w-sm z-[45] poke-glass border border-yellow-400/50 rounded-2xl p-3 text-xs text-slate-200 space-y-2";
   el.innerHTML = `<p>🍪 Wir verwenden keine Werbe- oder Tracking-Cookies. Gespeichert werden nur technisch nötige Daten (Login, Einstellungen, Offline-Kopie). Details in der <button class="underline font-bold" data-legal>Datenschutzerklärung</button>.</p>
     <button class="w-full bg-yellow-400 text-slate-950 font-black py-2 rounded-xl" data-ok>Verstanden</button>`;
   el.querySelector("[data-ok]").onclick = () => { localStorage.setItem("ps_notice_ok", "1"); el.remove(); };
@@ -795,7 +795,7 @@ export function injectGrowthPanels() {
     const el = document.createElement("p");
     el.innerHTML = `<strong>Impressum (Angaben gemäß § 5 DDG):</strong><br><span id="ps-impressum" class="whitespace-pre-line"></span>`;
     first?.after(el);
-    $("ps-impressum").textContent = "Kevin Hundt\nHähn 10\n51515 Kürten\nTelefon: 0174 2182874\nE-Mail: info@galabau-hundt.de";
+    $("ps-impressum").textContent = "Wird geladen …";
     origOpenModal = window.openModal;
     window.openModal = (id) => { origOpenModal?.(id); if (id === "legal-modal") loadImpressum(); };
   }

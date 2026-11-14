@@ -223,22 +223,16 @@ async function cardPage(c: any) {
 // Rechtliches (Impressum-Text pflegt der Admin; gespeichert in Netlify Blobs)
 // ---------------------------------------------------------------------------
 type Legal = { impressum: string; updatedAt: string | null };
-export const DEFAULT_IMPRESSUM = `Kevin Hundt
-Hähn 10
-51515 Kürten
-Deutschland
-
-Telefon: 0174 2182874
-E-Mail: info@galabau-hundt.de
-
-Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV: Kevin Hundt, Anschrift wie oben.
-
-EU-Streitschlichtung: Die Europäische Kommission stellt eine Plattform zur Online-Streitbeilegung bereit: https://ec.europa.eu/consumers/odr/. Wir sind nicht bereit und nicht verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.`;
+// Keine personenbezogenen Daten im Code: Das Impressum pflegt der Admin in der Admin-Zentrale
+// (gespeichert in Netlify Blobs) oder optional über die Umgebungsvariable IMPRESSUM_TEXT.
+export const DEFAULT_IMPRESSUM = "";
+const ODR_NOTE = "EU-Streitschlichtung: Die Europäische Kommission stellt eine Plattform zur Online-Streitbeilegung bereit: https://ec.europa.eu/consumers/odr/. Wir sind nicht bereit und nicht verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.";
 
 async function getLegal(): Promise<Legal> {
   let saved: Legal | null = null;
   try { saved = (await getStore("app-config").get("legal", { type: "json" })) as Legal | null; } catch {}
-  return { impressum: saved?.impressum || DEFAULT_IMPRESSUM, updatedAt: saved?.updatedAt || null };
+  const text = saved?.impressum || String(process.env.IMPRESSUM_TEXT || "").trim() || DEFAULT_IMPRESSUM;
+  return { impressum: text ? (text.includes("Streitbeilegung") ? text : `${text}\n\n${ODR_NOTE}`) : "", updatedAt: saved?.updatedAt || null };
 }
 
 // ---------------------------------------------------------------------------
