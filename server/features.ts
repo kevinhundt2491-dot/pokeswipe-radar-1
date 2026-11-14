@@ -135,15 +135,20 @@ export async function notifySealedListing(row: typeof listings.$inferSelect, sel
 // TCGdex-Helfer
 // ---------------------------------------------------------------------------
 const setCache = new Map<string, { data: any; expires: number }>();
-export async function fetchSet(setId: string) {
-  const hit = setCache.get(setId);
+export async function fetchSet(setId: string, lang: "de" | "en" = "de") {
+  const key = `${lang}:${setId}`;
+  const hit = setCache.get(key);
   if (hit && hit.expires > Date.now()) return hit.data;
-  const res = await fetch(`https://api.tcgdex.net/v2/de/sets/${encodeURIComponent(setId)}`, { signal: AbortSignal.timeout(8000) });
-  if (!res.ok) return null;
-  const data = await res.json();
-  if (setCache.size > 300) setCache.clear();
-  setCache.set(setId, { data, expires: Date.now() + 6 * 3600_000 });
-  return data;
+  try {
+    const res = await fetch(`https://api.tcgdex.net/v2/${lang}/sets/${encodeURIComponent(setId)}`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (setCache.size > 300) setCache.clear();
+    setCache.set(key, { data, expires: Date.now() + 6 * 3600_000 });
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 export async function searchTcgdex(lang: "de" | "en", name: string) {
@@ -323,8 +328,9 @@ export function registerFeatures(app: any, h: {
   app.get("/api/sets/:id", auth, async (c: any) => {
     const setId = c.req.param("id");
     if (!/^[a-zA-Z0-9.\-]{1,20}$/.test(setId)) return c.json({ error: "Ungültiges Set" }, 400);
-    const set = await fetchSet(setId);
+    const [set, setEn] = await Promise.all([fetchSet(setId), fetchSet(setId, "en")]);
     if (!set?.cards) return c.json({ error: "Set nicht gefunden" }, 404);
+    const enNames = new Map<string, string>((setEn?.cards || []).map((x: any) => [String(x.id), String(x.name || "")]));
     const userId = c.get("user").id;
     const ids: string[] = set.cards.map((x: any) => String(x.id)).filter((id: string) => CARD_ID_RE.test(id));
 
@@ -348,11 +354,11 @@ export function registerFeatures(app: any, h: {
       if (price) priced++;
       const qty = ownedMap.get(String(x.id)) || 0;
       if (qty) ownedValue += price; else missingCost += price;
-      return { id: x.id, localId: x.localId, name: x.name, image: x.image ? `${x.image}/low.webp` : "", price, owned: qty > 0, qty };
+      return { id: x.id, localId: x.localId, name: x.name, en: enNames.get(String(x.id)) || "", image: x.image ? `${x.image}/low.webp` : "", price, owned: qty > 0, qty };
     });
     const [tracked] = await db.select({ id: trackedSets.id }).from(trackedSets).where(and(eq(trackedSets.userId, userId), eq(trackedSets.setId, setId))).limit(1);
     return c.json({
-      id: set.id, name: set.name, logo: set.logo ? `${set.logo}.webp` : "", official: set.cardCount?.official ?? list.length,
+      id: set.id, name: set.name, enName: String(setEn?.name || ""), abbr: String(setEn?.abbreviation?.official || set.abbreviation?.official || ""), logo: set.logo ? `${set.logo}.webp` : "", official: set.cardCount?.official ?? list.length,
       total: list.length, owned: list.filter((x: any) => x.owned).length, ownedValue, missingCost, priced,
       pricesPending: list.length - priced > 0 && missing.length > 40, tracked: Boolean(tracked), cards: list,
     });

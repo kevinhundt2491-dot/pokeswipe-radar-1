@@ -23,6 +23,10 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
 - **Kalender** – Set-Releases (Admin) und Community-Events mit Push-Erinnerung
 - **Shop-Statistik** – Aufrufe, Anfragen und gefragteste Inserate für Pro-Trader
 - **Offline-Modus** – App, Sammlung und Bilder bleiben ohne Netz verfügbar
+- **Master-Set-Tracker** – genaue Stückzahl pro Karte (0x, 1x, 2x, 5x …), Live-Fortschritt mit Restkosten,
+  „Set vervollständigen“-Modus mit Cardmarket- und eBay-Links je fehlender Karte und Wants-Listen-Export
+- **Duplikat-Radar** – Überschuss-Badges ab 2x, 1-Klick-Inserat im Tausch-Hub, Cardmarket-Verkaufs-Assistent und
+  CSV-Bulk-Export für den Cardmarket-Bestands-Import
 - **Datenschutz** – Daten-Export (JSON), Konto selbst löschen, Impressum in der Admin-Zentrale pflegbar
 
 ## Echte Karten & Preise
@@ -34,7 +38,10 @@ und werden beim Öffnen der Seite automatisch über `/api/prices` mit aktuellen 
 PSA-10-Preise werden nicht geschätzt, sondern über eBay-„Verkauft“-Links (mit Partner-ID) angezeigt.
 
 Alle eBay-Links tragen die ePN-Campaign-ID 5339244109 und eine `customid` pro Bereich (z. B. `pokeswipe-swipe`,
-`pokeswipe-flip`, `pokeswipe-portfolio`), damit im ePN-Bericht sichtbar ist, welcher Bereich wie viel bringt.
+`pokeswipe-flip`, `pokeswipe-portfolio`, `pokeswipe-masterset`), damit im ePN-Bericht sichtbar ist, welcher Bereich wie viel bringt.
+
+Partner-IDs stehen zentral im `CONFIG`-Objekt ganz oben im Skript von `public/index.html`. Alle Cardmarket-Links bekommen
+automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüllt ist, wird es als `referrer` angehängt.
 
 ## Aufbau
 
@@ -90,5 +97,6 @@ Werte ändern: `server/plans.ts`.
 7. **Firebase-Regeln:** Den Inhalt von `firebase/database.rules.json` in der Firebase-Konsole
    (Realtime Database → Regeln) **in die bestehenden Regeln einfügen** – nur den Block `pokeswipe_radar`.
    Die Datenbank wird mit einem anderen Projekt geteilt, dessen Regeln erhalten bleiben müssen.
-8. **Impressum:** Ist fest hinterlegt (Fußzeile, Rechtliches-Fenster und Kartenseiten). Änderungen optional in der Admin-Zentrale.
+8. **Impressum:** Wird bewusst nicht im Code gespeichert. In der Admin-Zentrale eintragen (oder Umgebungsvariable
+   `IMPRESSUM_TEXT`); es erscheint dann im Fenster „Impressum & Datenschutz“.
 9. **Set-Releases:** Als Admin unter Community → Kalender eintragen (Art „Set-Release“). Nutzer können sich erinnern lassen.

@@ -822,7 +822,7 @@
         <h3 class="text-base font-black text-white">Impressum & Datenschutz</h3>
         <button onclick="closeModal('legal-modal')" class="text-slate-400 font-bold">✕</button>
       </div>
-      <p><strong>Projekt:</strong> PokeSwipe & Radar (pokeswipe-radar.de)<br>Betreiber: Kevin Hundt, Hähn 10, 51515 Kürten<br>Telefon: <a href="tel:+491742182874" class="underline">0174 2182874</a> • E-Mail: <a href="mailto:info@galabau-hundt.de" class="underline">info@galabau-hundt.de</a></p>
+      <p><strong>Projekt:</strong> PokeSwipe & Radar (pokeswipe-radar.de)</p>
       <p><strong>Pokémon-Fanprojekt-Hinweis:</strong> PokeSwipe & Radar ist ein unabhängiges, inoffizielles Fanprojekt und steht in keiner Verbindung zu Nintendo, Creatures Inc., GAME FREAK inc. oder The Pokémon Company und wird von diesen weder unterstützt noch gesponsert. Pokémon, Kartennamen und Kartenbilder sind Marken bzw. urheberrechtlich geschützte Werke ihrer jeweiligen Inhaber und werden ausschließlich zur Identifikation der Sammelkarten verwendet.</p>
       <p><strong>Preisangaben:</strong> Marktpreise stammen von Cardmarket (über TCGdex) und werden automatisch aktualisiert. Alle Angaben ohne Gewähr; maßgeblich ist der Preis beim jeweiligen Anbieter.</p>
       <p><strong>Affiliate-Hinweis (*):</strong> Als Partner des eBay Partner Networks (CampID: 5339244109) verdienen wir an qualifizierten Käufen über gekennzeichnete eBay-Links eine kleine Provision, ohne Mehrkosten für dich.</p>
@@ -831,7 +831,7 @@
       <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Beim Laden der Seite werden Schriftarten und Skripte von Google Fonts, cdn.tailwindcss.com und unpkg.com abgerufen; dabei wird technisch bedingt deine IP-Adresse übermittelt.</p>
       <p><strong>Öffentlich sichtbar:</strong> dein Sammlername, Stadt, Inserate, Bewertungen, Shop-Seite, eingetragene Events sowie – für Tausch-Vorschläge – welche Karten du auf der Wunschliste hast. In der Bestenliste erscheinst du nur, wenn du es selbst einschaltest.</p>
       <p><strong>Speicher im Browser:</strong> Wir verwenden keine Werbe- oder Tracking-Cookies. Gespeichert werden nur technisch notwendige Daten: Login-Token, Einstellungen und eine Offline-Kopie deiner Sammlung (wird beim Abmelden gelöscht).</p>
-      <p><strong>Deine Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Im Konto unter „Datenschutz & Konto“ kannst du alle Daten als Datei herunterladen und dein Konto selbst löschen. Verantwortlich für die Datenverarbeitung: Kevin Hundt, Hähn 10, 51515 Kürten, info@galabau-hundt.de.</p>
+      <p><strong>Deine Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Im Konto unter „Datenschutz & Konto“ kannst du alle Daten als Datei herunterladen und dein Konto selbst löschen. Verantwortlich für die Datenverarbeitung ist der im Impressum genannte Betreiber.</p>
       <p><strong>Abos:</strong> Premium (4,99 €/Monat oder 49 €/Jahr) und Pro Trader (9,99 €/Monat oder 99 €/Jahr). Das erste Abo kann 7 Tage kostenlos getestet werden (mit Einladung 30 Tage). Kündigung jederzeit im Konto unter „Abo kündigen“ – die Vorteile bleiben bis zum Ende des bezahlten Zeitraums aktiv.</p>
       </div>
     </div>
@@ -841,8 +841,8 @@
     <div class="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4">
       <div>
         <p class="font-black text-slate-200">Impressum</p>
-        <p>Kevin Hundt<br>Hähn 10<br>51515 Kürten</p>
-        <p>Tel.: <a href="tel:+491742182874" class="hover:text-white underline">0174 2182874</a><br>E-Mail: <a href="mailto:info@galabau-hundt.de" class="hover:text-white underline">info@galabau-hundt.de</a></p>
+        <p>Anbieterkennzeichnung nach § 5 DDG und Kontakt:</p>
+        <p><button onclick="openModal('legal-modal')" class="hover:text-white underline font-bold">Impressum öffnen</button></p>
       </div>
       <div>
         <p class="font-black text-slate-200">Affiliate-Hinweis</p>
@@ -861,7 +861,19 @@
   <!-- 6. VOLLSTÄNDIGER JAVASCRIPT-KERN                                      -->
   <!-- ===================================================================== -->
   <script>
-    const EPN_CAMPAIGN_ID = "5339244109";
+    // ===================================================================
+    // ZENTRALE KONFIGURATION – Partner-IDs & Tracking an einer Stelle
+    // ===================================================================
+    const CONFIG = window.PS_CONFIG = Object.freeze({
+      // eBay Partner Network (ePN) – feste Campaign-ID für alle Kauf-Buttons
+      EPN_CAMPAIGN_ID: "5339244109",
+      // Cardmarket-Partnerkürzel/Referral: sobald vorhanden hier eintragen –
+      // wird automatisch an ALLE Cardmarket-Links angehängt (als ?referrer=…).
+      CARDMARKET_PARTNER_ID: "",
+      // Tracking-Parameter für alle Cardmarket-Links
+      CARDMARKET_UTM: { utm_source: "pokeswipe_radar", utm_medium: "referral", utm_campaign: "pokeswipe" },
+    });
+    const EPN_CAMPAIGN_ID = CONFIG.EPN_CAMPAIGN_ID;
     const firebaseConfig = {
       databaseURL: "https://pyro-planer-web-app-default-rtdb.europe-west1.firebasedatabase.app"
     };
@@ -987,9 +999,20 @@
       });
     }
 
-    function buildCardmarketUrl(query) {
-      return `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(query)}`;
+    /** Hängt UTM-Tracking und (falls hinterlegt) das Cardmarket-Partnerkürzel an jeden Cardmarket-Link. */
+    function withCardmarketTracking(url) {
+      try {
+        const u = new URL(url);
+        Object.entries(CONFIG.CARDMARKET_UTM || {}).forEach(([k, v]) => { if (v && !u.searchParams.has(k)) u.searchParams.set(k, v); });
+        if (CONFIG.CARDMARKET_PARTNER_ID) u.searchParams.set("referrer", CONFIG.CARDMARKET_PARTNER_ID);
+        return u.toString();
+      } catch (e) { return url; }
     }
+    window.withCardmarketTracking = withCardmarketTracking;
+    function buildCardmarketUrl(query) {
+      return withCardmarketTracking(`https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(String(query || "").slice(0, 120))}`);
+    }
+    window.buildCardmarketUrl = buildCardmarketUrl;
 
     function hydrateStaticAffiliateLinks() {
       document.querySelectorAll(".epn-dynamic-link").forEach(el => {

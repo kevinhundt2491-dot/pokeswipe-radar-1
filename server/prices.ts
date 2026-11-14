@@ -97,7 +97,7 @@ export async function evaluateAlerts(cardId: string) {
       a.userId,
       `🎯 Preisalarm: ${card.name}`,
       `Cardmarket-Trend liegt bei ${price.toFixed(2).replace(".", ",")} € – ${dir} deinem Ziel von ${Number(a.targetPrice).toFixed(2).replace(".", ",")} €.`,
-      `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(card.name)}`,
+      `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(card.name)}&utm_source=pokeswipe_radar&utm_medium=push`,
     );
     await db.update(priceAlerts).set({ lastTriggeredAt: new Date() }).where(eq(priceAlerts.id, a.id));
   }

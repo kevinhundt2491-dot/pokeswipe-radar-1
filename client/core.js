@@ -1,7 +1,7 @@
 // Gemeinsame Helfer für alle Client-Module
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (window.sanitizeHTML ? window.sanitizeHTML(s) : String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`));
-const eur = (n) => `${Number(n || 0).toFixed(2).replace(".", ",")} €`;
+const eur = (n) => `${(Number(n) || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u00A0€`;
 const pct = (n) => `${n > 0 ? "+" : ""}${Number(n).toFixed(1).replace(".", ",")} %`;
 /**
  * In-App-Banner (+ Ton) ohne zusätzliche Browser-Benachrichtigung – echte Push-Nachrichten

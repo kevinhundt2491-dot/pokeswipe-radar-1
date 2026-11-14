@@ -91,3 +91,55 @@ test("CSV: einfache Liste ohne Kopfzeile", () => {
   const rows = csvToRows("Glurak ex 199/165\nMewtu\n");
   assert.deepEqual(rows.map((r: any) => [r.name, r.number]), [["Glurak ex", "199/165"], ["Mewtu", ""]]);
 });
+
+// @ts-ignore – Client-Modul ohne Typen
+import { setStats, wantsLine, wantsText, groupDuplicates, cardmarketCsv, cmName, ebayQuery, surplusBadge } from "../client/collector-logic.js";
+
+test("Master-Set: Fortschritt, fehlende Karten, Restkosten und Überschuss", () => {
+  const cards = [
+    { id: "a", qty: 0, price: 10 }, { id: "b", qty: 1, price: 5 }, { id: "c", qty: 5, price: 2.5 }, { id: "d", qty: 0, price: 0 },
+  ];
+  const s = setStats(cards);
+  assert.equal(s.owned, 2);
+  assert.equal(s.percent, 50);
+  assert.equal(s.missingCount, 2);
+  assert.equal(s.missingCost, 10);
+  assert.equal(s.missingUnpriced, 1);
+  assert.equal(s.surplus, 4);
+  assert.equal(s.surplusValue, 10);
+  assert.equal(s.ownedValue, 17.5);
+  assert.equal(setStats([]).percent, 0);
+});
+
+test("Cardmarket-Wants-Liste im Format „1x Name (SET Nr)“", () => {
+  assert.equal(cmName("Pikachu-ex"), "Pikachu ex");
+  assert.equal(wantsLine({ name: "Pikachu-ex", en: "Pikachu ex", localId: "057" }, { abbr: "SSP" }), "1x Pikachu ex (SSP 057)");
+  assert.equal(wantsLine({ name: "Glurak-ex", localId: "199" }, { enName: "151" }), "1x Glurak ex (151 199)");
+  assert.equal(wantsText([{ name: "A", localId: "1" }, { name: "B", localId: "2" }], { abbr: "MEW" }), "1x A (MEW 1)\n1x B (MEW 2)");
+  assert.equal(ebayQuery({ name: "Pikachu-ex", localId: "238" }, { official: 191 }), "Pikachu ex 238/191");
+  assert.equal(ebayQuery({ name: "Giratina VSTAR", localId: "GG69" }, { official: 159 }), "Giratina VSTAR GG69");
+});
+
+test("Duplikat-Radar: gruppiert Einträge und berechnet Verkaufswert", () => {
+  const d = groupDuplicates([
+    { cardId: "sv08-238", name: "Pikachu-ex", quantity: 3, unitValue: 200 },
+    { cardId: "sv08-238", name: "Pikachu-ex", quantity: 2, unitValue: 200 },
+    { cardId: "sv08-001", name: "Owei", quantity: 1, unitValue: 0.1 },
+    { cardId: null, name: "Manuell", quantity: 9, unitValue: 1 },
+  ]);
+  assert.equal(d.length, 1);
+  assert.equal(d[0].qty, 5);
+  assert.equal(d[0].surplus, 4);
+  assert.equal(d[0].surplusValue, 800);
+  assert.equal(surplusBadge(d[0], (n: number) => `${n.toFixed(2).replace(".", ",")} €`), "4x Überschuss – Verkaufswert: 800,00 €");
+});
+
+test("Cardmarket-CSV: Kopfzeile, Semikolon und Escaping", () => {
+  const csv = cardmarketCsv([{ idProduct: 794611, surplus: 4, name: "Pikachu-ex", enName: "Pikachu ex", abbr: "SSP", enSetName: "Surging Sparks", localId: "238", unit: 199.3 },
+    { idProduct: null, surplus: 1, name: 'Karte; mit "Zeichen"', localId: "1", unit: 0 }]);
+  const lines = csv.replace(/^﻿/, "").trim().split("\r\n");
+  assert.equal(lines.length, 3);
+  assert.match(lines[0], /^idProduct;Count;English Name/);
+  assert.equal(lines[1], "794611;4;Pikachu ex;Pikachu-ex;SSP;Surging Sparks;238;German;NM;;;;199.30;via PokeSwipe Radar");
+  assert.match(lines[2], /"Karte; mit ""Zeichen"""/);
+});
