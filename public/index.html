@@ -854,7 +854,11 @@
         <p class="mt-1"><button onclick="openModal('legal-modal')" class="hover:text-white underline font-bold">Impressum & Datenschutz</button></p>
       </div>
     </div>
-    <p class="max-w-7xl mx-auto mt-3 text-[11px] text-slate-500">© 2026 PokeSwipe & Radar • pokeswipe-radar.de</p>
+    <div class="max-w-7xl mx-auto mt-3 flex items-center justify-between gap-3">
+      <p class="text-[11px] text-slate-500">© 2026 PokeSwipe & Radar • pokeswipe-radar.de</p>
+      <!-- Admin-Reel-Studio: nur für Admins sichtbar (auch per Strg + Shift + R) -->
+      <button id="reel-studio-btn" type="button" class="hidden text-[10px] font-bold text-slate-600 hover:text-yellow-300 border border-slate-800 hover:border-yellow-400/40 rounded-lg px-2 py-1 transition" title="Admin-Reel-Studio (Strg + Shift + R)">🎬 Reel Studio</button>
+    </div>
   </footer>
 
   <!-- ===================================================================== -->
