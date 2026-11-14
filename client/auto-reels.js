@@ -811,12 +811,15 @@ function updateVoiceInfo() {
     ? "Aus – die Reels bekommen nur Musik und Soundeffekte."
     : !voiceReady
       ? "Sprachdienst wird geprüft …"
+      : voiceReady.error
+        ? `⚠️ Sprachdienst-Status konnte nicht geprüft werden (${voiceReady.error}). Bitte als Admin anmelden und die Seite neu laden – sonst wird im Platzhalter-Modus aufgenommen.`
       : voiceReady.ready
         ? `✓ Ein freundlicher deutscher Sprecher (${voiceReady.provider === "openai" ? "OpenAI TTS" : "ElevenLabs"}) erklärt jede Szene – passend getimt, Musik wird darunter leiser. Das Video geht erst mit fertiger Tonspur an Make.com.`
         : "⚠️ Platzhalter-Modus: Noch kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt). Die Reels werden vorerst nur mit Musik aufgenommen und an Make.com mit voiceover_mode=placeholder gemeldet. Sobald der Schlüssel gesetzt ist, spricht automatisch der Sprecher.";
 }
 async function checkVoice() {
-  try { voiceReady = await api("/api/admin/voiceover/status"); } catch { voiceReady = { ready: false }; }
+  try { voiceReady = await api("/api/admin/voiceover/status"); }
+  catch (e) { voiceReady = { ready: false, error: e?.message || "Netzwerkfehler" }; }
   updateVoiceInfo();
 }
 function updateBatchLabel() {
@@ -1005,7 +1008,7 @@ async function generateAll(list = EPISODES) {
   }
   const ac = audio ? unlockAudio() : null; // noch im Klick-Handler entsperren, sonst bleibt der AudioContext stumm
   if (voiceOn && !ac) return setStatus("⚠️ Dieser Browser kann keinen Ton mit aufnehmen – für das Voiceover bitte aktuelles Chrome oder Edge verwenden.", "err");
-  if (voiceOn && !voiceReady) await checkVoice();
+  if (voiceOn && !voiceReady?.ready) await checkVoice(); // vor jedem Start neu prüfen – ein frisch gesetzter Schlüssel greift ohne Neuladen
   // Platzhalter-Modus: Ohne TTS-Schlüssel (ELEVENLABS_API_KEY / OPENAI_TTS_API_KEY) wird ohne Sprecher
   // aufgenommen und an Make.com mit voiceover_mode=placeholder gemeldet. Sobald ein Schlüssel gesetzt ist,
   // greift automatisch die echte Sprecherstimme.

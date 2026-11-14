@@ -63,6 +63,7 @@ const b64 = (buf: ArrayBuffer) => Buffer.from(buf).toString("base64");
 export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
   app.get("/api/admin/voiceover/status", auth, adminOnly, (c: any) => {
     const p = provider();
+    c.header("Cache-Control", "no-store");
     return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null });
   });
 
