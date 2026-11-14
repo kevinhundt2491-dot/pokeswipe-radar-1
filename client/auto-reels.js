@@ -23,58 +23,58 @@ const base = {
 };
 const EPISODES = [
   { ...base, n: 1,
-    vo: ["Episode eins: Scannen und Preise checken!", "Frisch gezogen? Halt die Karte einfach in die Kamera. Der Scanner erkennt sie sofort und zeigt dir live den aktuellen Cardmarket-Preis.", "Jeder Scan landet direkt in deinem digitalen Binder – mit dem Wert deiner Sammlung immer im Blick.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge eins: der Karten-Scanner!","Karte in die Kamera – der Scanner zeigt dir sofort den Cardmarket-Preis.","Und ab damit in deinen digitalen Binder.","Jetzt gratis – Link in der Bio!"],
     title: "Virtueller Binder-Scanner & Live Cardmarket-Preis-Check",
     slogan: "Frische Pulls direkt in den digitalen Binder scannen und Cardmarket-Preise live prüfen! ⚡️💎",
     scenes: [["scan", 3], ["binder", 2]], ctaTag: "Scannen, sammeln, Preise live checken" },
   { ...base, n: 2,
-    vo: ["Episode zwei: Swipen statt suchen!", "Wisch nach links, wenn dich eine Karte kalt lässt. Wisch nach rechts, wenn du sie willst. Passt es auf beiden Seiten, habt ihr ein Tausch-Match.", "Das Tausch-Radar zeigt dir Sammler im Umkreis von zehn Kilometern.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge zwei: Swipen statt suchen!","Links weiter, rechts will ich. Wollt ihr beide tauschen: Match!","Sammler in deiner Nähe.","Jetzt gratis – Link in der Bio!"],
     title: "Tinder-Swipe für Tauschkarten & lokales Match",
     slogan: "Swipe nach rechts für dein nächstes Tausch-Match mit Sammlern direkt in deiner Nähe! 💚🤝",
     scenes: [["swipe", 3], ["radar", 1.4]], swipeDirs: [-1, 1, -1, 1], radarMode: "trade",
     swipe: "Swipe rechts = Tausch-Match 📍", alert: "🤝 TAUSCH-MATCH: Ein Sammler in deiner Nähe will tauschen!",
     radarLabel: (n) => `📡 Tausch-Radar · ${n} Sammler im Umkreis von 10 km`, ctaTag: "Sicher tauschen mit Sammlern in deiner Nähe" },
   { ...base, n: 3,
-    vo: ["Episode drei: Der Flip-Radar!", "Der Flip-Radar scannt eBay und Cardmarket rund um die Uhr. Liegt ein Angebot unter dem Cardmarket-Trend, schlägt er sofort Alarm.", "Dazu siehst du, welche Karten gerade im Preis steigen – und welche fallen.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge drei: der Flip-Radar!","Er checkt eBay und Cardmarket und meldet Deals unter Trend.","Plus: Wer steigt, wer fällt.","Jetzt gratis – Link in der Bio!"],
     title: "Live Flip-Radar & Schnäppchen-Alarm für eBay/Cardmarket",
     slogan: "Der Flip-Radar schlägt Alarm – Schnäppchen unter Cardmarket-Trend auf eBay & Cardmarket! 🚨💸",
     scenes: [["radar", 3], ["movers", 1.3]], dealCount: 3,
     radarLabel: (n) => `📡 Flip-Radar · ${n} Deals unter Trend`, ctaTag: "Nie wieder ein Schnäppchen verpassen" },
   { ...base, n: 4,
-    vo: ["Episode vier: Dein Portfolio-Wert!", "Karte scannen – und dein Portfolio wächst automatisch mit.", "Hier siehst du den Gesamtwert deiner Sammlung live: jede Karte, jedes Set, jeder Euro. Der Verlauf zeigt dir, wie sich deine Sammlung entwickelt.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge vier: dein Portfolio!","Karte scannen, Wert wächst.","Hier siehst du den Wert deiner Sammlung live – mit Verlauf.","Jetzt gratis – Link in der Bio!"],
     title: "Portfolio-Wert & Sammlungs-Tracker",
     slogan: "Dein Portfolio-Wert live im Blick – jede Karte, jeder Euro, jedes Set! 📈💼",
     scenes: [["scan", 1.4], ["portfolio", 3]], scan: "Karte scannen = Portfolio wächst 📈", ctaTag: "Deine Sammlung. Dein Wert. Live." },
   { ...base, n: 5,
-    vo: ["Episode fünf: Tauschen in deiner Nähe!", "Die Umkreis-Karte zeigt dir Tauschpartner ganz in deiner Nähe. Mit Bewertungen, verifizierten Profilen und einem Vorschlag für einen sicheren, öffentlichen Treffpunkt.", "Das Radar meldet dir neue Sammler bis zehn Kilometer um dich herum.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge fünf: Tauschen vor Ort!","Die Karte zeigt Tauschpartner im Umkreis – mit sicherem Treffpunkt.","Das Radar meldet sich.","Jetzt gratis – Link in der Bio!"],
     title: "Umkreis-Radar auf der Karte für sichere Übergabe vor Ort",
     slogan: "Tauschpartner im Umkreis finden und sicher vor Ort übergeben! 📍🛡️",
     scenes: [["map", 3], ["radar", 1.3]], radarMode: "trade",
     alert: "📍 IN DEINER NÄHE: Tauschpartner gefunden – sicher vor Ort übergeben!",
     radarLabel: (n) => `📡 Umkreis-Radar · ${n} Sammler bis 10 km`, ctaTag: "Lokal tauschen – sicher & persönlich" },
   { ...base, n: 6,
-    vo: ["Episode sechs: Die Pull-Wall!", "Auf der Pull-Wall zeigt die Community ihre krassesten Hits. Feier die besten Pulls, sieh dir ihren Cardmarket-Wert an und lass dich inspirieren.", "Selbst was Großes gezogen? Scannen und ab damit auf die Wall!", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge sechs: die Pull-Wall!","Die Community zeigt ihre krassesten Hits – mit Cardmarket-Wert.","Scannen und posten!","Jetzt gratis – Link in der Bio!"],
     title: "Pull-Wall & Community-Feed für die besten Hits",
     slogan: "Zeig deine krassesten Pulls auf der Pull-Wall und feier die Hits der Community! 📸🔥",
     scenes: [["pullwall", 3], ["scan", 1.2]], scan: "Pull gezogen? Ab auf die Wall! 📸", ctaTag: "Die Community für deutsche Sammler" },
   { ...base, n: 7,
-    vo: ["Episode sieben: Tausch-Hub mit Chat!", "Karte gefunden? Ein Swipe – und du schreibst direkt an.", "Im Direkt-Chat schickst du dein Tauschangebot, ihr klärt alle Details und bestätigt den Tausch mit einem Klick. Ganz ohne Gebühren.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge sieben: Tausch-Chat!","Swipe – und schreib direkt an.","Im Chat Angebot schicken, Details klären, Tausch bestätigen – ohne Gebühren.","Jetzt gratis – Link in der Bio!"],
     title: "P2P Tausch-Hub & Direkt-Chat",
     slogan: "Tausch-Hub mit Direkt-Chat – Angebot schicken, Deal klarmachen, fertig! 💬🤝",
     scenes: [["swipe", 1.2], ["chat", 3]], swipeDirs: [-1, 1], swipe: "Karte gefunden? Direkt anschreiben 💬",
     ctaTag: "Tauschen ohne Gebühren – direkt im Chat" },
   { ...base, n: 8,
-    vo: ["Episode acht: Die Top-Mover!", "Wer steigt, wer stürzt ab? Die Top-Mover zeigen dir, welche Karten aus den aktuellen Sets gerade den Markt bewegen – mit Preisstürzen auf einen Blick.", "Und fällt eine Karte unter den Trend, meldet sich der Radar.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge acht: die Top-Mover!","Welche Karten steigen, welche stürzen ab? Hier siehst du es sofort.","Preissturz? Radar-Alarm!","Jetzt gratis – Link in der Bio!"],
     title: "Top-Mover & Preissturz-Analyse aktueller Sets",
     slogan: "Top-Mover & Preisstürze – diese Karten bewegen gerade den Markt! 📊📉",
     scenes: [["movers", 3], ["radar", 1.3]], dealCount: 2, ctaTag: "Markt verstehen. Clever kaufen." },
   { ...base, n: 9,
-    vo: ["Episode neun: Der Wunschlisten-Abgleich!", "Trag deine Wunschkarten einfach ein. Die App gleicht sie automatisch mit den Tauschangeboten anderer Sammler ab und hakt jeden Treffer für dich ab.", "Bei einem Treffer startet sofort der Chat mit dem passenden Tauschpartner.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge neun: die Wunschliste!","Wunschkarten eintragen – die App findet sie bei anderen Sammlern.","Treffer? Direkt in den Chat!","Jetzt gratis – Link in der Bio!"],
     title: "Automatischer Wunschlisten-Abgleich beim Tauschen",
     slogan: "Deine Wunschliste tauscht mit – der automatische Abgleich findet sofort passende Karten! ⭐🔄",
     scenes: [["wishlist", 3], ["chat", 1.6]], ctaTag: "Wunschkarten finden – automatisch" },
   { ...base, n: 10,
-    vo: ["Episode zehn: Die komplette App-Tour!", "Karten scannen, Preise live prüfen.", "Swipen und Tauschpartner finden.", "Der Radar findet Schnäppchen.", "Tauschen in deiner Nähe.", "Dein Portfolio immer im Blick.", "Und die besten Pulls der Community.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    vo: ["Folge zehn: die App-Tour!","Scannen.","Swipen.","Deals finden.","Vor Ort tauschen.","Portfolio.","Pull-Wall.","Jetzt gratis – Link in der Bio!"],
     title: "All-in-One App-Tour",
     slogan: "Scannen, Swipen, Tauschen & Sparen – die komplette Pokémon-TCG-App für deutsche Sammler! 🚀🔥",
     scenes: [["scan", 1], ["swipe", 1], ["radar", 1], ["map", 0.9], ["portfolio", 0.9], ["pullwall", 0.8]],
@@ -82,7 +82,8 @@ const EPISODES = [
 ];
 
 const DURATIONS = [15, 20, 30, 45, 60];
-let duration = 30;
+// 15 s = Standard für Instagram Reels, Facebook-Videos und YouTube Shorts (kleine Dateien für den Webhook)
+let duration = 15;
 
 /** Szenen-Zeitplan: Hook + Feature-Szenen (nach Gewicht) + Call to Action, auf die Länge D skaliert. */
 function timeline(ep, D) {
@@ -673,7 +674,7 @@ function build() {
         <div class="ar-col">
           <div class="ar-bar">
             <label for="ar-len" style="font-size:13px;font-weight:800">Länge pro Reel:</label>
-            <select id="ar-len">${DURATIONS.map((s) => `<option value="${s}"${s === duration ? " selected" : ""}>${s} Sekunden</option>`).join("")}</select>
+            <select id="ar-len">${DURATIONS.map((s) => `<option value="${s}"${s === duration ? " selected" : ""}>${s} Sekunden${s === 15 ? " (Reels/Shorts)" : ""}</option>`).join("")}</select>
           </div>
           <div class="ar-hook">
             <label for="ar-hook">🔗 Make.com Webhook-URL</label>
@@ -779,7 +780,7 @@ function build() {
     box.checked ? batchSel.add(n) : batchSel.delete(n);
     updateBatchLabel();
   });
-  ui.len.addEventListener("change", () => { duration = Number(ui.len.value) || 30; updateTotal(); updateSizeInfo(); if (previewEp) startPreview(previewEp); });
+  ui.len.addEventListener("change", () => { duration = Number(ui.len.value) || 15; updateTotal(); updateSizeInfo(); if (previewEp) startPreview(previewEp); });
   updateTotal();
   updateHookInfo();
 }
@@ -905,10 +906,10 @@ async function recordEpisode(ep, D, mime, onTick, withAudio = false, voice = nul
   await new Promise((resolve) => {
     const loop = (now) => {
       if (aborted) return resolve();
-      const t = (now - start) / 1000;
+      const t = Math.min((now - start) / 1000, D);
       renderEpisode(ctx, t, ep, D);
-      onTick(Math.min(t, D));
-      if (t >= D + 0.25) return resolve();
+      onTick(t);
+      if (t >= D) return resolve(); // exakt D Sekunden, kein Nachlauf
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
