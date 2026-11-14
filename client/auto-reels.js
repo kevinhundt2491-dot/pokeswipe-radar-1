@@ -1,7 +1,8 @@
 // 10x Auto-Reel-Generator – zeichnet nacheinander 10 Feature-Episoden (9:16, 1080x1920, 60 FPS)
 // auf ein Canvas, nimmt sie per canvas.captureStream(60) + MediaRecorder (8 Mbit/s, MP4 bevorzugt) auf
-// und lädt jede Datei automatisch herunter. Der Dateiname ist exakt der Werbespruch der Episode,
-// damit Make.com ihn als Instagram-Caption übernehmen kann.
+// und schickt jede fertige Datei per POST (multipart/form-data) an die eingetragene Make.com-Webhook-URL.
+// Ohne Webhook-URL (oder wenn der Versand scheitert) wird die Datei lokal heruntergeladen.
+// Der Dateiname ist "Episode N - <Werbespruch>", damit Make.com ihn als Caption übernehmen kann.
 // Nutzt die Zeichen-Engine, Farben, Schriften und echten Karten (REAL_CARDS) des Admin-Reel-Studios.
 import { reelEngine as E } from "./reel-studio.js";
 
@@ -545,12 +546,27 @@ const CSS = `
 #auto-reels canvas{height:min(72vh,780px);aspect-ratio:9/16;width:auto;max-width:100%;border-radius:18px;background:#0c1022;box-shadow:0 0 0 3px #2a3050,0 20px 50px rgba(0,0,0,.6)}
 #auto-reels .ar-time{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(12,16,34,.85);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:900;white-space:nowrap}
 #auto-reels .ar-time.rec{background:#e11d48;color:#fff}
+#auto-reels .ar-hook{display:flex;flex-direction:column;gap:6px;background:var(--night-3,#1b2444);border:1px solid rgba(245,200,75,.2);border-radius:12px;padding:10px}
+#auto-reels .ar-hook label{font-size:13px;font-weight:800}
+#auto-reels .ar-hook input{font:600 13px var(--font-body,Figtree,sans-serif);border-radius:10px;padding:9px 11px;border:1px solid rgba(245,200,75,.25);background:var(--night-2,#131a33);color:var(--ink,#f3efe4);width:100%;box-sizing:border-box}
+#auto-reels .ar-hook input.bad{border-color:#fb7185}
+#auto-reels .ar-hook small{font-size:12px;color:var(--ink-soft,#b9b7c9)}
+#auto-reels li input[type=checkbox]{flex:none;margin-top:3px;width:16px;height:16px;accent-color:#ffcb05}
+#auto-reels button.ar-batch{background:#7c3aed;border-color:#7c3aed;color:#fff;flex:1}
 #auto-reels .ar-hint{font-size:12px;line-height:1.45;color:var(--ink-soft,#b9b7c9);margin:0}
 `;
 
 const ui = {};
 let built = false, ctx = null, raf = 0, mode = "idle", previewEp = null, previewStart = 0, stopAll = false, wake = null;
-const results = new Map(); // Episode-Nummer -> { url, name, size }
+const results = new Map(); // Episode-Nummer -> { url, name, size, sent }
+const batchSel = new Set(); // im Serien-Modus ausgewählte Episoden
+
+// Make.com-Webhook-URL (einmal eintragen, bleibt im localStorage)
+const HOOK_KEY = "pokeswipe.autoReels.webhook";
+const getHook = () => { try { return localStorage.getItem(HOOK_KEY) || ""; } catch { return ""; } };
+function validHook(u) {
+  try { const x = new URL(u); return x.protocol === "https:" ? x.href : null; } catch { return null; }
+}
 
 function build() {
   if (built) return;
@@ -571,13 +587,23 @@ function build() {
             <label for="ar-len" style="font-size:13px;font-weight:800">Länge pro Reel:</label>
             <select id="ar-len">${DURATIONS.map((s) => `<option value="${s}"${s === duration ? " selected" : ""}>${s} Sekunden</option>`).join("")}</select>
           </div>
+          <div class="ar-hook">
+            <label for="ar-hook">🔗 Make.com Webhook-URL</label>
+            <input id="ar-hook" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hook.eu1.make.com/…">
+            <small id="ar-hook-info"></small>
+          </div>
           <button type="button" class="ar-btn ar-go" data-ar="all">🚀 Alle 10 Episoden jetzt vollautomatisch generieren</button>
           <button type="button" class="ar-btn ar-stop" data-ar="stop" hidden>■ Generierung abbrechen</button>
           <div class="ar-progress"><i id="ar-bar"></i></div>
+          <div class="ar-bar">
+            <button type="button" class="ar-btn" data-ar="sel-all">☑ Alle</button>
+            <button type="button" class="ar-btn" data-ar="sel-none">☐ Keine</button>
+            <button type="button" class="ar-btn ar-batch" data-ar="batch">🎞️ Serien-Modus: ausgewählte nacheinander</button>
+          </div>
           <div class="ar-status" id="ar-status"></div>
           <ol id="ar-list"></ol>
           <p class="ar-hint" id="ar-format"></p>
-          <p class="ar-hint">Während der Generierung diesen Tab sichtbar lassen (nicht minimieren oder wechseln) – jedes Reel wird in Echtzeit gezeichnet, alle 10 dauern zusammen etwa <span id="ar-total"></span>. Wird der Tab verdeckt, wartet der Generator und nimmt die Episode danach neu auf. Beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“ – bitte erlauben. Die Dateien landen im Download-Ordner; diesen per Google Drive für Desktop mit deinem Make.com-Ordner synchronisieren.</p>
+          <p class="ar-hint">Während der Generierung diesen Tab sichtbar lassen (nicht minimieren oder wechseln) – jedes Reel wird in Echtzeit gezeichnet, alle 10 dauern zusammen etwa <span id="ar-total"></span>. Wird der Tab verdeckt, wartet der Generator und nimmt die Episode danach neu auf. Ist eine Webhook-URL eingetragen, geht jedes fertige MP4 direkt an Make.com (Felder: <code>file</code>, <code>filename</code>, <code>episode</code>, <code>slogan</code>, <code>title</code>). Ohne URL oder bei einem Fehler landet die Datei im Download-Ordner – beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“, bitte erlauben.</p>
         </div>
         <div class="ar-stage"><canvas id="ar-canvas" width="${W}" height="${H}"></canvas><span class="ar-time" id="ar-time"></span></div>
       </div>
@@ -594,6 +620,18 @@ function build() {
   ui.total = el.querySelector("#ar-total");
   ui.go = el.querySelector('[data-ar="all"]');
   ui.stop = el.querySelector('[data-ar="stop"]');
+  ui.batch = el.querySelector('[data-ar="batch"]');
+  ui.hook = el.querySelector("#ar-hook");
+  ui.hookInfo = el.querySelector("#ar-hook-info");
+  ui.hook.value = getHook();
+  const saveHook = () => {
+    const raw = ui.hook.value.trim(), ok = !raw || validHook(raw);
+    ui.hook.classList.toggle("bad", !ok);
+    if (ok) { try { raw ? localStorage.setItem(HOOK_KEY, raw) : localStorage.removeItem(HOOK_KEY); } catch { /* privater Modus */ } }
+    updateHookInfo();
+  };
+  ui.hook.addEventListener("input", saveHook);
+  ui.hook.addEventListener("change", saveHook);
   ctx = ui.canvas.getContext("2d");
   renderList();
   el.addEventListener("click", (e) => {
@@ -606,15 +644,44 @@ function build() {
     if (act === "stop") { stopAll = true; setStatus("Abbruch nach der laufenden Episode …"); }
     if (act === "preview") startPreview(EPISODES[n - 1]);
     if (act === "one") generateAll([EPISODES[n - 1]]);
+    if (act === "sel-all") { EPISODES.forEach((ep) => batchSel.add(ep.n)); renderList(); }
+    if (act === "sel-none") { batchSel.clear(); renderList(); }
+    if (act === "batch") {
+      const list = EPISODES.filter((ep) => batchSel.has(ep.n));
+      if (!list.length) return setStatus("Bitte zuerst Episoden für den Serien-Modus anhaken.", "err");
+      generateAll(list);
+    }
+  });
+  el.addEventListener("change", (e) => {
+    const box = e.target.closest("[data-sel]");
+    if (!box) return;
+    const n = Number(box.dataset.sel);
+    box.checked ? batchSel.add(n) : batchSel.delete(n);
+    updateBatchLabel();
   });
   ui.len.addEventListener("change", () => { duration = Number(ui.len.value) || 30; updateTotal(); if (previewEp) startPreview(previewEp); });
   updateTotal();
+  updateHookInfo();
+}
+
+function updateHookInfo() {
+  const raw = ui.hook.value.trim();
+  ui.hookInfo.textContent = !raw
+    ? "Keine URL eingetragen → fertige Reels werden lokal heruntergeladen."
+    : validHook(raw)
+      ? "✓ Gespeichert. Fertige MP4-Reels werden automatisch per POST an diesen Webhook geschickt."
+      : "⚠️ Bitte eine gültige https://-Adresse eintragen.";
+}
+function updateBatchLabel() {
+  if (ui.batch) ui.batch.textContent = `🎞️ Serien-Modus: ${batchSel.size} ausgewählte nacheinander`;
 }
 
 function updateTotal() { const m = (duration * 10 + 25) / 60; ui.total.textContent = `${m.toLocaleString("de-DE", { maximumFractionDigits: 1 })} Minuten`; }
 function setStatus(msg, kind = "") { ui.status.textContent = msg; ui.status.className = `ar-status ${kind}`; }
 function setBusy(b) {
   ui.len.disabled = b; ui.go.disabled = b; ui.stop.hidden = !b;
+  ui.batch.disabled = b; ui.hook.disabled = b;
+  ui.root.querySelectorAll('[data-ar^="sel-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll("button").forEach((x) => { x.disabled = b; });
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -624,10 +691,11 @@ function renderList(states = {}) {
     const st = states[ep.n] || (results.has(ep.n) ? "ok" : "");
     const r = results.get(ep.n);
     const icon = { on: "⏺", ok: "✅", err: "⚠️", wait: "⏳" }[st] || "🎞️";
-    return `<li class="${st}"><span class="ar-st">${icon}</span><div><b>${ep.n}. ${esc(ep.title)}</b><small>${esc(fileBase(ep))}.mp4</small></div>
-      <span class="ar-acts"><button type="button" data-ar="preview" data-n="${ep.n}" title="Vorschau">▶</button><button type="button" data-ar="one" data-n="${ep.n}" title="Nur diese Episode aufnehmen">⏺</button>${r ? `<a href="${r.url}" download="${esc(r.name)}" title="Erneut herunterladen">⬇</a>` : ""}</span></li>`;
+    return `<li class="${st}"><input type="checkbox" data-sel="${ep.n}" aria-label="Episode ${ep.n} für den Serien-Modus"${batchSel.has(ep.n) ? " checked" : ""}><span class="ar-st">${icon}</span><div><b>${ep.n}. ${esc(ep.title)}</b><small>${esc(fileBase(ep))}.mp4</small></div>
+      <span class="ar-acts"><button type="button" data-ar="preview" data-n="${ep.n}" title="Vorschau">▶</button><button type="button" data-ar="one" data-n="${ep.n}" title="Nur diese Episode aufnehmen">⏺</button>${r ? `${r.sent ? `<span title="An Make.com gesendet">📤</span>` : ""}<a href="${r.url}" download="${esc(r.name)}" title="Herunterladen">⬇</a>` : ""}</span></li>`;
   }).join("");
-  if (mode === "rec") ui.list.querySelectorAll("button").forEach((x) => { x.disabled = true; });
+  if (mode === "rec") ui.list.querySelectorAll("button,input").forEach((x) => { x.disabled = true; });
+  updateBatchLabel();
 }
 
 const fmt = (t, D) => `${t.toFixed(1).replace(".", ",")} / ${D.toFixed(1).replace(".", ",")} s`;
@@ -691,15 +759,48 @@ async function recordEpisode(ep, D, mime, onTick) {
   return { blob, ext };
 }
 
-function download(ep, blob, ext) {
+/** Ergebnis merken (für den ⬇-Link) und optional sofort lokal herunterladen. */
+function keep(ep, blob, ext, { click = false, sent = false } = {}) {
   const old = results.get(ep.n);
   if (old) URL.revokeObjectURL(old.url);
   const url = URL.createObjectURL(blob), name = `${fileBase(ep)}.${ext}`;
-  results.set(ep.n, { url, name, size: blob.size });
-  const a = document.createElement("a");
-  a.href = url; a.download = name; a.style.display = "none";
-  document.body.append(a); a.click(); a.remove();
+  results.set(ep.n, { url, name, size: blob.size, sent });
+  if (click) {
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.style.display = "none";
+    document.body.append(a); a.click(); a.remove();
+  }
   return name;
+}
+
+/** Fertiges Reel als multipart/form-data an den Make.com-Webhook schicken (mit Upload-Fortschritt). */
+function postToWebhook(url, ep, blob, ext, onProgress) {
+  const name = `${fileBase(ep)}.${ext}`;
+  const form = new FormData();
+  form.append("file", blob, name);
+  form.append("filename", name);
+  form.append("episode", String(ep.n));
+  form.append("slogan", ep.slogan);
+  form.append("title", ep.title);
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", url);
+    x.timeout = 10 * 60 * 1000;
+    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    x.onload = () => (x.status >= 200 && x.status < 300 ? resolve(name) : reject(new Error(`Webhook antwortet mit ${x.status}`)));
+    x.onerror = () => reject(new Error("Netzwerkfehler"));
+    x.ontimeout = () => reject(new Error("Zeitüberschreitung"));
+    x.send(form);
+  });
+}
+
+async function sendWithRetry(url, ep, blob, ext, onProgress) {
+  let err;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try { return await postToWebhook(url, ep, blob, ext, onProgress); }
+    catch (e) { err = e; if (/ 4\d\d$/.test(e.message)) break; await new Promise((r) => setTimeout(r, 1500 * attempt)); }
+  }
+  throw err;
 }
 
 async function generateAll(list = EPISODES) {
@@ -715,7 +816,8 @@ async function generateAll(list = EPISODES) {
   const D = duration, states = {};
   list.forEach((ep) => { states[ep.n] = "wait"; });
   renderList(states);
-  let ok = 0;
+  let ok = 0, sent = 0;
+  const hook = validHook(getHook());
   for (let i = 0; i < list.length && !stopAll; i++) {
     const ep = list[i];
     states[ep.n] = "on"; renderList(states); setBusy(true);
@@ -725,7 +827,7 @@ async function generateAll(list = EPISODES) {
       let res = null;
       while (!res && !stopAll) {
         await waitVisible();
-        setStatus(`⏺ Episode ${ep.n}/10 wird aufgenommen (${mime.startsWith("video/mp4") ? "MP4" : "WebM"}, 60 FPS, 8 Mbit/s) – Tab sichtbar lassen …`);
+        setStatus(`⏺ Episode ${ep.n} (${i + 1}/${list.length}) wird aufgenommen (${mime.startsWith("video/mp4") ? "MP4" : "WebM"}, 60 FPS, 8 Mbit/s) – Tab sichtbar lassen …`);
         res = await recordEpisode(ep, D, mime, (t) => {
           ui.time.textContent = `⏺ Ep. ${ep.n} · ${fmt(t, D)}`;
           ui.bar.style.width = `${((i + t / D) / list.length) * 100}%`;
@@ -733,10 +835,24 @@ async function generateAll(list = EPISODES) {
         if (!res && !stopAll) setStatus(`⏸ Tab war verdeckt – Episode ${ep.n} wird neu aufgenommen, sobald der Tab wieder sichtbar ist …`, "err");
       }
       if (!res) break;
-      const name = download(ep, res.blob, res.ext);
+      const mb = (res.blob.size / 1048576).toFixed(1);
+      if (hook && res.ext === "mp4") {
+        try {
+          setStatus(`📤 Episode ${ep.n} wird an Make.com gesendet (${mb} MB) …`);
+          const name = await sendWithRetry(hook, ep, res.blob, res.ext, (p) => { ui.time.textContent = `📤 Ep. ${ep.n} · ${Math.round(p * 100)} %`; });
+          keep(ep, res.blob, res.ext, { sent: true }); sent++;
+          setStatus(`✓ ${name} (${mb} MB) an Make.com übergeben.`, "ok");
+        } catch (e) {
+          const name = keep(ep, res.blob, res.ext, { click: true });
+          setStatus(`⚠️ Webhook fehlgeschlagen (${e.message}) – ${name} wurde stattdessen heruntergeladen.`, "err");
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      } else {
+        const name = keep(ep, res.blob, res.ext, { click: true });
+        setStatus(`✓ ${name} (${mb} MB) heruntergeladen${hook ? " (WebM wird nicht an Make.com gesendet)" : ""}.`, hook ? "err" : "ok");
+        await new Promise((r) => setTimeout(r, 700)); // kurze Pause zwischen den Downloads
+      }
       states[ep.n] = "ok"; ok++;
-      setStatus(`✓ ${name} (${(res.blob.size / 1048576).toFixed(1)} MB) heruntergeladen.`, "ok");
-      await new Promise((r) => setTimeout(r, 700)); // kurze Pause zwischen den Downloads
     } catch (e) {
       states[ep.n] = "err";
       setStatus(`⚠️ Episode ${ep.n}: ${e.message}`, "err");
@@ -749,9 +865,10 @@ async function generateAll(list = EPISODES) {
   renderList(Object.fromEntries(Object.entries(states).filter(([, s]) => s === "err")));
   ui.bar.style.width = "100%";
   const failed = Object.values(states).filter((s) => s === "err").length;
-  if (stopAll) setStatus(`■ Abgebrochen – ${ok} von ${list.length} Reels wurden heruntergeladen.`, ok ? "ok" : "err");
-  else if (failed) setStatus(`⚠️ ${ok} von ${list.length} Reels fertig, ${failed} fehlgeschlagen – einzeln über ⏺ erneut aufnehmen.`, "err");
-  else setStatus(`🎉 Fertig! ${ok} Reel${ok === 1 ? "" : "s"} heruntergeladen – Dateinamen sind die Instagram-Captions.`, "ok");
+  const where = sent && sent === ok ? "an Make.com gesendet" : sent ? `fertig (${sent} an Make.com, ${ok - sent} heruntergeladen)` : "heruntergeladen";
+  if (stopAll) setStatus(`■ Abgebrochen – ${ok} von ${list.length} Reels ${where}.`, ok ? "ok" : "err");
+  else if (failed) setStatus(`⚠️ ${ok} von ${list.length} Reels ${where}, ${failed} fehlgeschlagen – einzeln über ⏺ erneut aufnehmen.`, "err");
+  else setStatus(`🎉 Fertig! ${ok} Reel${ok === 1 ? "" : "s"} ${where} – Dateinamen sind die Captions.`, "ok");
   if (list[list.length - 1]) startPreview(list[list.length - 1]);
 }
 
