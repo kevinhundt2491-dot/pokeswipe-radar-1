@@ -89,4 +89,15 @@ export async function ensureProfile(user: AuthUser) {
   return fallback ?? (await db.select().from(profiles).where(eq(profiles.userId, user.id)).limit(1))[0];
 }
 
-export const isAdmin = (user: AuthUser) => user.roles.includes("admin");
+/**
+ * Admin = Rolle "admin" in Netlify Identity ODER die (von Identity verifizierte) E-Mail steht
+ * in der Umgebungsvariable ADMIN_EMAILS (kommagetrennt). So bleibt der Admin-Zugang erhalten,
+ * auch wenn die Identity-Rolle verloren geht.
+ */
+function adminEmails(): Set<string> {
+  const raw = process.env.ADMIN_EMAILS || "";
+  return new Set(raw.split(/[,;\s]+/).map((e) => e.trim().toLowerCase()).filter(Boolean));
+}
+
+export const isAdmin = (user: AuthUser | null | undefined) =>
+  !!user && (user.roles.includes("admin") || adminEmails().has(user.email.toLowerCase()));
