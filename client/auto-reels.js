@@ -5,7 +5,8 @@
 // Der Dateiname ist "Episode N - <Werbespruch>", damit Make.com ihn als Caption übernehmen kann.
 // Nutzt die Zeichen-Engine, Farben, Schriften und echten Karten (REAL_CARDS) des Admin-Reel-Studios.
 import { reelEngine as E } from "./reel-studio.js";
-import { toast, hooks, state } from "./core.js";
+import { toast, hooks, state, api } from "./core.js";
+import { pickAvMime, unlockAudio, startSoundtrack, cuesFromTimeline, placeVoice } from "./reel-audio.js";
 
 const { W, H, FPS, C, disp, font, eur, km, clamp, prog, lerp, eOut, eIn, eInOut, eBack, rgba,
   rr, circle, text, wrap, drawCard, drawBackground, dexBar, caption, watermark, pill, button, tapRipple } = E;
@@ -21,40 +22,60 @@ const base = {
   radarLabel: (n) => `📡 Live-Radar · ${n} Deals unter Cardmarket-Trend`,
 };
 const EPISODES = [
-  { ...base, n: 1, title: "Virtueller Binder-Scanner & Live Cardmarket-Preis-Check",
+  { ...base, n: 1,
+    vo: ["Episode eins: Scannen und Preise checken!", "Frisch gezogen? Halt die Karte einfach in die Kamera. Der Scanner erkennt sie sofort und zeigt dir live den aktuellen Cardmarket-Preis.", "Jeder Scan landet direkt in deinem digitalen Binder – mit dem Wert deiner Sammlung immer im Blick.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "Virtueller Binder-Scanner & Live Cardmarket-Preis-Check",
     slogan: "Frische Pulls direkt in den digitalen Binder scannen und Cardmarket-Preise live prüfen! ⚡️💎",
     scenes: [["scan", 3], ["binder", 2]], ctaTag: "Scannen, sammeln, Preise live checken" },
-  { ...base, n: 2, title: "Tinder-Swipe für Tauschkarten & lokales Match",
+  { ...base, n: 2,
+    vo: ["Episode zwei: Swipen statt suchen!", "Wisch nach links, wenn dich eine Karte kalt lässt. Wisch nach rechts, wenn du sie willst. Passt es auf beiden Seiten, habt ihr ein Tausch-Match.", "Das Tausch-Radar zeigt dir Sammler im Umkreis von zehn Kilometern.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "Tinder-Swipe für Tauschkarten & lokales Match",
     slogan: "Swipe nach rechts für dein nächstes Tausch-Match mit Sammlern direkt in deiner Nähe! 💚🤝",
     scenes: [["swipe", 3], ["radar", 1.4]], swipeDirs: [-1, 1, -1, 1], radarMode: "trade",
     swipe: "Swipe rechts = Tausch-Match 📍", alert: "🤝 TAUSCH-MATCH: Ein Sammler in deiner Nähe will tauschen!",
     radarLabel: (n) => `📡 Tausch-Radar · ${n} Sammler im Umkreis von 10 km`, ctaTag: "Sicher tauschen mit Sammlern in deiner Nähe" },
-  { ...base, n: 3, title: "Live Flip-Radar & Schnäppchen-Alarm für eBay/Cardmarket",
+  { ...base, n: 3,
+    vo: ["Episode drei: Der Flip-Radar!", "Der Flip-Radar scannt eBay und Cardmarket rund um die Uhr. Liegt ein Angebot unter dem Cardmarket-Trend, schlägt er sofort Alarm.", "Dazu siehst du, welche Karten gerade im Preis steigen – und welche fallen.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "Live Flip-Radar & Schnäppchen-Alarm für eBay/Cardmarket",
     slogan: "Der Flip-Radar schlägt Alarm – Schnäppchen unter Cardmarket-Trend auf eBay & Cardmarket! 🚨💸",
     scenes: [["radar", 3], ["movers", 1.3]], dealCount: 3,
     radarLabel: (n) => `📡 Flip-Radar · ${n} Deals unter Trend`, ctaTag: "Nie wieder ein Schnäppchen verpassen" },
-  { ...base, n: 4, title: "Portfolio-Wert & Sammlungs-Tracker",
+  { ...base, n: 4,
+    vo: ["Episode vier: Dein Portfolio-Wert!", "Karte scannen – und dein Portfolio wächst automatisch mit.", "Hier siehst du den Gesamtwert deiner Sammlung live: jede Karte, jedes Set, jeder Euro. Der Verlauf zeigt dir, wie sich deine Sammlung entwickelt.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "Portfolio-Wert & Sammlungs-Tracker",
     slogan: "Dein Portfolio-Wert live im Blick – jede Karte, jeder Euro, jedes Set! 📈💼",
     scenes: [["scan", 1.4], ["portfolio", 3]], scan: "Karte scannen = Portfolio wächst 📈", ctaTag: "Deine Sammlung. Dein Wert. Live." },
-  { ...base, n: 5, title: "Umkreis-Radar auf der Karte für sichere Übergabe vor Ort",
+  { ...base, n: 5,
+    vo: ["Episode fünf: Tauschen in deiner Nähe!", "Die Umkreis-Karte zeigt dir Tauschpartner ganz in deiner Nähe. Mit Bewertungen, verifizierten Profilen und einem Vorschlag für einen sicheren, öffentlichen Treffpunkt.", "Das Radar meldet dir neue Sammler bis zehn Kilometer um dich herum.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "Umkreis-Radar auf der Karte für sichere Übergabe vor Ort",
     slogan: "Tauschpartner im Umkreis finden und sicher vor Ort übergeben! 📍🛡️",
     scenes: [["map", 3], ["radar", 1.3]], radarMode: "trade",
     alert: "📍 IN DEINER NÄHE: Tauschpartner gefunden – sicher vor Ort übergeben!",
     radarLabel: (n) => `📡 Umkreis-Radar · ${n} Sammler bis 10 km`, ctaTag: "Lokal tauschen – sicher & persönlich" },
-  { ...base, n: 6, title: "Pull-Wall & Community-Feed für die besten Hits",
+  { ...base, n: 6,
+    vo: ["Episode sechs: Die Pull-Wall!", "Auf der Pull-Wall zeigt die Community ihre krassesten Hits. Feier die besten Pulls, sieh dir ihren Cardmarket-Wert an und lass dich inspirieren.", "Selbst was Großes gezogen? Scannen und ab damit auf die Wall!", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "Pull-Wall & Community-Feed für die besten Hits",
     slogan: "Zeig deine krassesten Pulls auf der Pull-Wall und feier die Hits der Community! 📸🔥",
     scenes: [["pullwall", 3], ["scan", 1.2]], scan: "Pull gezogen? Ab auf die Wall! 📸", ctaTag: "Die Community für deutsche Sammler" },
-  { ...base, n: 7, title: "P2P Tausch-Hub & Direkt-Chat",
+  { ...base, n: 7,
+    vo: ["Episode sieben: Tausch-Hub mit Chat!", "Karte gefunden? Ein Swipe – und du schreibst direkt an.", "Im Direkt-Chat schickst du dein Tauschangebot, ihr klärt alle Details und bestätigt den Tausch mit einem Klick. Ganz ohne Gebühren.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "P2P Tausch-Hub & Direkt-Chat",
     slogan: "Tausch-Hub mit Direkt-Chat – Angebot schicken, Deal klarmachen, fertig! 💬🤝",
     scenes: [["swipe", 1.2], ["chat", 3]], swipeDirs: [-1, 1], swipe: "Karte gefunden? Direkt anschreiben 💬",
     ctaTag: "Tauschen ohne Gebühren – direkt im Chat" },
-  { ...base, n: 8, title: "Top-Mover & Preissturz-Analyse aktueller Sets",
+  { ...base, n: 8,
+    vo: ["Episode acht: Die Top-Mover!", "Wer steigt, wer stürzt ab? Die Top-Mover zeigen dir, welche Karten aus den aktuellen Sets gerade den Markt bewegen – mit Preisstürzen auf einen Blick.", "Und fällt eine Karte unter den Trend, meldet sich der Radar.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "Top-Mover & Preissturz-Analyse aktueller Sets",
     slogan: "Top-Mover & Preisstürze – diese Karten bewegen gerade den Markt! 📊📉",
     scenes: [["movers", 3], ["radar", 1.3]], dealCount: 2, ctaTag: "Markt verstehen. Clever kaufen." },
-  { ...base, n: 9, title: "Automatischer Wunschlisten-Abgleich beim Tauschen",
+  { ...base, n: 9,
+    vo: ["Episode neun: Der Wunschlisten-Abgleich!", "Trag deine Wunschkarten einfach ein. Die App gleicht sie automatisch mit den Tauschangeboten anderer Sammler ab und hakt jeden Treffer für dich ab.", "Bei einem Treffer startet sofort der Chat mit dem passenden Tauschpartner.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "Automatischer Wunschlisten-Abgleich beim Tauschen",
     slogan: "Deine Wunschliste tauscht mit – der automatische Abgleich findet sofort passende Karten! ⭐🔄",
     scenes: [["wishlist", 3], ["chat", 1.6]], ctaTag: "Wunschkarten finden – automatisch" },
-  { ...base, n: 10, title: "All-in-One App-Tour",
+  { ...base, n: 10,
+    vo: ["Episode zehn: Die komplette App-Tour!", "Karten scannen, Preise live prüfen.", "Swipen und Tauschpartner finden.", "Der Radar findet Schnäppchen.", "Tauschen in deiner Nähe.", "Dein Portfolio immer im Blick.", "Und die besten Pulls der Community.", "Hol dir Pokéswipe Radar jetzt kostenlos – Link in der Bio!"],
+    title: "All-in-One App-Tour",
     slogan: "Scannen, Swipen, Tauschen & Sparen – die komplette Pokémon-TCG-App für deutsche Sammler! 🚀🔥",
     scenes: [["scan", 1], ["swipe", 1], ["radar", 1], ["map", 0.9], ["portfolio", 0.9], ["pullwall", 0.8]],
     ctaTag: "Binder, Swipe, Radar, Tausch & Portfolio" },
@@ -588,6 +609,32 @@ const LIMITS = [[5, "Free"], [100, "Core"], [250, "Pro"], [500, "Teams"], [1000,
 const LIMIT_KEY = "pokeswipe.autoReels.limitMb";
 let limitMb = LIMITS.some(([mb]) => mb === Number(load(LIMIT_KEY, 100))) ? Number(load(LIMIT_KEY, 100)) : 100;
 const MB = 1024 * 1024;
+
+// Deutsche Sprecherstimme (Voiceover) – Text je Szene steht in EPISODES[].vo (Hook, Szenen…, CTA)
+const VOICE_KEY = "pokeswipe.autoReels.voice";
+let voiceOn = load(VOICE_KEY, "1") !== "0";
+const voiceModes = new Map(); // Episode -> "voice" | "placeholder" | "off" (geht als Feld voiceover_mode an Make)
+const voiceCache = new Map(); // Text -> AudioBuffer (pro Sitzung; serverseitig zusätzlich in Blobs)
+const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
+
+/** Sprecher-Clips einer Episode holen (Server: ElevenLabs/OpenAI TTS), dekodieren und auf die Szenen legen. */
+async function loadVoice(ep, D, ac) {
+  const tl = timeline(ep, D);
+  if (!Array.isArray(ep.vo) || ep.vo.length !== tl.length) throw new Error(`Sprechertext passt nicht zu den Szenen von Episode ${ep.n}`);
+  const missing = ep.vo.map((text, i) => ({ id: String(i), text })).filter((l) => !voiceCache.has(l.text));
+  if (missing.length) {
+    const res = await api("/api/admin/voiceover", { method: "POST", body: { lines: missing } });
+    for (const clip of res.clips || []) {
+      const line = missing[Number(clip.id)];
+      if (!line) continue;
+      voiceCache.set(line.text, await ac.decodeAudioData(b64ToBuf(clip.audio)));
+    }
+  }
+  const clips = tl.map(([, a, b], i) => ({ id: tl[i][0], at: a, end: b, buffer: voiceCache.get(ep.vo[i]), keep: i === 0 || i === tl.length - 1 }));
+  if (clips.some((c) => !c.buffer)) throw new Error("Sprachausgabe unvollständig");
+  const placed = placeVoice(clips, D);
+  return { placed, dropped: clips.length - placed.length };
+}
 const estMb = (D = duration) => (mbit * D) / 8 * 1.05; // +5 % Container-Overhead
 
 // Geheimer Token: wird als Feld "token" mitgeschickt. Im Make-Szenario direkt nach dem Webhook einen
@@ -644,6 +691,8 @@ function build() {
               <select id="ar-limit">${LIMITS.map(([mb, plan]) => `<option value="${mb}"${mb === limitMb ? " selected" : ""}>${mb} MB (${plan})</option>`).join("")}</select>
             </div>
             <small id="ar-size-info"></small>
+            <label class="ar-row" for="ar-voice" style="cursor:pointer;gap:8px"><input id="ar-voice" type="checkbox" style="width:18px;height:18px;accent-color:#ffcb05"> 🎙️ Deutsche Sprecherstimme (Voiceover) einbetten</label>
+            <small id="ar-voice-info"></small>
           </div>
           <button type="button" class="ar-btn ar-go" data-ar="all">🚀 Alle 10 Episoden jetzt vollautomatisch generieren</button>
           <button type="button" class="ar-btn ar-stop" data-ar="stop" hidden>■ Generierung abbrechen</button>
@@ -656,7 +705,7 @@ function build() {
           <div class="ar-status" id="ar-status"></div>
           <ol id="ar-list"></ol>
           <p class="ar-hint" id="ar-format"></p>
-          <p class="ar-hint">Während der Generierung diesen Tab sichtbar lassen (nicht minimieren oder wechseln) – jedes Reel wird in Echtzeit gezeichnet, alle 10 dauern zusammen etwa <span id="ar-total"></span>. Wird der Tab verdeckt, wartet der Generator und nimmt die Episode danach neu auf. Ist eine Webhook-URL eingetragen, geht jedes fertige MP4 direkt an Make.com (Felder: <code>file</code>, <code>filename</code>, <code>episode</code>, <code>slogan</code>, <code>title</code>, <code>token</code>, <code>upload_id</code> – über <code>upload_id</code> kann das Szenario Doppel-Lieferungen erkennen). Ohne URL oder bei einem Fehler landet die Datei im Download-Ordner – beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“, bitte erlauben.</p>
+          <p class="ar-hint">Während der Generierung diesen Tab sichtbar lassen (nicht minimieren oder wechseln) – jedes Reel wird in Echtzeit gezeichnet, alle 10 dauern zusammen etwa <span id="ar-total"></span>. Wird der Tab verdeckt, wartet der Generator und nimmt die Episode danach neu auf. Ist eine Webhook-URL eingetragen, geht jedes fertige MP4 direkt an Make.com (Felder: <code>file</code>, <code>filename</code>, <code>episode</code>, <code>slogan</code>, <code>title</code>, <code>token</code>, <code>voiceover</code> (gesprochener Text), <code>voiceover_mode</code> (<code>voice</code>/<code>placeholder</code>/<code>off</code>), <code>upload_id</code> – über <code>upload_id</code> kann das Szenario Doppel-Lieferungen erkennen). Ohne URL oder bei einem Fehler landet die Datei im Download-Ordner – beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“, bitte erlauben.</p>
         </div>
         <div class="ar-stage"><canvas id="ar-canvas" width="${W}" height="${H}"></canvas><span class="ar-time" id="ar-time"></span></div>
       </div>
@@ -689,6 +738,10 @@ function build() {
   ui.mbit = el.querySelector("#ar-mbit");
   ui.limit = el.querySelector("#ar-limit");
   ui.sizeInfo = el.querySelector("#ar-size-info");
+  ui.voice = el.querySelector("#ar-voice");
+  ui.voiceInfo = el.querySelector("#ar-voice-info");
+  ui.voice.checked = voiceOn;
+  ui.voice.addEventListener("change", () => { voiceOn = ui.voice.checked; save(VOICE_KEY, voiceOn ? "1" : "0"); updateVoiceInfo(); });
   ui.token.value = getToken();
   ui.token.addEventListener("input", () => save(TOKEN_KEY, ui.token.value.trim()));
   ui.mbit.addEventListener("change", () => { mbit = Number(ui.mbit.value) || 8; save(BITRATE_KEY, String(mbit)); updateSizeInfo(); });
@@ -749,6 +802,22 @@ function updateSizeInfo() {
     ? `⚠️ ≈ ${est.toFixed(0)} MB pro Reel – über dem Make-Limit von ${limitMb} MB. Solche Reels werden nicht gesendet, sondern heruntergeladen. Qualität oder Länge reduzieren.`
     : `✓ ≈ ${est.toFixed(1).replace(".", ",")} MB pro Reel (Limit ${limitMb} MB). Größere Dateien werden automatisch lokal gespeichert statt gesendet.`;
 }
+let voiceReady = null; // null = unbekannt, sonst { ready, provider }
+function updateVoiceInfo() {
+  if (!ui.voiceInfo) return;
+  ui.voiceInfo.classList.toggle("warn", voiceOn && voiceReady && !voiceReady.ready);
+  ui.voiceInfo.textContent = !voiceOn
+    ? "Aus – die Reels bekommen nur Musik und Soundeffekte."
+    : !voiceReady
+      ? "Sprachdienst wird geprüft …"
+      : voiceReady.ready
+        ? `✓ Ein freundlicher deutscher Sprecher (${voiceReady.provider === "openai" ? "OpenAI TTS" : "ElevenLabs"}) erklärt jede Szene – passend getimt, Musik wird darunter leiser. Das Video geht erst mit fertiger Tonspur an Make.com.`
+        : "⚠️ Platzhalter-Modus: Noch kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt). Die Reels werden vorerst nur mit Musik aufgenommen und an Make.com mit voiceover_mode=placeholder gemeldet. Sobald der Schlüssel gesetzt ist, spricht automatisch der Sprecher.";
+}
+async function checkVoice() {
+  try { voiceReady = await api("/api/admin/voiceover/status"); } catch { voiceReady = { ready: false }; }
+  updateVoiceInfo();
+}
 function updateBatchLabel() {
   if (ui.batch) ui.batch.textContent = `🎞️ Serien-Modus: ${batchSel.size} ausgewählte nacheinander`;
 }
@@ -758,7 +827,7 @@ function setStatus(msg, kind = "") { ui.status.textContent = msg; ui.status.clas
 function setBusy(b) {
   ui.len.disabled = b; ui.go.disabled = b; ui.stop.hidden = !b;
   ui.batch.disabled = b; ui.hook.disabled = b;
-  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b;
+  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b;
   ui.root.querySelectorAll('[data-ar^="sel-"],[data-ar^="token-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll("button").forEach((x) => { x.disabled = b; });
 }
@@ -801,11 +870,29 @@ const waitVisible = () => new Promise((resolve) => {
 });
 
 /** Eine Episode in Echtzeit aufnehmen. Liefert { blob, ext } oder null bei Abbruch (Tab verdeckt). */
-async function recordEpisode(ep, D, mime, onTick) {
+async function recordEpisode(ep, D, mime, onTick, withAudio = false, voice = null) {
   const ext = mime.startsWith("video/mp4") ? "mp4" : "webm";
   renderEpisode(ctx, 0, ep, D);
-  const stream = ui.canvas.captureStream(FPS);
-  const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: mbit * 1_000_000 });
+  const video = ui.canvas.captureStream(FPS);
+  // Tonspur: Synth-Musik + Soundeffekte passend zu den Szenenwechseln
+  const ac = withAudio ? unlockAudio() : null;
+  let sound = null;
+  if (ac) {
+    try { if (ac.state !== "running") await ac.resume(); } catch { /* ohne Ton weiter */ }
+    if (ac.state === "running") {
+      try { sound = startSoundtrack(ac, D, cuesFromTimeline(timeline(ep, D), ep), ep.n, voice || []); } catch { sound = null; }
+    }
+  }
+  // Mit Voiceover nie stumm aufnehmen – lieber abbrechen, als ein Reel ohne Sprecher zu veröffentlichen
+  if (voice && !sound) { video.getTracks().forEach((tr) => tr.stop()); throw new Error("Tonspur mit Sprecherstimme konnte nicht gestartet werden"); }
+  const stream = sound ? new MediaStream([...video.getVideoTracks(), sound.track]) : video;
+  const opts = { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: mbit * 1_000_000, ...(sound ? { audioBitsPerSecond: 192_000 } : {}) };
+  let rec;
+  try { rec = new MediaRecorder(stream, opts); }
+  catch (e) {
+    sound?.stop(); video.getTracks().forEach((tr) => tr.stop());
+    throw new Error(`Aufnahme konnte nicht starten: ${e.message}`);
+  }
   const chunks = [];
   let aborted = false, error = null;
   const onHide = () => { if (document.hidden) { aborted = true; if (rec.state === "recording") rec.stop(); } };
@@ -828,7 +915,8 @@ async function recordEpisode(ep, D, mime, onTick) {
   });
   if (rec.state === "recording") rec.stop();
   await done;
-  stream.getTracks().forEach((tr) => tr.stop());
+  sound?.stop();
+  video.getTracks().forEach((tr) => tr.stop());
   document.removeEventListener("visibilitychange", onHide);
   if (error) throw new Error(`Aufnahmefehler: ${error}`);
   if (aborted) return null;
@@ -868,6 +956,8 @@ function postToWebhook(url, ep, blob, ext, uploadId, onProgress) {
   form.append("episode", String(ep.n));
   form.append("slogan", ep.slogan);
   form.append("title", ep.title);
+  if (Array.isArray(ep.vo)) form.append("voiceover", ep.vo.join(" "));
+  form.append("voiceover_mode", voiceModes.get(ep.n) || "off"); // "voice" = Sprecher eingebettet, "placeholder" = noch ohne Sprecher // gesprochener Text (z. B. für Beschreibung/Untertitel)
   form.append("upload_id", uploadId); // bleibt bei Wiederholungen gleich → Make kann Duplikate erkennen
   const token = ui.token.value.trim();
   if (token) form.append("token", token);
@@ -908,10 +998,17 @@ async function sendWithRetry(url, ep, blob, ext, onProgress) {
 async function generateAll(list = EPISODES) {
   if (mode === "rec") return;
   if (E.isStudioBusy()) return setStatus("⚠️ Das Reel-Studio nimmt gerade auf – bitte warten.", "err");
-  const mime = E.pickMime();
+  const { mime, audio } = pickAvMime(E.pickMime);
   if (mime === null || typeof ui.canvas.captureStream !== "function") {
     return setStatus("⚠️ Dieser Browser kann kein Canvas aufnehmen. Bitte aktuelles Chrome, Edge oder Safari verwenden.", "err");
   }
+  const ac = audio ? unlockAudio() : null; // noch im Klick-Handler entsperren, sonst bleibt der AudioContext stumm
+  if (voiceOn && !ac) return setStatus("⚠️ Dieser Browser kann keinen Ton mit aufnehmen – für das Voiceover bitte aktuelles Chrome oder Edge verwenden.", "err");
+  if (voiceOn && !voiceReady) await checkVoice();
+  // Platzhalter-Modus: Ohne TTS-Schlüssel (ELEVENLABS_API_KEY / OPENAI_TTS_API_KEY) wird ohne Sprecher
+  // aufgenommen und an Make.com mit voiceover_mode=placeholder gemeldet. Sobald ein Schlüssel gesetzt ist,
+  // greift automatisch die echte Sprecherstimme.
+  const useVoice = voiceOn && !!voiceReady?.ready;
   // Immer die URL verwenden, die gerade im Feld steht – eine ungültige Eingabe sperrt den Start.
   const hs = hookState();
   if (hs.error) { ui.hook.focus(); return setStatus(`⚠️ ${hs.error}`, "err"); }
@@ -930,16 +1027,28 @@ async function generateAll(list = EPISODES) {
     try {
       setStatus(`Lade Karten für Episode ${ep.n} …`);
       await E.buildPlan(); await buildExtras();
+      let voice = null;
+      if (useVoice) {
+        setStatus(`🎙️ Sprecherstimme für Episode ${ep.n} wird erzeugt …`);
+        try {
+          const v = await loadVoice(ep, D, ac);
+          voice = v.placed;
+          if (v.dropped) setStatus(`🎙️ Episode ${ep.n}: ${v.dropped} Satz/Sätze passen nicht in ${D} s und werden ausgelassen.`, "err");
+        } catch (e) {
+          throw new Error(`Voiceover fehlgeschlagen (${e.message}) – Episode wurde nicht gesendet`);
+        }
+      }
+      voiceModes.set(ep.n, voice ? "voice" : voiceOn ? "placeholder" : "off");
       let res = null;
       while (!res && !stopAll) {
         await waitVisible();
         // Displaysperre geht verloren, wenn der Tab verdeckt war – neu anfordern (Punkt D)
         if (!wake || wake.released) { try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; } }
-        setStatus(`⏺ Episode ${ep.n} (${i + 1}/${list.length}) wird aufgenommen (${mime.startsWith("video/mp4") ? "MP4" : "WebM"}, 60 FPS, ${mbit} Mbit/s) – Tab sichtbar lassen …`);
+        setStatus(`⏺ Episode ${ep.n} (${i + 1}/${list.length}) wird aufgenommen (${mime.startsWith("video/mp4") ? "MP4" : "WebM"}, 60 FPS, ${mbit} Mbit/s${voice ? ", mit Sprecher + Musik" : useVoice === false && voiceOn && audio ? ", Platzhalter: nur Musik, noch kein Sprecher" : audio ? ", mit Ton" : ", ohne Ton"}) – Tab sichtbar lassen …`);
         res = await recordEpisode(ep, D, mime, (t) => {
           ui.time.textContent = `⏺ Ep. ${ep.n} · ${fmt(t, D)}`;
           ui.bar.style.width = `${((i + t / D) / list.length) * 100}%`;
-        });
+        }, audio, voice);
         if (!res && !stopAll) setStatus(`⏸ Tab war verdeckt – Episode ${ep.n} wird neu aufgenommen, sobald der Tab wieder sichtbar ist …`, "err");
       }
       if (!res) break;
@@ -991,12 +1100,14 @@ async function open() {
   if (!ui.root.hidden) return;
   ui.root.hidden = false;
   document.documentElement.style.overflow = "hidden";
-  const mime = E.pickMime();
+  const { mime, audio } = pickAvMime(E.pickMime);
+  const tone = audio ? " 🔊 Mit Ton (Musik + Soundeffekte)." : " 🔇 Dieser Browser kann hier keinen Ton mit aufnehmen.";
+  updateVoiceInfo(); checkVoice();
   ui.format.textContent = mime === null
     ? "⚠️ MediaRecorder wird von diesem Browser nicht unterstützt."
     : mime.startsWith("video/mp4")
-      ? `✓ Ausgabeformat: MP4 (${mime}) – passt für Instagram Reels und Make.com.`
-      : `⚠️ Dieser Browser kann kein MP4 aufnehmen – es wird WebM gespeichert, das Instagram nicht annimmt. Für MP4 bitte aktuelles Chrome/Edge (ab Version 126) oder Safari nutzen.`;
+      ? `✓ Ausgabeformat: MP4 (${mime}) – passt für Instagram Reels und Make.com.${tone}`
+      : `⚠️ Dieser Browser kann kein MP4 aufnehmen – es wird WebM gespeichert, das Instagram nicht annimmt. Für MP4 bitte aktuelles Chrome/Edge (ab Version 126) oder Safari nutzen.${tone}`;
   if (!xp) {
     setBusy(true); ui.stop.hidden = true; setStatus("Lade Schriften, Logo und Karten aus der App …");
     try { await E.prepare(); await E.buildPlan(); await buildExtras(); setStatus("✓ Bereit. Ein Klick auf 🚀 nimmt alle 10 Episoden nacheinander auf.", "ok"); }
