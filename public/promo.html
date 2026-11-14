@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="theme-color" content="#0c1022" />
+<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@500;700;800;900&family=Lilita+One&display=swap" />
+<title>PokeSwipe Radar – Promo-Video (9:16)</title>
+<style>
+  :root {
+    --yellow: #ffcb05; --red: #d9363e; --red-dark: #9e1f2a; --blue: #4a9be0; --green: #34d399;
+    --night: #0c1022; --night-2: #131a33; --night-3: #1b2444; --ink: #f3efe4; --soft: #b9b7c9;
+    --display: "Lilita One", "Trebuchet MS", sans-serif; --body: "Figtree", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; overflow: hidden; font-family: var(--body); color: var(--ink); }
+  body { display: grid; place-items: center; }
+
+  /* ---------- Bühne: feste 1080x1920, per JS auf das Fenster skaliert ---------- */
+  #stage {
+    width: 1080px; height: 1920px; position: relative; overflow: hidden; flex: none;
+    transform-origin: center center;
+    background:
+      radial-gradient(900px 700px at 90% -5%, rgba(217,54,62,.38), transparent 60%),
+      radial-gradient(800px 700px at -10% 40%, rgba(74,155,224,.26), transparent 60%),
+      radial-gradient(900px 700px at 60% 110%, rgba(255,203,5,.2), transparent 60%),
+      var(--night);
+  }
+  #stage::before { /* Pokéball-Raster */
+    content: ""; position: absolute; inset: 0; opacity: .9;
+    background: url("data:image/svg+xml,%3Csvg width='180' height='180' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='rgba(243,239,228,0.05)' stroke-width='2'%3E%3Ccircle cx='60' cy='60' r='34'/%3E%3Cpath d='M26 60h22M72 60h22'/%3E%3Ccircle cx='60' cy='60' r='11'/%3E%3C/g%3E%3C/svg%3E");
+    animation: drift 40s linear infinite;
+  }
+  @keyframes drift { to { background-position: 360px 720px; } }
+
+  /* ---------- Captions ---------- */
+  .cap {
+    position: absolute; left: 70px; right: 70px; top: 150px; z-index: 30; text-align: center;
+    font-family: var(--display); font-size: 92px; line-height: 1.02; letter-spacing: .5px;
+    text-shadow: 0 8px 0 rgba(0,0,0,.35), 0 0 40px rgba(0,0,0,.5);
+    opacity: 0; transform: translateY(40px) scale(.94);
+    transition: opacity .28s ease, transform .4s cubic-bezier(.2,1.4,.4,1);
+  }
+  .cap.on { opacity: 1; transform: none; }
+  .cap.out { opacity: 0; transform: translateY(-30px) scale(1.04); }
+  .cap .hl { color: var(--yellow); }
+  .cap .hl-r { color: #ff6b6b; }
+  .cap .hl-g { color: var(--green); }
+  .cap .chip {
+    display: inline-block; font-family: var(--body); font-weight: 900; font-size: 34px; letter-spacing: 3px; text-transform: uppercase;
+    background: var(--yellow); color: #1a1420; padding: 10px 26px; border-radius: 999px; margin-bottom: 22px; text-shadow: none;
+  }
+  .sub {
+    position: absolute; left: 90px; right: 90px; bottom: 120px; z-index: 30; text-align: center;
+    font-weight: 800; font-size: 40px; line-height: 1.25; color: var(--ink);
+    background: rgba(12,16,34,.78); border: 2px solid rgba(255,203,5,.25); border-radius: 28px; padding: 22px 30px;
+    backdrop-filter: blur(6px); opacity: 0; transform: translateY(20px); transition: all .3s ease;
+  }
+  .sub.on { opacity: 1; transform: none; }
+
+  /* ---------- Smartphone ---------- */
+  .phone {
+    position: absolute; left: 50%; top: 470px; width: 640px; height: 1300px; margin-left: -320px; z-index: 10;
+    border-radius: 86px; background: #05070f; padding: 22px;
+    box-shadow: 0 0 0 4px #2a3050, 0 0 0 10px #0a0d1a, 0 60px 120px -20px rgba(0,0,0,.8), 0 0 140px rgba(255,203,5,.12);
+    transition: transform .7s cubic-bezier(.2,1,.3,1), opacity .5s;
+  }
+  .phone::before { content: ""; position: absolute; top: 40px; left: 50%; width: 170px; height: 46px; margin-left: -85px; background: #000; border-radius: 30px; z-index: 50; }
+  .screen { position: relative; width: 100%; height: 100%; border-radius: 66px; overflow: hidden; background: var(--night); }
+  .status { height: 100px; display: flex; align-items: flex-end; justify-content: space-between; padding: 0 50px 12px; font-weight: 800; font-size: 26px; color: #fff; background: var(--red); }
+  .dexbar {
+    background: linear-gradient(180deg, var(--red), var(--red-dark)); padding: 14px 30px 22px; display: flex; align-items: center; gap: 18px;
+    box-shadow: 0 7px 0 #1a1420; position: relative; z-index: 4;
+  }
+  .lens { width: 58px; height: 58px; border-radius: 50%; border: 5px solid var(--ink); box-shadow: 0 0 0 4px #1a1420;
+    background: radial-gradient(circle at 35% 30%, #c8ecff 0 12%, #4a9be0 13% 55%, #1f4f87 56% 100%); flex: none; }
+  .dexbar b { font-family: var(--display); font-size: 40px; font-weight: 400; }
+  .dexbar small { display: block; font-size: 20px; font-weight: 700; opacity: .8; letter-spacing: 1px; }
+  .views { position: absolute; left: 0; right: 0; top: 207px; bottom: 120px; }
+  .view { position: absolute; inset: 0; padding: 28px 26px; opacity: 0; transform: translateX(60px); transition: opacity .35s, transform .45s cubic-bezier(.2,1,.3,1); pointer-events: none; }
+  .view.on { opacity: 1; transform: none; }
+  .view.left { opacity: 0; transform: translateX(-60px); }
+  .tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: 120px; background: var(--night-2); border-top: 2px solid rgba(255,203,5,.14);
+    display: flex; justify-content: space-around; align-items: center; padding-bottom: 14px; }
+  .tab { font-size: 19px; font-weight: 800; color: var(--soft); display: flex; flex-direction: column; align-items: center; gap: 6px; transition: color .3s; }
+  .tab i { width: 46px; height: 46px; border-radius: 14px; background: var(--night-3); display: grid; place-items: center; font-style: normal; font-size: 26px; transition: background .3s, transform .3s; }
+  .tab.on { color: var(--yellow); }
+  .tab.on i { background: var(--yellow); transform: translateY(-6px); }
+
+  .h { font-family: var(--display); font-size: 40px; margin-bottom: 6px; }
+  .muted { color: var(--soft); font-size: 22px; font-weight: 700; }
+  .panel { background: var(--night-2); border: 2px solid rgba(255,203,5,.14); border-radius: 28px; padding: 22px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 900; font-size: 22px; border-radius: 16px; padding: 16px 18px; white-space: nowrap; }
+  .btn.cm { background: #1d4ed8; color: #fff; background: linear-gradient(180deg,#2a3f9e,#1c2a6e); border: 2px solid #5468d4; }
+  .btn.eb { background: #2563eb; color: #fff; }
+  .btn.y { background: var(--yellow); color: #1a1420; }
+  .btn.g { background: #10b981; color: #052e1f; }
+  .flash { animation: flash .9s ease 2; }
+  @keyframes flash { 0%,100% { box-shadow: 0 0 0 0 rgba(255,203,5,0); transform: scale(1); } 40% { box-shadow: 0 0 0 10px rgba(255,203,5,.55), 0 0 50px rgba(255,203,5,.7); transform: scale(1.07); } }
+
+  /* ---------- Finger-Tap ---------- */
+  .finger { position: absolute; z-index: 60; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,.75) 0 28%, rgba(255,255,255,.25) 30% 60%, transparent 62%);
+    opacity: 0; pointer-events: none; transition: left .5s cubic-bezier(.3,1,.4,1), top .5s cubic-bezier(.3,1,.4,1), opacity .2s; }
+  .finger.on { opacity: 1; }
+  .finger.tap { animation: tap .35s ease; }
+  @keyframes tap { 50% { transform: scale(.7); } }
+
+  /* ---------- Szene 1: Swipe ---------- */
+  .deck { position: relative; height: 760px; margin-top: 10px; }
+  .scard { position: absolute; left: 50%; top: 10px; width: 500px; margin-left: -250px; border-radius: 26px; overflow: hidden;
+    box-shadow: 0 30px 60px -10px rgba(0,0,0,.7); transition: transform .55s cubic-bezier(.3,.9,.4,1), opacity .55s; background: var(--night-3); }
+  .scard img { display: block; width: 100%; aspect-ratio: 63/88; object-fit: cover; }
+  .scard .holo { position: absolute; inset: 0; background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.35) 45%, rgba(120,200,255,.25) 52%, transparent 65%);
+    background-size: 250% 250%; animation: holo 2.4s linear infinite; mix-blend-mode: overlay; }
+  @keyframes holo { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+  .scard.gone-r { transform: translateX(700px) rotate(28deg); opacity: 0; }
+  .scard.gone-l { transform: translateX(-700px) rotate(-28deg); opacity: 0; }
+  .stamp { position: absolute; top: 40px; padding: 8px 22px; border: 6px solid; border-radius: 14px; font-family: var(--display); font-size: 52px; opacity: 0; transform: rotate(-14deg); transition: opacity .2s; }
+  .stamp.like { left: 30px; color: var(--green); border-color: var(--green); }
+  .stamp.nope { right: 30px; color: #ff6b6b; border-color: #ff6b6b; transform: rotate(14deg); }
+  .scard.show-like .like, .scard.show-nope .nope { opacity: 1; }
+  .pricepill { position: absolute; left: 18px; right: 18px; bottom: 18px; background: rgba(12,16,34,.88); border-radius: 18px; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center; font-weight: 900; font-size: 24px; }
+  .pricepill b { color: var(--yellow); font-size: 30px; }
+  .swipebtns { display: flex; justify-content: center; gap: 60px; margin-top: 20px; }
+  .swipebtns span { width: 110px; height: 110px; border-radius: 50%; display: grid; place-items: center; font-size: 50px; background: var(--night-2); border: 3px solid rgba(255,255,255,.1); }
+
+  .alert { position: absolute; left: 22px; right: 22px; top: 18px; z-index: 40; background: linear-gradient(180deg,#1e2850,#141b38);
+    border: 3px solid var(--yellow); border-radius: 30px; padding: 22px; box-shadow: 0 30px 70px rgba(0,0,0,.7), 0 0 60px rgba(255,203,5,.35);
+    transform: translateY(-140%) scale(.9); transition: transform .55s cubic-bezier(.2,1.5,.4,1); }
+  .alert.on { transform: none; }
+  .alert .row { display: flex; gap: 18px; align-items: center; }
+  .alert img { width: 96px; border-radius: 10px; }
+  .alert .t { font-weight: 900; font-size: 26px; color: var(--yellow); letter-spacing: 1px; }
+  .alert .n { font-weight: 900; font-size: 30px; }
+  .alert .d { font-weight: 800; font-size: 24px; color: var(--green); }
+  .alert svg { width: 100%; height: 130px; margin-top: 12px; }
+  .draw { stroke-dasharray: 1200; stroke-dashoffset: 1200; }
+  .on .draw, .draw.go { animation: draw 1.6s ease forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  /* ---------- Szene 2: Master-Set ---------- */
+  .ringwrap { display: flex; align-items: center; gap: 26px; }
+  .ring { width: 190px; height: 190px; flex: none; position: relative; }
+  .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring .num { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-family: var(--display); font-size: 46px; line-height: 1; }
+  .ring .num small { display: block; font-family: var(--body); font-weight: 800; font-size: 18px; color: var(--soft); }
+  .bar { height: 18px; border-radius: 9px; background: var(--night-3); overflow: hidden; margin-top: 14px; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--yellow), #ff9f1a); width: 0; transition: width .5s ease; }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 22px; }
+  .cell { position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 63/88; background: var(--night-3); border: 2px dashed rgba(243,239,228,.18); }
+  .cell img { width: 100%; height: 100%; object-fit: cover; display: block; filter: grayscale(1) brightness(.35); transition: filter .4s, transform .4s; }
+  .cell .no { position: absolute; bottom: 4px; left: 0; right: 0; text-align: center; font-size: 15px; font-weight: 900; color: var(--soft); }
+  .cell.have { border: 2px solid var(--green); }
+  .cell.have img { filter: none; }
+  .cell.pop img { animation: pop .5s ease; }
+  @keyframes pop { 40% { transform: scale(1.25) rotate(-4deg); } }
+  .cell.have::after { content: "✓"; position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 50%; background: var(--green); color: #052e1f; font-weight: 900; font-size: 18px; display: grid; place-items: center; }
+  .missing { margin-top: 22px; display: flex; gap: 18px; align-items: center; opacity: 0; transform: translateY(30px); transition: all .45s cubic-bezier(.2,1.3,.4,1); }
+  .missing.on { opacity: 1; transform: none; }
+  .missing img { width: 120px; border-radius: 12px; }
+  .missing .p { font-family: var(--display); font-size: 40px; color: var(--yellow); }
+  .missing .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .addtoast { position: absolute; left: 50%; top: 30px; transform: translate(-50%, -30px); opacity: 0; background: #10b981; color: #052e1f; font-weight: 900; font-size: 24px; padding: 12px 24px; border-radius: 999px; transition: all .3s; white-space: nowrap; z-index: 5; }
+  .addtoast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- Szene 2b: Duplikat-Radar ---------- */
+  .dup { display: flex; gap: 22px; align-items: flex-start; margin-top: 20px; }
+  .dup .stack { position: relative; width: 230px; height: 330px; flex: none; }
+  .dup .stack img { position: absolute; width: 210px; border-radius: 14px; box-shadow: 0 16px 30px rgba(0,0,0,.6); transition: transform .5s cubic-bezier(.2,1.3,.4,1); }
+  .on .dup .stack img:nth-child(1) { transform: translate(-8px, 6px) rotate(-8deg); }
+  .on .dup .stack img:nth-child(2) { transform: translate(0, 2px) rotate(-3deg); }
+  .on .dup .stack img:nth-child(3) { transform: translate(8px, -2px) rotate(3deg); }
+  .on .dup .stack img:nth-child(4) { transform: translate(16px, -6px) rotate(8deg); }
+  .on .dup .stack img:nth-child(5) { transform: translate(24px, -10px) rotate(13deg); }
+  .qty { position: absolute; top: -14px; right: -18px; z-index: 5; background: var(--red); color: #fff; font-family: var(--display); font-size: 40px; width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; border: 5px solid var(--ink); }
+  .badge { margin-top: 26px; border-radius: 24px; padding: 22px 24px; background: linear-gradient(135deg, #3b1f04, #6b3a06); border: 3px solid var(--yellow);
+    font-weight: 900; font-size: 30px; line-height: 1.25; color: #ffe27a; opacity: 0; transform: scale(.6); transition: all .45s cubic-bezier(.2,1.6,.4,1); }
+  .badge.on { opacity: 1; transform: none; box-shadow: 0 0 50px rgba(255,203,5,.4); }
+  .badge small { display: block; color: var(--ink); font-size: 22px; font-weight: 700; margin-top: 6px; }
+
+  /* ---------- Szene 3: Flip-Radar & Portfolio ---------- */
+  .flip { display: flex; gap: 16px; align-items: center; padding: 16px; margin-top: 14px; background: var(--night-2); border: 2px solid rgba(255,255,255,.07); border-radius: 22px;
+    opacity: 0; transform: translateX(80px); transition: all .45s cubic-bezier(.2,1.2,.4,1); }
+  .flip.on { opacity: 1; transform: none; }
+  .flip.hot { border-color: var(--green); box-shadow: 0 0 40px rgba(52,211,153,.3); }
+  .flip img { width: 84px; border-radius: 10px; }
+  .flip .nm { font-weight: 900; font-size: 26px; }
+  .flip .mt { font-size: 20px; color: var(--soft); font-weight: 700; }
+  .flip .sp { margin-left: auto; text-align: right; }
+  .flip .sp b { display: block; font-family: var(--display); font-size: 36px; color: var(--green); }
+  .flip .sp span { font-size: 18px; font-weight: 800; color: var(--soft); }
+  .live { display: inline-flex; align-items: center; gap: 10px; font-weight: 900; font-size: 20px; color: #ff6b6b; letter-spacing: 2px; }
+  .live::before { content: ""; width: 14px; height: 14px; border-radius: 50%; background: #ff6b6b; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+  .pf-val { font-family: var(--display); font-size: 88px; line-height: 1; margin: 6px 0; }
+  .pf-gain { display: inline-block; font-weight: 900; font-size: 28px; color: #052e1f; background: var(--green); border-radius: 999px; padding: 6px 18px; }
+  .pf-chart { width: 100%; height: 300px; margin-top: 18px; }
+  .sell { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .toast2 { margin-top: 16px; text-align: center; font-weight: 900; font-size: 24px; padding: 14px; border-radius: 18px; background: rgba(16,185,129,.15); color: var(--green); border: 2px solid var(--green); opacity: 0; transform: translateY(14px); transition: all .3s; }
+  .toast2.on { opacity: 1; transform: none; }
+
+  /* ---------- Szene 4: CTA ---------- */
+  .cta { position: absolute; inset: 0; z-index: 35; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; opacity: 0; pointer-events: none; transition: opacity .6s; }
+  .cta.on { opacity: 1; }
+  .cta .logo { width: 300px; height: 300px; filter: drop-shadow(0 0 60px rgba(255,203,5,.45)); animation: spin-in 1s cubic-bezier(.2,1.4,.4,1) both; }
+  @keyframes spin-in { from { transform: rotate(-200deg) scale(.2); opacity: 0; } }
+  .cta h1 { font-family: var(--display); font-weight: 400; font-size: 120px; line-height: 1; margin-top: 30px; }
+  .cta h1 span { color: var(--yellow); }
+  .cta .url { margin-top: 34px; font-family: var(--display); font-size: 84px; color: #1a1420; background: var(--yellow); padding: 18px 46px; border-radius: 30px; box-shadow: 0 12px 0 #b38d00, 0 0 80px rgba(255,203,5,.5); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform: scale(1.05); } }
+  .cta .free { margin-top: 44px; font-weight: 900; font-size: 46px; color: var(--green); letter-spacing: 1px; }
+  .cta .tag { margin-top: 26px; font-weight: 800; font-style: italic; font-size: 40px; color: var(--ink); opacity: .9; }
+  .cta .mini { display: flex; gap: 22px; margin-top: 60px; }
+  .cta .mini img { width: 190px; border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,.6); animation: float 3s ease-in-out infinite; }
+  .cta .mini img:nth-child(2) { animation-delay: -1s; transform: translateY(-20px); }
+  .cta .mini img:nth-child(3) { animation-delay: -2s; }
+  @keyframes float { 50% { transform: translateY(-24px) rotate(2deg); } }
+
+  .flashcut { position: absolute; inset: 0; background: #fff; z-index: 80; opacity: 0; pointer-events: none; }
+  .flashcut.go { animation: cut .35s ease; }
+  @keyframes cut { 0% { opacity: .55; } 100% { opacity: 0; } }
+  .progress { position: absolute; left: 0; top: 0; height: 10px; background: var(--yellow); z-index: 90; width: 0; }
+  .note { position: absolute; left: 0; right: 0; bottom: 40px; z-index: 30; text-align: center; font-size: 20px; font-weight: 700; color: rgba(243,239,228,.5); }
+
+  /* ---------- Steuerung (im Aufnahme-Modus ausgeblendet) ---------- */
+  #controls { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 1000; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+    background: rgba(12,16,34,.92); border: 1px solid rgba(255,203,5,.3); border-radius: 16px; padding: 10px; font-size: 14px; max-width: 96vw; }
+  #controls button, #controls label { font: 800 14px var(--body); color: var(--ink); background: var(--night-3); border: 0; border-radius: 10px; padding: 9px 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  #controls button.primary { background: var(--yellow); color: #1a1420; }
+  #controls .time { font: 800 14px var(--body); color: var(--soft); padding: 9px 6px; min-width: 64px; text-align: center; }
+  body.rec #controls { display: none; }
+  body.rec { cursor: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="progress" id="progress"></div>
+  <div class="flashcut" id="flashcut"></div>
+
+  <!-- Captions -->
+  <div class="cap" id="c1a"><span class="hl-r">Schluss</span> mit unübersichtlichen Tabellen …</div>
+  <div class="cap" id="c1b">… und <span class="hl">verpassten Deals</span> auf Cardmarket!</div>
+  <div class="cap" id="c2a"><span class="chip">Neu</span><br>Master-Set-<span class="hl">Tracker</span></div>
+  <div class="cap" id="c2b">Sieht <span class="hl">sofort</span>, was dir noch fehlt</div>
+  <div class="cap" id="c2c"><span class="hl">1 Klick</span> zu Cardmarket &amp; eBay</div>
+  <div class="cap" id="c2d"><span class="chip">Duplikat-Radar</span><br>Karten <span class="hl">doppelt?</span></div>
+  <div class="cap" id="c3a"><span class="chip">Live</span><br>Flip-<span class="hl">Radar</span></div>
+  <div class="cap" id="c3b">Krasse Flips <span class="hl-g">vor allen anderen</span></div>
+  <div class="cap" id="c3c">Überschuss <span class="hl">verkaufen</span> – mit 1 Klick</div>
+  <div class="cap" id="c3d">Portfolio-Gewinne <span class="hl-g">live</span></div>
+
+  <div class="sub" id="sub"></div>
+
+  <!-- Smartphone -->
+  <div class="phone" id="phone">
+    <div class="screen">
+      <div class="status"><span>9:41</span><span>●●●● 5G ▮</span></div>
+      <div class="dexbar"><div class="lens"></div><div><b>PokeSwipe Radar</b><small id="dexsub">ARENA · SWIPE</small></div></div>
+
+      <div class="views">
+        <!-- Swipe -->
+        <div class="view" id="v-swipe">
+          <div class="alert" id="alert">
+            <div class="row">
+              <img data-card="sv03.5-199" alt="" />
+              <div><div class="t">🔔 DEAL-ALARM</div><div class="n">Glurak-ex · 151</div><div class="d" id="alert-d">Angebot 18 % unter Trend</div></div>
+            </div>
+            <svg viewBox="0 0 560 130" preserveAspectRatio="none">
+              <defs><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffcb05" stop-opacity=".35"/><stop offset="1" stop-color="#ffcb05" stop-opacity="0"/></linearGradient></defs>
+              <path d="M0 40 L60 52 L120 30 L180 46 L240 28 L300 38 L360 22 L420 34 L470 30 L520 96 L560 104 L560 130 L0 130Z" fill="url(#ga)"/>
+              <path class="draw" id="alert-line" d="M0 40 L60 52 L120 30 L180 46 L240 28 L300 38 L360 22 L420 34 L470 30 L520 96 L560 104" fill="none" stroke="#ffcb05" stroke-width="6" stroke-linejoin="round"/>
+              <circle cx="560" cy="104" r="10" fill="#34d399"/>
+            </svg>
+          </div>
+          <div class="deck" id="deck"></div>
+          <div class="swipebtns"><span>✖️</span><span>⭐</span><span>💚</span></div>
+        </div>
+
+        <!-- Master-Set-Tracker -->
+        <div class="view" id="v-set">
+          <div class="addtoast" id="addtoast">+ Karte eingetragen</div>
+          <div class="panel">
+            <div class="ringwrap">
+              <div class="ring">
+                <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="none" stroke="#1b2444" stroke-width="12"/>
+                  <circle id="ringarc" cx="50" cy="50" r="42" fill="none" stroke="#ffcb05" stroke-width="12" stroke-linecap="round" stroke-dasharray="263.9" stroke-dashoffset="263.9" style="transition: stroke-dashoffset .5s ease"/></svg>
+                <div class="num"><div><span id="pct">0</span>%<small>komplett</small></div></div>
+              </div>
+              <div style="flex:1">
+                <div class="h">Karmesin &amp; Purpur – 151</div>
+                <div class="muted"><b id="have" style="color:#f3efe4">0</b> / 207 Karten · Master-Set</div>
+                <div class="bar"><i id="setbar"></i></div>
+                <div class="muted" style="margin-top:12px">Noch <b id="miss" style="color:#ffcb05">207</b> fehlen</div>
+              </div>
+            </div>
+          </div>
+          <div class="grid" id="grid"></div>
+          <div class="panel missing" id="missing">
+            <img data-card="sv03.5-200" alt="" />
+            <div style="flex:1">
+              <div class="muted">Fehlt dir noch · #200</div>
+              <div style="font-weight:900;font-size:28px">Turtok-ex SIR</div>
+              <div class="p" id="miss-price">104,07 €</div>
+              <div class="btns"><span class="btn cm" id="b-cm">Cardmarket ↗</span><span class="btn eb" id="b-eb">🛒 eBay-Bestpreis*</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Duplikat-Radar -->
+        <div class="view" id="v-dup">
+          <div class="h">Duplikat-Radar</div>
+          <div class="muted">Doppelte Karten in deiner Sammlung</div>
+          <div class="dup">
+            <div class="stack">
+              <img data-card="sv08-057" alt="" /><img data-card="sv08-057" alt="" /><img data-card="sv08-057" alt="" /><img data-card="sv08-057" alt="" /><img data-card="sv08-057" alt="" />
+              <div class="qty">5x</div>
+            </div>
+            <div style="padding-top:20px">
+              <div style="font-weight:900;font-size:32px">Pikachu-ex</div>
+              <div class="muted">Stürmische Funken · 057/191</div>
+              <div class="muted" style="margin-top:14px">Trendpreis</div>
+              <div style="font-family:var(--display);font-size:52px;color:var(--yellow)" id="dup-price">4,14 €</div>
+              <div class="muted">Du behältst 1 Exemplar</div>
+            </div>
+          </div>
+          <div class="badge" id="badge">⚡ 4x Überschuss – Direkt auf dem P2P-Marktplatz anbieten<small id="dup-val">Verkaufswert: 16,56 €</small></div>
+          <div class="sell"><span class="btn y" id="b-p2p">📣 Inserat erstellen</span><span class="btn cm" id="b-csv">⬇ Cardmarket-CSV</span></div>
+          <div class="toast2" id="toast-p2p">✓ Angebot ist live in der Community</div>
+        </div>
+
+        <!-- Flip-Radar -->
+        <div class="view" id="v-flip">
+          <div style="display:flex;justify-content:space-between;align-items:center"><div class="h">Flip-Radar</div><span class="live">LIVE</span></div>
+          <div class="muted">Unterbewertete Karten · Cardmarket-Trend vs. Angebot</div>
+          <div id="flips"></div>
+          <div style="display:flex;gap:12px;margin-top:18px"><span class="btn eb" id="b-eb2" style="flex:1">🛒 Jetzt auf eBay kaufen*</span><span class="btn cm" style="flex:1">Cardmarket ↗</span></div>
+          <div class="muted" style="font-size:16px;margin-top:10px">*Partner-Link</div>
+        </div>
+
+        <!-- Portfolio -->
+        <div class="view" id="v-pf">
+          <div class="h">Mein Portfolio</div>
+          <div class="panel" style="margin-top:12px">
+            <div class="muted">Gesamtwert (Cardmarket-Trend)</div>
+            <div class="pf-val"><span id="pfv">0</span> €</div>
+            <span class="pf-gain" id="pfg">▲ +0 € (0 %)</span>
+            <svg class="pf-chart" viewBox="0 0 560 300" preserveAspectRatio="none">
+              <defs><linearGradient id="gp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34d399" stop-opacity=".45"/><stop offset="1" stop-color="#34d399" stop-opacity="0"/></linearGradient></defs>
+              <path id="pf-area" d="M0 250 L50 240 L100 246 L150 220 L200 226 L250 196 L300 204 L350 160 L400 150 L450 110 L500 92 L560 50 L560 300 L0 300Z" fill="url(#gp)" opacity="0" style="transition:opacity 1s .6s"/>
+              <path class="draw" id="pf-line" d="M0 250 L50 240 L100 246 L150 220 L200 226 L250 196 L300 204 L350 160 L400 150 L450 110 L500 92 L560 50" fill="none" stroke="#34d399" stroke-width="7" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px" id="pf-cards"></div>
+        </div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab" data-tab="swipe"><i>⚡</i>Arena</div>
+        <div class="tab" data-tab="flip"><i>📈</i>Preise</div>
+        <div class="tab" data-tab="community"><i>💬</i>Community</div>
+        <div class="tab" data-tab="map"><i>🗺️</i>Tausch</div>
+        <div class="tab" data-tab="portfolio"><i>📦</i>Sammlung</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="finger" id="finger"></div>
+
+  <!-- CTA -->
+  <div class="cta" id="cta">
+    <svg class="logo" viewBox="0 0 192 192"><circle cx="96" cy="96" r="80" fill="#ef4444"/><path d="M16 96a80 80 0 0 0 160 0z" fill="#f8fafc"/><rect x="16" y="88" width="160" height="16" fill="#0b0f19"/><circle cx="96" cy="96" r="28" fill="#0b0f19"/><circle cx="96" cy="96" r="15" fill="#ffcb05"/></svg>
+    <h1>PokeSwipe<br><span>Radar</span></h1>
+    <div class="url">pokeswipe-radar.de</div>
+    <div class="free">✓ Völlig kostenlos loslegen</div>
+    <div class="mini"><img data-card="sv03.5-199" alt="" /><img data-card="sv08-238" alt="" /><img data-card="sv03.5-205" alt="" /></div>
+    <div class="tag">Die ultimative App für deutsche Sammler.</div>
+  </div>
+  <div class="note" id="note">Preise: Cardmarket-Trend über PokeSwipe Radar · *eBay-Partner-Links</div>
+</div>
+
+<div id="controls">
+  <button class="primary" id="btn-play">▶ Abspielen</button>
+  <span class="time" id="time">0,0 s</span>
+  <label><input type="checkbox" id="opt-beat" checked /> Beat</label>
+  <label><input type="checkbox" id="opt-voice" /> Sprecher (Browser-Stimme)</label>
+  <button id="btn-rec">⏺ Aufnahme-Modus</button>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const stage = $("stage");
+  const DURATION = 43;
+
+  // ---------- Echte Karten (TCGdex-IDs, deutsche Kartenbilder) ----------
+  // Fallback-Preise = Cardmarket-Trend beim Erstellen; werden beim Laden live über /api/prices ersetzt.
+  const CARDS = {
+    "sv08-238": { name: "Pikachu-ex", set: "Stürmische Funken", no: "238/191", img: "https://assets.tcgdex.net/de/sv/sv08/238/high.webp", price: 199.3 },
+    "sv08-247": { name: "Pikachu-ex", set: "Stürmische Funken", no: "247/191", img: "https://assets.tcgdex.net/de/sv/sv08/247/high.webp", price: 52.87 },
+    "sv08-057": { name: "Pikachu-ex", set: "Stürmische Funken", no: "057/191", img: "https://assets.tcgdex.net/de/sv/sv08/057/high.webp", price: 4.14 },
+    "sv03.5-199": { name: "Glurak-ex", set: "151", no: "199/165", img: "https://assets.tcgdex.net/de/sv/sv03.5/199/high.webp", price: 343.78 },
+    "sv03.5-200": { name: "Turtok-ex", set: "151", no: "200/165", img: "https://assets.tcgdex.net/de/sv/sv03.5/200/high.webp", price: 104.07 },
+    "sv03.5-205": { name: "Mew-ex", set: "151", no: "205/165", img: "https://assets.tcgdex.net/de/sv/sv03.5/205/high.webp", price: 26.11 },
+  };
+  const SET_GRID = ["001","002","003","004","005","006","007","008","009","025","026","150"].map((n) => ({ id: `sv03.5-${n}`, no: n, img: `https://assets.tcgdex.net/de/sv/sv03.5/${n}/high.webp` }));
+
+  const local = location.hostname === "localhost" && location.port !== "8889";
+  const cdn = (url, w) => (local ? url : `/.netlify/images?url=${encodeURIComponent(url)}&w=${w}`);
+  const eur = (v) => v.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  const imgEl = (url, w) => { const i = new Image(); i.decoding = "async"; i.src = cdn(url, w); i.onerror = () => { i.onerror = null; i.src = "/card-fallback.svg"; }; return i; };
+
+  function hydrateImages() {
+    document.querySelectorAll("img[data-card]").forEach((i) => {
+      const c = CARDS[i.dataset.card]; if (!c) return;
+      i.src = cdn(c.img, 400); i.onerror = () => { i.onerror = null; i.src = "/card-fallback.svg"; };
+    });
+    // Swipe-Deck
+    const deck = $("deck");
+    ["sv03.5-199", "sv03.5-200", "sv08-247", "sv08-238"].forEach((id, k) => {
+      const c = CARDS[id];
+      const el = document.createElement("div");
+      el.className = "scard"; el.dataset.id = id;
+      el.style.transform = `translateY(${(3 - k) * 14}px) scale(${1 - (3 - k) * 0.03})`;
+      el.append(imgEl(c.img, 600));
+      el.insertAdjacentHTML("beforeend", `<div class="holo"></div><div class="stamp like">WILL ICH</div><div class="stamp nope">NOPE</div><div class="pricepill"><span>${c.name} · ${c.set}</span><b data-price="${id}">${eur(c.price)}</b></div>`);
+      deck.append(el);
+    });
+    // Set-Grid
+    const grid = $("grid");
+    SET_GRID.forEach((s) => {
+      const cell = document.createElement("div");
+      cell.className = "cell"; cell.append(imgEl(s.img, 160));
+      cell.insertAdjacentHTML("beforeend", `<div class="no">#${s.no}</div>`);
+      grid.append(cell);
+    });
+    // Flips
+    const flips = [
+      { id: "sv03.5-199", ask: 0.78 }, { id: "sv08-238", ask: 0.84 }, { id: "sv03.5-205", ask: 0.8 }, { id: "sv08-247", ask: 0.87 },
+    ];
+    $("flips").innerHTML = "";
+    flips.forEach((f, k) => {
+      const c = CARDS[f.id];
+      const row = document.createElement("div");
+      row.className = "flip" + (k === 0 ? " hot" : ""); row.dataset.ask = f.ask; row.dataset.id = f.id;
+      row.append(imgEl(c.img, 160));
+      row.insertAdjacentHTML("beforeend", `<div><div class="nm">${c.name}</div><div class="mt">${c.set} · ${c.no}</div><div class="mt">Angebot <b style="color:#f3efe4" data-ask="${f.id}">${eur(c.price * f.ask)}</b> · Trend <span data-price="${f.id}">${eur(c.price)}</span></div></div><div class="sp"><b data-gain="${f.id}">+${eur(c.price * (1 - f.ask))}</b><span>Spanne ${Math.round((1 - f.ask) * 100)} %</span></div>`);
+      $("flips").append(row);
+    });
+    // Portfolio-Karten
+    ["sv03.5-199", "sv08-238", "sv03.5-200"].forEach((id) => {
+      const i = imgEl(CARDS[id].img, 260); i.style.cssText = "width:100%;border-radius:12px"; $("pf-cards").append(i);
+    });
+  }
+
+  // ---------- Live-Preise aus der eigenen API ----------
+  async function loadPrices() {
+    try {
+      const res = await fetch(`/api/prices?ids=${Object.keys(CARDS).join(",")}`);
+      if (!res.ok) return;
+      const { prices } = await res.json();
+      for (const [id, p] of Object.entries(prices || {})) if (CARDS[id] && p && p.trend > 0) CARDS[id].price = p.trend;
+      renderPrices();
+    } catch { /* Fallback-Preise bleiben stehen */ }
+  }
+  function renderPrices() {
+    document.querySelectorAll("[data-price]").forEach((e) => (e.textContent = eur(CARDS[e.dataset.price].price)));
+    document.querySelectorAll(".flip").forEach((r) => {
+      const c = CARDS[r.dataset.id], a = Number(r.dataset.ask);
+      r.querySelector("[data-ask]").textContent = eur(c.price * a);
+      r.querySelector("[data-gain]").textContent = "+" + eur(c.price * (1 - a));
+    });
+    $("miss-price").textContent = eur(CARDS["sv03.5-200"].price);
+    $("dup-price").textContent = eur(CARDS["sv08-057"].price);
+    $("dup-val").textContent = "Verkaufswert: " + eur(CARDS["sv08-057"].price * 4);
+  }
+
+  // ---------- Skalierung der 1080x1920-Bühne ----------
+  function fit() {
+    const rec = document.body.classList.contains("rec");
+    const h = window.innerHeight - (rec ? 0 : 80), w = window.innerWidth;
+    const s = Math.min(w / 1080, h / 1920);
+    stage.style.transform = `scale(${s})`;
+    stage.style.margin = `${(1920 * s - 1920) / 2}px ${(1080 * s - 1080) / 2}px`;
+    document.body.style.paddingBottom = rec ? "0" : "80px";
+  }
+  window.addEventListener("resize", fit);
+
+  // ---------- Hilfen für die Timeline ----------
+  const caps = [...document.querySelectorAll(".cap")];
+  const views = ["v-swipe", "v-set", "v-dup", "v-flip", "v-pf"];
+  const cap = (id) => caps.forEach((c) => { if (c.id === id) { c.classList.remove("out"); c.classList.add("on"); } else if (c.classList.contains("on")) { c.classList.remove("on"); c.classList.add("out"); } });
+  const capOff = () => caps.forEach((c) => { if (c.classList.contains("on")) { c.classList.remove("on"); c.classList.add("out"); } });
+  const sub = (t) => { const s = $("sub"); if (!t) return s.classList.remove("on"); s.textContent = t; s.classList.add("on"); };
+  const view = (id, tab, label) => {
+    views.forEach((v) => { const e = $(v); if (v === id) { e.classList.remove("left"); e.classList.add("on"); } else if (e.classList.contains("on")) { e.classList.remove("on"); e.classList.add("left"); } });
+    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === tab));
+    if (label) $("dexsub").textContent = label;
+  };
+  const cut = () => { const f = $("flashcut"); f.classList.remove("go"); void f.offsetWidth; f.classList.add("go"); sfx("whoosh"); };
+  function tapAt(el, dx = 0.5, dy = 0.5) {
+    const f = $("finger"), r = el.getBoundingClientRect(), sr = stage.getBoundingClientRect(), s = sr.width / 1080;
+    f.style.left = (r.left - sr.left + r.width * dx) / s + "px";
+    f.style.top = (r.top - sr.top + r.height * dy) / s + "px";
+    f.classList.add("on");
+    setTimeout(() => { f.classList.remove("tap"); void f.offsetWidth; f.classList.add("tap"); sfx("tap"); }, 450);
+  }
+  const fingerOff = () => $("finger").classList.remove("on");
+  const flash = (id) => { const e = $(id); e.classList.remove("flash"); void e.offsetWidth; e.classList.add("flash"); };
+  function countTo(el, from, to, ms, fmt) {
+    const t0 = performance.now();
+    const step = (t) => { const k = Math.min(1, (t - t0) / ms), v = from + (to - from) * (1 - Math.pow(1 - k, 3)); el.textContent = fmt(v); if (k < 1 && running) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
+  function swipe(dir) {
+    const cards = [...document.querySelectorAll(".scard:not(.gone-r):not(.gone-l)")];
+    const top = cards[cards.length - 1]; if (!top) return;
+    top.classList.add(dir === "r" ? "show-like" : "show-nope");
+    sfx("whoosh");
+    setTimeout(() => top.classList.add(dir === "r" ? "gone-r" : "gone-l"), 260);
+    cards.slice(0, -1).forEach((c, k, arr) => { const d = arr.length - 1 - k; c.style.transform = `translateY(${d * 14}px) scale(${1 - d * 0.03})`; });
+  }
+  let haveCount = 0;
+  function setProgress(have) {
+    haveCount = have;
+    const p = have / 207;
+    $("have").textContent = have; $("miss").textContent = 207 - have; $("pct").textContent = Math.round(p * 100);
+    $("setbar").style.width = p * 100 + "%"; $("ringarc").style.strokeDashoffset = 263.9 * (1 - p);
+  }
+  function addCell(k) {
+    const cell = $("grid").children[k]; if (!cell) return;
+    cell.classList.add("have", "pop"); setProgress(haveCount + 1); sfx("ding");
+    const t = $("addtoast"); t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 500);
+  }
+
+  // ---------- Timeline (Sekunden) ----------
+  const VO = [
+    [0.2, "Schluss mit unübersichtlichen Tabellen und verpassten Deals auf dem Pokémon-Cardmarket!"],
+    [5.2, "Mit PokeSwipe Radar hast du deine Sammlung perfekt im Griff. Der Master-Set-Tracker erkennt sofort, welche Karten dir noch fehlen, zeigt dir reale Marktpreise und schickt dich mit einem Klick direkt zu den besten Angeboten auf Cardmarket und eBay."],
+    [20.2, "Du hast Karten doppelt? Verkaufe deinen Überschuss direkt in der Community oder exportiere sie für Cardmarket. Finde die krassesten Flips vor allen anderen und verfolge deine Portfolio-Gewinne live."],
+    [35.2, "Spare Zeit, finde die besten Deals und vervollständige dein Binder schneller als je zuvor. Geh jetzt auf pokeswipe-radar.de und leg direkt los – völlig kostenlos!"],
+  ];
+  const TL = [
+    // Szene 1 – Hook
+    [0.0, () => { view("v-swipe", "swipe", "ARENA · SWIPE"); cap("c1a"); }],
+    [0.9, () => swipe("l")],
+    [1.7, () => swipe("r")],
+    [2.5, () => { cap("c1b"); swipe("l"); }],
+    [3.1, () => { $("alert").classList.add("on"); $("alert-line").classList.add("go"); sfx("alert"); }],
+    [4.2, () => tapAt($("alert"))],
+    // Szene 2 – Master-Set-Tracker
+    [5.0, () => { cut(); fingerOff(); view("v-set", "portfolio", "SAMMLUNG · MASTER-SET"); cap("c2a"); setProgress(0); countTo($("have"), 0, 136, 900, (v) => Math.round(v)); setTimeout(() => setProgress(136), 900); }],
+    [6.3, () => { cap("c2b"); [0, 1, 3, 9].forEach((k, j) => setTimeout(() => addCell(k), j * 280)); }],
+    [7.8, () => [4, 2, 10, 11].forEach((k, j) => setTimeout(() => addCell(k), j * 280))],
+    [9.4, () => $("missing").classList.add("on")],
+    [10.4, () => { cap("c2c"); tapAt($("b-cm")); setTimeout(() => flash("b-cm"), 450); }],
+    [11.9, () => { tapAt($("b-eb")); setTimeout(() => flash("b-eb"), 450); sub("eBay-Bestpreis* mit Partner-ID · Cardmarket-Deep-Link"); }],
+    // Szene 2b – Duplikat-Radar
+    [13.8, () => { cut(); fingerOff(); sub(""); view("v-dup", "portfolio", "SAMMLUNG · DUPLIKAT-RADAR"); cap("c2d"); }],
+    [15.2, () => { $("badge").classList.add("on"); sfx("alert"); }],
+    [17.0, () => sub("Reale Cardmarket-Preise für jede Karte")],
+    // Szene 3 – Verkaufen, Flips, Portfolio
+    [20.0, () => { cap("c3c"); sub(""); tapAt($("b-p2p")); setTimeout(() => flash("b-p2p"), 450); }],
+    [21.2, () => { $("toast-p2p").classList.add("on"); sfx("ding"); }],
+    [22.4, () => { tapAt($("b-csv")); setTimeout(() => { flash("b-csv"); $("toast-p2p").textContent = "✓ CSV für Cardmarket exportiert"; }, 450); }],
+    [24.0, () => { cut(); fingerOff(); view("v-flip", "flip", "PREISE · FLIP-RADAR"); cap("c3a"); document.querySelectorAll(".flip").forEach((f, k) => setTimeout(() => { f.classList.add("on"); sfx("tick"); }, 250 + k * 260)); }],
+    [26.4, () => cap("c3b")],
+    [27.6, () => { tapAt($("b-eb2")); setTimeout(() => flash("b-eb2"), 450); }],
+    [29.6, () => {
+      cut(); fingerOff(); view("v-pf", "portfolio", "SAMMLUNG · PORTFOLIO"); cap("c3d");
+      const total = CARDS["sv03.5-199"].price + CARDS["sv08-238"].price + CARDS["sv03.5-200"].price + CARDS["sv03.5-205"].price + CARDS["sv08-247"].price * 2 + CARDS["sv08-057"].price * 5;
+      const fmt0 = (v) => Math.round(v).toLocaleString("de-DE");
+      $("pf-line").classList.add("go"); $("pf-area").style.opacity = 1;
+      countTo($("pfv"), total * 0.72, total, 2400, fmt0);
+      countTo($("pfg"), 0, total * 0.28, 2400, (v) => `▲ +${fmt0(v)} € (${Math.round((v / (total * 0.72)) * 100)} %)`);
+    }],
+    // Szene 4 – CTA
+    [35.0, () => { cut(); capOff(); sub(""); $("phone").style.transform = "translateY(1500px) scale(.8)"; $("cta").classList.add("on"); $("note").style.opacity = 0; }],
+    [DURATION, () => stop(true)],
+  ];
+
+  // ---------- Audio: synthetischer Tech-Beat (124 BPM) + SFX ----------
+  let ac = null, master = null, beatTimer = null, nextBeat = 0, beatStep = 0;
+  function ensureAudio() {
+    if (!ac) { ac = new (window.AudioContext || window.webkitAudioContext)(); master = ac.createGain(); master.gain.value = 0.55; master.connect(ac.destination); }
+    if (ac.state === "suspended") ac.resume();
+  }
+  function env(node, t, a, d, peak) { node.gain.setValueAtTime(0.0001, t); node.gain.exponentialRampToValueAtTime(peak, t + a); node.gain.exponentialRampToValueAtTime(0.0001, t + a + d); }
+  function noise(len) { const b = ac.createBuffer(1, ac.sampleRate * len, ac.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; const s = ac.createBufferSource(); s.buffer = b; return s; }
+  function kick(t) { const o = ac.createOscillator(), g = ac.createGain(); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.18); env(g, t, 0.003, 0.32, 1); o.connect(g).connect(master); o.start(t); o.stop(t + 0.4); }
+  function hat(t, v = 0.18) { const n = noise(0.06), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = "highpass"; f.frequency.value = 8000; env(g, t, 0.001, 0.045, v); n.connect(f).connect(g).connect(master); n.start(t); }
+  function snare(t) { const n = noise(0.2), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = "bandpass"; f.frequency.value = 1800; env(g, t, 0.002, 0.16, 0.5); n.connect(f).connect(g).connect(master); n.start(t); }
+  function bass(t, freq) { const o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain(); o.type = "sawtooth"; o.frequency.value = freq; f.type = "lowpass"; f.frequency.setValueAtTime(900, t); f.frequency.exponentialRampToValueAtTime(160, t + 0.2); env(g, t, 0.005, 0.2, 0.32); o.connect(f).connect(g).connect(master); o.start(t); o.stop(t + 0.3); }
+  function pluck(t, freq) { const o = ac.createOscillator(), g = ac.createGain(); o.type = "triangle"; o.frequency.value = freq; env(g, t, 0.004, 0.3, 0.12); o.connect(g).connect(master); o.start(t); o.stop(t + 0.4); }
+  const BASS = [55, 55, 65.4, 49];           // A1, A1, C2, G1 – pro Takt
+  const ARP = [440, 523.3, 659.3, 784, 659.3, 523.3, 440, 392];
+  function scheduleBeat() {
+    const sixteenth = 60 / 124 / 4;
+    while (nextBeat < ac.currentTime + 0.12) {
+      const s = beatStep % 16, bar = Math.floor(beatStep / 16) % 4, t = nextBeat, intro = beatStep < 16;
+      if (s % 4 === 0) kick(t);
+      if (s === 4 || s === 12) snare(t);
+      if (s % 2 === 1) hat(t, 0.14); else if (!intro) hat(t, 0.07);
+      if (!intro && (s % 4 === 2 || s === 15)) bass(t, BASS[bar]);
+      if (!intro && s % 2 === 0) pluck(t, ARP[(s / 2 + bar) % 8] * (bar === 3 ? 0.89 : 1));
+      nextBeat += sixteenth; beatStep++;
+    }
+  }
+  function startBeat() { if (!$("opt-beat").checked) return; ensureAudio(); nextBeat = ac.currentTime + 0.05; beatStep = 0; beatTimer = setInterval(scheduleBeat, 25); }
+  function stopBeat() { clearInterval(beatTimer); beatTimer = null; }
+  function sfx(kind) {
+    if (!ac || !beatTimer) return; const t = ac.currentTime;
+    if (kind === "tap") { pluck(t, 1318); }
+    if (kind === "tick") { pluck(t, 1046); }
+    if (kind === "ding") { pluck(t, 1568); pluck(t + 0.06, 2093); }
+    if (kind === "alert") { [880, 1174, 1568].forEach((f, k) => pluck(t + k * 0.07, f)); }
+    if (kind === "whoosh") { const n = noise(0.35), f = ac.createBiquadFilter(), g = ac.createGain(); f.type = "bandpass"; f.Q.value = 0.8; f.frequency.setValueAtTime(400, t); f.frequency.exponentialRampToValueAtTime(5000, t + 0.3); env(g, t, 0.05, 0.25, 0.25); n.connect(f).connect(g).connect(master); n.start(t); }
+  }
+
+  // ---------- Sprecher (Browser-Sprachausgabe, de-DE) ----------
+  function speak(text) {
+    if (!$("opt-voice").checked || !("speechSynthesis" in window)) return;
+    const u = new SpeechSynthesisUtterance(text);
+    const voices = speechSynthesis.getVoices().filter((v) => v.lang && v.lang.toLowerCase().startsWith("de"));
+    u.voice = voices.find((v) => /google|neural|natural|premium/i.test(v.name)) || voices[0] || null;
+    u.lang = "de-DE"; u.rate = 1.22; u.pitch = 1.05;
+    speechSynthesis.speak(u);
+  }
+
+  // ---------- Wiedergabe ----------
+  let running = false, t0 = 0, idx = 0, voIdx = 0, raf = 0;
+  function reset() {
+    document.querySelectorAll(".on, .left, .out, .go, .flash, .gone-r, .gone-l, .show-like, .show-nope, .have, .pop").forEach((e) => {
+      if (e.id === "controls") return;
+      e.classList.remove("on", "left", "out", "go", "flash", "gone-r", "gone-l", "show-like", "show-nope", "have", "pop");
+    });
+    document.querySelectorAll(".scard").forEach((c, k, a) => { const d = a.length - 1 - k; c.style.transform = `translateY(${d * 14}px) scale(${1 - d * 0.03})`; });
+    $("phone").style.transform = ""; $("note").style.opacity = 1; $("pf-area").style.opacity = 0;
+    $("toast-p2p").textContent = "✓ Angebot ist live in der Community";
+    setProgress(0); $("pfv").textContent = "0";
+    view("v-swipe", "swipe", "ARENA · SWIPE");
+  }
+  function play() {
+    stop(false); reset(); running = true; idx = 0; voIdx = 0;
+    startBeat(); t0 = performance.now();
+    $("btn-play").textContent = "■ Stopp";
+    loop();
+  }
+  function loop() {
+    if (!running) return;
+    const t = (performance.now() - t0) / 1000;
+    while (idx < TL.length && TL[idx][0] <= t) TL[idx++][1]();
+    while (voIdx < VO.length && VO[voIdx][0] <= t) speak(VO[voIdx++][1]);
+    $("progress").style.width = Math.min(100, (t / DURATION) * 100) + "%";
+    $("time").textContent = t.toFixed(1).replace(".", ",") + " s";
+    raf = requestAnimationFrame(loop);
+  }
+  function stop(ended) {
+    running = false; cancelAnimationFrame(raf); stopBeat();
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    $("btn-play").textContent = ended ? "↻ Nochmal" : "▶ Abspielen";
+    if (ended && document.body.classList.contains("rec") && params.has("loop")) setTimeout(play, 1500);
+  }
+
+  const params = new URLSearchParams(location.search);
+  $("btn-play").onclick = () => (running ? stop(false) : play());
+  $("btn-rec").onclick = () => {
+    document.body.classList.add("rec"); fit();
+    if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+    setTimeout(play, 1200);
+  };
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("rec")) { document.body.classList.remove("rec"); stop(false); fit(); }
+    if (e.key === " ") { e.preventDefault(); running ? stop(false) : play(); }
+  });
+  if ("speechSynthesis" in window) speechSynthesis.getVoices();
+
+  hydrateImages();
+  loadPrices();
+  if (params.has("rec")) document.body.classList.add("rec");
+  fit();
+  reset();
+  // Erstes Standbild: Hook-Caption sichtbar, damit die Seite nicht leer wirkt
+  cap("c1a");
+  if (params.has("autoplay")) setTimeout(play, 800);
+})();
+</script>
+</body>
+</html>
