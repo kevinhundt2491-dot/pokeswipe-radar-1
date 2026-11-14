@@ -5,6 +5,7 @@
 // Der Dateiname ist "Episode N - <Werbespruch>", damit Make.com ihn als Caption übernehmen kann.
 // Nutzt die Zeichen-Engine, Farben, Schriften und echten Karten (REAL_CARDS) des Admin-Reel-Studios.
 import { reelEngine as E } from "./reel-studio.js";
+import { toast, hooks, state } from "./core.js";
 
 const { W, H, FPS, C, disp, font, eur, km, clamp, prog, lerp, eOut, eIn, eInOut, eBack, rgba,
   rr, circle, text, wrap, drawCard, drawBackground, dexBar, caption, watermark, pill, button, tapRipple } = E;
@@ -1010,18 +1011,49 @@ function close() {
   stopPreview();
   ui.root.hidden = true;
   document.documentElement.style.overflow = "";
+  // Anker entfernen, damit Neu-Laden/Zurück den Generator nicht ungewollt wieder öffnet
+  if (HASHES.includes(location.hash)) history.replaceState(null, "", location.pathname + location.search);
+}
+
+// Direkte Anker: pokeswipe-radar.de/#generator (alt: /#auto-reels)
+const HASHES = ["#generator", "#auto-reels"];
+
+/** Generator öffnen – mit klarer Rückmeldung, falls nicht (als Admin) angemeldet. */
+export function openAutoReels() {
+  if (E.isAdmin()) {
+    if (!HASHES.includes(location.hash)) history.replaceState(null, "", "#generator");
+    return open();
+  }
+  if (!state.user) return hooks.openAccount("Der Auto-Reels-Generator ist nur für Admins – bitte mit deinem Admin-Konto anmelden.");
+  if (!state.me) return; // Konto lädt noch – syncAutoReels() öffnet danach automatisch
+  toast("🔒 Nur für Admins", "Der Auto-Reels-Generator ist nur mit einem Admin-Konto verfügbar.");
+}
+
+/** Beim Start bzw. bei Anker-Wechsel: /#generator öffnet den Generator. */
+export function routeAutoReels() {
+  if (HASHES.includes(location.hash)) openAutoReels();
 }
 
 /** Footer-Button nur für Admins zeigen (nach jedem Login-Wechsel aufrufen). */
 export function syncAutoReels() {
-  const btn = document.getElementById("auto-reels-btn");
-  if (btn) btn.classList.toggle("hidden", !E.isAdmin());
-  if (E.isAdmin() && location.hash === "#auto-reels") open();
+  for (const id of ["auto-reels-btn", "ps-generator-btn"]) document.getElementById(id)?.classList.toggle("hidden", !E.isAdmin());
+  if (E.isAdmin() && HASHES.includes(location.hash)) open();
   if (!E.isAdmin()) close();
 }
 
 export function initAutoReels() {
-  document.getElementById("auto-reels-btn")?.addEventListener("click", () => { if (E.isAdmin()) open(); });
+  document.getElementById("auto-reels-btn")?.addEventListener("click", openAutoReels);
+  // Gut sichtbarer Admin-Button im Kopfbereich (neben dem Konto-Button)
+  const profileBtn = document.getElementById("authBtnText")?.closest("button");
+  if (profileBtn && !document.getElementById("ps-generator-btn")) {
+    const b = document.createElement("a");
+    b.id = "ps-generator-btn"; b.href = "#generator"; b.title = "Auto-Reels-Generator (10x)"; b.setAttribute("aria-label", "Auto-Reels-Generator öffnen");
+    b.className = "hidden relative bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-2.5 py-1.5 rounded-xl border border-yellow-400/50";
+    b.innerHTML = `🎬<span class="hidden sm:inline ml-1">Generator</span>`;
+    b.addEventListener("click", (e) => { e.preventDefault(); openAutoReels(); });
+    profileBtn.before(b);
+  }
+  window.addEventListener("hashchange", routeAutoReels);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && ui.root && !ui.root.hidden) close();
   }, true);
