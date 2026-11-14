@@ -2,6 +2,7 @@
 // auf ein Canvas und speichert es per MediaRecorder als Videodatei (MP4 bevorzugt).
 // Nutzt die echten Karten der App (REAL_CARDS inkl. Live-Cardmarket-Preise) und die Theme-Farben.
 import { state, cdn } from "./core.js";
+import { pickAvMime, unlockAudio, startSoundtrack, cuesFromTimeline } from "./reel-audio.js";
 
 const W = 1080, H = 1920, FPS = 60, BITRATE = 8_000_000;
 
@@ -942,27 +943,37 @@ function stopPreview() {
 
 async function record() {
   if (mode === "rec" || !plan) return;
-  const mime = pickMime();
+  const { mime, audio } = pickAvMime(pickMime);
   if (mime === null || typeof ui.canvas.captureStream !== "function") {
     return setStatus("⚠️ Dieser Browser kann kein Canvas aufnehmen. Bitte aktuelles Chrome, Edge oder Safari verwenden.", "err");
   }
+  const ac = audio ? unlockAudio() : null; // im Klick-Handler entsperren
   stopPreview();
   const isMp4 = mime.startsWith("video/mp4");
   const ext = isMp4 ? "mp4" : "webm";
   const tplKey = ui.tpl.value;
   renderFrame(ctx, 0, tplKey);
-  let stream;
+  let stream, video, sound = null;
   try {
-    stream = ui.canvas.captureStream(FPS);
-    recorder = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: BITRATE });
+    video = ui.canvas.captureStream(FPS);
+    if (ac) {
+      try { if (ac.state !== "running") await ac.resume(); } catch { /* ohne Ton weiter */ }
+      const tpl = TEMPLATES[tplKey] || TEMPLATES.tour;
+      if (ac.state === "running") {
+        try { sound = startSoundtrack(ac, DURATION, cuesFromTimeline(tpl.scenes, tpl), Object.keys(TEMPLATES).indexOf(tplKey) + 1); } catch { sound = null; }
+      }
+    }
+    stream = sound ? new MediaStream([...video.getVideoTracks(), sound.track]) : video;
+    recorder = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: BITRATE, ...(sound ? { audioBitsPerSecond: 192_000 } : {}) });
   } catch (e) {
+    sound?.stop(); video?.getTracks().forEach((tr) => tr.stop());
     return setStatus(`⚠️ Aufnahme konnte nicht starten: ${e.message}`, "err");
   }
   chunks = []; abortRec = false;
   mode = "rec"; setBusy(true);
   ui.time.classList.add("rec");
   ui.dl.hidden = true;
-  setStatus(`⏺ Aufnahme läuft (${ext.toUpperCase()}, 60 FPS, 8 Mbit/s) – Tab bitte sichtbar lassen …`);
+  setStatus(`⏺ Aufnahme läuft (${ext.toUpperCase()}, 60 FPS, 8 Mbit/s${sound ? ", mit Ton" : ", ohne Ton"}) – Tab bitte sichtbar lassen …`);
 
   const done = new Promise((resolve) => { recorder.onstop = resolve; });
   recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -984,7 +995,8 @@ async function record() {
   });
   if (recorder.state === "recording") recorder.stop();
   await done;
-  stream.getTracks().forEach((tr) => tr.stop());
+  sound?.stop();
+  video.getTracks().forEach((tr) => tr.stop());
   mode = "idle"; setBusy(false); ui.time.classList.remove("rec");
 
   if (abortRec) {
@@ -1007,12 +1019,13 @@ async function open() {
   if (!ui.root.hidden) return;
   ui.root.hidden = false;
   document.documentElement.style.overflow = "hidden";
-  const mime = pickMime();
+  const { mime, audio } = pickAvMime(pickMime);
+  const tone = audio ? " 🔊 Mit Ton (Musik + Soundeffekte)." : " 🔇 Dieser Browser kann hier keinen Ton mit aufnehmen.";
   ui.format.textContent = mime === null
     ? "⚠️ MediaRecorder wird von diesem Browser nicht unterstützt."
     : mime.startsWith("video/mp4")
-      ? `✓ Ausgabeformat: MP4 (${mime}) – passt für Instagram Reels, TikTok, YouTube Shorts und Make.com.`
-      : `⚠️ Dieser Browser kann kein MP4 aufnehmen – es wird WebM (${mime || "Standard"}) gespeichert. Für MP4 bitte aktuelles Chrome/Edge (ab Version 126) oder Safari nutzen.`;
+      ? `✓ Ausgabeformat: MP4 (${mime}) – passt für Instagram Reels, TikTok, YouTube Shorts und Make.com.${tone}`
+      : `⚠️ Dieser Browser kann kein MP4 aufnehmen – es wird WebM (${mime || "Standard"}) gespeichert. Für MP4 bitte aktuelles Chrome/Edge (ab Version 126) oder Safari nutzen.${tone}`;
   if (!plan) {
     setBusy(true); setStatus("Lade Schriften, Logo und Karten aus der App …");
     try { await prepare(); await buildPlan(); showCards(); setStatus("✓ Bereit. Vorlage wählen, Vorschau ansehen, dann aufnehmen.", "ok"); }
