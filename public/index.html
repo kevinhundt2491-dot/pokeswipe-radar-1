@@ -13,6 +13,16 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;700;800;900&family=Lilita+One&display=swap" />
   <title>PokeSwipe & Radar | Die Pokémon TCG Community & Preis-Arena</title>
+  <meta name="description" content="Pokémon-Karten: echte Cardmarket-Preise, Preisalarme, Portfolio mit Live-Wert, KI-Kartenscan, Wunschliste und sicherer Tausch mit Sammlern in deiner Nähe." />
+  <link rel="canonical" href="https://pokeswipe-radar.de/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="PokeSwipe & Radar" />
+  <meta property="og:locale" content="de_DE" />
+  <meta property="og:title" content="PokeSwipe & Radar – Pokémon-Karten Preise, Portfolio & Tausch" />
+  <meta property="og:description" content="Echte Cardmarket-Preise, Preisalarme, KI-Kartenscan, Wunschliste und sicherer Tausch mit Sammlern in deiner Nähe." />
+  <meta property="og:url" content="https://pokeswipe-radar.de/" />
+  <meta property="og:image" content="https://pokeswipe-radar.de/.netlify/images?url=https%3A%2F%2Fimages.pokemontcg.io%2Fsv8%2F238_hires.png&w=600&fm=jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
 
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -273,38 +283,45 @@
           <div class="poke-glass rounded-[1.35rem] p-4 sm:p-6">
             <div class="flex flex-wrap justify-between items-center mb-3 gap-2">
               <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
-                <button onclick="filterSwipeDeck('all')" class="bg-yellow-400 text-slate-950 font-black text-xs px-3 py-1 rounded-xl">Alle Sets</button>
-                <button onclick="filterSwipeDeck('Stürmische Funken')" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl">⚡ Stürmische Funken</button>
-                <button onclick="filterSwipeDeck('151')" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl">🔥 K&P 151</button>
-                <button onclick="filterSwipeDeck('Evo & Vintage')" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl">🌙 Drachenwandel</button>
+                <button onclick="filterSwipeDeck('all')" data-deck="all" class="deck-btn bg-yellow-400 text-slate-950 font-black text-xs px-3 py-1 rounded-xl shrink-0">Alle Sets</button>
+                <button onclick="filterSwipeDeck('Stürmische Funken')" data-deck="Stürmische Funken" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">⚡ Stürmische Funken</button>
+                <button onclick="filterSwipeDeck('151')" data-deck="151" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">🔥 151</button>
+                <button onclick="filterSwipeDeck('Prismatische Entwicklungen')" data-deck="Prismatische Entwicklungen" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">💎 Prismatische Entw.</button>
+                <button onclick="filterSwipeDeck('Mega-Entwicklung')" data-deck="Mega-Entwicklung" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">🌀 Mega-Entwicklung</button>
+                <button onclick="filterSwipeDeck('Zenit der Könige')" data-deck="Zenit der Könige" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">👑 Zenit der Könige</button>
+                <button onclick="filterSwipeDeck('Obsidianflammen')" data-deck="Obsidianflammen" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">🌋 Obsidianflammen</button>
+                <button onclick="filterSwipeDeck('Drachenwandel')" data-deck="Drachenwandel" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">🌙 Drachenwandel</button>
               </div>
-              <span id="swipe-rarity" class="text-[11px] font-black bg-yellow-400 text-slate-950 px-2.5 py-1 rounded-lg">SIR Highlight</span>
+              <span id="swipe-rarity" class="text-[11px] font-black bg-yellow-400 text-slate-950 px-2.5 py-1 rounded-lg">Special Illustration Rare</span>
             </div>
 
             <div class="bg-gradient-to-b from-slate-950 via-indigo-950/70 to-slate-950 rounded-2xl p-4 sm:p-5 border border-yellow-400/30">
               <div class="relative mx-auto w-52 sm:w-60 h-72 sm:h-80 flex items-center justify-center">
                 <div class="absolute inset-0 bg-gradient-to-tr from-yellow-400/25 via-red-500/20 to-purple-500/25 rounded-3xl blur-xl"></div>
-                <img id="swipe-img" src="https://images.pokemontcg.io/sv8/238_hires.png" alt="Pokémon Karte"
-                     class="relative z-10 max-h-full max-w-full object-contain rounded-xl shadow-2xl border-2 border-yellow-400/50 transition duration-300 hover:scale-105" />
+                <img id="swipe-img" src="https://assets.tcgdex.net/de/sv/sv08/238/high.webp" alt="Pokémon Karte" draggable="false"
+                     style="touch-action: pan-y; -webkit-user-drag: none; user-select: none;"
+                     class="relative z-10 max-h-full max-w-full object-contain rounded-xl shadow-2xl border-2 border-yellow-400/50 transition duration-300 hover:scale-105 cursor-grab" />
+                <span id="swipe-hint-left" class="absolute left-0 top-1/2 -translate-y-1/2 z-20 bg-slate-800/90 text-white text-xs font-black px-2.5 py-1 rounded-lg opacity-0 transition">❌ Weiter</span>
+                <span id="swipe-hint-right" class="absolute right-0 top-1/2 -translate-y-1/2 z-20 bg-emerald-400 text-slate-950 text-xs font-black px-2.5 py-1 rounded-lg opacity-0 transition">💚 Merken</span>
               </div>
 
               <div class="text-center mt-3">
-                <h2 id="swipe-title" class="text-xl sm:text-2xl font-black text-white">Pikachu ex SIR (238/191)</h2>
+                <h2 id="swipe-title" class="text-xl sm:text-2xl font-black text-white">Pikachu-ex (238/191)</h2>
                 <p id="swipe-set" class="text-xs text-amber-200/80 mt-0.5">Karmesin & Purpur – Stürmische Funken</p>
               </div>
 
               <div class="grid grid-cols-3 gap-2 mt-4 bg-slate-950/90 p-3 rounded-2xl border border-yellow-400/20 text-center">
                 <div>
                   <p class="text-[10px] text-slate-400">Cardmarket-Trend</p>
-                  <p id="swipe-cm" class="text-sm sm:text-base font-bold text-slate-400 line-through">420,00 €</p>
+                  <p id="swipe-cm" class="text-sm sm:text-base font-bold text-white">–</p>
                 </div>
                 <div>
-                  <p class="text-[10px] text-slate-400">Schnäppchen-Ziel</p>
-                  <p id="swipe-price" class="text-base sm:text-lg font-black text-emerald-400">340,00 €</p>
+                  <p class="text-[10px] text-slate-400">Günstigstes Angebot</p>
+                  <p id="swipe-price" class="text-base sm:text-lg font-black text-emerald-400">–</p>
                 </div>
                 <div>
-                  <p class="text-[10px] text-slate-400">Potenzial</p>
-                  <p id="swipe-margin" class="text-sm sm:text-base font-extrabold text-yellow-400">+80,00 € (-19%)</p>
+                  <p class="text-[10px] text-slate-400">Unter Trend</p>
+                  <p id="swipe-margin" class="text-sm sm:text-base font-extrabold text-yellow-400">–</p>
                 </div>
               </div>
             </div>
@@ -318,10 +335,10 @@
 
             <!-- Monetarisierungs-Leiste direkt unter jeder Karte -->
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-3 border-t border-slate-800 text-xs">
-              <a id="swipe-ebay-buy" href="#" target="_blank" rel="noopener" class="text-center bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-2 px-2 rounded-xl shadow">🔎 eBay Sofortkauf</a>
-              <a id="swipe-ebay-auction" href="#" target="_blank" rel="noopener" class="text-center bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2 px-2 rounded-xl shadow">🔨 eBay Auktion</a>
+              <a id="swipe-ebay-buy" href="#" target="_blank" rel="noopener sponsored" class="col-span-2 sm:col-span-1 text-center bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-2 px-2 rounded-xl shadow">🛒 Jetzt bei eBay kaufen*</a>
+              <a id="swipe-ebay-auction" href="#" target="_blank" rel="noopener sponsored" class="text-center bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2 px-2 rounded-xl shadow">🔨 eBay Auktion</a>
               <a id="swipe-cm-link" href="#" target="_blank" rel="noopener" class="text-center bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold py-2 px-2 rounded-xl shadow">📊 Cardmarket</a>
-              <a id="swipe-psa-link" href="#" target="_blank" rel="noopener" class="text-center bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/40 font-bold py-2 px-2 rounded-xl">💎 PSA 10 Check</a>
+              <a id="swipe-psa-link" href="#" target="_blank" rel="noopener sponsored" class="text-center bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/40 font-bold py-2 px-2 rounded-xl">💎 PSA-10-Preise*</a>
             </div>
           </div>
         </div>
@@ -337,14 +354,18 @@
                 <h3 class="text-base font-black text-white mt-1">Gratis Booster-Simulator öffnen!</h3>
               </div>
               <select id="pack-set-select" class="bg-slate-900 border border-yellow-400/40 rounded-xl px-2.5 py-1.5 text-xs text-yellow-300 font-bold">
-                <option value="sv8">⚡ Stürmische Funken</option>
-                <option value="sv3pt5">🔥 Karmesin & Purpur 151</option>
-                <option value="swsh7">🌙 Drachenwandel (Evolving Skies)</option>
+                <option value="sv08">⚡ Stürmische Funken</option>
+                <option value="sv03.5">🔥 Karmesin & Purpur 151</option>
+                <option value="sv08.5">💎 Prismatische Entwicklungen</option>
+                <option value="me01">🌀 Mega-Entwicklung</option>
+                <option value="swsh12.5gg">👑 Zenit der Könige</option>
+                <option value="sv03">🌋 Obsidianflammen</option>
+                <option value="swsh7">🌙 Drachenwandel</option>
               </select>
             </div>
 
             <div id="pack-stage" class="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 text-center space-y-3">
-              <img id="pack-visual-img" src="https://images.pokemontcg.io/sv8/238_hires.png" alt="Booster Hit" class="w-36 h-48 mx-auto object-contain rounded-xl shadow-xl border border-yellow-400/40 transition" />
+              <img id="pack-visual-img" src="https://assets.tcgdex.net/de/sv/sv08/238/high.webp" alt="Booster Hit" class="w-36 h-48 mx-auto object-contain rounded-xl shadow-xl border border-yellow-400/40 transition" />
               <div>
                 <span id="pack-hit-badge" class="text-[10px] font-black uppercase bg-yellow-400/20 text-yellow-300 px-2.5 py-0.5 rounded-full">Bereit zum Öffnen</span>
                 <h4 id="pack-hit-name" class="text-sm font-black text-white mt-1">Teste dein Zieh-Glück!</h4>
@@ -631,35 +652,45 @@
             <h3 class="text-sm font-black text-white">📦 Bulk-Konvolut Rechner</h3>
             <div class="space-y-2">
               <div class="flex justify-between items-center">
-                <span class="text-slate-300">Commons / Uncommons (0,02 €):</span>
+                <span class="text-slate-300">Commons / Uncommons (Richtwert 0,02 €):</span>
                 <input id="bulk-commons" type="number" value="0" min="0" oninput="calcBulk()" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-slate-300">Reverse / Holos (0,06 €):</span>
+                <span class="text-slate-300">Reverse / Holos (Richtwert 0,06 €):</span>
                 <input id="bulk-holos" type="number" value="0" min="0" oninput="calcBulk()" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-slate-300">ex / V / Full Art Hits (0,80 €):</span>
+                <span class="text-slate-300">ex / V / Full Art Hits (Richtwert 0,80 €):</span>
                 <input id="bulk-hits" type="number" value="0" min="0" oninput="calcBulk()" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
               </div>
             </div>
             <div class="flex justify-between items-center pt-2 border-t border-slate-800">
-              <span class="text-slate-400">Geschätzter Wert:</span>
+              <span class="text-slate-400">Geschätzter Bulk-Ankaufswert (Händler-Richtwerte):</span>
               <strong id="bulk-result" class="text-base font-black text-yellow-400">0,00 €</strong>
             </div>
           </div>
 
           <div class="poke-glass rounded-3xl p-4 space-y-3 text-xs">
             <h3 class="text-sm font-black text-white">🏆 PSA 10 Grading-Gewinnrechner</h3>
-            <div class="flex justify-between items-center">
-              <span class="text-slate-300">Rohkarten-Einkaufspreis (€):</span>
-              <input id="grade-raw-price" type="number" value="100" min="0" oninput="calcGradingProfit()" class="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
+            <div class="flex justify-between items-center gap-2">
+              <span class="text-slate-300">Rohkarte – Einkauf/Marktwert (€):</span>
+              <input id="grade-raw-price" type="number" value="" min="0" step="0.01" placeholder="z. B. 199" oninput="calcGradingProfit()" class="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
             </div>
+            <div class="flex justify-between items-center gap-2">
+              <span class="text-slate-300">PSA 10 Verkaufspreis (€):</span>
+              <input id="grade-psa10-price" type="number" value="" min="0" step="0.01" placeholder="aus eBay „Verkauft“" oninput="calcGradingProfit()" class="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
+            </div>
+            <div class="flex justify-between items-center gap-2">
+              <span class="text-slate-300">Grading + Versand (€):</span>
+              <input id="grade-fee" type="number" value="35" min="0" step="0.01" oninput="calcGradingProfit()" class="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-right text-white" />
+            </div>
+            <a id="grade-sold-link" href="#" target="_blank" rel="noopener sponsored" class="block text-center bg-blue-600/20 text-blue-300 border border-blue-500/40 font-bold py-1.5 rounded-lg">🔎 Echte PSA-10-Verkaufspreise auf eBay ansehen*</a>
             <div class="grid grid-cols-3 gap-2 bg-slate-950 p-2.5 rounded-xl text-center">
-              <div><p class="text-[10px] text-slate-400">Inkl. Grading</p><p id="grade-cost" class="font-bold text-white">125,00 €</p></div>
-              <div><p class="text-[10px] text-slate-400">PSA 10 (~1.9x)</p><p id="grade-psa10" class="font-bold text-purple-400">190,00 €</p></div>
-              <div><p class="text-[10px] text-slate-400">Netto-Plus</p><p id="grade-profit" class="font-bold text-emerald-400">+65,00 €</p></div>
+              <div><p class="text-[10px] text-slate-400">Gesamtkosten</p><p id="grade-cost" class="font-bold text-white">–</p></div>
+              <div><p class="text-[10px] text-slate-400">PSA 10 Erlös (nach 13 % Gebühren)</p><p id="grade-psa10" class="font-bold text-purple-400">–</p></div>
+              <div><p class="text-[10px] text-slate-400">Netto bei PSA 10</p><p id="grade-profit" class="font-bold text-emerald-400">–</p></div>
             </div>
+            <div id="grade-pro-box" class="bg-slate-950 p-2.5 rounded-xl border border-yellow-400/40 text-[11px]"></div>
           </div>
         </div>
       </div>
@@ -763,7 +794,9 @@
           <p class="text-xl font-black text-white">4,99 € <span class="text-xs font-normal text-slate-400">/ Mo</span></p>
           <ul class="text-slate-300 space-y-1">
             <li>✅ Unbegrenzte Swipes & Pack-Opener</li>
-            <li>✅ Echtzeit Push-Sniper Alarme</li>
+            <li>✅ Exklusive Sniper-Deals (&gt;25 % unter Marktwert)</li>
+            <li>✅ PSA-Grading-Profit-Analyse</li>
+            <li>✅ Echtzeit Push-Preisalarme</li>
             <li>✅ Goldenes PRO-Badge im Tausch-Hub</li>
           </ul>
           <button onclick="activatePro('PRO')" class="w-full bg-yellow-400 text-slate-950 font-black py-2 rounded-xl mt-2">4,99 € Abo aktivieren</button>
@@ -789,18 +822,39 @@
         <h3 class="text-base font-black text-white">Impressum & Datenschutz</h3>
         <button onclick="closeModal('legal-modal')" class="text-slate-400 font-bold">✕</button>
       </div>
-      <p><strong>Projekt:</strong> PokeSwipe & Radar (pokeswipe-radar.de)<br>Kontakt: info@pokeswipe-radar.de</p>
+      <p><strong>Projekt:</strong> PokeSwipe & Radar (pokeswipe-radar.de)<br>Betreiber: Kevin Hundt, Hähn 10, 51515 Kürten<br>Telefon: <a href="tel:+491742182874" class="underline">0174 2182874</a> • E-Mail: <a href="mailto:info@galabau-hundt.de" class="underline">info@galabau-hundt.de</a></p>
+      <p><strong>Pokémon-Fanprojekt-Hinweis:</strong> PokeSwipe & Radar ist ein unabhängiges, inoffizielles Fanprojekt und steht in keiner Verbindung zu Nintendo, Creatures Inc., GAME FREAK inc. oder The Pokémon Company und wird von diesen weder unterstützt noch gesponsert. Pokémon, Kartennamen und Kartenbilder sind Marken bzw. urheberrechtlich geschützte Werke ihrer jeweiligen Inhaber und werden ausschließlich zur Identifikation der Sammelkarten verwendet.</p>
+      <p><strong>Preisangaben:</strong> Marktpreise stammen von Cardmarket (über TCGdex) und werden automatisch aktualisiert. Alle Angaben ohne Gewähr; maßgeblich ist der Preis beim jeweiligen Anbieter.</p>
       <p><strong>Affiliate-Hinweis (*):</strong> Als Partner des eBay Partner Networks (CampID: 5339244109) verdienen wir an qualifizierten Käufen über gekennzeichnete eBay-Links eine kleine Provision, ohne Mehrkosten für dich.</p>
-      <p><strong>Datenschutz:</strong> Ohne Konto bleiben Portfolio-, Merklisten- und Push-Einstellungen lokal im Browser (LocalStorage). Mit Konto werden Login (Netlify Identity), Portfolio, Preisalarme, Inserate, Tausche, private Tausch-Nachrichten und Bewertungen verschlüsselt übertragen und bei unserem Hosting-Anbieter Netlify gespeichert. Zahlungen wickelt Stripe ab – wir sehen keine Kartendaten. Öffentliche Community-Beiträge (Live-Chat, Pull-Wall, Radar-Pins) laufen über die Google Firebase Realtime Database (<code>europe-west1</code>). Kartenpreise stammen von Cardmarket über TCGdex.</p>
-      <p><strong>Abos:</strong> Premium (4,99 €/Monat) und Pro Trader (9,99 €/Monat) sind monatlich kündbar – im Konto unter „Abo kündigen“. Die Vorteile bleiben bis zum Ende des bezahlten Zeitraums aktiv.</p>
+      <div class="max-h-[55vh] overflow-y-auto space-y-3 pr-1">
+      <p><strong>Datenschutz – Überblick:</strong> Ohne Konto bleiben Portfolio-, Merklisten- und Push-Einstellungen lokal im Browser (LocalStorage). Mit Konto werden Login (Netlify Identity), Portfolio, Wunschliste, Preisalarme, Inserate, Tausche, private Tausch-Nachrichten, Bewertungen, Abzeichen und Kalendereinträge verschlüsselt übertragen und bei unserem Hosting-Anbieter Netlify gespeichert (Rechtsgrundlage: Vertragserfüllung, Art. 6 Abs. 1 lit. b DSGVO).</p>
+      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Beim Laden der Seite werden Schriftarten und Skripte von Google Fonts, cdn.tailwindcss.com und unpkg.com abgerufen; dabei wird technisch bedingt deine IP-Adresse übermittelt.</p>
+      <p><strong>Öffentlich sichtbar:</strong> dein Sammlername, Stadt, Inserate, Bewertungen, Shop-Seite, eingetragene Events sowie – für Tausch-Vorschläge – welche Karten du auf der Wunschliste hast. In der Bestenliste erscheinst du nur, wenn du es selbst einschaltest.</p>
+      <p><strong>Speicher im Browser:</strong> Wir verwenden keine Werbe- oder Tracking-Cookies. Gespeichert werden nur technisch notwendige Daten: Login-Token, Einstellungen und eine Offline-Kopie deiner Sammlung (wird beim Abmelden gelöscht).</p>
+      <p><strong>Deine Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Im Konto unter „Datenschutz & Konto“ kannst du alle Daten als Datei herunterladen und dein Konto selbst löschen. Verantwortlich für die Datenverarbeitung: Kevin Hundt, Hähn 10, 51515 Kürten, info@galabau-hundt.de.</p>
+      <p><strong>Abos:</strong> Premium (4,99 €/Monat oder 49 €/Jahr) und Pro Trader (9,99 €/Monat oder 99 €/Jahr). Das erste Abo kann 7 Tage kostenlos getestet werden (mit Einladung 30 Tage). Kündigung jederzeit im Konto unter „Abo kündigen“ – die Vorteile bleiben bis zum Ende des bezahlten Zeitraums aktiv.</p>
+      </div>
     </div>
   </div>
 
-  <footer class="relative z-10 border-t border-yellow-400/20 bg-slate-950/90 py-4 px-4 text-xs text-slate-400 mt-8">
-    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-      <p>© 2026 PokeSwipe & Radar (pokeswipe-radar.de) • *eBay Partner Network ID: 5339244109</p>
-      <button onclick="openModal('legal-modal')" class="hover:text-white underline">Impressum & Datenschutz</button>
+  <footer class="relative z-10 border-t border-yellow-400/20 bg-slate-950/90 py-5 px-4 text-xs text-slate-400 mt-8">
+    <div class="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div>
+        <p class="font-black text-slate-200">Impressum</p>
+        <p>Kevin Hundt<br>Hähn 10<br>51515 Kürten</p>
+        <p>Tel.: <a href="tel:+491742182874" class="hover:text-white underline">0174 2182874</a><br>E-Mail: <a href="mailto:info@galabau-hundt.de" class="hover:text-white underline">info@galabau-hundt.de</a></p>
+      </div>
+      <div>
+        <p class="font-black text-slate-200">Affiliate-Hinweis</p>
+        <p>Mit * gekennzeichnete Links sind Partner-Links (eBay Partner Network, Campaign-ID 5339244109). Kaufst du darüber, erhalten wir eine kleine Provision – für dich ohne Mehrkosten.</p>
+      </div>
+      <div>
+        <p class="font-black text-slate-200">Fanprojekt</p>
+        <p>Inoffizielles Fanprojekt, nicht verbunden mit Nintendo, Creatures, GAME FREAK oder The Pokémon Company. Pokémon und alle Kartennamen sind Marken ihrer Inhaber.</p>
+        <p class="mt-1"><button onclick="openModal('legal-modal')" class="hover:text-white underline font-bold">Impressum & Datenschutz</button></p>
+      </div>
     </div>
+    <p class="max-w-7xl mx-auto mt-3 text-[11px] text-slate-500">© 2026 PokeSwipe & Radar • pokeswipe-radar.de</p>
   </footer>
 
   <!-- ===================================================================== -->
@@ -847,10 +901,90 @@
     }
 
     // AFFILIATE & CARDMARKET URLS
-    function buildEbayUrl(query, mode = "bin") {
-      const encoded = encodeURIComponent(query);
-      const sort = mode === "auction" ? "&LH_Auction=1&_sop=1" : "&LH_BIN=1&_sop=15";
-      return `https://www.ebay.de/sch/i.html?_nkw=${encoded}${sort}&mkcid=1&mkrid=707-53477-19255-0&siteid=77&campid=${EPN_CAMPAIGN_ID}&customid=pokeswipe&toolid=10001&mkevt=1`;
+    // eBay-Partner-Link (ePN). mode: bin = Sofortkauf, auction = Auktion, sold = verkaufte Angebote.
+    // src landet als customid im ePN-Bericht, damit du siehst, welcher Bereich wie viel verdient.
+    function buildEbayUrl(query, mode = "bin", src = "") {
+      const encoded = encodeURIComponent(String(query || "Pokemon TCG").slice(0, 120));
+      const sort = mode === "auction" ? "&LH_Auction=1&_sop=1" : mode === "sold" ? "&LH_Sold=1&LH_Complete=1&_sop=13" : "&LH_BIN=1&_sop=15";
+      const custom = encodeURIComponent(("pokeswipe" + (src ? "-" + src : "")).replace(/[^a-z0-9-]/gi, "").slice(0, 40));
+      return `https://www.ebay.de/sch/i.html?_nkw=${encoded}${sort}&mkcid=1&mkrid=707-53477-19255-0&siteid=77&campid=${EPN_CAMPAIGN_ID}&customid=${custom}&toolid=10001&mkevt=1`;
+    }
+    window.buildEbayUrl = buildEbayUrl;
+
+    // ===================================================================
+    // SCHUTZ & ROBUSTHEIT: Cooldown gegen Spam-Klicks, Bild-Fallback, Fehlerfang
+    // ===================================================================
+    const FALLBACK_CARD_IMG = "/card-fallback.svg";
+    const COOLDOWN_MS = 3000;
+    const cooldowns = new Map();
+    /** true = Aktion erlaubt; false = noch im 3-Sekunden-Cooldown. */
+    function cooldownOk(key, ms = COOLDOWN_MS) {
+      const now = Date.now();
+      const last = cooldowns.get(key) || 0;
+      if (now - last < ms) {
+        const left = Math.ceil((ms - (now - last)) / 1000);
+        try { triggerSmartPush("⏳ Kurz warten", `Bitte ${left} Sek. bis zur nächsten Aktion.`); } catch (e) {}
+        return false;
+      }
+      cooldowns.set(key, now);
+      return true;
+    }
+    // Aktions-Buttons (Senden, Posten, Liken, Inserieren, Anfragen …) global mit 3 s Cooldown schützen
+    const ACTION_RE = /(like|send|publish|submit|post|comment|report|request|register|create|add|boost|checkout|claim|confirm|track|review|trade|alert|wish|remind|event|vidrecord|delete)/i;
+    const NAV_RE = /(Row|switchTab|showSub|openModal|closeModal|filter|board\(|vidKind|toggle|open[A-Z]|close|select|pick|calc|update|render|load|search)/;
+    document.addEventListener("click", (e) => {
+      const el = e.target.closest && e.target.closest("button, [data-cooldown]");
+      if (!el || el.disabled) return;
+      const code = el.getAttribute("onclick") || el.id || "";
+      if (!el.hasAttribute("data-cooldown") && (!ACTION_RE.test(code) || NAV_RE.test(code.split("(")[0]))) return;
+      const key = code || el.textContent.trim().slice(0, 40);
+      const now = Date.now(), last = cooldowns.get("btn:" + key) || 0;
+      if (now - last < COOLDOWN_MS) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+      cooldowns.set("btn:" + key, now);
+      el.classList.add("opacity-60");
+      setTimeout(() => el.classList.remove("opacity-60"), COOLDOWN_MS);
+    }, true);
+    // Kaputte Bilder durch eine neutrale Kartenrückseite ersetzen
+    document.addEventListener("error", (e) => {
+      const img = e.target;
+      if (!img || img.tagName !== "IMG" || img.dataset.fallback) return;
+      img.dataset.fallback = "1";
+      img.src = FALLBACK_CARD_IMG;
+    }, true);
+    window.addEventListener("unhandledrejection", (e) => { console.warn("Nicht abgefangener Fehler:", e.reason); e.preventDefault(); });
+    window.addEventListener("error", (e) => { if (e.message) console.warn("Skriptfehler:", e.message); });
+    function safeRun(label, fn) { try { return fn(); } catch (err) { console.warn(label, err); } }
+    const fmtEur = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? `${Number(n).toFixed(2).replace(".", ",")} €` : "–");
+    const safeKey = (k) => (/^[A-Za-z0-9_-]{1,64}$/.test(String(k || "")) ? String(k) : "");
+
+    // ===================================================================
+    // AUTOMATISCHER TEST-/DUMMY-FILTER FÜR FIREBASE (Chat, Pull-Wall, Radar)
+    // Blendet alte Testeinträge, Platzhalter und Spam automatisch aus.
+    // ===================================================================
+    const DUMMY_RE = /\b(test(user|post|eintrag|nachricht)?|dummy|demo|fake|beispiel|example|lorem|ipsum|asdf|qwert|xxx+|sample|platzhalter|placeholder|bot\d*)\b/i;
+    const DAY = 86400000;
+    function isDummyEntry(e, { maxAgeDays = 0, textFields = [] } = {}) {
+      if (!e || typeof e !== "object") return true;
+      const ts = Number(e.timestamp || e.ts || 0);
+      if (!ts || ts > Date.now() + DAY) return true;                         // ohne Zeitstempel = alter Import/Test
+      if (maxAgeDays && Date.now() - ts > maxAgeDays * DAY) return true;     // veraltet
+      const parts = textFields.map((f) => String(e[f] || "")).join(" ").trim();
+      if (!parts) return true;
+      if (DUMMY_RE.test(parts)) return true;
+      if (/(.)\1{7,}/.test(parts)) return true;                              // „aaaaaaaa“-Spam
+      return false;
+    }
+    /**
+     * Bereinigt zusätzlich in Firebase, wo die Sicherheitsregeln es erlauben: Der eigene Radar-Pin
+     * (Schlüssel = Geräte-ID) wird gelöscht, wenn er ein Test-/Dummy-Eintrag oder älter als 90 Tage ist.
+     * Chat und Pull-Wall sind laut Regeln nicht löschbar – dort werden Altlasten nur ausgeblendet.
+     */
+    function cleanupOwnDummies(ref, entries, textFields, maxAgeDays = 90) {
+      if (!ref) return;
+      const me = getOwnerId();
+      entries.forEach(([key, v]) => {
+        if (key === me && isDummyEntry(v, { textFields, maxAgeDays })) ref.child(key).remove().catch(() => {});
+      });
     }
 
     function buildCardmarketUrl(query) {
@@ -884,28 +1018,56 @@
       reader.readAsDataURL(file);
     }
 
-    // KARTEN-KATALOG FÜR SCANNER & BOOSTER-OPENER
-    const cardCatalog = {
-      "238/191": { name: "Pikachu ex SIR (238/191)", set: "Stürmische Funken", setCode: "sv8", value: 420, img: "https://images.pokemontcg.io/sv8/238_hires.png" },
-      "247/191": { name: "Latias ex SIR (247/191)", set: "Stürmische Funken", setCode: "sv8", value: 185, img: "https://images.pokemontcg.io/sv8/239_hires.png" },
-      "199/165": { name: "Glurak ex SIR (199/165)", set: "Karmesin & Purpur 151", setCode: "sv3pt5", value: 195, img: "https://images.pokemontcg.io/sv3pt5/199_hires.png" },
-      "200/165": { name: "Turtok ex SIR (200/165)", set: "Karmesin & Purpur 151", setCode: "sv3pt5", value: 72, img: "https://images.pokemontcg.io/sv3pt5/200_hires.png" },
-      "201/165": { name: "Simsala ex SIR (201/165)", set: "Karmesin & Purpur 151", setCode: "sv3pt5", value: 48, img: "https://images.pokemontcg.io/sv3pt5/201_hires.png" },
-      "251/182": { name: "Donnersichel ex SIR (251/182)", set: "Paradoxrift", setCode: "sv4", value: 78, img: "https://images.pokemontcg.io/sv4/251_hires.png" },
-      "203/162": { name: "Eisenblatt ex SIR (203/162)", set: "Gewalten der Zeit", setCode: "sv5", value: 68, img: "https://images.pokemontcg.io/sv5/203_hires.png" },
-      "215/203": { name: "Nachtara VMAX Alt Art (215/203)", set: "Drachenwandel", setCode: "swsh7", value: 890, img: "https://images.pokemontcg.io/swsh7/215_hires.png" },
-      "218/203": { name: "Rayquaza VMAX Alt Art (218/203)", set: "Drachenwandel", setCode: "swsh7", value: 460, img: "https://images.pokemontcg.io/swsh7/218_hires.png" }
-    };
+    // ECHTE KARTEN (offizielle Sets & Set-Nummern). Preise: Cardmarket über TCGdex, Stand 13.11.2026 –
+    // werden beim Laden der Seite automatisch live aktualisiert (siehe refreshLivePrices).
+    const PRICE_SNAPSHOT_DATE = "13.11.2026";
+    const REAL_SETS = {"sv08": {"tag": "Stürmische Funken", "full": "Karmesin & Purpur – Stürmische Funken", "sealedQuery": "Pokemon Stürmische Funken Display 36 Booster OVP deutsch"}, "sv03.5": {"tag": "151", "full": "Karmesin & Purpur – 151", "sealedQuery": "Pokemon 151 Booster Bundle deutsch OVP"}, "sv08.5": {"tag": "Prismatische Entwicklungen", "full": "Karmesin & Purpur – Prismatische Entwicklungen", "sealedQuery": "Pokemon Prismatische Entwicklungen Top Trainer Box deutsch"}, "swsh12.5gg": {"tag": "Zenit der Könige", "full": "Schwert & Schild – Zenit der Könige (Galar-Galerie)", "sealedQuery": "Pokemon Zenit der Könige Top Trainer Box deutsch"}, "sv03": {"tag": "Obsidianflammen", "full": "Karmesin & Purpur – Obsidianflammen", "sealedQuery": "Pokemon Obsidianflammen Display 36 Booster deutsch"}, "me01": {"tag": "Mega-Entwicklung", "full": "Mega-Entwicklung", "sealedQuery": "Pokemon Mega-Entwicklung Display 36 Booster deutsch"}, "sv04": {"tag": "Paradoxrift", "full": "Karmesin & Purpur – Paradoxrift", "sealedQuery": "Pokemon Paradoxrift Display 36 Booster deutsch"}, "swsh7": {"tag": "Drachenwandel", "full": "Schwert & Schild – Drachenwandel", "sealedQuery": "Pokemon Drachenwandel Display 36 Booster deutsch"}};
+    const REAL_CARDS = [
+      {"id": "sv08-238", "name": "Pikachu-ex", "num": "238/191", "setTag": "Stürmische Funken", "setFull": "Karmesin & Purpur – Stürmische Funken", "rarity": "Special Illustration Rare", "trend": 199.3, "low": 155, "avg30": 243.52, "img": "https://assets.tcgdex.net/de/sv/sv08/238/high.webp", "query": "Pikachu ex 238/191"},
+      {"id": "sv08-239", "name": "Latias-ex", "num": "239/191", "setTag": "Stürmische Funken", "setFull": "Karmesin & Purpur – Stürmische Funken", "rarity": "Special Illustration Rare", "trend": 173.91, "low": 99, "avg30": 160.75, "img": "https://assets.tcgdex.net/de/sv/sv08/239/high.webp", "query": "Latias ex 239/191"},
+      {"id": "sv08-237", "name": "Milotic-ex", "num": "237/191", "setTag": "Stürmische Funken", "setFull": "Karmesin & Purpur – Stürmische Funken", "rarity": "Special Illustration Rare", "trend": 133.28, "low": 89.99, "avg30": 120.06, "img": "https://assets.tcgdex.net/de/sv/sv08/237/high.webp", "query": "Milotic ex 237/191"},
+      {"id": "sv08-247", "name": "Pikachu-ex", "num": "247/191", "setTag": "Stürmische Funken", "setFull": "Karmesin & Purpur – Stürmische Funken", "rarity": "Hyper Rare (Gold)", "trend": 52.87, "low": 48, "avg30": 62.42, "img": "https://assets.tcgdex.net/de/sv/sv08/247/high.webp", "query": "Pikachu ex 247/191"},
+      {"id": "sv03.5-199", "name": "Glurak-ex", "num": "199/165", "setTag": "151", "setFull": "Karmesin & Purpur – 151", "rarity": "Special Illustration Rare", "trend": 343.78, "low": 180, "avg30": 325.94, "img": "https://assets.tcgdex.net/de/sv/sv03.5/199/high.webp", "query": "Glurak ex 199/165"},
+      {"id": "sv03.5-198", "name": "Bisaflor-ex", "num": "198/165", "setTag": "151", "setFull": "Karmesin & Purpur – 151", "rarity": "Special Illustration Rare", "trend": 112.3, "low": 60, "avg30": 113.85, "img": "https://assets.tcgdex.net/de/sv/sv03.5/198/high.webp", "query": "Bisaflor ex 198/165"},
+      {"id": "sv03.5-200", "name": "Turtok-ex", "num": "200/165", "setTag": "151", "setFull": "Karmesin & Purpur – 151", "rarity": "Special Illustration Rare", "trend": 104.07, "low": 69.99, "avg30": 139.21, "img": "https://assets.tcgdex.net/de/sv/sv03.5/200/high.webp", "query": "Turtok ex 200/165"},
+      {"id": "sv03.5-202", "name": "Zapdos-ex", "num": "202/165", "setTag": "151", "setFull": "Karmesin & Purpur – 151", "rarity": "Special Illustration Rare", "trend": 96.12, "low": 60, "avg30": 110.45, "img": "https://assets.tcgdex.net/de/sv/sv03.5/202/high.webp", "query": "Zapdos ex 202/165"},
+      {"id": "sv03.5-193", "name": "Mew-ex", "num": "193/165", "setTag": "151", "setFull": "Karmesin & Purpur – 151", "rarity": "Ultra Selten", "trend": 27.5, "low": 14.9, "avg30": 28.17, "img": "https://assets.tcgdex.net/de/sv/sv03.5/193/high.webp", "query": "Mew ex 193/165"},
+      {"id": "sv03.5-205", "name": "Mew-ex", "num": "205/165", "setTag": "151", "setFull": "Karmesin & Purpur – 151", "rarity": "Hyper Rare (Gold)", "trend": 26.11, "low": 14.5, "avg30": 19.58, "img": "https://assets.tcgdex.net/de/sv/sv03.5/205/high.webp", "query": "Mew ex 205/165"},
+      {"id": "sv08.5-161", "name": "Nachtara-ex", "num": "161/131", "setTag": "Prismatische Entwicklungen", "setFull": "Karmesin & Purpur – Prismatische Entwicklungen", "rarity": "Special Illustration Rare", "trend": 1290.1, "low": 699, "avg30": 1064.7, "img": "https://assets.tcgdex.net/de/sv/sv08.5/161/high.webp", "query": "Nachtara ex 161/131"},
+      {"id": "sv08.5-144", "name": "Folipurba-ex", "num": "144/131", "setTag": "Prismatische Entwicklungen", "setFull": "Karmesin & Purpur – Prismatische Entwicklungen", "rarity": "Special Illustration Rare", "trend": 276.99, "low": 110, "avg30": 231.27, "img": "https://assets.tcgdex.net/de/sv/sv08.5/144/high.webp", "query": "Folipurba ex 144/131"},
+      {"id": "sv08.5-156", "name": "Feelinara-ex", "num": "156/131", "setTag": "Prismatische Entwicklungen", "setFull": "Karmesin & Purpur – Prismatische Entwicklungen", "rarity": "Special Illustration Rare", "trend": 256.69, "low": 183, "avg30": 281.78, "img": "https://assets.tcgdex.net/de/sv/sv08.5/156/high.webp", "query": "Feelinara ex 156/131"},
+      {"id": "sv08.5-149", "name": "Aquana-ex", "num": "149/131", "setTag": "Prismatische Entwicklungen", "setFull": "Karmesin & Purpur – Prismatische Entwicklungen", "rarity": "Special Illustration Rare", "trend": 199.71, "low": 90, "avg30": 193.87, "img": "https://assets.tcgdex.net/de/sv/sv08.5/149/high.webp", "query": "Aquana ex 149/131"},
+      {"id": "swsh12.5gg-GG69", "name": "Giratina VSTAR", "num": "GG69/GG70", "setTag": "Zenit der Könige", "setFull": "Schwert & Schild – Zenit der Könige (Galar-Galerie)", "rarity": "Alternate Art Secret Rare", "trend": 257.92, "low": 160, "avg30": 279.02, "img": "https://images.pokemontcg.io/swsh12pt5gg/GG69_hires.png", "query": "Giratina VSTAR GG69"},
+      {"id": "swsh12.5gg-GG44", "name": "Mewtu VSTAR", "num": "GG44/GG70", "setTag": "Zenit der Könige", "setFull": "Schwert & Schild – Zenit der Könige (Galar-Galerie)", "rarity": "Ultra Selten", "trend": 208.47, "low": 99.95, "avg30": 201.45, "img": "https://images.pokemontcg.io/swsh12pt5gg/GG44_hires.png", "query": "Mewtu VSTAR GG44"},
+      {"id": "swsh12.5gg-GG70", "name": "Arceus VSTAR", "num": "GG70/GG70", "setTag": "Zenit der Könige", "setFull": "Schwert & Schild – Zenit der Könige (Galar-Galerie)", "rarity": "Alternate Art Secret Rare", "trend": 172.71, "low": 89.9, "avg30": 184.58, "img": "https://images.pokemontcg.io/swsh12pt5gg/GG70_hires.png", "query": "Arceus VSTAR GG70"},
+      {"id": "sv03-223", "name": "Glurak-ex", "num": "223/197", "setTag": "Obsidianflammen", "setFull": "Karmesin & Purpur – Obsidianflammen", "rarity": "Special Illustration Rare", "trend": 64.37, "low": 42, "avg30": 78.9, "img": "https://assets.tcgdex.net/de/sv/sv03/223/high.webp", "query": "Glurak ex 223/197"},
+      {"id": "sv03-228", "name": "Glurak-ex", "num": "228/197", "setTag": "Obsidianflammen", "setFull": "Karmesin & Purpur – Obsidianflammen", "rarity": "Hyper Rare (Gold)", "trend": 21.28, "low": 12, "avg30": 28.68, "img": "https://assets.tcgdex.net/de/sv/sv03/228/high.webp", "query": "Glurak ex 228/197"},
+      {"id": "me01-188", "name": "Mega-Lucario-ex", "num": "188/132", "setTag": "Mega-Entwicklung", "setFull": "Mega-Entwicklung", "rarity": "Mega Hyper Rare (Gold)", "trend": 169.27, "low": 140, "avg30": 168.12, "img": "https://assets.tcgdex.net/de/me/me01/188/high.webp", "query": "Mega-Lucario ex 188/132"},
+      {"id": "me01-187", "name": "Mega-Guardevoir-ex", "num": "187/132", "setTag": "Mega-Entwicklung", "setFull": "Mega-Entwicklung", "rarity": "Mega Hyper Rare (Gold)", "trend": 157.35, "low": 119.99, "avg30": 160.33, "img": "https://assets.tcgdex.net/de/me/me01/187/high.webp", "query": "Mega-Guardevoir ex 187/132"},
+      {"id": "me01-178", "name": "Mega-Guardevoir-ex", "num": "178/132", "setTag": "Mega-Entwicklung", "setFull": "Mega-Entwicklung", "rarity": "Special Illustration Rare", "trend": 143.34, "low": 80, "avg30": 127.41, "img": "https://assets.tcgdex.net/de/me/me01/178/high.webp", "query": "Mega-Guardevoir ex 178/132"},
+      {"id": "me01-179", "name": "Mega-Lucario-ex", "num": "179/132", "setTag": "Mega-Entwicklung", "setFull": "Mega-Entwicklung", "rarity": "Special Illustration Rare", "trend": 132.11, "low": 69.9, "avg30": 137.55, "img": "https://assets.tcgdex.net/de/me/me01/179/high.webp", "query": "Mega-Lucario ex 179/132"},
+      {"id": "sv04-251", "name": "Donnersichel-ex", "num": "251/182", "setTag": "Paradoxrift", "setFull": "Karmesin & Purpur – Paradoxrift", "rarity": "Special Illustration Rare", "trend": 28.43, "low": 19, "avg30": 35.56, "img": "https://assets.tcgdex.net/de/sv/sv04/251/high.webp", "query": "Donnersichel ex 251/182"},
+      {"id": "swsh7-215", "name": "Nachtara VMAX", "num": "215/203", "setTag": "Drachenwandel", "setFull": "Schwert & Schild – Drachenwandel", "rarity": "Alternate Art Secret Rare", "trend": 1872.01, "low": 500, "avg30": 1790.22, "img": "https://assets.tcgdex.net/de/swsh/swsh7/215/high.webp", "query": "Nachtara VMAX 215/203"},
+      {"id": "swsh7-218", "name": "Rayquaza VMAX", "num": "218/203", "setTag": "Drachenwandel", "setFull": "Schwert & Schild – Drachenwandel", "rarity": "Alternate Art Secret Rare", "trend": 1154.9, "low": 350, "avg30": 1037.8, "img": "https://assets.tcgdex.net/de/swsh/swsh7/218/high.webp", "query": "Rayquaza VMAX 218/203"}
+    ];
+
+    const setKeyOf = (c) => c.id.slice(0, c.id.lastIndexOf("-"));
+    const cardLabel = (c) => `${c.name} (${c.num})`;
+    // Abwärtskompatibel: Katalog nach Kartennummer (z. B. "238/191")
+    const cardCatalog = {};
+    REAL_CARDS.forEach((c) => {
+      cardCatalog[c.num] = { name: cardLabel(c), set: c.setTag, value: c.trend, img: c.img, id: c.id };
+    });
 
     function resolveCard(input) {
       const clean = (input || "").trim();
-      if (cardCatalog[clean]) return cardCatalog[clean];
+      if (cardCatalog[clean]) return { ...cardCatalog[clean], value: (REAL_CARDS.find((c) => c.num === clean) || {}).trend || cardCatalog[clean].value };
       for (const k in cardCatalog) {
         if (clean.toLowerCase().includes(k.toLowerCase()) || clean.toLowerCase().includes(cardCatalog[k].name.toLowerCase().split(" ")[0])) {
           return cardCatalog[k];
         }
       }
-      return { name: clean || "Pokémon Karte", set: "Pokémon TCG", value: 25, img: "https://images.pokemontcg.io/sv8/238_hires.png" };
+      return { name: clean || "Pokémon Karte", set: "Pokémon TCG", value: 0, img: FALLBACK_CARD_IMG };
     }
 
     // ===================================================================
@@ -1011,22 +1173,21 @@
 
     function sendTestPushNotification() {
       closeModal("push-modal");
+      const c = REAL_CARDS[0];
       triggerSmartPush(
-        "⚡ DEAL-SNIPER ALARM (-29%)",
-        "Pikachu ex SIR (238/191) unter Zielpreis entdeckt! Jetzt auf eBay prüfen.",
-        buildEbayUrl("Pikachu ex 238/191", "bin")
+        "🔔 Test-Mitteilung",
+        `So sieht ein Preisalarm aus: ${cardLabel(c)} – Cardmarket-Trend aktuell ${fmtEur(c.trend)}.`,
+        buildEbayUrl(c.query, "bin", "push")
       );
     }
 
     // ===================================================================
     // 1. SWIPE-ARENA & GRATIS BOOSTER-PACK-SIMULATOR
     // ===================================================================
-    const swipeCatalog = [
-      { title: "Pikachu ex SIR (238/191)", setTag: "Stürmische Funken", setFull: "Karmesin & Purpur – Stürmische Funken", rarity: "SIR Highlight", cm: 420, price: 340, img: "https://images.pokemontcg.io/sv8/238_hires.png", query: "Pikachu ex 238/191" },
-      { title: "Glurak ex SIR (199/165)", setTag: "151", setFull: "Karmesin & Purpur – 151", rarity: "SIR Grail", cm: 195, price: 155, img: "https://images.pokemontcg.io/sv3pt5/199_hires.png", query: "Glurak ex 199/165" },
-      { title: "Nachtara VMAX Alt Art (215/203)", setTag: "Evo & Vintage", setFull: "Schwert & Schild – Drachenwandel", rarity: "Moonbreon Alt Art", cm: 890, price: 740, img: "https://images.pokemontcg.io/swsh7/215_hires.png", query: "Nachtara VMAX 215/203" },
-      { title: "Donnersichel ex SIR (251/182)", setTag: "Stürmische Funken", setFull: "Karmesin & Purpur – Paradoxrift", rarity: "SIR", cm: 78, price: 59, img: "https://images.pokemontcg.io/sv4/251_hires.png", query: "Donnersichel ex 251/182" }
-    ];
+    const swipeCatalog = REAL_CARDS.map((c) => ({
+      id: c.id, title: cardLabel(c), setTag: c.setTag, setFull: c.setFull, rarity: c.rarity,
+      get cm() { return c.trend; }, get price() { return c.low; }, img: c.img, query: c.query,
+    }));
 
     let activeDeck = [...swipeCatalog];
     let swipeIdx = 0;
@@ -1036,26 +1197,34 @@
     function renderSwipeCard() {
       if (!activeDeck.length) activeDeck = [...swipeCatalog];
       const item = activeDeck[swipeIdx % activeDeck.length];
-      const diff = item.cm - item.price;
-      const pct = Math.round((diff / item.cm) * 100);
+      const diff = Math.max(0, (item.cm || 0) - (item.price || 0));
+      const pct = item.cm ? Math.round((diff / item.cm) * 100) : 0;
 
       document.getElementById("swipe-rarity").textContent = item.rarity;
       document.getElementById("swipe-title").textContent = item.title;
       document.getElementById("swipe-set").textContent = item.setFull;
-      document.getElementById("swipe-cm").textContent = `${item.cm},00 €`;
-      document.getElementById("swipe-price").textContent = `${item.price},00 €`;
-      document.getElementById("swipe-margin").textContent = `+${diff},00 € (-${pct}%)`;
-      document.getElementById("swipe-img").src = item.img;
+      document.getElementById("swipe-cm").textContent = fmtEur(item.cm);
+      document.getElementById("swipe-price").textContent = fmtEur(item.price);
+      document.getElementById("swipe-margin").textContent = diff > 0 ? `-${fmtEur(diff)} (-${pct}%)` : "–";
+      const img = document.getElementById("swipe-img");
+      delete img.dataset.fallback;
+      img.src = item.img;
+      img.alt = item.title;
 
-      document.getElementById("swipe-ebay-buy").href = buildEbayUrl(item.query, "bin");
-      document.getElementById("swipe-ebay-auction").href = buildEbayUrl(item.query, "auction");
-      document.getElementById("swipe-cm-link").href = buildCardmarketUrl(item.query);
-      document.getElementById("swipe-psa-link").href = buildEbayUrl(item.query + " PSA 10", "bin");
+      document.getElementById("swipe-ebay-buy").href = buildEbayUrl(item.query, "bin", "swipe");
+      document.getElementById("swipe-ebay-auction").href = buildEbayUrl(item.query, "auction", "swipe");
+      document.getElementById("swipe-cm-link").href = buildCardmarketUrl(item.query.replace(/ \d+\/\d+$/, ""));
+      document.getElementById("swipe-psa-link").href = buildEbayUrl(item.query + " PSA 10", "sold", "swipe-psa");
     }
 
     function filterSwipeDeck(tag) {
       activeDeck = tag === "all" ? [...swipeCatalog] : swipeCatalog.filter(c => c.setTag === tag);
+      if (!activeDeck.length) activeDeck = [...swipeCatalog];
       swipeIdx = 0;
+      document.querySelectorAll(".deck-btn").forEach((b) => {
+        const on = b.dataset.deck === tag;
+        b.className = `deck-btn ${on ? "bg-yellow-400 text-slate-950 font-black" : "bg-slate-800 hover:bg-slate-700 text-white font-bold"} text-xs px-3 py-1 rounded-xl shrink-0`;
+      });
       renderSwipeCard();
     }
 
@@ -1063,7 +1232,7 @@
       const item = activeDeck[swipeIdx % activeDeck.length];
       if (mode === "match") {
         if (!savedMatches.some(m => m.title === item.title)) {
-          savedMatches.unshift({ title: item.title, price: item.price, query: item.query });
+          savedMatches.unshift({ title: item.title, price: item.price || item.cm || 0, query: item.query });
           localStorage.setItem("pokeswipe_matches_clean", JSON.stringify(savedMatches));
           renderMatches();
         }
@@ -1084,11 +1253,11 @@
         <div class="flex items-center justify-between bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl">
           <div class="truncate pr-2">
             <p class="font-bold text-white truncate">${sanitizeHTML(m.title)}</p>
-            <p class="text-[11px] text-emerald-400 font-bold">Zielpreis: ${Number(m.price)},00 €</p>
+            <p class="text-[11px] text-emerald-400 font-bold">Zielpreis: ${fmtEur(m.price)}</p>
           </div>
           <div class="flex gap-1.5 shrink-0">
             <a href="${buildCardmarketUrl(m.query)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-[11px] font-bold px-2 py-1 rounded-lg">CM</a>
-            <a href="${buildEbayUrl(m.query, 'bin')}" target="_blank" rel="noopener" class="bg-blue-600 text-white text-[11px] font-bold px-2 py-1 rounded-lg">eBay</a>
+            <a href="${buildEbayUrl(m.query, 'bin', 'merkliste')}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white text-[11px] font-bold px-2 py-1 rounded-lg">🛒 eBay*</a>
             <button onclick="savedMatches.splice(${i},1);localStorage.setItem('pokeswipe_matches_clean',JSON.stringify(savedMatches));renderMatches();" class="text-slate-500 hover:text-rose-400 px-1">✕</button>
           </div>
         </div>
@@ -1098,35 +1267,17 @@
     function clearMatches() { savedMatches = []; localStorage.removeItem("pokeswipe_matches_clean"); renderMatches(); }
 
     // GRATIS BOOSTER-PACK-SIMULATOR (HÄLT SAMMLER AUF DER SEITE & GENERIERT AFFILIATE-KLICKS)
-    const boosterPools = {
-      sv8: {
-        displayQuery: "Pokemon Stürmische Funken Display 36 Booster OVP",
-        cards: [
-          { name: "Pikachu ex SIR (238/191)", rarity: "⚡ GOD HIT! Special Illustration Rare", val: 420, img: "https://images.pokemontcg.io/sv8/238_hires.png" },
-          { name: "Latias ex SIR (239/191)", rarity: "🔥 Special Illustration Rare", val: 185, img: "https://images.pokemontcg.io/sv8/239_hires.png" },
-          { name: "Donnersichel ex SIR (251/182)", rarity: "✨ Illustration Rare Hit", val: 78, img: "https://images.pokemontcg.io/sv4/251_hires.png" }
-        ]
-      },
-      sv3pt5: {
-        displayQuery: "Pokemon Karmesin Purpur 151 Top Trainer Box Display",
-        cards: [
-          { name: "Glurak ex SIR (199/165)", rarity: "🔥 GRAIL HIT! Special Illustration Rare", val: 195, img: "https://images.pokemontcg.io/sv3pt5/199_hires.png" },
-          { name: "Turtok ex SIR (200/165)", rarity: "💧 Special Illustration Rare", val: 72, img: "https://images.pokemontcg.io/sv3pt5/200_hires.png" },
-          { name: "Simsala ex SIR (201/165)", rarity: "🔮 Special Illustration Rare", val: 48, img: "https://images.pokemontcg.io/sv3pt5/201_hires.png" }
-        ]
-      },
-      swsh7: {
-        displayQuery: "Pokemon Drachenwandel Evolving Skies Display Booster",
-        cards: [
-          { name: "Nachtara VMAX Alt Art (215/203)", rarity: "🌙 JACKPOT! Moonbreon Alternate Art", val: 890, img: "https://images.pokemontcg.io/swsh7/215_hires.png" },
-          { name: "Rayquaza VMAX Alt Art (218/203)", rarity: "🐉 Alternate Art Secret Rare", val: 460, img: "https://images.pokemontcg.io/swsh7/218_hires.png" }
-        ]
-      }
-    };
+    const RARITY_ICON = { "Special Illustration Rare": "🔥 Special Illustration Rare", "Hyper Rare (Gold)": "🌟 Hyper Rare (Gold)", "Alternate Art Secret Rare": "🌙 Alternate Art Secret Rare", "Mega Hyper Rare (Gold)": "🌀 Mega Hyper Rare (Gold)" };
+    const boosterPools = {};
+    REAL_CARDS.forEach((c) => {
+      const key = setKeyOf(c);
+      if (!boosterPools[key]) boosterPools[key] = { displayQuery: REAL_SETS[key]?.sealedQuery || `Pokemon ${c.setTag} Display`, cards: [] };
+      boosterPools[key].cards.push({ id: c.id, name: cardLabel(c), rarity: RARITY_ICON[c.rarity] || c.rarity, get val() { return c.trend; }, img: c.img, query: c.query });
+    });
 
     function openVirtualBooster() {
-      const setKey = document.getElementById("pack-set-select").value || "sv8";
-      const pool = boosterPools[setKey] || boosterPools.sv8;
+      const setKey = document.getElementById("pack-set-select").value || "sv08";
+      const pool = boosterPools[setKey] || boosterPools.sv08 || Object.values(boosterPools)[0];
       const pulled = pool.cards[Math.floor(Math.random() * pool.cards.length)];
 
       const imgEl = document.getElementById("pack-visual-img");
@@ -1134,12 +1285,13 @@
       void imgEl.offsetWidth;
       imgEl.classList.add("pack-shake");
 
+      delete imgEl.dataset.fallback;
       imgEl.src = pulled.img;
       document.getElementById("pack-hit-badge").textContent = pulled.rarity;
       document.getElementById("pack-hit-name").textContent = pulled.name;
-      document.getElementById("pack-hit-val").textContent = `Aktueller Marktwert: ~${pulled.val},00 €`;
-      document.getElementById("pack-buy-card-link").href = buildEbayUrl(pulled.name, "bin");
-      document.getElementById("pack-buy-display-link").href = buildEbayUrl(pool.displayQuery, "bin");
+      document.getElementById("pack-hit-val").textContent = `Cardmarket-Trend: ${fmtEur(pulled.val)} (Stand ${livePriceDate})`;
+      document.getElementById("pack-buy-card-link").href = buildEbayUrl(pulled.query, "bin", "booster");
+      document.getElementById("pack-buy-display-link").href = buildEbayUrl(pool.displayQuery, "bin", "booster-ovp");
 
       packsOpenedCount += 1;
       localStorage.setItem("pokeswipe_packs_count", String(packsOpenedCount));
@@ -1160,7 +1312,7 @@
       box.innerHTML = wishlist.map((w, i) => `
         <div class="flex items-center gap-2 bg-slate-900 border border-yellow-400/40 px-3 py-1 rounded-full text-xs">
           <span class="text-yellow-300 font-bold">🎯 ${sanitizeHTML(w.card)} &le; ${Number(w.max)} €</span>
-          <a href="${buildEbayUrl(w.card, 'bin')}" target="_blank" rel="noopener" class="text-blue-400 underline font-bold">eBay</a>
+          <a href="${buildEbayUrl(w.card, 'bin', 'waechter')}" target="_blank" rel="noopener sponsored" class="text-blue-400 underline font-bold">eBay*</a>
           <a href="${buildCardmarketUrl(w.card)}" target="_blank" rel="noopener" class="text-purple-400 underline font-bold">CM</a>
           <button onclick="wishlist.splice(${i},1);localStorage.setItem('pokeswipe_wishlist_clean',JSON.stringify(wishlist));renderWishlist();" class="text-slate-400 hover:text-rose-400">✕</button>
         </div>
@@ -1179,45 +1331,33 @@
       triggerSmartPush("🎯 Preis-Wächter aktiv!", `Wir überwachen "${card}" unter ${max} € für dich.`, buildEbayUrl(card, "bin"));
     }
 
-    let flipDeals = [
-      { name: "Pikachu ex SIR (238/191) Stürmische Funken", category: "singles", cmPrice: 420, ebayPrice: 315, query: "Pikachu ex 238/191" },
-      { name: "Karmesin & Purpur 151 Top-Trainer-Box (OVP)", category: "sealed", cmPrice: 115, ebayPrice: 89, query: "Pokemon 151 Top Trainer Box deutsch" },
-      { name: "Glurak ex SIR (199/165) K&P 151 Deutsch", category: "singles", cmPrice: 195, ebayPrice: 149, query: "Glurak ex 199/165 deutsch" },
-      { name: "Stürmische Funken 36er Booster Display (OVP)", category: "sealed", cmPrice: 165, ebayPrice: 129, query: "Stürmische Funken Display 36 Booster" }
-    ];
+    // Flip-Radar: echte Karten, bei denen das günstigste Cardmarket-Angebot unter dem Trend liegt
+    let communityDeals = [];
+    function buildFlipDeals() {
+      const real = REAL_CARDS.filter((c) => c.trend > 0 && c.low > 0 && c.low < c.trend).map((c) => ({
+        name: `${cardLabel(c)} – ${c.setTag}`, category: "singles", cmPrice: c.trend, ebayPrice: c.low, query: c.query, img: c.img, source: "Cardmarket ab",
+      })).sort((a, b) => (b.cmPrice - b.ebayPrice) / b.cmPrice - (a.cmPrice - a.ebayPrice) / a.cmPrice);
+      return communityDeals.concat(real);
+    }
+    let flipDeals = buildFlipDeals();
 
     function filterFlipDeals(cat = "all") {
+      // Wird von der Pro-Version weiter unten ersetzt (Sniper-Deals)
       const items = cat === "all" ? flipDeals : flipDeals.filter(d => d.category === cat);
-      document.getElementById("flip-list").innerHTML = items.map(d => {
-        const diff = d.cmPrice - d.ebayPrice;
-        const pct = Math.round((diff / d.cmPrice) * 100);
-        return `
-          <div class="poke-glass rounded-2xl p-4 flex flex-col justify-between gap-3">
-            <div class="flex justify-between items-start gap-2">
-              <div>
-                <span class="text-[11px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">🔥 -${pct}% unter CM-Trend (+${diff} €)</span>
-                <h3 class="font-bold text-white text-sm mt-2">${sanitizeHTML(d.name)}</h3>
-              </div>
-              <span class="text-xs text-slate-400 shrink-0">CM: <del>${Number(d.cmPrice)} €</del></span>
-            </div>
-            <div class="flex items-center justify-between pt-3 border-t border-slate-800">
-              <p class="text-lg font-black text-emerald-400">${Number(d.ebayPrice)},00 €</p>
-              <div class="flex gap-1.5">
-                <a href="${buildCardmarketUrl(d.query)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl">Cardmarket</a>
-                <a href="${buildEbayUrl(d.query, 'auction')}" target="_blank" rel="noopener" class="bg-amber-400 text-slate-950 text-xs font-bold px-2.5 py-1.5 rounded-xl">Auktion</a>
-                <a href="${buildEbayUrl(d.query, 'bin')}" target="_blank" rel="noopener" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">eBay-Deal</a>
-              </div>
-            </div>
-          </div>
-        `;
-      }).join("");
+      document.getElementById("flip-list").innerHTML = items.map(d => `
+        <div class="poke-glass rounded-2xl p-4 text-xs"><p class="font-bold text-white">${sanitizeHTML(d.name)}</p>
+        <a href="${buildEbayUrl(d.query, 'bin', 'flip')}" target="_blank" rel="noopener sponsored" class="text-blue-400 underline">eBay*</a></div>`).join("");
     }
 
     function submitCommunityDeal() {
       const title = document.getElementById("rep-title").value.trim();
       const price = parseInt(document.getElementById("rep-price").value, 10);
-      if (!title || isNaN(price)) return alert("Bitte Titel und Preis angeben.");
-      flipDeals.unshift({ name: title, category: "singles", cmPrice: Math.round(price * 1.25), ebayPrice: price, query: title });
+      if (!title || isNaN(price) || price <= 0) return alert("Bitte Titel und Preis angeben.");
+      if (!cooldownOk("deal")) return;
+      const t = title.toLowerCase();
+      const match = REAL_CARDS.find((c) => t.includes(c.num.split("/")[0]) && t.includes(c.name.toLowerCase().split(/[- ]/)[0]));
+      communityDeals.unshift({ name: title.slice(0, 120), category: "singles", cmPrice: match ? match.trend : 0, ebayPrice: price, query: match ? match.query : title, source: "Community-Meldung" });
+      flipDeals = buildFlipDeals();
       document.getElementById("rep-title").value = "";
       document.getElementById("rep-price").value = "";
       filterFlipDeals("all");
@@ -1247,10 +1387,11 @@
       const caption = document.getElementById("wall-caption").value.trim().slice(0, 300);
       const num = document.getElementById("wall-cardnum").value.trim();
       if (!caption && !pendingWallImg && !num) return alert("Bitte Foto, Kartennummer oder Beschreibung eingeben.");
+      if (!cooldownOk("wall")) return;
 
       let img = pendingWallImg;
       if (!img && num) img = resolveCard(num).img;
-      if (!img) img = "https://images.pokemontcg.io/sv8/238_hires.png";
+      if (!img) img = FALLBACK_CARD_IMG;
 
       const postObj = {
         user,
@@ -1267,17 +1408,26 @@
     }
 
     function likeWallPost(key) {
+      key = safeKey(key);
       if (!dbRefWall || !key) return;
-      dbRefWall.child(key).child("likes").transaction(c => (c === null ? 1 : c + 1));
+      const liked = JSON.parse(localStorage.getItem("pokeswipe_liked") || "[]");
+      if (liked.includes(key)) return triggerSmartPush("❤️ Schon geliked", "Pro Beitrag zählt ein Like.");
+      if (!cooldownOk("like")) return;
+      liked.push(key);
+      localStorage.setItem("pokeswipe_liked", JSON.stringify(liked.slice(-500)));
+      dbRefWall.child(key).child("likes").transaction(c => (c === null ? 1 : Math.min(Number(c) + 1, 1e6)));
     }
 
     function addWallComment(key, idx) {
-      const inp = document.getElementById(`wall-cmt-${idx}`);
+      key = safeKey(key);
+      const inp = document.getElementById(`wall-cmt-${Number(idx)}`);
       if (!inp || !dbRefWall || !key) return;
       const text = inp.value.trim().slice(0, 300);
       if (!text) return;
+      if (DUMMY_RE.test(text)) return alert("Bitte einen echten Kommentar schreiben.");
+      if (!cooldownOk("comment")) return;
       const author = (getCurrentUser() || "Sammler").slice(0, 35);
-      dbRefWall.child(key).child("comments").push({ author, text, timestamp: Date.now() });
+      dbRefWall.child(key).child("comments").push({ author, text, timestamp: Date.now() }).catch(() => alert("Kommentar konnte nicht gesendet werden."));
       inp.value = "";
     }
 
@@ -1288,7 +1438,8 @@
         return;
       }
       box.innerHTML = wallPosts.map((p, idx) => {
-        const comments = p.comments ? Object.values(p.comments) : [];
+        const comments = p.comments ? Object.values(p.comments).filter((c) => !isDummyEntry(c, { textFields: ["text"] })).slice(-30) : [];
+        const key = safeKey(p.firebaseKey);
         return `
           <div class="poke-glass rounded-2xl p-4 space-y-3">
             <div class="flex justify-between items-center text-xs">
@@ -1297,18 +1448,18 @@
             </div>
             <p class="text-xs sm:text-sm text-white">${sanitizeHTML(p.caption)}</p>
             <div class="bg-slate-950 rounded-xl p-2 flex justify-center">
-              <img src="${sanitizeHTML(p.img)}" alt="Pull" class="max-h-56 rounded-lg object-contain" />
+              <img src="${/^(data:image\/(jpeg|png|webp);base64,|https:\/\/|\/)/.test(String(p.img || "")) ? sanitizeHTML(p.img) : FALLBACK_CARD_IMG}" alt="Pull" loading="lazy" class="max-h-56 rounded-lg object-contain" />
             </div>
             <div class="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
-              <button onclick="likeWallPost('${p.firebaseKey}')" class="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold px-3 py-1 rounded-lg">
+              <button onclick="likeWallPost('${key}')" class="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold px-3 py-1 rounded-lg">
                 ❤️ Gefällt mir (${Number(p.likes || 0)})
               </button>
               <span class="text-slate-400">💬 ${comments.length} Kommentare</span>
             </div>
             ${comments.length ? `<div class="space-y-1 bg-slate-950 p-2.5 rounded-xl text-xs">${comments.map(c => `<div><strong class="text-yellow-400">${sanitizeHTML(c.author)}:</strong> <span class="text-slate-200">${sanitizeHTML(c.text)}</span></div>`).join("")}</div>` : ""}
             <div class="flex gap-2">
-              <input id="wall-cmt-${idx}" type="text" maxlength="300" placeholder="Kommentar schreiben..." onkeydown="if(event.key==='Enter')addWallComment('${p.firebaseKey}', ${idx})" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white" />
-              <button onclick="addWallComment('${p.firebaseKey}', ${idx})" class="bg-slate-800 hover:bg-slate-700 text-yellow-400 font-bold text-xs px-3 py-1.5 rounded-xl">Senden</button>
+              <input id="wall-cmt-${idx}" type="text" maxlength="300" placeholder="Kommentar schreiben..." onkeydown="if(event.key==='Enter')addWallComment('${key}', ${idx})" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white" />
+              <button onclick="addWallComment('${key}', ${idx})" class="bg-slate-800 hover:bg-slate-700 text-yellow-400 font-bold text-xs px-3 py-1.5 rounded-xl">Senden</button>
             </div>
           </div>
         `;
@@ -1337,6 +1488,8 @@
       const rawName = (nameInp.value.trim() || getCurrentUser() || "Sammler").slice(0, 35);
       const text = textInp.value.trim().slice(0, 500);
       if (!text) return;
+      if (DUMMY_RE.test(text) && text.length < 25) return alert("Bitte eine echte Nachricht schreiben.");
+      if (!cooldownOk("chat")) return;
       if (rawName) localStorage.setItem("pokeswipe_user", rawName);
 
       if (dbRefChat) dbRefChat.push({ user: rawName, text, timestamp: Date.now() }).catch(err => alert("Chat-Fehler: " + err.message));
@@ -1511,7 +1664,7 @@
       box.innerHTML = filtered.map(item => `
         <div class="poke-glass rounded-2xl p-3.5 flex items-center justify-between gap-3">
           <div class="flex items-center gap-3 truncate">
-            <img src="${sanitizeHTML(item.img || 'https://images.pokemontcg.io/sv8/238_hires.png')}" alt="Karte" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
+            <img src="${sanitizeHTML(item.img || FALLBACK_CARD_IMG)}" alt="Karte" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
             <div class="truncate text-xs">
               <span class="font-black text-emerald-400">${Number(item.price || 0)} €</span> • <span class="text-slate-400">📍 ${sanitizeHTML(item.city)} (${sanitizeHTML(item.seller)})</span>
               <h4 class="font-black text-white text-sm truncate">${sanitizeHTML(item.card)}</h4>
@@ -1520,8 +1673,8 @@
           </div>
           <div class="flex gap-1.5 shrink-0 text-xs">
             <a href="${buildCardmarketUrl(item.card)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2.5 py-1.5 rounded-xl">CM</a>
-            <a href="${buildEbayUrl(item.card, 'bin')}" target="_blank" rel="noopener" class="bg-blue-600 text-white font-bold px-2.5 py-1.5 rounded-xl">eBay</a>
-            ${item.ownerId === myUid && item.firebaseKey ? `<button onclick="deleteMarketItem('${item.firebaseKey}')" class="bg-rose-500/20 text-rose-300 font-bold px-2.5 py-1.5 rounded-xl">🗑️</button>` : ""}
+            <a href="${buildEbayUrl(item.card, 'bin', 'tausch')}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2.5 py-1.5 rounded-xl">🛒 eBay*</a>
+            ${item.ownerId === myUid && safeKey(item.firebaseKey) ? `<button onclick="deleteMarketItem('${safeKey(item.firebaseKey)}')" class="bg-rose-500/20 text-rose-300 font-bold px-2.5 py-1.5 rounded-xl">🗑️</button>` : ""}
           </div>
         </div>
       `).join("");
@@ -1533,9 +1686,11 @@
         mapInstance = L.map("radarMap").setView([51.1657, 10.4515], 6);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap" }).addTo(mapInstance);
       }
+      if (!mapInstance._psLayer) mapInstance._psLayer = L.layerGroup().addTo(mapInstance);
+      mapInstance._psLayer.clearLayers();
       radarUsers.forEach(u => {
-        if (u.lat && u.lng) {
-          L.marker([Number(u.lat), Number(u.lng)]).addTo(mapInstance)
+        if (Number.isFinite(Number(u.lat)) && Number.isFinite(Number(u.lng)) && u.lat && u.lng) {
+          L.marker([Number(u.lat), Number(u.lng)]).addTo(mapInstance._psLayer)
             .bindPopup(`<b>${sanitizeHTML(u.name)}</b> (${sanitizeHTML(u.city)})<br>${sanitizeHTML(u.cards)}`);
         }
       });
@@ -1557,6 +1712,8 @@
       const city = document.getElementById("radar-my-city").value.trim().slice(0, 60);
       const cards = document.getElementById("radar-my-cards").value.trim().slice(0, 120);
       if (!city || !cards) return alert("Bitte Ort und Karten angeben.");
+      if (DUMMY_RE.test(`${name} ${city} ${cards}`)) return alert("Bitte echte Angaben eintragen.");
+      if (!cooldownOk("radar")) return;
 
       const savePin = (lat, lng) => {
         const pin = { name, city, lat: Number(lat), lng: Number(lng), cards, timestamp: Date.now() };
@@ -1564,13 +1721,19 @@
         triggerSmartPush("📍 Radar-Pin gesetzt!", `${name} (${city}) ist jetzt auf der Sammler-Karte sichtbar.`);
       };
 
+      // Ohne GPS: Stadt über OpenStreetMap suchen (keine erfundenen Koordinaten)
+      const geocode = async () => {
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=de,at,ch&q=${encodeURIComponent(city)}`, { headers: { "Accept-Language": "de" } });
+          const hit = (await res.json())[0];
+          if (hit) return savePin(Number(hit.lat), Number(hit.lon));
+        } catch (e) {}
+        alert("Ort nicht gefunden. Bitte Stadt oder PLZ genauer angeben oder GPS erlauben.");
+      };
       if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          pos => savePin(pos.coords.latitude, pos.coords.longitude),
-          () => savePin(51.1657 + (Math.random() - 0.5), 10.4515 + (Math.random() - 0.5))
-        );
+        navigator.geolocation.getCurrentPosition(pos => savePin(pos.coords.latitude, pos.coords.longitude), geocode, { timeout: 8000 });
       } else {
-        savePin(51.1657, 10.4515);
+        geocode();
       }
     }
 
@@ -1610,15 +1773,15 @@
       box.innerHTML = portfolio.map((item, idx) => `
         <div class="flex items-center justify-between bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs">
           <div class="flex items-center gap-2.5 truncate">
-            <img src="${sanitizeHTML(item.img)}" alt="Card" class="w-8 h-11 object-contain rounded shrink-0" />
+            <img src="${sanitizeHTML(item.img || FALLBACK_CARD_IMG)}" alt="Card" loading="lazy" class="w-8 h-11 object-contain rounded shrink-0" />
             <div class="truncate">
               <p class="font-bold text-white truncate">${sanitizeHTML(item.name)}</p>
-              <p class="text-emerald-400 font-bold">${Number(item.value).toFixed(2).replace(".", ",")} €</p>
+              <p class="text-emerald-400 font-bold">${Number(item.value) > 0 ? fmtEur(item.value) : "Wert eintragen"}</p>
             </div>
           </div>
           <div class="flex gap-1.5 shrink-0">
             <a href="${buildCardmarketUrl(item.name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2 py-1 rounded-lg">CM</a>
-            <a href="${buildEbayUrl(item.name, 'bin')}" target="_blank" rel="noopener" class="bg-blue-600 text-white font-bold px-2 py-1 rounded-lg">eBay</a>
+            <a href="${buildEbayUrl(item.name, 'bin', 'portfolio')}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2 py-1 rounded-lg">🛒 eBay*</a>
             <button onclick="portfolio.splice(${idx},1);localStorage.setItem('pokeswipe_portfolio_clean',JSON.stringify(portfolio));renderPortfolio();" class="text-slate-400 hover:text-rose-400 px-1.5">✕</button>
           </div>
         </div>
@@ -1633,7 +1796,7 @@
       localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
       document.getElementById("scan-card-number").value = "";
       renderPortfolio();
-      triggerSmartPush("💼 Karte gescannt!", `${found.name} (${found.value} €) ins Portfolio aufgenommen.`);
+      triggerSmartPush("💼 Karte gespeichert!", found.value ? `${found.name} (${fmtEur(found.value)}) ins Portfolio aufgenommen.` : `${found.name} gespeichert – Nummer nicht im Katalog, bitte Wert eintragen oder oben die Live-Suche nutzen.`);
     }
 
     function addPortfolioItem() {
@@ -1650,10 +1813,10 @@
 
     function addCurrentSwipeToPortfolio() {
       const item = activeDeck[swipeIdx % activeDeck.length];
-      portfolio.unshift({ name: item.title, value: item.cm, img: item.img });
+      portfolio.unshift({ name: item.title, value: item.cm || 0, img: item.img });
       localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
       renderPortfolio();
-      triggerSmartPush("💼 Zum Portfolio hinzugefügt!", `${item.title} (${item.cm} €) wurde gespeichert.`);
+      triggerSmartPush("💼 Zum Portfolio hinzugefügt!", `${item.title} (${fmtEur(item.cm)}) wurde gespeichert.`);
     }
 
     function calcBulk() {
@@ -1665,11 +1828,29 @@
 
     function calcGradingProfit() {
       const raw = parseFloat(document.getElementById("grade-raw-price").value || 0);
-      const cost = raw + 25;
-      const psa10 = Math.round(raw * 1.9);
-      document.getElementById("grade-cost").textContent = `${cost.toFixed(2).replace(".", ",")} €`;
-      document.getElementById("grade-psa10").textContent = `${psa10.toFixed(2).replace(".", ",")} €`;
-      document.getElementById("grade-profit").textContent = `+${(psa10 - cost).toFixed(2).replace(".", ",")} €`;
+      const psa10 = parseFloat(document.getElementById("grade-psa10-price")?.value || 0);
+      const fee = parseFloat(document.getElementById("grade-fee")?.value || 0);
+      const swipeItem = activeDeck[swipeIdx % activeDeck.length];
+      const soldLink = document.getElementById("grade-sold-link");
+      if (soldLink && swipeItem) soldLink.href = buildEbayUrl(swipeItem.query + " PSA 10", "sold", "grading");
+      const cost = raw + fee;
+      const net = psa10 * 0.87; // nach ca. 13 % Verkaufsgebühren
+      document.getElementById("grade-cost").textContent = raw ? fmtEur(cost) : "–";
+      document.getElementById("grade-psa10").textContent = psa10 ? fmtEur(net) : "–";
+      const profit = net - cost;
+      const pEl = document.getElementById("grade-profit");
+      pEl.textContent = raw && psa10 ? `${profit >= 0 ? "+" : "-"}${fmtEur(Math.abs(profit))}` : "–";
+      pEl.className = `font-bold ${profit >= 0 ? "text-emerald-400" : "text-rose-400"}`;
+      const box = document.getElementById("grade-pro-box");
+      if (!box) return;
+      if (!raw || !psa10) { box.innerHTML = `<span class="text-slate-400">Trag Rohpreis und PSA-10-Preis ein (Link oben zeigt echte eBay-Verkäufe).</span>`; return; }
+      // Gewinnschwelle: Wie oft muss eine 10 kommen? (Rest wird etwa zum Rohpreis verkauft)
+      const breakEven = net > raw ? Math.min(100, Math.max(0, (fee / (net - raw)) * 100)) : null;
+      const maxBuy = Math.max(0, net * 0.45 + raw * 0.55 - fee);
+      const pro = typeof isProUser === "function" ? isProUser() : Boolean(localStorage.getItem("pokeswipe_pro"));
+      box.innerHTML = pro
+        ? `<p class="font-black text-yellow-300">👑 Pro-Analyse</p><p class="text-slate-200">Gewinnschwelle: <strong>${breakEven === null ? "nie (PSA 10 bringt weniger als raw)" : Math.ceil(breakEven) + " % PSA-10-Quote"}</strong> • Empfohlener Max-Einkauf (bei ~45 % PSA-10-Chance): <strong>${fmtEur(maxBuy)}</strong></p>`
+        : `<p class="text-slate-300">🔒 <strong class="text-yellow-300">Pro-Analyse:</strong> Gewinnschwelle & empfohlener Max-Einkaufspreis.</p><button onclick="openModal('pro-modal')" class="mt-1.5 bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-lg">Mit Pro-Pass freischalten (4,99 €/Monat)</button>`;
     }
 
     // PROFIL & PRO
@@ -1683,10 +1864,10 @@
     }
 
     function activatePro(plan) {
-      localStorage.setItem("pokeswipe_pro", plan);
-      document.getElementById("pro-badge").classList.remove("hidden");
+      // Freischaltung nur nach echter Stripe-Zahlung (läuft über /assets/app.js → Stripe Checkout)
       closeModal("pro-modal");
-      triggerSmartPush("👑 PRO VIP Status aktiv!", `Dein ${plan}-Zugang inkl. Echtzeit-Push-Sniper ist freigeschaltet.`);
+      if (window.PS && typeof window.PS.checkout === "function") window.PS.checkout(plan === "VIP" || plan === "pro" ? "pro" : "premium");
+      else alert("Die Zahlungsseite lädt gerade – bitte in ein paar Sekunden erneut versuchen.");
     }
 
     // ===================================================================
@@ -1728,15 +1909,18 @@
 
         // 3. Live-Chat
         dbRefChat = db.ref("pokeswipe_radar/chat");
-        dbRefChat.limitToLast(30).on("value", snap => {
-          renderChatList(snap.val() ? Object.values(snap.val()) : []);
-        });
+        dbRefChat.limitToLast(60).on("value", snap => {
+          const entries = snap.val() ? Object.entries(snap.val()) : [];
+          renderChatList(entries.map(([, v]) => v).filter((m) => !isDummyEntry(m, { maxAgeDays: 30, textFields: ["user", "text"] })).slice(-30));
+        }, (err) => console.warn("Chat nicht verfügbar", err));
 
         // 4. Pull-Wall inkl. Echtzeit-Push bei neuen Hits
         dbRefWall = db.ref("pokeswipe_radar/pullwall");
-        dbRefWall.limitToLast(20).on("value", snap => {
+        dbRefWall.limitToLast(40).on("value", snap => {
           const prevCount = wallPosts.length;
-          wallPosts = snap.val() ? Object.entries(snap.val()).map(([k, v]) => ({ firebaseKey: k, ...v })).reverse() : [];
+          const entries = snap.val() ? Object.entries(snap.val()) : [];
+          wallPosts = entries.filter(([k, v]) => safeKey(k) && !isDummyEntry(v, { textFields: ["user", "caption"] }))
+            .map(([k, v]) => ({ firebaseKey: k, ...v })).reverse();
           renderPullWall();
           if (initialWallLoaded && wallPosts.length > prevCount && pushSettings.wall) {
             const newest = wallPosts[0];
@@ -1751,14 +1935,102 @@
 
         // 6. Radar-Pins
         dbRefRadar = db.ref("pokeswipe_radar/radar_users");
-        dbRefRadar.limitToLast(30).on("value", snap => {
-          radarUsers = snap.val() ? Object.values(snap.val()).reverse() : [];
+        dbRefRadar.limitToLast(80).on("value", snap => {
+          const entries = snap.val() ? Object.entries(snap.val()) : [];
+          cleanupOwnDummies(dbRefRadar, entries, ["name", "city", "cards"]);
+          radarUsers = entries.map(([, v]) => v).filter((u) => !isDummyEntry(u, { maxAgeDays: 90, textFields: ["name", "city", "cards"] })).reverse();
           renderRadarUsers();
           if (mapInstance) initOrUpdateMap();
         });
       } catch (e) {
         console.warn("Firebase Info:", e);
       }
+    }
+
+    // ===================================================================
+    // LIVE-PREISE: echte Cardmarket-Werte für den ganzen Katalog (Server-Cache, 1 Anfrage)
+    // ===================================================================
+    let livePriceDate = PRICE_SNAPSHOT_DATE;
+    async function refreshLivePrices() {
+      try {
+        const ids = REAL_CARDS.map((c) => c.id).join(",");
+        const res = await fetch(`/api/prices?ids=${encodeURIComponent(ids)}`, { headers: { Accept: "application/json" } });
+        if (!res.ok) return;
+        const { prices } = await res.json();
+        let newest = 0;
+        REAL_CARDS.forEach((c) => {
+          const p = prices && prices[c.id];
+          if (!p) return;
+          if (p.trend > 0) c.trend = p.trend;
+          if (p.low > 0) c.low = p.low;
+          if (p.avg30 > 0) c.avg30 = p.avg30;
+          if (p.updated) newest = Math.max(newest, Date.parse(p.updated) || 0);
+          if (cardCatalog[c.num]) cardCatalog[c.num].value = c.trend;
+        });
+        if (newest) livePriceDate = new Date(newest).toLocaleDateString("de-DE");
+        flipDeals = buildFlipDeals();
+        safeRun("Swipe", renderSwipeCard);
+        safeRun("Flip", () => window.filterFlipDeals("all"));
+        safeRun("Rip or Keep", () => window.calcRipOrKeep && window.calcRipOrKeep());
+      } catch (e) {
+        console.warn("Live-Preise nicht geladen – zeige Stand " + PRICE_SNAPSHOT_DATE, e);
+      }
+    }
+
+    // TOUCH-SWIPEN: Karte nach rechts = merken, nach links = weiter (Handy & Maus)
+    function initTouchSwipe() {
+      const img = document.getElementById("swipe-img");
+      if (!img) return;
+      const hintL = document.getElementById("swipe-hint-left"), hintR = document.getElementById("swipe-hint-right");
+      let startX = 0, startY = 0, dx = 0, active = false, horizontal = null;
+      const reset = () => {
+        img.style.transition = "transform .25s ease";
+        img.style.transform = "";
+        if (hintL) hintL.style.opacity = "0";
+        if (hintR) hintR.style.opacity = "0";
+      };
+      img.addEventListener("pointerdown", (e) => {
+        active = true; horizontal = null; dx = 0; startX = e.clientX; startY = e.clientY;
+        img.style.transition = "none";
+        try { img.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      img.addEventListener("pointermove", (e) => {
+        if (!active) return;
+        const mx = e.clientX - startX, my = e.clientY - startY;
+        if (horizontal === null && (Math.abs(mx) > 8 || Math.abs(my) > 8)) horizontal = Math.abs(mx) > Math.abs(my);
+        if (!horizontal) return;
+        dx = mx;
+        img.style.transform = `translateX(${dx}px) rotate(${dx / 18}deg)`;
+        if (hintL) hintL.style.opacity = dx < -30 ? String(Math.min(1, -dx / 110)) : "0";
+        if (hintR) hintR.style.opacity = dx > 30 ? String(Math.min(1, dx / 110)) : "0";
+      });
+      const end = () => {
+        if (!active) return;
+        active = false;
+        const go = Math.abs(dx) > 90 && horizontal;
+        const dir = dx;
+        if (go) {
+          img.style.transition = "transform .2s ease";
+          img.style.transform = `translateX(${dir > 0 ? 420 : -420}px) rotate(${dir > 0 ? 18 : -18}deg)`;
+          if (navigator.vibrate) navigator.vibrate(12);
+          setTimeout(() => {
+            img.style.transition = "none";
+            img.style.transform = "";
+            window.nextSwipeCard(dir > 0 ? "match" : "skip");
+            if (hintL) hintL.style.opacity = "0";
+            if (hintR) hintR.style.opacity = "0";
+          }, 190);
+        } else reset();
+      };
+      img.addEventListener("pointerup", end);
+      img.addEventListener("pointercancel", end);
+      // Tastatur: Pfeil links/rechts im Swipe-Reiter
+      document.addEventListener("keydown", (e) => {
+        if (document.getElementById("view-swipe")?.classList.contains("hidden")) return;
+        if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+        if (e.key === "ArrowRight") window.nextSwipeCard("match");
+        if (e.key === "ArrowLeft") window.nextSwipeCard("skip");
+      });
     }
 
     // NAVIGATION (5 REITER)
@@ -1790,24 +2062,13 @@
       document.getElementById("statPacksOpened").textContent = packsOpenedCount;
 
       // Booster-Links initial befüllen
-      document.getElementById("pack-buy-card-link").href = buildEbayUrl("Pikachu ex 238/191", "bin");
-      document.getElementById("pack-buy-display-link").href = buildEbayUrl("Pokemon Stürmische Funken Display 36 Booster OVP", "bin");
+      document.getElementById("pack-buy-card-link").href = buildEbayUrl(REAL_CARDS[0].query, "bin", "booster");
+      document.getElementById("pack-buy-display-link").href = buildEbayUrl(REAL_SETS.sv08.sealedQuery, "bin", "booster-ovp");
 
-      loadPushSettingsUI();
-      hydrateStaticAffiliateLinks();
-      renderSwipeCard();
-      renderMatches();
-      filterFlipDeals("all");
-      renderWishlist();
-      renderPullWall();
-      renderChatList([]);
-      renderBatchRows();
-      renderRadarUsers();
-      renderMarket();
-      renderPortfolio();
-      calcBulk();
-      calcGradingProfit();
-      initFirebase();
+      [loadPushSettingsUI, hydrateStaticAffiliateLinks, renderSwipeCard, renderMatches, () => filterFlipDeals("all"), renderWishlist,
+        renderPullWall, () => renderChatList([]), renderBatchRows, renderRadarUsers, renderMarket, renderPortfolio, calcBulk,
+        calcGradingProfit, initFirebase, initTouchSwipe].forEach((fn, i) => safeRun("Start-Schritt " + i, fn));
+      refreshLivePrices();
     })();
   </script>
 <style>
@@ -1837,11 +2098,9 @@
 <script>
 (function initPokeSwipeExpansionV2() {
   // =========================================================================
-  // KONFIGURATION FÜR ECHTE ABO-ZAHLUNGSLINKS (STRIPE / PAYPAL)
-  // Trage hier deine echten Checkout-Links ein (leer = Demo-Freischaltung)
+  // ZAHLUNGEN: Pro-Pass (4,99 €/Monat) und Pro Trader laufen über Stripe Checkout auf dem Server
+  // (sichere Freischaltung erst nach bestätigter Zahlung, siehe server/app.ts → /api/billing/checkout).
   // =========================================================================
-  const STRIPE_PRO_499_URL = ""; // z.B. "https://buy.stripe.com/dein_499_link"
-  const STRIPE_VIP_999_URL = ""; // z.B. "https://buy.stripe.com/dein_999_link"
 
   const FREE_DAILY_SWIPE_LIMIT = 15;
   const FREE_PORTFOLIO_LIMIT = 15;
@@ -1935,11 +2194,16 @@
           <h3 class="text-base font-black text-white mt-1">„Rip or Keep“ – Display öffnen oder OVP lassen?</h3>
         </div>
         <select id="ripkeep-select" onchange="window.calcRipOrKeep()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-bold">
-          <option value="sv8">⚡ Stürmische Funken (36er Display) – Markt: ~139 €</option>
-          <option value="sv3pt5">🔥 Karmesin & Purpur 151 (Display/Bundle-Case) – Markt: ~420 €</option>
-          <option value="sv8pt5">💎 Prismatische Entwicklungen (Top-Trainer-Box) – Markt: ~95 €</option>
-          <option value="swsh7">🌙 Drachenwandel / Evolving Skies Display – Markt: ~890 €</option>
+          <option value="sv08">⚡ Stürmische Funken – Display (36 Booster)</option>
+          <option value="sv03.5">🔥 151 – Booster-Bundle / Display</option>
+          <option value="sv08.5">💎 Prismatische Entwicklungen – Top-Trainer-Box</option>
+          <option value="me01">🌀 Mega-Entwicklung – Display (36 Booster)</option>
+          <option value="swsh12.5gg">👑 Zenit der Könige – Top-Trainer-Box</option>
+          <option value="sv03">🌋 Obsidianflammen – Display (36 Booster)</option>
+          <option value="swsh7">🌙 Drachenwandel – Display (36 Booster)</option>
         </select>
+        <div class="flex items-center gap-2 text-xs"><span class="text-slate-300 shrink-0">Dein OVP-Preis (€):</span>
+          <input id="ripkeep-price" type="number" min="0" step="0.01" placeholder="Preis vom Händler / eBay" oninput="window.calcRipOrKeep()" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white" /></div>
         <div id="ripkeep-box" class="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2 text-xs"></div>
       </div>
     `;
@@ -1960,18 +2224,19 @@
         box.innerHTML = `<p class="text-slate-400 col-span-3 text-center py-4">Keine Karte mit Bild gefunden. Versuche z. B. „Pikachu“, „Glurak“ oder „Mew“.</p>`;
         return;
       }
-      box.innerHTML = withImg.map(c => {
-        const imgUrl = `${c.image}/high.png`;
+      window._tcgResults = withImg;
+      box.innerHTML = withImg.map((c, i) => {
+        const imgUrl = /^https:\/\/assets\.tcgdex\.net\//.test(String(c.image)) ? `${c.image}/high.webp` : FALLBACK_CARD_IMG;
         const safeName = sanitizeHTML(`${c.name} (${c.localId || ""})`);
         return `
           <div class="bg-slate-900 border border-slate-800 rounded-xl p-2 flex flex-col justify-between gap-2 text-center">
-            <img src="${imgUrl}" onerror="this.src='https://images.pokemontcg.io/sv8/238_hires.png'" class="h-32 mx-auto object-contain rounded" />
+            <img src="${sanitizeHTML(imgUrl)}" loading="lazy" class="h-32 mx-auto object-contain rounded" />
             <div>
               <p class="font-bold text-white truncate text-[11px]">${safeName}</p>
             </div>
             <div class="grid grid-cols-2 gap-1">
-              <button onclick="window.addApiCardToPortfolio('${safeName.replace(/'/g, "")}', '${imgUrl}')" class="bg-emerald-500 text-slate-950 font-black py-1 rounded text-[10px]">+ Portfolio</button>
-              <a href="${buildEbayUrl(c.name + ' ' + (c.localId || ''), 'bin')}" target="_blank" rel="noopener" class="bg-blue-600 text-white font-bold py-1 rounded text-[10px]">eBay ↗</a>
+              <button onclick="window.addApiCardToPortfolioIdx(${i})" class="bg-emerald-500 text-slate-950 font-black py-1 rounded text-[10px]">+ Portfolio</button>
+              <a href="${buildEbayUrl(c.name + ' ' + (c.localId || ''), 'bin', 'suche')}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold py-1 rounded text-[10px]">🛒 eBay* ↗</a>
             </div>
           </div>
         `;
@@ -1981,41 +2246,46 @@
     }
   };
 
+  window.addApiCardToPortfolioIdx = function(i) {
+    const c = (window._tcgResults || [])[Number(i)];
+    if (!c) return;
+    if (window.PS && typeof window.PS.openCard === "function" && localStorage.getItem("gotrue.user")) return window.PS.openCard(c.id);
+    window.addApiCardToPortfolio(`${c.name} (${c.localId || ""})`, `${c.image}/high.webp`);
+  };
   window.addApiCardToPortfolio = function(cardTitle, imgUrl) {
     if (!isProUser() && portfolio.length >= FREE_PORTFOLIO_LIMIT) {
       triggerSmartPush("🔒 Portfolio-Limit (15 Karten)", "Schalte PRO frei für unbegrenzte Portfolio-Karten!");
       openModal("pro-modal");
       return;
     }
-    const estVal = parseFloat(prompt(`Geschätzter Marktwert in € für "${cardTitle}":`, "25") || "25");
-    if (isNaN(estVal)) return;
+    const estVal = parseFloat(String(prompt(`Marktwert in € für "${cardTitle}" (siehe Cardmarket):`, "") || "").replace(",", "."));
+    if (isNaN(estVal) || estVal < 0) return;
     portfolio.unshift({ name: cardTitle, value: estVal, img: imgUrl });
     localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
     renderPortfolio();
-    triggerSmartPush("✅ Live-Karte gespeichert!", `${cardTitle} (${estVal} €) liegt jetzt im Portfolio.`);
-  };
-
-  const ripKeepData = {
-    sv8: { name: "Stürmische Funken Display", cost: 139, ev: 98, topHit: "Pikachu ex SIR (420 €)", verdict: "🔥 RIP IT! Hohe Chance auf SIR-Grails bei noch moderatem Display-Preis.", query: "Pokemon Stürmische Funken Display 36 Booster" },
-    sv3pt5: { name: "Karmesin & Purpur 151 Bundle-Case", cost: 420, ev: 245, topHit: "Glurak ex SIR (195 €) + God Packs", verdict: "🔒 KEEP SEALED! 151 steigt versiegelt deutlich stabiler als der Einzelkarten-Schnitt.", query: "Pokemon 151 Top Trainer Box Display" },
-    sv8pt5: { name: "Prismatische Entwicklungen TTB", cost: 95, ev: 78, topHit: "Nachtara ex SIR / Masterball-Holos", verdict: "⚡ RIP BEI UVP! Durch die Evoli-Entwicklungen und Masterbälle extrem hohes Hit-Potenzial.", query: "Pokemon Prismatische Entwicklungen Top Trainer Box" },
-    swsh7: { name: "Drachenwandel (Evolving Skies) Display", cost: 890, ev: 210, topHit: "Nachtara VMAX Alt Art (890 €)", verdict: "💎 STRENG OVP LASSEN (KEEP)! Selbst mit Top-Hit erreichst du kaum den versiegelten Display-Wert.", query: "Pokemon Drachenwandel Display OVP" }
+    triggerSmartPush("✅ Live-Karte gespeichert!", `${cardTitle} (${fmtEur(estVal)}) liegt jetzt im Portfolio.`);
   };
 
   window.calcRipOrKeep = function() {
-    const sel = document.getElementById("ripkeep-select")?.value || "sv8";
-    const d = ripKeepData[sel] || ripKeepData.sv8;
-    const roi = Math.round((d.ev / d.cost) * 100);
+    const sel = document.getElementById("ripkeep-select")?.value || "sv08";
     const box = document.getElementById("ripkeep-box");
     if (!box) return;
+    const set = REAL_SETS[sel] || REAL_SETS.sv08;
+    const hits = REAL_CARDS.filter((c) => setKeyOf(c) === sel).sort((a, b) => b.trend - a.trend).slice(0, 4);
+    const price = parseFloat(document.getElementById("ripkeep-price")?.value || "0");
+    const top = hits[0];
+    let verdict = `<p class="text-slate-300">Trag den OVP-Preis ein, den du zahlen würdest – wir vergleichen ihn mit den echten Chase-Preisen.</p>`;
+    if (price > 0 && top) {
+      const share = Math.round((top.trend / price) * 100);
+      verdict = share >= 100
+        ? `<p class="text-emerald-300 font-bold">Der Top-Hit allein (${fmtEur(top.trend)}) ist mehr wert als die OVP (${share} %). Aber: Die Chance auf genau diese Karte ist gering – ein geöffnetes Display bringt im Schnitt meist weniger als den OVP-Preis. Wer auf Wert spielt, kauft die Wunschkarte einzeln.</p>`
+        : `<p class="text-yellow-300 font-bold">Selbst der Top-Hit (${fmtEur(top.trend)}) deckt nur ${share} % des OVP-Preises. Rein finanziell: eher <strong>KEEP SEALED</strong> oder die Karte direkt einzeln kaufen.</p>`;
+    }
     box.innerHTML = `
-      <div class="grid grid-cols-3 gap-2 text-center pb-2 border-b border-slate-800">
-        <div><p class="text-[10px] text-slate-400">OVP-Preis</p><p class="font-black text-white text-sm">${d.cost} €</p></div>
-        <div><p class="text-[10px] text-slate-400">Ø Pull-Wert (EV)</p><p class="font-black text-amber-400 text-sm">~${d.ev} € (${roi}%)</p></div>
-        <div><p class="text-[10px] text-slate-400">Chase-Hit</p><p class="font-bold text-emerald-400 text-[11px]">${d.topHit}</p></div>
-      </div>
-      <p class="text-yellow-300 font-bold">${d.verdict}</p>
-      <a href="${buildEbayUrl(d.query, 'bin')}" target="_blank" rel="noopener" class="block text-center bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2 rounded-xl mt-1">📦 Aktuelle OVP-Preise auf eBay prüfen</a>
+      <p class="text-[10px] text-slate-400 uppercase font-bold">Echte Chase-Karten (Cardmarket-Trend, Stand ${livePriceDate})</p>
+      <div class="space-y-1">${hits.map((c) => `<div class="flex justify-between gap-2"><span class="truncate text-white">${sanitizeHTML(cardLabel(c))}</span><a href="${buildEbayUrl(c.query, "bin", "ripkeep")}" target="_blank" rel="noopener sponsored" class="text-emerald-400 font-black shrink-0">${fmtEur(c.trend)} 🛒</a></div>`).join("")}</div>
+      ${verdict}
+      <a href="${buildEbayUrl(set.sealedQuery, 'bin', 'ripkeep-ovp')}" target="_blank" rel="noopener sponsored" class="block text-center bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2 rounded-xl mt-1">📦 Aktuelle OVP-Preise auf eBay prüfen*</a>
     `;
   };
 
@@ -2029,9 +2299,11 @@
     const listEl = document.getElementById("flip-list");
     if (!listEl) return origFilterFlipDeals && origFilterFlipDeals(cat);
 
+    if (!items.length) { listEl.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">Gerade keine Angebote unter Marktwert – der Radar aktualisiert sich automatisch.</div>`; return; }
     listEl.innerHTML = items.map(d => {
-      const diff = d.cmPrice - d.ebayPrice;
-      const pct = Math.round((diff / d.cmPrice) * 100);
+      const known = d.cmPrice > 0;
+      const diff = known ? Math.max(0, d.cmPrice - d.ebayPrice) : 0;
+      const pct = known ? Math.round((diff / d.cmPrice) * 100) : 0;
       const isSniperDeal = pct >= 25;
       const lockedForFree = isSniperDeal && !proActive;
 
@@ -2040,28 +2312,28 @@
           <div class="flex justify-between items-start gap-2">
             <div>
               <span class="text-[11px] font-black ${isSniperDeal ? 'bg-yellow-400 text-slate-950' : 'bg-emerald-500/20 text-emerald-300'} px-2.5 py-0.5 rounded-full">
-                ${isSniperDeal ? '👑 VIP SNIPER-DEAL: ' : '🔥 '}-${pct}% unter CM-Trend (+${diff} €)
+                ${known ? `${isSniperDeal ? '👑 PRO SNIPER-DEAL: ' : '🔥 '}-${pct}% unter CM-Trend (${fmtEur(diff)} Ersparnis)` : '📣 Community-Meldung (Marktwert unbekannt)'}
               </span>
               <h3 class="font-bold text-white text-sm mt-2 ${lockedForFree ? 'sniper-blur' : ''}">${sanitizeHTML(d.name)}</h3>
             </div>
-            <span class="text-xs text-slate-400 shrink-0">CM: <del>${Number(d.cmPrice)} €</del></span>
+            <span class="text-xs text-slate-400 shrink-0">${known ? `Trend: <del>${fmtEur(d.cmPrice)}</del>` : ""}</span>
           </div>
 
           <div class="flex items-center justify-between pt-3 border-t border-slate-800 ${lockedForFree ? 'sniper-blur' : ''}">
-            <p class="text-lg font-black text-emerald-400">${Number(d.ebayPrice)},00 €</p>
+            <div><p class="text-lg font-black text-emerald-400">${fmtEur(d.ebayPrice)}</p><p class="text-[10px] text-slate-500">${sanitizeHTML(d.source || "")}</p></div>
             <div class="flex gap-1.5">
               <a href="${buildCardmarketUrl(d.query)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl">Cardmarket</a>
-              <a href="${buildEbayUrl(d.query, 'auction')}" target="_blank" rel="noopener" class="bg-amber-400 text-slate-950 text-xs font-bold px-2.5 py-1.5 rounded-xl">Auktion</a>
-              <a href="${buildEbayUrl(d.query, 'bin')}" target="_blank" rel="noopener" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">eBay-Deal</a>
+              <a href="${buildEbayUrl(d.query, 'auction', 'flip')}" target="_blank" rel="noopener sponsored" class="bg-amber-400 text-slate-950 text-xs font-bold px-2.5 py-1.5 rounded-xl">Auktion*</a>
+              <a href="${buildEbayUrl(d.query, 'bin', 'flip')}" target="_blank" rel="noopener sponsored" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">🛒 eBay-Deal*</a>
             </div>
           </div>
 
           ${lockedForFree ? `
             <div class="absolute inset-0 bg-slate-950/75 backdrop-blur-[3px] flex flex-col items-center justify-center p-4 text-center z-10">
               <p class="text-xs font-black text-yellow-400 uppercase">🔒 PRO Sniper-Deal (-${pct}% unter Trend)</p>
-              <p class="text-[11px] text-slate-200 mt-1">Deals mit über 25 % Marge sind die ersten 15 Min. exklusiv für PRO-Mitglieder sichtbar.</p>
+              <p class="text-[11px] text-slate-200 mt-1">Angebote mehr als 25 % unter Marktwert sind exklusiv für Pro-Pass-Mitglieder sichtbar.</p>
               <button onclick="openModal('pro-modal')" class="mt-2.5 bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black text-xs px-4 py-2 rounded-xl shadow-lg">
-                👑 Jetzt mit PRO sofort aufdecken
+                👑 Pro-Pass (4,99 €/Monat) – jetzt aufdecken
               </button>
             </div>
           ` : ''}
@@ -2156,9 +2428,9 @@
       restockBtn.className = "bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2 px-3 rounded-xl text-xs sm:col-span-4";
       restockBtn.textContent = "🛒 UVP-Restock / Karten-Automat auf der Karte melden (z. B. Smyths, Müller, Kiosk)";
       restockBtn.onclick = function() {
-        const store = prompt("Welcher Laden / Automat hat gerade UVP-Ware? (z. B. Müller, Smyths Toys, Kiosk):", "Smyths Toys");
-        const city = prompt("In welcher Stadt / PLZ?", "50667 Köln");
-        const setInfo = prompt("Welches Set ist zur UVP vorrätig?", "K&P 151 / Prismatische Entwicklungen zur UVP!");
+        const store = (prompt("Welcher Laden / Automat hat gerade UVP-Ware? (z. B. Müller, Smyths Toys, Kiosk):", "") || "").trim().slice(0, 40);
+        const city = (prompt("In welcher Stadt / PLZ?", "") || "").trim().slice(0, 60);
+        const setInfo = (prompt("Welches Set ist zur UVP vorrätig?", "") || "").trim().slice(0, 80);
         if (!store || !city) return;
         document.getElementById("radar-my-name").value = "🛒 UVP-RESTOCK: " + store;
         document.getElementById("radar-my-city").value = city;
@@ -2249,7 +2521,7 @@
         <input type="file" accept="image/*" onchange="window.loadCenteringPhoto(event)" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-1.5 text-xs text-slate-300" />
 
         <div class="relative mx-auto w-56 h-76 bg-slate-950 rounded-2xl overflow-hidden border-2 border-slate-700 flex items-center justify-center">
-          <img id="centering-img" src="https://images.pokemontcg.io/sv8/238_hires.png" class="max-w-full max-h-full object-contain select-none" />
+          <img id="centering-img" src="https://assets.tcgdex.net/de/sv/sv08/238/high.webp" class="max-w-full max-h-full object-contain select-none" />
           <div id="laser-left" class="laser-line-v bg-yellow-400" style="left: 9%;"></div>
           <div id="laser-right" class="laser-line-v bg-yellow-400" style="left: 91%;"></div>
           <div id="laser-top" class="laser-line-h bg-rose-500" style="top: 8%;"></div>
@@ -2370,7 +2642,7 @@
     ctx.textAlign = "center";
     ctx.fillText("⚡ POKESWIPE & RADAR ⚡", 360, 115);
 
-    const user = getCurrentUser() || "@Pokemon_Sammler";
+    const user = getCurrentUser() || "einem Sammler";
     ctx.fillStyle = "#e2e8f0";
     ctx.font = "bold 28px system-ui, sans-serif";
     ctx.fillText(`Sammler-Portfolio von ${user}`, 360, 165);
@@ -2397,7 +2669,8 @@
 
     const topCards = [...portfolio].sort((a, b) => Number(b.value) - Number(a.value)).slice(0, 5);
     if (!topCards.length) {
-      topCards.push({ name: "Pikachu ex SIR (238/191)", value: 420 }, { name: "Glurak ex SIR (199/165)", value: 195 });
+      alert("Füge zuerst Karten zu deinem Portfolio hinzu – dann entsteht deine Flex-Card.");
+      return;
     }
 
     ctx.textAlign = "left";
@@ -2415,7 +2688,7 @@
 
       ctx.textAlign = "right";
       ctx.fillStyle = "#34d399";
-      ctx.fillText(`${Number(c.value).toFixed(0)} €`, 625, y + 50);
+      ctx.fillText(Number(c.value) > 0 ? `${Number(c.value).toFixed(0)} €` : "–", 625, y + 50);
       ctx.textAlign = "left";
     });
 
@@ -2519,11 +2792,6 @@
 
   const origActivatePro = window.activatePro;
   window.activatePro = function(plan) {
-    if (plan === "PRO" && STRIPE_PRO_499_URL) {
-      window.open(STRIPE_PRO_499_URL, "_blank");
-    } else if (plan === "VIP" && STRIPE_VIP_999_URL) {
-      window.open(STRIPE_VIP_999_URL, "_blank");
-    }
     if (origActivatePro) origActivatePro(plan);
     updateSwipeCounterBadge();
     window.filterFlipDeals("all");
@@ -2537,6 +2805,7 @@
   injectMapAndTradeUpgrades();
   injectPortfolioUpgrades();
   window.filterFlipDeals("all");
+  try { calcGradingProfit(); } catch (e) {}
 })();
 </script>
 <script type="module" src="/assets/app.js"></script>

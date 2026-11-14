@@ -1,9 +1,12 @@
 // PokeSwipe & Radar – Erweiterungen: Web-Push, Kamera-Scan, Set-Fortschritt, Sealed-Tracker,
 // Grading-Partner, Händler-Shops, Empfehlungsprogramm und die übersichtliche Unter-Navigation.
 import {
-  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, state, api, handleError, requireLogin,
+  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart,
 } from "./core.js";
+import {
+  injectGrowthPanels, afterAuthGrowth, routeGrowth, growthApi, loadWishlist, loadCalendar, loadRanks, adminGrowthHtml,
+} from "./growth.js";
 
 const PS = () => window.PS;
 const KIND_LABEL = { display: "Display", etb: "Elite-Trainer-Box", ttb: "Top-Trainer-Box", bundle: "Booster-Bundle", booster: "Booster", tin: "Tin", collection: "Kollektion", other: "Sonstiges" };
@@ -85,6 +88,8 @@ async function syncPush() {
 export async function beforeLogout() {
   const sub = await currentSubscription().catch(() => null);
   if (sub) await api("/api/push/unsubscribe", { method: "POST", body: { endpoint: sub.endpoint } }).catch(() => {});
+  // Offline-Kopie der Kontodaten von diesem Gerät entfernen
+  try { await caches.delete("ps-api"); } catch {}
 }
 
 async function renderPushBox() {
@@ -158,7 +163,7 @@ async function handleScan(file) {
     box.innerHTML = `<p class="text-xs text-slate-300">Erkannt: <strong class="text-white">${esc(r.detected.name)}</strong>${r.detected.number ? ` • Nr. ${esc(r.detected.number)}${r.detected.total ? "/" + esc(r.detected.total) : ""}` : ""} – tippe auf die passende Karte:</p>
       <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">${r.candidates.map((c) => `
         <button onclick="PS.openCard('${esc(c.id)}')" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-2 text-center">
-          <img src="${esc(c.image || FALLBACK_IMG)}" onerror="this.src='${FALLBACK_IMG}'" class="h-28 mx-auto object-contain" loading="lazy" />
+          <img src="${esc(cdn(c.image || FALLBACK_IMG, 200))}" onerror="this.src='${FALLBACK_IMG}'" class="h-28 mx-auto object-contain" loading="lazy" />
           <p class="text-[11px] font-bold text-white truncate">${esc(c.name)}</p><p class="text-[10px] text-slate-400">${esc(c.id)}</p>
         </button>`).join("")}</div>`;
     if (r.candidates.length === 1) PS().openCard(r.candidates[0].id);
@@ -267,7 +272,7 @@ function renderSetDetail() {
     <div class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-7 gap-2 max-h-[34rem] overflow-y-auto">${list.map((c) => `
       <div class="relative rounded-xl border ${c.owned ? "border-emerald-400 bg-emerald-500/10" : "border-slate-800 bg-slate-900"} p-1.5 text-center">
         <button onclick="PS.toggleOwned('${esc(c.id)}')" class="block w-full" aria-label="${c.owned ? "Als fehlend markieren" : "Als vorhanden markieren"}">
-          <img src="${esc(c.image || FALLBACK_IMG)}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-24 mx-auto object-contain ${c.owned ? "" : "opacity-40 grayscale"}" />
+          <img src="${esc(cdn(c.image || FALLBACK_IMG, 180))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-24 mx-auto object-contain ${c.owned ? "" : "opacity-40 grayscale"}" />
           <p class="text-[10px] font-bold text-white truncate">${esc(c.localId)} ${esc(c.name)}</p>
           <p class="text-[10px] ${c.owned ? "text-emerald-400" : "text-slate-400"} font-bold">${c.price ? eur(c.price) : "–"}</p>
         </button>
@@ -335,7 +340,7 @@ function renderSealed() {
   if (!box) return;
   const list = sealed.filter((p) => sealedKind === "all" || p.kind === sealedKind);
   box.innerHTML = list.length ? list.map((p) => `<button onclick="PS.openSealed(${p.id})" class="text-left bg-slate-950 border border-slate-800 hover:border-purple-400 rounded-2xl p-3 text-xs flex gap-3">
-      ${p.image ? `<img src="${esc(p.image)}" class="w-14 h-14 object-contain rounded shrink-0" onerror="this.remove()" />` : `<div class="w-14 h-14 rounded-xl bg-slate-900 flex items-center justify-center text-2xl shrink-0">📦</div>`}
+      ${p.image ? `<img src="${esc(cdn(p.image, 120))}" class="w-14 h-14 object-contain rounded shrink-0" onerror="this.remove()" />` : `<div class="w-14 h-14 rounded-xl bg-slate-900 flex items-center justify-center text-2xl shrink-0">📦</div>`}
       <div class="min-w-0 flex-1">
         <p class="text-[10px] font-black text-purple-300 uppercase">${esc(KIND_LABEL[p.kind] || p.kind)}</p>
         <p class="font-black text-white truncate">${esc(p.name)}</p>
@@ -537,6 +542,7 @@ function openShopSettings() {
       <textarea id="ps-shop-bio" maxlength="600" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Was bietest du an? Versand, Zahlungsarten, Abholung …">${esc(m.shop.bio || "")}</textarea>
       ${btn("Speichern", "PS.saveShop()", "w-full bg-emerald-500 text-slate-950")}
       ${m.shop.slug ? btn("Meinen Shop ansehen", `PS.openShop('${esc(m.shop.slug)}')`, "w-full bg-slate-800 text-white") : ""}
+      ${btn("📊 Shop-Statistik", "PS.openShopStats()", "w-full bg-slate-800 text-cyan-300")}
     </div>`);
 }
 
@@ -592,8 +598,10 @@ export function referralHtml() {
 }
 
 export function trialBanner() {
-  const eligible = state.me ? state.me.trialEligible : Boolean(localStorage.getItem(REF_KEY));
-  return eligible ? `<div class="bg-emerald-500/20 border border-emerald-400 rounded-2xl p-3 text-xs text-emerald-200 font-bold">🎁 Du wurdest eingeladen: Dein erster Monat ist gratis – jederzeit vorher kündbar.</div>` : "";
+  const invited = state.me ? state.me.referred : Boolean(localStorage.getItem(REF_KEY));
+  const days = state.me ? state.me.trialDays : invited ? 30 : 7;
+  if (!days) return "";
+  return `<div class="bg-emerald-500/20 border border-emerald-400 rounded-2xl p-3 text-xs text-emerald-200 font-bold">🎁 ${invited ? "Du wurdest eingeladen: Dein erster Monat ist gratis" : `${days} Tage kostenlos testen`} – jederzeit vorher kündbar, keine Abbuchung in der Testphase.</div>`;
 }
 
 // ===========================================================================
@@ -625,7 +633,8 @@ export async function adminExtrasHtml() {
           <p class="text-slate-300">${c ? c.this_month : 0} Klicks (Monat) • ${c ? c.total : 0} gesamt</p>
           <p class="text-[10px] ${p.configured ? "text-emerald-400" : "text-amber-300"}">${p.configured ? "Partner-Link aktiv" : `Partner-Link fehlt: ${esc(p.env)}`}</p></div>`;
       }).join("")}</div>
-      <p class="text-xs text-slate-300">🎁 Empfehlungen: ${aff.referrals.referred} geworbene Nutzer, ${aff.referrals.converted} davon zahlend.</p>` : ""}`;
+      <p class="text-xs text-slate-300">🎁 Empfehlungen: ${aff.referrals.referred} geworbene Nutzer, ${aff.referrals.converted} davon zahlend.</p>` : ""}
+    ${await adminGrowthHtml()}`;
 }
 
 async function adminSealedPrice(id) {
@@ -662,11 +671,17 @@ const SUBTABS = {
     { key: "calc", label: "Tausch-Rechner", match: (el) => el.querySelector("#trade-sum-a") },
     { key: "radar", label: "Sammler-Radar", match: (el) => el.querySelector("#radarMap") },
   ],
+  community: [
+    { key: "feed", label: "Live-Community", fallback: true, match: () => false },
+    { key: "calendar", label: "Kalender & Events", match: (el) => el.id === "ps-calendar" },
+    { key: "ranks", label: "Abzeichen & Bestenliste", match: (el) => el.id === "ps-ranks" },
+  ],
   portfolio: [
     { key: "overview", label: "Portfolio", fallback: true, match: () => false },
+    { key: "wishlist", label: "Wunschliste", match: (el) => el.id === "ps-wishlist" },
     { key: "scan", label: "Scan", match: (el) => el.id === "ps-scan" },
     { key: "sets", label: "Sets", match: (el) => el.id === "ps-sets" },
-    { key: "grading", label: "Grading & Tools", match: (el) => el.id === "ps-grading" || el.querySelector("#centering-img, #masterset-list") },
+    { key: "grading", label: "Grading & Tools", match: (el) => el.id === "ps-grading" || el.id === "ps-gradecalc" || el.querySelector("#centering-img, #masterset-list") },
   ],
 };
 const subLoaders = {
@@ -675,6 +690,9 @@ const subLoaders = {
   "portfolio:sets": () => { loadTrackedSets(); loadSetList(); },
   "portfolio:grading": () => loadPartners(),
   "portfolio:scan": () => renderScanLeft(),
+  "portfolio:wishlist": () => loadWishlist(),
+  "community:calendar": () => loadCalendar(),
+  "community:ranks": () => loadRanks(),
 };
 
 function buildSubtabs() {
@@ -790,12 +808,14 @@ export const featureApi = {
   sealedKind: (k) => { sealedKind = k; renderSealed(); },
   openSealed, createSealedAlert, deleteSealedAlert, listSealed, openShop, openShopSettings, saveShop, shareLink,
   adminSealedPrice, adminSealedHide, adminSealedAdd, showSub,
+  ...growthApi,
 };
 
 export function initFeatures() {
   captureReferral();
   tidyLayout();
   injectPanels();
+  injectGrowthPanels();
   buildSubtabs();
   window.enableBrowserPush = () => (state.user ? enablePush() : requireLogin());
 }
@@ -807,6 +827,7 @@ export function afterAuthFeatures() {
   renderScanLeft();
   loadTrackedSets();
   loadSealedAlerts();
+  afterAuthGrowth();
 }
 
 export function routeFeatures() {
@@ -817,4 +838,5 @@ export function routeFeatures() {
   const tab = params.get("tab"), sub = params.get("sub");
   if (tab && sub && SUBTABS[tab]) showSub(tab, sub);
   if (params.get("scan") === "1") openScanner();
+  routeGrowth();
 }

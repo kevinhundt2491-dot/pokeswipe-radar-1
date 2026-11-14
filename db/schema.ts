@@ -25,6 +25,14 @@ export const profiles = pgTable("profiles", {
   referralRewarded: boolean("referral_rewarded").notNull().default(false),
   usedTrial: boolean("used_trial").notNull().default(false),
   bonusUntil: timestamp("bonus_until", { withTimezone: true }),
+  planInterval: text("plan_interval").notNull().default("month"), // month | year
+  // Bindung: tägliche Serie, Bestenliste, Wochen-Report
+  streak: integer().notNull().default(0),
+  bestStreak: integer("best_streak").notNull().default(0),
+  lastCheckin: date("last_checkin"),
+  leaderboardOptIn: boolean("leaderboard_opt_in").notNull().default(false),
+  weeklyReport: boolean("weekly_report").notNull().default(true),
+  lastWeeklyReport: timestamp("last_weekly_report", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("profiles_display_name_lower").on(t.displayName),
@@ -242,3 +250,52 @@ export const affiliateClicks = pgTable("affiliate_clicks", {
   userId: text("user_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("affiliate_clicks_partner").on(t.partner, t.createdAt)]);
+
+// Wunschliste: Karten, die ein Nutzer sucht (optional mit Höchstpreis)
+export const wishlistItems = pgTable("wishlist_items", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  cardId: text("card_id").notNull().references(() => cards.id),
+  maxPrice: numeric("max_price", { precision: 10, scale: 2 }),
+  lastNotifiedAt: timestamp("last_notified_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("wishlist_user_card").on(t.userId, t.cardId), index("wishlist_card").on(t.cardId)]);
+
+// Verdiente Abzeichen
+export const userBadges = pgTable("user_badges", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  badge: text().notNull(),
+  earnedAt: timestamp("earned_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("user_badges_user_badge").on(t.userId, t.badge)]);
+
+// Kalender: Set-Releases (Admin) und Events wie Tauschbörsen oder Turniere (Community)
+export const calendarEvents = pgTable("calendar_events", {
+  id: serial().primaryKey(),
+  kind: text().notNull().default("event"), // release | event
+  title: text().notNull(),
+  day: date().notNull(),
+  city: text().notNull().default(""),
+  url: text().notNull().default(""),
+  description: text().notNull().default(""),
+  createdBy: text("created_by").references(() => profiles.userId, { onDelete: "set null" }),
+  status: text().notNull().default("active"), // active | removed
+  remindersSent: boolean("reminders_sent").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("calendar_events_day").on(t.status, t.day)]);
+
+export const calendarReminders = pgTable("calendar_reminders", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  eventId: integer("event_id").notNull().references(() => calendarEvents.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("calendar_reminders_user_event").on(t.userId, t.eventId), index("calendar_reminders_event").on(t.eventId)]);
+
+// Tägliche Shop-Statistik für Pro-Trader
+export const shopStats = pgTable("shop_stats", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  day: date().notNull(),
+  views: integer().notNull().default(0),
+  listingViews: integer("listing_views").notNull().default(0),
+}, (t) => [uniqueIndex("shop_stats_user_day").on(t.userId, t.day)]);

@@ -3,11 +3,12 @@ import { and, desc, eq, gt, sql, inArray, or } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
 import {
   db, profiles, cards, priceHistory, portfolioItems, portfolioSnapshots, priceAlerts, notifications,
-  listings, trades, tradeMessages, reviews, reports, payments, freeBoostUsage,
+  listings, trades, tradeMessages, reviews, reports, payments, freeBoostUsage, calendarEvents,
 } from "../db/index.ts";
 import { verifyIdentityToken, ensureProfile, isAdmin, type AuthUser } from "./auth.ts";
-import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, REFERRAL_TRIAL_DAYS, effectivePlan, type PlanId } from "./plans.ts";
-import { registerFeatures, extraMe, applyShopUpdates, activeAlertCount, findSealed, notifySealedListing, trialEligible } from "./features.ts";
+import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, effectivePlan, type PlanId } from "./plans.ts";
+import { registerFeatures, extraMe, applyShopUpdates, activeAlertCount, findSealed, notifySealedListing, trialDays } from "./features.ts";
+import { registerGrowth, notifyWishlistListing } from "./growth.ts";
 import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker } from "./prices.ts";
 import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan } from "./billing.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
@@ -460,6 +461,7 @@ app.post("/api/listings", auth, async (c) => {
   }
   for (const row of created) {
     if (row.sealedProductId) await notifySealedListing(row, profile.displayName, user.id);
+    if (row.cardId) await notifyWishlistListing(row, profile.displayName, user.id);
   }
   if (!created.length) return c.json({ error: "Bitte Kartenname und Preis angeben." }, 400);
   return c.json({ created: created.length, skipped: input.length - created.length, listings: created }, 201);
@@ -629,7 +631,7 @@ app.post("/api/reports", auth, async (c) => {
   const user = c.get("user");
   if (!rateLimit(`report:${user.id}`, 5, 600_000)) return c.json({ error: "Zu viele Meldungen." }, 429);
   const b = await body(c);
-  const targetType = ["listing", "user", "trade"].includes(b.targetType) ? b.targetType : null;
+  const targetType = ["listing", "user", "trade", "event"].includes(b.targetType) ? b.targetType : null;
   const reason = str(b.reason, 500);
   if (!targetType || !b.targetId || reason.length < 3) return c.json({ error: "Bitte einen Grund angeben." }, 400);
   await db.insert(reports).values({ reporterId: user.id, targetType, targetId: str(b.targetId, 80), reason });
@@ -649,8 +651,12 @@ app.post("/api/billing/checkout", auth, async (c) => {
   const b = await body(c);
   const plan = b.plan === "pro" ? "pro" : b.plan === "premium" ? "premium" : null;
   if (!plan) return c.json({ error: "Unbekannter Tarif" }, 400);
+  const yearly = b.interval === "year";
   const profile = c.get("profile");
-  if (c.get("plan") === plan && !profile.cancelAtPeriodEnd) return c.json({ error: "Dieser Tarif ist bereits aktiv." }, 409);
+  if (c.get("plan") === plan && !profile.cancelAtPeriodEnd && (profile.planInterval === "year") === yearly) {
+    return c.json({ error: "Dieser Tarif ist bereits aktiv." }, 409);
+  }
+  const trial = await trialDays(profile);
   const customer = await getOrCreateCustomer(s, profile);
   const origin = appOrigin(c);
   const session = await s.checkout.sessions.create({
@@ -663,15 +669,18 @@ app.post("/api/billing/checkout", auth, async (c) => {
       quantity: 1,
       price_data: {
         currency: "eur",
-        unit_amount: PLANS[plan].priceCents,
-        recurring: { interval: "month" },
-        product_data: { name: `PokeSwipe ${PLANS[plan].label}`, description: "Monatsabo, jederzeit kündbar" },
+        unit_amount: yearly ? PLANS[plan].yearlyPriceCents : PLANS[plan].priceCents,
+        recurring: { interval: yearly ? "year" : "month" },
+        product_data: {
+          name: `PokeSwipe ${PLANS[plan].label}${yearly ? " (Jahresabo)" : ""}`,
+          description: yearly ? "Jahresabo, Kündigung zum Laufzeitende jederzeit möglich" : "Monatsabo, jederzeit kündbar",
+        },
       },
     }],
-    metadata: { userId: profile.userId, kind: "subscription", plan },
+    metadata: { userId: profile.userId, kind: "subscription", plan, interval: yearly ? "year" : "month" },
     subscription_data: {
       metadata: { userId: profile.userId, plan },
-      ...((await trialEligible(profile)) ? { trial_period_days: REFERRAL_TRIAL_DAYS } : {}),
+      ...(trial ? { trial_period_days: trial } : {}),
     },
     success_url: `${origin}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${origin}/?checkout=cancel`,
@@ -809,6 +818,8 @@ app.get("/api/admin/overview", auth, adminOnly, async (c) => {
       (SELECT count(*)::int FROM profiles) AS users,
       (SELECT count(*)::int FROM profiles WHERE plan = 'premium' AND plan_until > now()) AS premium,
       (SELECT count(*)::int FROM profiles WHERE plan = 'pro' AND plan_until > now()) AS pro,
+      (SELECT count(*)::int FROM profiles WHERE plan = 'premium' AND plan_until > now() AND plan_interval = 'year') AS premium_yearly,
+      (SELECT count(*)::int FROM profiles WHERE plan = 'pro' AND plan_until > now() AND plan_interval = 'year') AS pro_yearly,
       (SELECT count(*)::int FROM listings WHERE status = 'active') AS active_listings,
       (SELECT count(*)::int FROM trades WHERE status = 'completed') AS completed_trades,
       (SELECT coalesce(sum(amount_cents), 0)::int FROM payments WHERE created_at > date_trunc('month', now())) AS revenue_month_cents
@@ -817,7 +828,8 @@ app.get("/api/admin/overview", auth, adminOnly, async (c) => {
     SELECT r.*, p.display_name AS reporter FROM reports r JOIN profiles p ON p.user_id = r.reporter_id
     WHERE r.status = 'open' ORDER BY r.created_at DESC LIMIT 100
   `));
-  const mrr = (stats.premium * PLANS.premium.priceCents + stats.pro * PLANS.pro.priceCents) / 100;
+  const mrr = ((stats.premium - stats.premium_yearly) * PLANS.premium.priceCents + stats.premium_yearly * PLANS.premium.yearlyPriceCents / 12
+    + (stats.pro - stats.pro_yearly) * PLANS.pro.priceCents + stats.pro_yearly * PLANS.pro.yearlyPriceCents / 12) / 100;
   return c.json({ stats: { ...stats, mrr }, reports: open });
 });
 
@@ -829,11 +841,18 @@ app.post("/api/admin/reports/:id", auth, adminOnly, async (c) => {
   if (b.removeListing && rep.targetType === "listing") {
     await db.update(listings).set({ status: "removed" }).where(eq(listings.id, Number(rep.targetId) || 0));
   }
+  if (b.removeListing && rep.targetType === "event") {
+    await db.update(calendarEvents).set({ status: "removed" }).where(eq(calendarEvents.id, Number(rep.targetId) || 0));
+  }
   if (b.banUser) {
     let target = rep.targetType === "user" ? rep.targetId : "";
     if (rep.targetType === "listing") {
       const [l] = await db.select({ userId: listings.userId }).from(listings).where(eq(listings.id, Number(rep.targetId) || 0));
       target = l?.userId || "";
+    }
+    if (rep.targetType === "event") {
+      const [ev] = await db.select({ userId: calendarEvents.createdBy }).from(calendarEvents).where(eq(calendarEvents.id, Number(rep.targetId) || 0));
+      target = ev?.userId || "";
     }
     if (target) {
       await db.update(profiles).set({ banned: true }).where(eq(profiles.userId, target));
@@ -848,6 +867,7 @@ app.post("/api/admin/reports/:id", auth, adminOnly, async (c) => {
 app.post("/api/admin/run-tracker", auth, adminOnly, async (c) => c.json(await runTracker({ maxCards: 40 })));
 
 registerFeatures(app, { auth, adminOnly, body, safeImage, storeDataUrlImage, ratingOf });
+registerGrowth(app, { auth, adminOnly, body, ratingOf });
 
 app.all("/api/*", (c) => c.json({ error: "Nicht gefunden" }, 404));
 

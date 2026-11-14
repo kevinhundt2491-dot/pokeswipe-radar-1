@@ -14,6 +14,27 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
 - **Grading-Partner** – PSA, CGC, Beckett, TAG mit Klick-Zählung (Affiliate)
 - **Händler-Shops** – eigene Shop-Seite `/shop/<name>` für Pro-Trader
 - **Empfehlungsprogramm** – geworbene Nutzer: 1. Monat gratis; Werber: Gratismonat, sobald der Geworbene zahlt
+- **Wunschliste & Tausch-Matches** – Push, sobald eine gesuchte Karte inseriert wird; Vorschläge für passende Tausch-Partner
+- **Öffentliche Kartenseiten** – `/karte/<id>/<name>` mit Preis, Verlauf, Angeboten und Vorschaubild für Google & WhatsApp; `/sitemap.xml`
+- **Teilen-Bilder** – Portfolio- und Pull-Bild (Instagram-Format) inkl. Empfehlungscode
+- **Grading-Rechner** – „Lohnt sich PSA?“ mit KI-Zustandscheck (Zentrierung, Ecken, Kanten, Oberfläche)
+- **Serien-Scan & CSV-Import** – viele Karten auf einmal ins Portfolio (Cardmarket-, Excel- oder Listen-Format)
+- **Bindung** – tägliche Serie, 15 Abzeichen, Bestenliste (nur mit Zustimmung), Wochen-Report per Push
+- **Kalender** – Set-Releases (Admin) und Community-Events mit Push-Erinnerung
+- **Shop-Statistik** – Aufrufe, Anfragen und gefragteste Inserate für Pro-Trader
+- **Offline-Modus** – App, Sammlung und Bilder bleiben ohne Netz verfügbar
+- **Datenschutz** – Daten-Export (JSON), Konto selbst löschen, Impressum in der Admin-Zentrale pflegbar
+
+## Echte Karten & Preise
+
+Swipe-Arena, Booster-Simulator, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten
+(Stürmische Funken, 151, Prismatische Entwicklungen, Zenit der Könige, Obsidianflammen, Mega-Entwicklung, Paradoxrift,
+Drachenwandel) mit offiziellen Set-Nummern (`REAL_CARDS` in `public/index.html`). Die Preise sind ein Stand vom 13.11.2026
+und werden beim Öffnen der Seite automatisch über `/api/prices` mit aktuellen Cardmarket-Werten (TCGdex) ersetzt.
+PSA-10-Preise werden nicht geschätzt, sondern über eBay-„Verkauft“-Links (mit Partner-ID) angezeigt.
+
+Alle eBay-Links tragen die ePN-Campaign-ID 5339244109 und eine `customid` pro Bereich (z. B. `pokeswipe-swipe`,
+`pokeswipe-flip`, `pokeswipe-portfolio`), damit im ePN-Bericht sichtbar ist, welcher Bereich wie viel bringt.
 
 ## Aufbau
 
@@ -23,14 +44,18 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
 | API (Netlify Server, Hono) | `netlify/server/index.ts` → `server/*.ts`, Pfad `/api/*` |
 | Datenbank (Netlify Database, Drizzle) | `db/schema.ts`, Migrationen in `netlify/database/migrations/` |
 | Preis-Tracker (stündlich) | `netlify/functions/price-tracker.mts` |
+| Erinnerungen & Wochen-Report (stündlich) | `netlify/functions/growth-jobs.mts` |
+| Konto löschen | `netlify/functions/delete-account.mts` |
+| Tests | `npm test` (`tests/`) |
 | Login | Netlify Identity (E-Mail, optional Google) |
 | Zahlungen | Stripe Checkout (Abos & Boosts) |
 | Firebase-Regeln | `firebase/database.rules.json` |
 
 ## Tarife
 
-| | Free | Premium 4,99 €/Monat | Pro Trader 9,99 €/Monat |
+| | Free | Premium 4,99 €/Monat oder 49 €/Jahr | Pro Trader 9,99 €/Monat oder 99 €/Jahr |
 | --- | --- | --- | --- |
+| Wunschliste | 20 | 300 | 2000 |
 | Portfolio-Karten | 25 | 500 | unbegrenzt |
 | KI-Scans pro Tag | 3 | 40 | 250 |
 | Verfolgte Sets | 1 | 10 | unbegrenzt |
@@ -42,6 +67,7 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
 | Gratis-Boosts pro Monat | – | – | 3 |
 | CSV-Export | – | – | ✓ |
 
+Das erste Abo kann 7 Tage gratis getestet werden (mit Empfehlung 30 Tage).
 Einzel-Boost: 1,99 € für 7 Tage ganz oben im Tausch-Hub. Alle Limits werden auf dem Server geprüft.
 Werte ändern: `server/plans.ts`.
 
@@ -64,3 +90,5 @@ Werte ändern: `server/plans.ts`.
 7. **Firebase-Regeln:** Den Inhalt von `firebase/database.rules.json` in der Firebase-Konsole
    (Realtime Database → Regeln) **in die bestehenden Regeln einfügen** – nur den Block `pokeswipe_radar`.
    Die Datenbank wird mit einem anderen Projekt geteilt, dessen Regeln erhalten bleiben müssen.
+8. **Impressum:** Ist fest hinterlegt (Fußzeile, Rechtliches-Fenster und Kartenseiten). Änderungen optional in der Admin-Zentrale.
+9. **Set-Releases:** Als Admin unter Community → Kalender eintragen (Art „Set-Release“). Nutzer können sich erinnern lassen.
