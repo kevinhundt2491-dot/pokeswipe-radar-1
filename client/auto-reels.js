@@ -1018,9 +1018,16 @@ function close() {
 // Direkte Anker: pokeswipe-radar.de/#generator (alt: /#auto-reels)
 const HASHES = ["#generator", "#auto-reels"];
 
+// ⚠️ TEMPORÄRER BYPASS (bitte nach dem Make.com-Webhook-Test wieder entfernen):
+// Solange der Admin-Login gesperrt ist, lassen wir den Generator ohne Admin-Prüfung zu,
+// damit die Webhook-URL eingetragen und getestet werden kann. Das ist nur ein Client-UI-Gate –
+// serverseitige Admin-Checks (403 in server/app.ts & server/growth.ts) bleiben unverändert.
+// Zum Wiederherstellen: diese Konstante auf false setzen (oder den Block unten entfernen).
+const TEMP_ADMIN_BYPASS = true;
+
 /** Generator öffnen – mit klarer Rückmeldung, falls nicht (als Admin) angemeldet. */
 export function openAutoReels() {
-  if (E.isAdmin()) {
+  if (TEMP_ADMIN_BYPASS || E.isAdmin()) {
     if (!HASHES.includes(location.hash)) history.replaceState(null, "", "#generator");
     return open();
   }
@@ -1036,9 +1043,10 @@ export function routeAutoReels() {
 
 /** Footer-Button nur für Admins zeigen (nach jedem Login-Wechsel aufrufen). */
 export function syncAutoReels() {
-  for (const id of ["auto-reels-btn", "ps-generator-btn"]) document.getElementById(id)?.classList.toggle("hidden", !E.isAdmin());
-  if (E.isAdmin() && HASHES.includes(location.hash)) open();
-  if (!E.isAdmin()) close();
+  const show = TEMP_ADMIN_BYPASS || E.isAdmin();
+  for (const id of ["auto-reels-btn", "ps-generator-btn"]) document.getElementById(id)?.classList.toggle("hidden", !show);
+  if (show && HASHES.includes(location.hash)) open();
+  if (!show) close();
 }
 
 export function initAutoReels() {
