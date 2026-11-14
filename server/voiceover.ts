@@ -6,25 +6,37 @@ import { getStore } from "@netlify/blobs";
 import { rateLimit } from "./util.ts";
 
 const MAX_LINES = 12, MAX_CHARS = 320;
-// Freundliche, mehrsprachige Standardstimme ("Sarah"); per ELEVENLABS_VOICE_ID austauschbar.
-const DEFAULT_EL_VOICE = "EXAVITQu4vr4xnSDxMaL";
+// Auswählbare ElevenLabs-Stimmen (Premade, funktionieren mit eleven_multilingual_v2 auch auf Deutsch).
+// Standard ist "Brian"; per ELEVENLABS_VOICE_ID kann eine eigene Stimme als Standard gesetzt werden.
+export const EL_VOICES = [
+  { id: "nPczCjzI2devNBz1zQrb", name: "Brian", desc: "männlich, tief & ruhig – Erzähler" },
+  { id: "JBFqnCBsd6RMkjVDRZzb", name: "George", desc: "männlich, warm & sympathisch" },
+  { id: "onwK4e9ZLuTAKqWW03F9", name: "Daniel", desc: "männlich, klar – Nachrichtensprecher" },
+  { id: "cgSgspJ2msm6clMCkdW9", name: "Jessica", desc: "weiblich, jung & lebhaft" },
+  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", desc: "weiblich, freundlich & warm" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily", desc: "weiblich, sanft & klar" },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah", desc: "weiblich – bisherige Stimme" },
+];
+const DEFAULT_EL_VOICE = "nPczCjzI2devNBz1zQrb";
 const EL_MODEL = "eleven_multilingual_v2";
 
 type Provider = { id: string; voice: string; tts: (text: string) => Promise<ArrayBuffer> };
 
-function provider(): Provider | null {
+function provider(requested?: string): Provider | null {
   const el = process.env.ELEVENLABS_API_KEY;
   if (el) {
-    const voice = process.env.ELEVENLABS_VOICE_ID || DEFAULT_EL_VOICE;
+    const custom = process.env.ELEVENLABS_VOICE_ID;
+    const allowed = requested && (EL_VOICES.some((v) => v.id === requested) || requested === custom);
+    const voice = allowed ? requested! : custom || DEFAULT_EL_VOICE;
     return {
-      id: `elevenlabs:${EL_MODEL}`, voice,
+      id: `elevenlabs:${EL_MODEL}:v2`, voice,
       async tts(text) {
         const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
           method: "POST",
           headers: { "xi-api-key": el, "Content-Type": "application/json", Accept: "audio/mpeg" },
           body: JSON.stringify({
             text, model_id: EL_MODEL,
-            voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.35, use_speaker_boost: true, speed: 1.05 },
+            voice_settings: { stability: 0.55, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true, speed: 1.05 },
           }),
         });
         if (!res.ok) throw new Error(`ElevenLabs antwortet mit ${res.status}`);
@@ -64,15 +76,20 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
   app.get("/api/admin/voiceover/status", auth, adminOnly, (c: any) => {
     const p = provider();
     c.header("Cache-Control", "no-store");
-    return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null });
+    const isEl = p?.id.startsWith("elevenlabs");
+    const custom = process.env.ELEVENLABS_VOICE_ID;
+    const voices = isEl
+      ? [...(custom && !EL_VOICES.some((v) => v.id === custom) ? [{ id: custom, name: "Eigene Stimme", desc: "aus ELEVENLABS_VOICE_ID" }] : []), ...EL_VOICES]
+      : [];
+    return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null, voices, defaultVoice: p?.voice || null });
   });
 
   app.post("/api/admin/voiceover", auth, adminOnly, async (c: any) => {
-    const p = provider();
-    if (!p) return c.json({ error: "Kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt)." }, 503);
     const user = c.get("user");
     if (!rateLimit(`vo:${user.id}`, 40, 60_000)) return c.json({ error: "Zu viele Voiceover-Anfragen – bitte kurz warten." }, 429);
     const b = await body(c);
+    const p = provider(typeof b.voice === "string" ? b.voice : undefined);
+    if (!p) return c.json({ error: "Kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt)." }, 503);
     const lines = Array.isArray(b.lines) ? b.lines.slice(0, MAX_LINES) : [];
     const clean = lines
       .map((l: any) => ({ id: String(l?.id ?? "").slice(0, 40), text: String(l?.text ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_CHARS) }))
