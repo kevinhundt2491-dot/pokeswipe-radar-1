@@ -615,23 +615,26 @@ const MB = 1024 * 1024;
 const VOICE_KEY = "pokeswipe.autoReels.voice";
 let voiceOn = load(VOICE_KEY, "1") !== "0";
 const voiceModes = new Map(); // Episode -> "voice" | "placeholder" | "off" (geht als Feld voiceover_mode an Make)
-const voiceCache = new Map(); // Text -> AudioBuffer (pro Sitzung; serverseitig zusätzlich in Blobs)
+const VOICE_ID_KEY = "pokeswipe.autoReels.voiceId";
+let voiceId = load(VOICE_ID_KEY, "");
+const voiceCache = new Map(); // Stimme|Text -> AudioBuffer (pro Sitzung; serverseitig zusätzlich in Blobs)
 const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
 
 /** Sprecher-Clips einer Episode holen (Server: ElevenLabs/OpenAI TTS), dekodieren und auf die Szenen legen. */
 async function loadVoice(ep, D, ac) {
   const tl = timeline(ep, D);
   if (!Array.isArray(ep.vo) || ep.vo.length !== tl.length) throw new Error(`Sprechertext passt nicht zu den Szenen von Episode ${ep.n}`);
-  const missing = ep.vo.map((text, i) => ({ id: String(i), text })).filter((l) => !voiceCache.has(l.text));
+  const vk = (text) => `${voiceId}|${text}`;
+  const missing = ep.vo.map((text, i) => ({ id: String(i), text })).filter((l) => !voiceCache.has(vk(l.text)));
   if (missing.length) {
-    const res = await api("/api/admin/voiceover", { method: "POST", body: { lines: missing } });
+    const res = await api("/api/admin/voiceover", { method: "POST", body: { lines: missing, voice: voiceId || undefined } });
     for (const clip of res.clips || []) {
       const line = missing[Number(clip.id)];
       if (!line) continue;
-      voiceCache.set(line.text, await ac.decodeAudioData(b64ToBuf(clip.audio)));
+      voiceCache.set(vk(line.text), await ac.decodeAudioData(b64ToBuf(clip.audio)));
     }
   }
-  const clips = tl.map(([, a, b], i) => ({ id: tl[i][0], at: a, end: b, buffer: voiceCache.get(ep.vo[i]), keep: i === 0 || i === tl.length - 1 }));
+  const clips = tl.map(([, a, b], i) => ({ id: tl[i][0], at: a, end: b, buffer: voiceCache.get(vk(ep.vo[i])), keep: i === 0 || i === tl.length - 1 }));
   if (clips.some((c) => !c.buffer)) throw new Error("Sprachausgabe unvollständig");
   const placed = placeVoice(clips, D);
   return { placed, dropped: clips.length - placed.length };
@@ -693,6 +696,11 @@ function build() {
             </div>
             <small id="ar-size-info"></small>
             <label class="ar-row" for="ar-voice" style="cursor:pointer;gap:8px"><input id="ar-voice" type="checkbox" style="width:18px;height:18px;accent-color:#ffcb05"> 🎙️ Deutsche Sprecherstimme (Voiceover) einbetten</label>
+            <div class="ar-row" id="ar-voice-pick" hidden>
+              <label for="ar-voice-id">Stimme:</label>
+              <select id="ar-voice-id"></select>
+              <button type="button" class="ar-btn" id="ar-voice-test">▶ Probe hören</button>
+            </div>
             <small id="ar-voice-info"></small>
           </div>
           <button type="button" class="ar-btn ar-go" data-ar="all">🚀 Alle 10 Episoden jetzt vollautomatisch generieren</button>
@@ -743,6 +751,11 @@ function build() {
   ui.voiceInfo = el.querySelector("#ar-voice-info");
   ui.voice.checked = voiceOn;
   ui.voice.addEventListener("change", () => { voiceOn = ui.voice.checked; save(VOICE_KEY, voiceOn ? "1" : "0"); updateVoiceInfo(); });
+  ui.voicePick = el.querySelector("#ar-voice-pick");
+  ui.voiceId = el.querySelector("#ar-voice-id");
+  ui.voiceTest = el.querySelector("#ar-voice-test");
+  ui.voiceId.addEventListener("change", () => { voiceId = ui.voiceId.value; save(VOICE_ID_KEY, voiceId); });
+  ui.voiceTest.addEventListener("click", testVoice);
   ui.token.value = getToken();
   ui.token.addEventListener("input", () => save(TOKEN_KEY, ui.token.value.trim()));
   ui.mbit.addEventListener("change", () => { mbit = Number(ui.mbit.value) || 8; save(BITRATE_KEY, String(mbit)); updateSizeInfo(); });
@@ -806,6 +819,7 @@ function updateSizeInfo() {
 let voiceReady = null; // null = unbekannt, sonst { ready, provider }
 function updateVoiceInfo() {
   if (!ui.voiceInfo) return;
+  if (ui.voicePick) ui.voicePick.hidden = !voiceOn || !(voiceReady?.voices || []).length;
   ui.voiceInfo.classList.toggle("warn", voiceOn && voiceReady && !voiceReady.ready);
   ui.voiceInfo.textContent = !voiceOn
     ? "Aus – die Reels bekommen nur Musik und Soundeffekte."
@@ -820,7 +834,29 @@ function updateVoiceInfo() {
 async function checkVoice() {
   try { voiceReady = await api("/api/admin/voiceover/status"); }
   catch (e) { voiceReady = { ready: false, error: e?.message || "Netzwerkfehler" }; }
+  const voices = voiceReady?.voices || [];
+  if (ui.voicePick) {
+    ui.voicePick.hidden = !voiceOn || !voices.length;
+    if (voices.length) {
+      if (!voices.some((v) => v.id === voiceId)) voiceId = voiceReady.defaultVoice || voices[0].id;
+      ui.voiceId.innerHTML = voices.map((v) => `<option value="${v.id}"${v.id === voiceId ? " selected" : ""}>${v.name} – ${v.desc}</option>`).join("");
+    }
+  }
   updateVoiceInfo();
+}
+let testAudio = null;
+async function testVoice() {
+  const btn = ui.voiceTest;
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "⏳ lädt …";
+  try {
+    const res = await api("/api/admin/voiceover", { method: "POST", body: { voice: voiceId || undefined, lines: [{ id: "t", text: "Hey! Willkommen bei PokeSwipe Radar – hier findest du die besten Pokémon-Karten-Deals in deiner Nähe." }] } });
+    const clip = res.clips?.[0];
+    if (!clip) throw new Error("Keine Probe erhalten");
+    testAudio?.pause();
+    testAudio = new Audio(URL.createObjectURL(new Blob([b64ToBuf(clip.audio)], { type: "audio/mpeg" })));
+    await testAudio.play();
+  } catch (e) { setStatus(`⚠️ Stimmprobe fehlgeschlagen: ${e?.message || "unbekannt"}`, "err"); }
+  finally { btn.disabled = false; btn.textContent = label; }
 }
 function updateBatchLabel() {
   if (ui.batch) ui.batch.textContent = `🎞️ Serien-Modus: ${batchSel.size} ausgewählte nacheinander`;
@@ -831,7 +867,7 @@ function setStatus(msg, kind = "") { ui.status.textContent = msg; ui.status.clas
 function setBusy(b) {
   ui.len.disabled = b; ui.go.disabled = b; ui.stop.hidden = !b;
   ui.batch.disabled = b; ui.hook.disabled = b;
-  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b;
+  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceId.disabled = b; ui.voiceTest.disabled = b;
   ui.root.querySelectorAll('[data-ar^="sel-"],[data-ar^="token-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll("button").forEach((x) => { x.disabled = b; });
 }
