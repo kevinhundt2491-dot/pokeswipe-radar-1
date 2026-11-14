@@ -24,7 +24,18 @@ const toast = (title, body = "", link = "") => {
 };
 const ebay = (q) => (window.buildEbayUrl ? window.buildEbayUrl(q, "bin") : "#");
 const cm = (q) => (window.buildCardmarketUrl ? window.buildCardmarketUrl(q) : "#");
-const FALLBACK_IMG = "https://images.pokemontcg.io/sv8/238_hires.png";
+const FALLBACK_IMG = "/card-fallback.svg";
+/** Kartenbild über das Netlify Image CDN: passend verkleinert und als WebP/AVIF ausgeliefert. */
+const CDN_HOSTS = ["assets.tcgdex.net", "images.pokemontcg.io", "raw.githubusercontent.com"];
+const cdn = (url, w = 240) => {
+  const s = String(url || "");
+  if (location.hostname === "localhost" && location.port !== "8889") return s;
+  if (s.startsWith("/api/images/")) return `/.netlify/images?url=${encodeURIComponent(s)}&w=${w}`;
+  try {
+    const u = new URL(s);
+    return u.protocol === "https:" && CDN_HOSTS.includes(u.hostname) ? `/.netlify/images?url=${encodeURIComponent(s)}&w=${w}` : s;
+  } catch { return s; }
+};
 
 const state = {
   user: null, me: null, settings: null, listings: [], portfolio: null, alerts: null,
@@ -130,6 +141,6 @@ function areaChart(points, w = 640, h = 160) {
 
 
 export {
-  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, state, bearer, api, handleError, requireLogin,
+  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, bearer, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart, hooks,
 };

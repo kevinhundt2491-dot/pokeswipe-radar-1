@@ -6,12 +6,13 @@ import {
 } from "@netlify/identity";
 
 import {
-  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, state, api, handleError, requireLogin,
+  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart, hooks,
 } from "./core.js";
 import {
   initFeatures, featureApi, afterAuthFeatures, routeFeatures, beforeLogout, referralHtml, trialBanner, adminExtrasHtml,
 } from "./features.js";
+import { cardExtrasHtml, accountExtrasHtml } from "./growth.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -63,7 +64,7 @@ function openAccount(hint = "") {
         <span class="font-black text-white">Tarif: <span class="text-yellow-400">${esc(planLabel)}</span></span>
         ${m?.rating?.count ? `<span class="text-amber-300 font-bold">⭐ ${m.rating.avg} (${m.rating.count})</span>` : ""}
       </div>
-      ${m && m.plan !== "free" ? `<p class="text-slate-400">${m.cancelAtPeriodEnd ? `Gekündigt – läuft bis ${until}` : `Verlängert sich am ${until}`}</p>
+      ${m && m.plan !== "free" ? `<p class="text-slate-400">${m.planInterval === "year" ? "Jahresabo • " : ""}${m.cancelAtPeriodEnd ? `Gekündigt – läuft bis ${until}` : `Verlängert sich am ${until}`}</p>
         ${m.cancelAtPeriodEnd ? btn("Abo fortsetzen", "PS.cancelPlan(true)", "w-full bg-emerald-500 text-slate-950") : btn("Abo kündigen", "PS.cancelPlan(false)", "w-full bg-slate-800 text-slate-200")}`
         : btn("👑 Premium oder Pro freischalten", "PS.openPro()", "w-full bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950")}
       ${m ? `<p class="text-slate-500">Portfolio ${m.usage.portfolio}/${m.planInfo.portfolio} • Alarme ${m.usage.alerts}/${m.planInfo.alerts} • Inserate ${m.usage.listings}/${m.planInfo.listings}${m.planInfo.freeBoostsPerMonth ? ` • Gratis-Boosts ${m.freeBoostsLeft}/${m.planInfo.freeBoostsPerMonth}` : ""}</p>` : ""}
@@ -73,6 +74,7 @@ function openAccount(hint = "") {
       ${btn(m?.shop?.enabled ? "🏪 Mein Händler-Shop" : "🏪 Händler-Shop (Pro)", "PS.openShopSettings()", "bg-slate-800 text-cyan-300")}
     </div>
     ${referralHtml()}
+    ${accountExtrasHtml()}
     <div class="grid grid-cols-2 gap-2">
       ${btn("🤝 Meine Tausche", "PS.openTrades()", "bg-slate-800 text-white")}
       ${btn("🔔 Mitteilungen", "PS.openNotifications()", "bg-slate-800 text-white")}
@@ -212,36 +214,52 @@ async function migrateLocalPortfolio() {
 // ---------------------------------------------------------------------------
 // Abo & Zahlungen
 // ---------------------------------------------------------------------------
-function openPro() {
+let proInterval = "month";
+function openPro(interval) {
+  if (interval === "month" || interval === "year") proInterval = interval;
   const m = state.me, plans = m?.plans;
   const current = m?.plan || "free";
-  const tier = (id, color, features, price) => `
+  const yearly = proInterval === "year";
+  const yearCents = { premium: plans?.premium?.yearlyPriceCents || 4900, pro: plans?.pro?.yearlyPriceCents || 9900 };
+  const monthCents = { premium: plans?.premium?.priceCents || 499, pro: plans?.pro?.priceCents || 999 };
+  const priceOf = (id) => (id === "free" ? "0 €" : eur((yearly ? yearCents[id] : monthCents[id]) / 100));
+  const isCurrent = (id) => current === id && (id === "free" || (m?.planInterval === "year") === yearly);
+  const tier = (id, color, features) => {
+    const price = priceOf(id);
+    const saving = yearly && id !== "free" ? Math.round((1 - yearCents[id] / (monthCents[id] * 12)) * 100) : 0;
+    return `
     <div class="bg-slate-950 border-2 ${color} rounded-2xl p-4 space-y-2 flex flex-col ${current === id ? "ring-2 ring-emerald-400" : ""}">
       <p class="font-black uppercase text-[10px] ${id === "pro" ? "text-purple-300" : id === "premium" ? "text-yellow-400" : "text-slate-400"}">${id === "pro" ? "Pro Trader" : id === "premium" ? "Premium" : "Free"}</p>
-      <p class="text-xl font-black text-white">${price}<span class="text-xs font-normal text-slate-400">${id === "free" ? "" : " / Monat"}</span></p>
+      <p class="text-xl font-black text-white">${price}<span class="text-xs font-normal text-slate-400">${id === "free" ? "" : yearly ? " / Jahr" : " / Monat"}</span></p>
+      ${saving ? `<p class="text-[10px] font-black text-emerald-300">≈ ${eur(yearCents[id] / 1200)} pro Monat • ${saving} % gespart</p>` : ""}
       <ul class="text-slate-300 space-y-1 flex-1">${features.map((f) => `<li>✅ ${f}</li>`).join("")}</ul>
-      ${current === id ? `<p class="text-center text-emerald-400 font-black py-2">✓ Dein Tarif</p>`
-        : id === "free" ? "" : btn(`${price} – jetzt starten`, `PS.checkout('${id}')`, `w-full ${id === "pro" ? "bg-gradient-to-r from-purple-500 to-pink-500 text-white" : "bg-yellow-400 text-slate-950"}`)}
+      ${isCurrent(id) ? `<p class="text-center text-emerald-400 font-black py-2">✓ Dein Tarif</p>`
+        : id === "free" ? "" : btn(m?.trialDays ? `${m.trialDays} Tage gratis testen` : `${price} – jetzt starten`, `PS.checkout('${id}', '${yearly ? "year" : "month"}')`, `w-full ${id === "pro" ? "bg-gradient-to-r from-purple-500 to-pink-500 text-white" : "bg-yellow-400 text-slate-950"}`)}
     </div>`;
+  };
   const p = plans || { free: { portfolio: 25, alerts: 3, listings: 5 }, premium: { portfolio: 500, alerts: 50, listings: 40 }, pro: { alerts: 500, listings: 500, freeBoostsPerMonth: 3 } };
   modal("ps-pro", `
     <span class="bg-yellow-400 text-slate-950 text-xs font-black px-3 py-1 rounded-full">👑 POKESWIPE PREMIUM</span>
     <h3 class="text-lg font-black text-white">Mehr Gewinn bei jedem Deal</h3>
     ${trialBanner()}
-    <p class="text-xs text-slate-300">Echte Cardmarket-Preise, stündlicher Preis-Tracker, KI-Kartenscan, sichere Tausche. Monatlich kündbar, sichere Zahlung über Stripe (Karte, Apple Pay, Google Pay, Klarna u. a.).</p>
+    <p class="text-xs text-slate-300">Echte Cardmarket-Preise, stündlicher Preis-Tracker, KI-Kartenscan, sichere Tausche. Sichere Zahlung über Stripe (Karte, Apple Pay, Google Pay, Klarna u. a.).</p>
+    <div class="flex justify-center"><div class="inline-flex bg-slate-900 border border-slate-700 rounded-2xl p-1 text-xs font-black">
+      <button onclick="PS.openPro('month')" class="px-4 py-2 rounded-xl ${yearly ? "text-slate-300" : "bg-yellow-400 text-slate-950"}">Monatlich</button>
+      <button onclick="PS.openPro('year')" class="px-4 py-2 rounded-xl ${yearly ? "bg-yellow-400 text-slate-950" : "text-slate-300"}">Jährlich <span class="${yearly ? "text-emerald-700" : "text-emerald-400"}">2 Monate gratis</span></button>
+    </div></div>
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-      ${tier("free", "border-slate-700", [`${p.free.portfolio} Portfolio-Karten`, `${p.free.alerts} Preisalarme`, `${p.free.listings} aktive Inserate`, `${p.free.scansPerDay || 3} KI-Scans pro Tag`, "Push-Alarme", "Sicherer Tausch & Bewertungen"], "0 €")}
-      ${tier("premium", "border-yellow-400/60", [`${p.premium.portfolio} Portfolio-Karten`, `${p.premium.alerts} Preisalarme (stündlich)`, "Wertverlauf & Top-Mover", `${p.premium.scansPerDay || 40} KI-Scans pro Tag`, `${p.premium.sets || 10} Sets verfolgen`, `${p.premium.listings} aktive Inserate`, "Unbegrenzte Swipes", "Goldenes Badge"], "4,99 €")}
-      ${tier("pro", "border-purple-500", ["Alles aus Premium", "🏪 Eigener Händler-Shop", "Unbegrenzte Alarme & Inserate", "✔ Verifizierter Händler-Badge", `${p.pro.freeBoostsPerMonth || 3} Gratis-Boosts pro Monat`, "Inserate vor Free & Premium", "Portfolio-Export (CSV)"], "9,99 €")}
+      ${tier("free", "border-slate-700", [`${p.free.portfolio} Portfolio-Karten`, `${p.free.alerts} Preisalarme`, `${p.free.listings} aktive Inserate`, `${p.free.scansPerDay || 3} KI-Scans pro Tag`, "Push-Alarme", "Sicherer Tausch & Bewertungen"])}
+      ${tier("premium", "border-yellow-400/60", [`${p.premium.portfolio} Portfolio-Karten`, `${p.premium.alerts} Preisalarme (stündlich)`, "👑 Sniper-Deals >25 % unter Marktwert", "🏆 Grading-Profit-Analyse", "Wertverlauf & Top-Mover", `${p.premium.scansPerDay || 40} KI-Scans pro Tag`, `${p.premium.sets || 10} Sets verfolgen`, `${p.premium.listings} aktive Inserate`, "Unbegrenzte Swipes", "Goldenes Badge"])}
+      ${tier("pro", "border-purple-500", ["Alles aus Premium", "🏪 Eigener Händler-Shop", "Unbegrenzte Alarme & Inserate", "✔ Verifizierter Händler-Badge", `${p.pro.freeBoostsPerMonth || 3} Gratis-Boosts pro Monat`, "Inserate vor Free & Premium", "Portfolio-Export (CSV)", "📊 Shop-Statistik"])}
     </div>
     <p class="text-[11px] text-slate-400">🚀 Einzel-Boost für jedes Inserat: ${eur((m?.boost?.priceCents || 199) / 100)} für ${m?.boost?.days || 7} Tage ganz oben im Tausch-Hub.</p>
     ${m && !m.paymentsEnabled ? `<p class="text-xs text-amber-300">⏳ Zahlungen werden gerade eingerichtet – bitte versuche es in Kürze erneut.</p>` : ""}`, { wide: true });
 }
 
-async function checkout(plan) {
+async function checkout(plan, interval = "month") {
   if (!requireLogin()) return;
   try {
-    const { url } = await api("/api/billing/checkout", { method: "POST", body: { plan } });
+    const { url } = await api("/api/billing/checkout", { method: "POST", body: { plan, interval } });
     location.href = url;
   } catch (e) { handleError(e); }
 }
@@ -292,7 +310,7 @@ async function openCard(cardId) {
     const ch30 = card.avg30 && price ? ((price - card.avg30) / card.avg30) * 100 : null;
     modal("ps-card", `
       <div class="flex gap-4">
-        <img src="${esc(card.image || FALLBACK_IMG)}" onerror="this.src='${FALLBACK_IMG}'" class="w-28 sm:w-36 rounded-xl object-contain shrink-0" />
+        <img src="${esc(cdn(card.image || FALLBACK_IMG, 320))}" onerror="this.src='${FALLBACK_IMG}'" class="w-28 sm:w-36 rounded-xl object-contain shrink-0" />
         <div class="space-y-1 text-xs min-w-0">
           <h3 class="text-base font-black text-white">${esc(card.name)}</h3>
           <p class="text-slate-400">${esc(card.setName)} • ${esc(card.id)}</p>
@@ -325,6 +343,7 @@ async function openCard(cardId) {
         </div>
       </div>
       <button onclick="PS.listCard('${esc(card.id)}', ${JSON.stringify(card.name).replace(/"/g, "&quot;")}, ${price || 0})" class="w-full bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">🤝 Diese Karte im Tausch-Hub inserieren</button>
+      ${cardExtrasHtml(card)}
       <p class="text-[10px] text-slate-500">Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link</p>`, { wide: true });
   } catch (e) {
     closeModalEl("ps-card");
@@ -384,7 +403,7 @@ async function searchCards(q, boxId) {
     if (!list.length) { box.innerHTML = `<p class="text-slate-400 col-span-full text-center py-4">Keine Karte gefunden. Versuche z. B. „Pikachu“, „Glurak“ oder „Mew“.</p>`; return; }
     box.innerHTML = list.map((c) => `
       <button onclick="PS.openCard('${esc(c.id)}')" class="bg-slate-900 border border-slate-800 hover:border-yellow-400 rounded-xl p-2 flex flex-col gap-1.5 text-center transition">
-        <img src="${esc(c.image)}/low.webp" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-32 mx-auto object-contain rounded" />
+        <img src="${esc(cdn(c.image + "/low.webp", 200))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-32 mx-auto object-contain rounded" />
         <p class="font-bold text-white truncate text-[11px] w-full">${esc(c.name)} <span class="text-slate-500">${esc(c.localId || "")}</span></p>
         <span class="text-[10px] font-black text-yellow-300">💶 Live-Preis & Alarm</span>
       </button>`).join("");
@@ -440,7 +459,7 @@ async function loadAlerts() {
     box.innerHTML = alerts.length ? alerts.map((a) => {
       const hit = a.price && (a.direction === "below" ? a.price <= a.targetPrice : a.price >= a.targetPrice);
       return `<div class="flex items-center gap-3 bg-slate-900 border ${hit ? "border-emerald-400" : "border-slate-800"} rounded-xl p-2.5 text-xs">
-        <img src="${esc(a.image || FALLBACK_IMG)}" class="w-9 h-12 object-contain rounded shrink-0 cursor-pointer" onclick="PS.openCard('${esc(a.cardId)}')" />
+        <img src="${esc(cdn(a.image || FALLBACK_IMG, 80))}" class="w-9 h-12 object-contain rounded shrink-0 cursor-pointer" onclick="PS.openCard('${esc(a.cardId)}')" />
         <div class="min-w-0 flex-1">
           <p class="font-bold text-white truncate">${esc(a.name)}</p>
           <p class="text-slate-400">Jetzt <strong class="text-emerald-400">${a.price ? eur(a.price) : "–"}</strong> • Ziel ${a.direction === "below" ? "≤" : "≥"} <strong class="text-yellow-300">${eur(a.targetPrice)}</strong> ${hit ? `<span class="text-emerald-400 font-black">• ZIEL ERREICHT</span>` : ""}</p>
@@ -542,7 +561,7 @@ function renderServerPortfolio() {
   box.innerHTML = p.items.map((i) => `
     <div class="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs">
       <div class="flex items-center gap-2.5 min-w-0 ${i.cardId ? "cursor-pointer" : ""}" ${i.cardId ? `onclick="PS.openCard('${esc(i.cardId)}')"` : ""}>
-        <img src="${esc(i.image || FALLBACK_IMG)}" onerror="this.src='${FALLBACK_IMG}'" class="w-8 h-11 object-contain rounded shrink-0" />
+        <img src="${esc(cdn(i.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" class="w-8 h-11 object-contain rounded shrink-0" />
         <div class="min-w-0">
           <p class="font-bold text-white truncate">${i.quantity > 1 ? `${i.quantity}× ` : ""}${esc(i.name)}</p>
           <p><span class="text-emerald-400 font-bold">${eur(i.value)}</span>
@@ -661,7 +680,7 @@ function listingCard(l) {
     const pb = l.priceCheck ? priceBadge[l.priceCheck] : null;
     return `<div class="poke-glass rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${l.boosted ? "border-2 border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,.25)]" : ""}">
       <div class="flex items-center gap-3 min-w-0">
-        <img src="${esc(l.image || FALLBACK_IMG)}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
+        <img src="${esc(cdn(l.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
         <div class="min-w-0 text-xs space-y-0.5">
           <div class="flex flex-wrap gap-1">
             ${l.boosted ? `<span class="text-[9px] font-black bg-yellow-400 text-slate-950 px-1.5 rounded">🚀 TOP</span>` : ""}
@@ -729,6 +748,7 @@ function requestTrade(listingId) {
   if (!requireLogin()) return;
   const l = state.listings.find((x) => x.id === listingId);
   if (!l) { toast("Inserat", "Das Angebot findest du im Tausch-Hub."); goMarket(); return; }
+  api(`/api/listings/${listingId}/view`, { method: "POST", body: {} }).catch(() => {});
   modal("ps-trade-req", `
     <h3 class="text-base font-black text-white">🤝 Tauschanfrage</h3>
     <p class="text-xs text-slate-300">Du fragst <strong class="text-white">${esc(l.card_name)}</strong> (${eur(l.price)}) bei ${esc(l.seller)} an.</p>
@@ -996,7 +1016,7 @@ async function openAdmin() {
           <p><strong class="text-rose-300">${esc(r.target_type)} #${esc(r.target_id)}</strong> <span class="text-slate-400">von ${esc(r.reporter)} • ${new Date(r.created_at).toLocaleString("de-DE")}</span></p>
           <p class="text-slate-200">${esc(r.reason)}</p>
           <div class="flex flex-wrap gap-1.5 mt-1.5">
-            ${r.target_type === "listing" ? btn("Inserat entfernen", `PS.resolveReport(${r.id}, {removeListing:true})`, "bg-rose-500/30 text-rose-200") : ""}
+            ${r.target_type === "listing" || r.target_type === "event" ? btn(r.target_type === "event" ? "Event entfernen" : "Inserat entfernen", `PS.resolveReport(${r.id}, {removeListing:true})`, "bg-rose-500/30 text-rose-200") : ""}
             ${r.target_type !== "trade" ? btn("Nutzer sperren", `PS.resolveReport(${r.id}, {banUser:true, removeListing:true})`, "bg-rose-600 text-white") : ""}
             ${btn("Erledigt", `PS.resolveReport(${r.id}, {})`, "bg-emerald-500/30 text-emerald-200")}
             ${btn("Verwerfen", `PS.resolveReport(${r.id}, {dismiss:true})`, "bg-slate-800 text-slate-300")}

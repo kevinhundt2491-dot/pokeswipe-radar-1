@@ -3,8 +3,10 @@ export type PlanId = "free" | "premium" | "pro";
 export const PLANS: Record<PlanId, {
   label: string;
   priceCents: number;
+  yearlyPriceCents: number;
   portfolio: number;
   alerts: number;
+  wishlist: number;
   listings: number;
   sets: number;
   scansPerDay: number;
@@ -13,15 +15,17 @@ export const PLANS: Record<PlanId, {
   verified: boolean;
   shop: boolean;
 }> = {
-  free: { label: "Free", priceCents: 0, portfolio: 25, alerts: 3, listings: 5, sets: 1, scansPerDay: 3, freeBoostsPerMonth: 0, history: false, verified: false, shop: false },
-  premium: { label: "Premium", priceCents: 499, portfolio: 500, alerts: 50, listings: 40, sets: 10, scansPerDay: 40, freeBoostsPerMonth: 0, history: true, verified: false, shop: false },
-  pro: { label: "Pro Trader", priceCents: 999, portfolio: 5000, alerts: 500, listings: 500, sets: 200, scansPerDay: 250, freeBoostsPerMonth: 3, history: true, verified: true, shop: true },
+  free: { label: "Free", priceCents: 0, yearlyPriceCents: 0, portfolio: 25, alerts: 3, wishlist: 20, listings: 5, sets: 1, scansPerDay: 3, freeBoostsPerMonth: 0, history: false, verified: false, shop: false },
+  premium: { label: "Premium", priceCents: 499, yearlyPriceCents: 4900, portfolio: 500, alerts: 50, wishlist: 300, listings: 40, sets: 10, scansPerDay: 40, freeBoostsPerMonth: 0, history: true, verified: false, shop: false },
+  pro: { label: "Pro Trader", priceCents: 999, yearlyPriceCents: 9900, portfolio: 5000, alerts: 500, wishlist: 2000, listings: 500, sets: 200, scansPerDay: 250, freeBoostsPerMonth: 3, history: true, verified: true, shop: true },
 };
 
 export const BOOST_PRICE_CENTS = 199;
 export const BOOST_DAYS = 7;
 export const REFERRAL_TRIAL_DAYS = 30;
 export const REFERRAL_BONUS_DAYS = 30;
+/** Testphase für jedes erste Abo (ohne Empfehlung) */
+export const TRIAL_DAYS = 7;
 
 /**
  * Bezahlter Tarif gilt, solange das Abo-Ende in der Zukunft liegt (+1 Tag Kulanz).

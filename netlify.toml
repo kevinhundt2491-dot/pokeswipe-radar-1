@@ -8,9 +8,13 @@
   # Die App ist statisches HTML + API – das in Netlify installierte Next.js-Plugin überspringen
   NETLIFY_NEXT_PLUGIN_SKIP = "true"
 
-# Der API-Server beantwortet nur /api/* – alles andere ist die statische App
+# Der API-Server beantwortet /api/*, die öffentlichen Kartenseiten und die Sitemap – alles andere ist die statische App
 [server]
-  path = "/api/*"
+  path = ["/api/*", "/karte/*", "/sitemap.xml"]
+
+# Kartenbilder über das Netlify Image CDN (verkleinert, WebP/AVIF)
+[images]
+  remote_images = ['https://assets\.tcgdex\.net/.*', 'https://images\.pokemontcg\.io/.*', 'https://raw\.githubusercontent\.com/.*']
 
 [[headers]]
   for = "/*"

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "esbuild client/main.js --bundle --minify --format=esm --target=es2020 --outfile=public/assets/app.js",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "test": "node --test \"tests/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

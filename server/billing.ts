@@ -35,7 +35,7 @@ export async function applySubscription(userId: string, sub: Stripe.Subscription
   const live = ["active", "trialing", "past_due"].includes(sub.status);
   const plan = (sub.metadata?.plan in PLANS ? sub.metadata.plan : "premium") as PlanId;
   const values = live
-    ? { plan, planUntil: periodEnd(sub), stripeSubscriptionId: sub.id, cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end), planCheckedAt: new Date() }
+    ? { plan, planUntil: periodEnd(sub), planInterval: sub.items?.data?.[0]?.price?.recurring?.interval === "year" ? "year" : "month", stripeSubscriptionId: sub.id, cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end), planCheckedAt: new Date() }
     : { plan: "free", planUntil: null, stripeSubscriptionId: null, cancelAtPeriodEnd: false, planCheckedAt: new Date() };
   const [updated] = await db.update(profiles).set(values).where(eq(profiles.userId, userId)).returning();
   if (updated && sub.status === "active" && updated.referredBy && !updated.referralRewarded) {
@@ -58,7 +58,7 @@ async function rewardReferrer(referred: Profile) {
   const s = stripe();
   if (s && plan !== "free" && referrer.stripeCustomerId && referrer.stripeSubscriptionId && !referrer.cancelAtPeriodEnd) {
     await s.customers.createBalanceTransaction(referrer.stripeCustomerId, {
-      amount: -PLANS[plan].priceCents,
+      amount: -PLANS[plan].priceCents, // Gutschrift = ein Monatsbeitrag (auch bei Jahresabo)
       currency: "eur",
       description: `Gratismonat: Empfehlung von ${referred.displayName}`,
     });

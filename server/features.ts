@@ -5,10 +5,11 @@ import {
   db, profiles, cards, portfolioItems, pushSubscriptions, trackedSets, sealedProducts, sealedPriceHistory,
   sealedAlerts, cardScans, affiliateClicks, payments, listings,
 } from "../db/index.ts";
-import { PLANS, REFERRAL_TRIAL_DAYS, effectivePlan, type PlanId } from "./plans.ts";
+import { PLANS, REFERRAL_TRIAL_DAYS, TRIAL_DAYS, effectivePlan, type PlanId } from "./plans.ts";
 import { getCard, cardPrice, notify, evaluateSealedAlerts, CARD_ID_RE } from "./prices.ts";
 import { getVapid, isValidPushEndpoint, sendPush } from "./push.ts";
 import { verifyIdentityToken } from "./auth.ts";
+import { recordShopView } from "./growth.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
 
 type Profile = typeof profiles.$inferSelect;
@@ -36,8 +37,14 @@ async function ensureReferralCode(profile: Profile) {
   return "";
 }
 
+/** Testphase in Tagen für das erste Abo: 30 Tage mit Empfehlung, sonst 7 Tage – 0, wenn schon genutzt. */
+export async function trialDays(profile: Profile) {
+  if (!(await trialEligible(profile))) return 0;
+  return profile.referredBy ? REFERRAL_TRIAL_DAYS : TRIAL_DAYS;
+}
+
 export async function trialEligible(profile: Profile) {
-  if (!profile.referredBy || profile.usedTrial || profile.stripeSubscriptionId) return false;
+  if (profile.usedTrial || profile.stripeSubscriptionId) return false;
   const [paid] = await db.select({ id: payments.id }).from(payments)
     .where(and(eq(payments.userId, profile.userId), eq(payments.kind, "subscription"))).limit(1);
   return !paid;
@@ -66,6 +73,9 @@ export async function extraMe(c: any, profile: Profile, plan: PlanId) {
       trialDays: REFERRAL_TRIAL_DAYS,
     },
     trialEligible: await trialEligible(profile),
+    trialDays: await trialDays(profile),
+    referred: Boolean(profile.referredBy),
+    planInterval: profile.planInterval,
     bonusUntil: profile.bonusUntil,
     shop: { slug: profile.shopSlug, title: profile.shopTitle, bio: profile.shopBio, enabled: PLANS[plan].shop },
     scansLeft: Math.max(0, PLANS[plan].scansPerDay - (await scansToday(profile.userId))),
@@ -125,7 +135,7 @@ export async function notifySealedListing(row: typeof listings.$inferSelect, sel
 // TCGdex-Helfer
 // ---------------------------------------------------------------------------
 const setCache = new Map<string, { data: any; expires: number }>();
-async function fetchSet(setId: string) {
+export async function fetchSet(setId: string) {
   const hit = setCache.get(setId);
   if (hit && hit.expires > Date.now()) return hit.data;
   const res = await fetch(`https://api.tcgdex.net/v2/de/sets/${encodeURIComponent(setId)}`, { signal: AbortSignal.timeout(8000) });
@@ -136,7 +146,7 @@ async function fetchSet(setId: string) {
   return data;
 }
 
-async function searchTcgdex(lang: "de" | "en", name: string) {
+export async function searchTcgdex(lang: "de" | "en", name: string) {
   try {
     const res = await fetch(`https://api.tcgdex.net/v2/${lang}/cards?name=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return [];
@@ -147,9 +157,9 @@ async function searchTcgdex(lang: "de" | "en", name: string) {
   }
 }
 
-const normNum = (v: unknown) => String(v ?? "").replace(/^0+/, "").toLowerCase();
+export const normNum = (v: unknown) => String(v ?? "").replace(/^0+/, "").toLowerCase();
 
-async function pool<T>(items: T[], size: number, fn: (x: T) => Promise<unknown>, deadline: number) {
+export async function pool<T>(items: T[], size: number, fn: (x: T) => Promise<unknown>, deadline: number) {
   let i = 0;
   await Promise.all(Array.from({ length: size }, async () => {
     while (i < items.length && Date.now() < deadline) {
@@ -533,6 +543,7 @@ export function registerFeatures(app: any, h: {
     const slug = str(c.req.param("slug"), 30).toLowerCase();
     const [p] = await db.select().from(profiles).where(eq(profiles.shopSlug, slug)).limit(1);
     if (!p || p.banned || effectivePlan({ plan: p.plan, planUntil: p.planUntil }) !== "pro") return c.json({ error: "Shop nicht gefunden" }, 404);
+    await recordShopView(c, p.userId);
     const items = rows(await db.execute(sql`
       SELECT l.id, l.card_id, l.sealed_product_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.created_at, l.user_id,
         (l.boosted_until > now()) AS boosted, COALESCE(c.trend, c.avg)::float AS market_price
