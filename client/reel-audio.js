@@ -69,7 +69,8 @@ const PROGRESSIONS = [
  * @param {Array<[number,string]>} cues  Soundeffekte: [Zeitpunkt in s, Typ]
  * @param {number} seed     Variation (z. B. Episodennummer)
  * @param {Array<{start:number, buffer:AudioBuffer, rate:number}>} voice  Sprecher-Clips (siehe placeVoice)
- * @returns {{ track: MediaStreamTrack, t0: number, stop: () => void }}  t0 = AudioContext-Zeit von Sekunde 0
+ * @returns {{ track: MediaStreamTrack, t0: number, voiceEnded: Promise<number>|null, stop: () => void }}
+ *   t0 = AudioContext-Zeit von Sekunde 0; voiceEnded = Videozeit (s), zu der die Sprecherin fertig ist (onended)
  */
 export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
   const dest = ac.createMediaStreamDestination();
@@ -95,6 +96,7 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
   // Mit Sprecherin: Musik dezent und leise im Hintergrund, Effekte zurückhaltend
   if (voice.length) { music.gain.value = 0.2; sfx.gain.value = 0.32; }
   const nodes = [];
+  const voiceSources = [];
   const track = (n) => { nodes.push(n); return n; };
 
   const env = (g, t, a, peak, dec) => {
@@ -212,14 +214,22 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
       const src = track(ac.createBufferSource());
       src.buffer = buffer; src.playbackRate.value = 1;
       src.connect(hp);
+      voiceSources.push(src);
       src.start(T0 + start);
     });
   }
+  // Ende der Sprecherin: Promise, das beim onended-Event des LETZTEN Sprecher-Clips erfüllt wird
+  // (danach stoppt die Aufnahme mit kurzem Ausklang – nie über einen festen Timer).
+  const voiceEnded = voiceSources.length
+    ? Promise.all(voiceSources.map((src) => new Promise((resolve) => { src.onended = () => resolve(ac.currentTime - T0); })))
+      .then((ts) => Math.max(...ts))
+    : null;
 
   const out = dest.stream.getAudioTracks()[0];
   return {
     track: out,
     t0: T0,
+    voiceEnded,
     stop() {
       nodes.forEach((n) => { try { n.stop(); } catch { /* schon beendet */ } });
       try { master.disconnect(); comp.disconnect(); limiter.disconnect(); } catch { /* egal */ }
