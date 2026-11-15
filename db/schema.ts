@@ -25,6 +25,8 @@ export const profiles = pgTable("profiles", {
   referralRewarded: boolean("referral_rewarded").notNull().default(false),
   usedTrial: boolean("used_trial").notNull().default(false),
   bonusUntil: timestamp("bonus_until", { withTimezone: true }),
+  bonusPlan: text("bonus_plan").notNull().default("premium"), // Tarif während bonusUntil: premium | pro (Stufen-Belohnungen)
+  referredVia: integer("referred_via"), // share_links.id, über den die Anmeldung kam
   // Wechsel-Bonus (einmalig beim Import einer Sammlung aus einer anderen App)
   switchBonusAt: timestamp("switch_bonus_at", { withTimezone: true }),
   planInterval: text("plan_interval").notNull().default("month"), // month | year
@@ -62,7 +64,40 @@ export const cards = pgTable("cards", {
   category: text(), // Pokémon | Trainer | Energie
   illustrator: text(),
   importedAt: timestamp("imported_at", { withTimezone: true }),
-}, (t) => [index("cards_set_id").on(t.setId, t.localId), index("cards_checked_at").on(t.checkedAt)]);
+  // Detaildaten (beim Preisabruf aus TCGdex befüllt) – Grundlage für Pokémon-Seiten & strukturierte Daten
+  dexId: integer("dex_id"), // National-Pokédex-Nr. (erste, falls mehrere)
+  hp: integer(),
+  types: text(), // kommagetrennt, z. B. "Feuer"
+  stage: text(), // Basis | Phase 1 | Phase 2 …
+  variants: text(), // kommagetrennt: normal,reverse,holo,firstEdition
+  regulationMark: text("regulation_mark"),
+  detailsAt: timestamp("details_at", { withTimezone: true }),
+}, (t) => [index("cards_set_id").on(t.setId, t.localId), index("cards_checked_at").on(t.checkedAt), index("cards_dex_id").on(t.dexId)]);
+
+// Pokémon-Arten (aus dem Katalog abgeleitet) – öffentliche Seiten /pokemon/<name> für Suchanfragen wie „Glurak Karten Wert“
+export const pokemonSpecies = pgTable("pokemon_species", {
+  dexId: integer("dex_id").primaryKey(),
+  nameDe: text("name_de").notNull(),
+  nameEn: text("name_en").notNull().default(""),
+  slug: text().notNull(),
+  cardCount: integer("card_count").notNull().default(0),
+  pricedCount: integer("priced_count").notNull().default(0),
+  topCardId: text("top_card_id"),
+  topPrice: numeric("top_price", { precision: 10, scale: 2 }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("pokemon_species_slug").on(t.slug)]);
+
+// Protokoll der automatischen Katalog-Importe (Admin-Zentrale, Fehlersuche)
+export const catalogImportRuns = pgTable("catalog_import_runs", {
+  id: serial().primaryKey(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  setsImported: integer("sets_imported").notNull().default(0),
+  prices: integer().notNull().default(0),
+  species: integer().notNull().default(0),
+  errors: integer().notNull().default(0),
+  note: text().notNull().default(""),
+}, (t) => [index("catalog_import_runs_started").on(t.startedAt)]);
 
 // Deutscher Set-Katalog (TCGdex) – Grundlage für öffentliche Set-Seiten und den Karten-Import
 export const cardSets = pgTable("card_sets", {
@@ -251,6 +286,9 @@ export const sealedProducts = pgTable("sealed_products", {
   releaseDate: date("release_date"),
   cardmarketUrl: text("cardmarket_url").notNull().default(""),
   priceSource: text("price_source").notNull().default("admin"), // admin | import | community
+  contents: text().notNull().default(""), // Inhalt, z. B. "36 Booster" oder "9 Booster, 65 Hüllen, Würfel"
+  boosterCount: integer("booster_count"), // für „Preis pro Booster“
+  description: text().notNull().default(""),
 }, (t) => [uniqueIndex("sealed_products_slug").on(t.slug), uniqueIndex("sealed_products_ean").on(t.ean)]);
 
 export const sealedPriceHistory = pgTable("sealed_price_history", {
@@ -457,3 +495,40 @@ export const cancellations = pgTable("cancellations", {
   verified: boolean().notNull().default(false), // true = beim Absenden angemeldet
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("cancellations_reference").on(t.reference), index("cancellations_email").on(t.email), index("cancellations_user").on(t.userId)]);
+
+// ---------------------------------------------------------------------------
+// Virales Wachstum: verfolgte Teilen-Links, Besuche und Empfehlungs-Belohnungen
+// ---------------------------------------------------------------------------
+export const shareLinks = pgTable("share_links", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  code: text().notNull(), // Kurzcode für /s/<code>
+  kind: text().notNull().default("invite"), // invite | card | set | pokemon | sealed | portfolio | pull | trends
+  target: text().notNull().default("/"), // eigener Pfad, auf den /s/<code> weiterleitet
+  title: text().notNull().default(""),
+  clicks: integer().notNull().default(0),
+  uniqueVisitors: integer("unique_visitors").notNull().default(0),
+  signups: integer().notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("share_links_code").on(t.code), uniqueIndex("share_links_user_target").on(t.userId, t.target)]);
+
+export const shareVisits = pgTable("share_visits", {
+  id: serial().primaryKey(),
+  shareId: integer("share_id").notNull().references(() => shareLinks.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  visitorHash: text("visitor_hash").notNull(), // gehashte IP + Browser (kein Klartext, DSGVO)
+  day: date().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("share_visits_share_visitor").on(t.shareId, t.visitorHash), index("share_visits_owner_day").on(t.ownerId, t.day)]);
+
+// Gutgeschriebene Empfehlungs-Belohnungen (Nachweis + verhindert doppelte Gutschrift)
+export const referralRewards = pgTable("referral_rewards", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  kind: text().notNull(), // paid_referral | milestone_3 | milestone_5 | milestone_10 | milestone_25
+  reference: text().notNull().default(""), // z. B. ID des geworbenen Nutzers
+  plan: text().notNull().default("premium"),
+  days: integer().notNull().default(0),
+  creditCents: integer("credit_cents").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("referral_rewards_unique").on(t.userId, t.kind, t.reference), index("referral_rewards_user").on(t.userId)]);

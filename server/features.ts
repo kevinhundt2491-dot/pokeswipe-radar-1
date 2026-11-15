@@ -11,6 +11,7 @@ import { getVapid, isValidPushEndpoint, sendPush } from "./push.ts";
 import { verifyIdentityToken } from "./auth.ts";
 import { recordShopView } from "./growth.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro, trustedOrigin } from "./util.ts";
+import { scanLimit, shareBonusToday, attributeSignup } from "./viral.ts";
 
 type Profile = typeof profiles.$inferSelect;
 
@@ -20,7 +21,7 @@ type Profile = typeof profiles.$inferSelect;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const randomCode = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => CODE_CHARS[b % CODE_CHARS.length]).join("");
 
-async function ensureReferralCode(profile: Profile) {
+export async function ensureReferralCode(profile: Profile) {
   if (profile.referralCode) return profile.referralCode;
   for (let i = 0; i < 5; i++) {
     const code = randomCode();
@@ -79,11 +80,12 @@ export async function extraMe(c: any, profile: Profile, plan: PlanId) {
     FROM profiles WHERE referred_by = ${profile.userId}
   `));
   const [sets] = await db.select({ n: sql<number>`count(*)::int` }).from(trackedSets).where(eq(trackedSets.userId, profile.userId));
-  const origin = trustedOrigin(c) || process.env.URL || "https://pokeswipe-radar.de";
+  const origin = process.env.URL || trustedOrigin(c) || "https://pokeswipe-radar.de";
+  const shareBonus = await shareBonusToday(profile.userId);
   return {
     referral: {
       code,
-      link: `${process.env.URL || origin}/?ref=${code}`,
+      link: `${origin}/einladung/${code}`,
       invited: Number(ref?.invited ?? 0),
       rewarded: Number(ref?.rewarded ?? 0),
       trialDays: REFERRAL_TRIAL_DAYS,
@@ -93,9 +95,11 @@ export async function extraMe(c: any, profile: Profile, plan: PlanId) {
     referred: Boolean(profile.referredBy),
     planInterval: profile.planInterval,
     bonusUntil: profile.bonusUntil,
+    bonusPlan: profile.bonusPlan,
+    shareBonus,
     switchBonusAvailable: !profile.switchBonusAt && !profile.stripeSubscriptionId,
     shop: { slug: profile.shopSlug, title: profile.shopTitle, bio: profile.shopBio, enabled: PLANS[plan].shop },
-    scansLeft: Math.max(0, PLANS[plan].scansPerDay - (await scansToday(profile.userId))),
+    scansLeft: Math.max(0, PLANS[plan].scansPerDay + shareBonus - (await scansToday(profile.userId))),
     setsTracked: Number(sets?.n ?? 0),
   };
 }
@@ -281,14 +285,16 @@ export function registerFeatures(app: any, h: {
   app.post("/api/scan", auth, async (c: any) => {
     const user = c.get("user"), plan: PlanId = c.get("plan");
     if (!rateLimit(`scan:${user.id}`, 6, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
-    if ((await scansToday(user.id)) >= PLANS[plan].scansPerDay) {
-      return c.json({ error: `Tageslimit erreicht: ${PLANS[plan].scansPerDay} Scans im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+    const limit = await scanLimit(user.id, plan);
+    const limitMsg = `Tageslimit erreicht: ${limit} Scans heute (Tarif ${PLANS[plan].label}${limit > PLANS[plan].scansPerDay ? " + Teilen-Bonus" : ""}). Tipp: Teile eine Karte – jeder neue Besucher bringt dir heute +1 Scan.`;
+    if ((await scansToday(user.id)) >= limit) {
+      return c.json({ error: limitMsg, upgrade: true, shareBonus: true }, 402);
     }
     const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String((await body(c)).image || ""));
     if (!m || m[2].length > 2_000_000) return c.json({ error: "Bitte ein Foto (JPG/PNG, max. ca. 1,5 MB) aufnehmen." }, 400);
-    const reservation = await reserveScan(user.id, PLANS[plan].scansPerDay);
+    const reservation = await reserveScan(user.id, limit);
     if (!reservation) {
-      return c.json({ error: `Tageslimit erreicht: ${PLANS[plan].scansPerDay} Scans im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+      return c.json({ error: limitMsg, upgrade: true, shareBonus: true }, 402);
     }
 
     const ai = new Anthropic();
@@ -598,7 +604,9 @@ export function registerFeatures(app: any, h: {
   // ------------------------- Empfehlungsprogramm ---------------------------
   app.post("/api/referral/claim", auth, async (c: any) => {
     const profile: Profile = c.get("profile");
-    const code = str((await body(c)).code, 12).toUpperCase();
+    const b = await body(c);
+    const code = str(b.code, 12).toUpperCase();
+    const via = str(b.via, 10).toLowerCase();
     if (!/^[A-Z0-9]{6,10}$/.test(code)) return c.json({ error: "Ungültiger Code" }, 400);
     if (profile.referredBy) return c.json({ ok: true, already: true });
     if (Date.now() - profile.createdAt.getTime() > 14 * 86400_000) return c.json({ error: "Empfehlungen gelten nur für neue Konten." }, 409);
@@ -606,7 +614,9 @@ export function registerFeatures(app: any, h: {
     const [referrer] = await db.select().from(profiles).where(eq(profiles.referralCode, code)).limit(1);
     if (!referrer || referrer.userId === profile.userId || referrer.banned) return c.json({ error: "Code nicht gefunden" }, 404);
     if (referrer.email.toLowerCase() === profile.email.toLowerCase()) return c.json({ error: "Code nicht gültig" }, 409);
-    await db.update(profiles).set({ referredBy: referrer.userId }).where(and(eq(profiles.userId, profile.userId), sql`${profiles.referredBy} IS NULL`));
+    const [set] = await db.update(profiles).set({ referredBy: referrer.userId }).where(and(eq(profiles.userId, profile.userId), sql`${profiles.referredBy} IS NULL`)).returning({ id: profiles.userId });
+    if (!set) return c.json({ ok: true, already: true });
+    if (via) await attributeSignup(profile.userId, referrer.userId, via).catch(() => {});
     await notify(referrer.userId, "👋 Neuer Sammler über deinen Link", `${profile.displayName} hat sich registriert. Sobald das erste Abo bezahlt ist, bekommst du deinen Gratismonat.`);
     return c.json({ ok: true, trialDays: REFERRAL_TRIAL_DAYS });
   });

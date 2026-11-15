@@ -30,6 +30,8 @@ export const BADGES: Badge[] = [
   { id: "scanner", icon: "📷", label: "Scanner", description: "10 Karten gescannt", test: (s) => s.scans >= 10 },
   { id: "wishlist", icon: "❤️", label: "Wunschzettel", description: "5 Karten auf der Wunschliste", test: (s) => s.wishlistCount >= 5 },
   { id: "recruiter", icon: "🎁", label: "Botschafter", description: "Einen Freund geworben, der Premium nutzt", test: (s) => s.referralsRewarded >= 1 },
+  { id: "recruiter-5", icon: "📣", label: "Super-Botschafter", description: "5 Freunde geworben, die ein Abo bezahlen", test: (s) => s.referralsRewarded >= 5 },
+  { id: "recruiter-25", icon: "👑", label: "Radar-Legende", description: "25 Freunde geworben, die ein Abo bezahlen", test: (s) => s.referralsRewarded >= 25 },
 ];
 
 export const earnedBadges = (s: BadgeStats) => BADGES.filter((b) => b.test(s)).map((b) => b.id);
@@ -76,3 +78,16 @@ export function weeklySummary(i: { value: number; valueWeekAgo: number | null; t
   if (i.top) lines.push(`Top-Mover: ${i.top.name} ${i.top.change >= 0 ? "+" : ""}${i.top.change.toFixed(1).replace(".", ",")} %.`);
   return lines.join(" ");
 }
+
+const SPECIES_SUFFIX_RE = /([\s-]+(ex|EX|GX|V|VMAX|VSTAR|V-UNION|BREAK|LV\.X|Prime|LEGENDE|δ|☆|◇))+$/u;
+const SPECIES_PREFIX_RE = /^(Mega[\s-]+|M[\s-]+|Dunkles\s+|Licht\s+|Strahlendes?\s+|Glänzendes?\s+|Shining\s+|Radiant\s+|Dark\s+|Light\s+|Alola[\s-]+|Galar[\s-]+|Hisui[\s-]+|Paldea[\s-]+)/u;
+/** Kartenname → Name der Pokémon-Art („Mega-Glurak X ex“ → „Glurak“). */
+export function baseSpeciesName(name: string) {
+  let n = String(name || "").trim();
+  for (let i = 0; i < 3; i++) n = n.replace(SPECIES_SUFFIX_RE, "").replace(SPECIES_PREFIX_RE, "").trim();
+  return n.replace(/\s+[XY]$/u, "").replace(/\s+/g, " ").trim();
+}
+
+/** Nur eigene, öffentliche Pfade dürfen Ziel eines Teilen-Links sein (kein offener Redirect). */
+const SHARE_TARGET_RE = /^\/(?:(?:karte|set|pokemon|sealed|shop|einladung)\/[A-Za-z0-9._~%\-\/]{1,160}|sets|pokemon|sealed|trends)?$/;
+export const validShareTarget = (t: string) => SHARE_TARGET_RE.test(t) && !t.includes("//") && !t.includes("..");

@@ -8,6 +8,7 @@ import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml,
 import {
   injectGrowthPanels, afterAuthGrowth, routeGrowth, growthApi, loadWishlist, loadCalendar, loadRanks, adminGrowthHtml,
 } from "./growth.js";
+import { captureVia, takeVia, inviteBoxHtml, injectInviteButton, viralApi } from "./viral.js";
 import { injectDropsPanels, afterAuthDrops, routeDrops, dropsApi, loadDrops, loadGraded, loadFakeLeft } from "./drops.js";
 
 const PS = () => window.PS;
@@ -522,13 +523,14 @@ const REF_KEY = "ps_ref";
 function captureReferral() {
   const code = new URLSearchParams(location.search).get("ref");
   if (code && /^[A-Za-z0-9]{6,10}$/.test(code)) localStorage.setItem(REF_KEY, code.toUpperCase());
+  captureVia();
 }
 
 export async function claimReferral() {
   const code = localStorage.getItem(REF_KEY);
   if (!code || !state.user) return;
   try {
-    const r = await api("/api/referral/claim", { method: "POST", body: { code } });
+    const r = await api("/api/referral/claim", { method: "POST", body: { code, via: takeVia() } });
     if (r.ok && !r.already) toast("🎁 Empfehlung aktiviert", `Dein erster Monat Premium oder Pro ist gratis (${r.trialDays} Tage Testphase).`);
     await PS().refreshMe();
   } catch {}
@@ -536,15 +538,7 @@ export async function claimReferral() {
 }
 
 export function referralHtml() {
-  const r = state.me?.referral;
-  if (!r?.code) return "";
-  return `<div class="bg-slate-950 rounded-2xl p-3.5 border border-emerald-500/40 text-xs space-y-2">
-    <p class="font-black text-emerald-300">🎁 Freunde einladen – Gratismonat sichern</p>
-    <p class="text-slate-300">Deine Freunde bekommen den ersten Monat Premium/Pro gratis. Sobald jemand danach zahlt, bekommst du einen Monat geschenkt.</p>
-    <div class="flex gap-2"><input readonly value="${esc(r.link)}" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-[11px]" onclick="this.select()" />
-      ${btn("Teilen", `PS.shareLink(${jsArg(r.link)}, 'PokeSwipe & Radar – 1 Monat Premium gratis')`, "bg-emerald-500 text-slate-950")}</div>
-    <p class="text-slate-500">${Number(r.invited) || 0} eingeladen • ${Number(r.rewarded) || 0} Gratismonate verdient${state.me.bonusUntil && new Date(state.me.bonusUntil) > new Date() ? ` • Premium geschenkt bis ${new Date(state.me.bonusUntil).toLocaleDateString("de-DE")}` : ""}</p>
-  </div>`;
+  return inviteBoxHtml();
 }
 
 export function trialBanner() {
@@ -772,6 +766,7 @@ export const featureApi = {
   adminSealedPrice, adminSealedHide, adminSealedAdd, showSub,
   ...growthApi,
   ...dropsApi,
+  ...viralApi,
 };
 
 export function initFeatures() {
@@ -781,6 +776,7 @@ export function initFeatures() {
   injectGrowthPanels();
   injectDropsPanels();
   buildSubtabs();
+  injectInviteButton();
   window.enableBrowserPush = () => (state.user ? enablePush() : requireLogin());
 }
 
@@ -803,6 +799,9 @@ export function routeFeatures() {
   const tab = params.get("tab"), sub = params.get("sub");
   if (tab && sub && Object.prototype.hasOwnProperty.call(SUBTABS, tab)) showSub(tab, sub);
   if (params.get("scan") === "1") openScanner();
+  if (tab === "account" && sub === "invite") setTimeout(() => PS().openInvite?.(), 400);
+  const sealedId = Number(params.get("sealed"));
+  if (Number.isInteger(sealedId) && sealedId > 0) { showSub("flip", "sealed"); setTimeout(() => openSealed(sealedId), 300); }
   routeGrowth();
   routeDrops();
 }

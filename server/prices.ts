@@ -25,6 +25,27 @@ export async function notify(userId: string, title: string, body = "", link = ""
   }
 }
 
+const intOrNull = (v: unknown, max: number) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 && n <= max ? n : null;
+};
+const list = (v: unknown, max = 80) => (Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean).join(",").slice(0, max) || null : null);
+
+/** Detaildaten einer TCGdex-Karte (Pokédex-Nr., KP, Typen, Phase, Varianten) für Pokémon-Seiten & strukturierte Daten. */
+export function cardDetails(data: any) {
+  const variants = data?.variants && typeof data.variants === "object"
+    ? Object.entries(data.variants).filter(([, v]) => v === true).map(([k]) => k).join(",").slice(0, 80) || null : null;
+  return {
+    dexId: Array.isArray(data?.dexId) ? intOrNull(data.dexId[0], 2000) : null,
+    hp: intOrNull(data?.hp, 1000),
+    types: list(data?.types),
+    stage: data?.stage ? String(data.stage).slice(0, 40) : null,
+    variants,
+    regulationMark: data?.regulationMark ? String(data.regulationMark).slice(0, 4) : null,
+    detailsAt: new Date(),
+  };
+}
+
 /** Holt eine Karte inkl. Cardmarket-Preis von TCGdex und speichert sie. */
 export async function refreshCard(cardId: string) {
   if (!CARD_ID_RE.test(cardId)) throw new Error("Ungültige Karten-ID");
@@ -51,6 +72,7 @@ export async function refreshCard(cardId: string) {
     rarity: data.rarity ? String(data.rarity).slice(0, 80) : null,
     category: data.category ? String(data.category).slice(0, 30) : null,
     illustrator: data.illustrator ? String(data.illustrator).slice(0, 80) : null,
+    ...cardDetails(data),
   };
   const { id: _id, ...updates } = row;
   const [saved] = await db
