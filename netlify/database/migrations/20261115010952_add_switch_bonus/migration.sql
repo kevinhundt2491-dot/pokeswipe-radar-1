@@ -1,0 +1,1 @@
+ALTER TABLE "profiles" ADD COLUMN "switch_bonus_at" timestamp with time zone;

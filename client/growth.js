@@ -394,11 +394,32 @@ export function importButtonHtml() {
 }
 
 let importRows = [];
+const SWITCH_MIN = 20;
+
+/** Anleitungen für den Export aus anderen Sammler-Apps (Stand der jeweiligen App kann abweichen). */
+const EXPORT_HELP = `<details class="bg-slate-950 rounded-2xl p-3 border border-slate-800 text-xs">
+  <summary class="font-black text-white cursor-pointer">❓ So exportierst du deine Sammlung aus einer anderen App</summary>
+  <ul class="mt-2 space-y-1.5 text-slate-300 list-disc pl-4">
+    <li><b>Collectr:</b> Portfolio öffnen → Menü (⋯) bzw. Einstellungen → „Export“ / „Export to CSV“. Die Datei hier hochladen.</li>
+    <li><b>Dex, PokéCardex & andere Apps:</b> In den Einstellungen oder in der Sammlung nach „Export“, „CSV“ oder „Backup“ suchen.</li>
+    <li><b>Cardmarket:</b> Bestand bzw. Sammlung als CSV herunterladen.</li>
+    <li><b>Kein Export möglich?</b> Kartenliste aus Notizen oder Excel einfügen (eine Karte pro Zeile, z. B. „Glurak ex 199/165“) oder den Serien-Scan nutzen.</li>
+  </ul>
+  <p class="text-[10px] text-slate-500 mt-2">Menüpunkte können sich je nach App-Version unterscheiden. Erkannt werden deutsche und englische Spalten (z. B. „Product Name“, „Card Number“, „Quantity“, „Average Cost Paid“).</p>
+</details>`;
+
+const bonusBanner = () => (state.me?.switchBonusAvailable
+  ? `<div class="bg-gradient-to-r from-yellow-400/20 to-emerald-400/20 border border-yellow-400/60 rounded-2xl p-3 text-xs text-white">
+      🎁 <b>Wechsel-Bonus:</b> Importiere mindestens ${SWITCH_MIN} Karten aus deiner bisherigen App und du bekommst <b>30 Tage Premium gratis</b> – mit Platz für 500 Karten. Wird automatisch eingelöst.</div>`
+  : "");
+
 function openImport() {
   if (!requireLogin()) return;
   importRows = [];
   modal("ps-import", `<h3 class="text-base font-black text-white">📥 Sammlung importieren</h3>
-    <p class="text-xs text-slate-300">CSV-Datei aus Cardmarket, Excel, Google Sheets oder einer anderen Sammler-App hochladen – oder eine Liste einfügen (eine Karte pro Zeile, z. B. „Glurak ex 199/165“). Erkannte Spalten: Name, Set, Nummer, Anzahl, Einkaufspreis.</p>
+    <p class="text-xs text-slate-300">Umzug in 2 Minuten: CSV-Datei aus Collectr, Dex, Cardmarket, Excel oder Google Sheets hochladen – oder eine Liste einfügen (eine Karte pro Zeile, z. B. „Glurak ex 199/165“). Erkannte Spalten: Name, Set, Nummer, Anzahl, Einkaufspreis.</p>
+    ${bonusBanner()}
+    ${EXPORT_HELP}
     <label class="block cursor-pointer"><input id="ps-imp-file" type="file" accept=".csv,.txt,text/csv,text/plain" class="hidden" />
       <span class="block text-center bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">📄 CSV-Datei wählen</span></label>
     <textarea id="ps-imp-text" rows="5" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs" placeholder="Name;Set;Nummer;Anzahl;Einkaufspreis&#10;Glurak ex;151;199;1;89,90"></textarea>
@@ -422,10 +443,24 @@ function openImport() {
   $("ps-imp-go").onclick = runImport;
 }
 
+/** Löst den Wechsel-Bonus ein, sobald genug Karten erkannt wurden. Liefert true, wenn er gerade aktiviert wurde. */
+async function claimSwitchBonus() {
+  if (!state.me?.switchBonusAvailable) return false;
+  try {
+    await api("/api/switch-bonus", { method: "POST", body: {} });
+    await PS().refreshMe?.();
+    toast("🎁 Wechsel-Bonus aktiv!", "30 Tage Premium gratis – Platz für 500 Karten, Restock-Alarme ohne Wartezeit und mehr.");
+    return true;
+  } catch (e) {
+    if (e.data?.used && state.me) state.me.switchBonusAvailable = false;
+    return false;
+  }
+}
+
 async function runImport() {
   const btnEl = $("ps-imp-go");
   btnEl.disabled = true;
-  let queue = importRows.slice(0, 2000), imported = 0, matched = 0, overLimit = 0, rounds = 0;
+  let queue = importRows.slice(0, 2000), imported = 0, matched = 0, overLimit = 0, rounds = 0, bonus = false;
   const unmatched = [];
   while (queue.length && rounds++ < 120) {
     const chunk = queue.slice(0, 40);
@@ -433,15 +468,29 @@ async function runImport() {
     try {
       const r = await api("/api/portfolio/import-rows", { method: "POST", body: { rows: chunk } });
       imported += r.imported; matched += r.matched; unmatched.push(...r.unmatched);
-      if (r.overLimit) { overLimit = queue.length - r.imported - r.retry.length; break; }
+      if (r.overLimit) {
+        // Limit erreicht: Mit dem Wechsel-Bonus (Premium) geht der Import einfach weiter
+        const todoCount = r.imported + r.retry.length;
+        if (!bonus && matched >= SWITCH_MIN && (await claimSwitchBonus())) {
+          bonus = true;
+          queue = r.retry.concat(chunk.slice(todoCount), queue.slice(chunk.length));
+          continue;
+        }
+        overLimit = queue.length - r.imported - r.retry.length;
+        break;
+      }
       queue = r.retry.concat(queue.slice(chunk.length));
       if (!r.imported && r.retry.length) await new Promise((res) => setTimeout(res, 1500));
     } catch (e) { handleError(e); break; }
   }
+  if (!bonus && matched >= SWITCH_MIN) bonus = await claimSwitchBonus();
   PS().loadPortfolio();
   $("ps-imp-preview").innerHTML = `<p class="text-emerald-300 font-bold">✅ ${imported} Karten importiert, ${matched} davon mit Live-Preis.</p>
+    ${bonus ? `<p class="text-yellow-300 font-bold">🎁 Wechsel-Bonus eingelöst: 30 Tage Premium gratis.</p>` : ""}
+    ${!bonus && state.me?.switchBonusAvailable && matched < SWITCH_MIN ? `<p class="text-slate-300">Noch ${SWITCH_MIN - matched} Karten mit Live-Preis bis zum Wechsel-Bonus (30 Tage Premium).</p>` : ""}
     ${unmatched.length ? `<p class="text-amber-300">Ohne Live-Preis (bitte Wert selbst eintragen): ${unmatched.slice(0, 15).map(esc).join(", ")}${unmatched.length > 15 ? " …" : ""}</p>` : ""}
-    ${overLimit ? `<p class="text-rose-300">${overLimit} Karten passen nicht mehr in deinen Tarif. <button onclick="PS.openPro()" class="underline font-bold">Mehr Platz</button></p>` : ""}`;
+    ${overLimit ? `<p class="text-rose-300">${overLimit} Karten passen nicht mehr in deinen Tarif. <button onclick="PS.openPro()" class="underline font-bold">Mehr Platz</button></p>` : ""}
+    ${imported ? `<button onclick="PS.sharePortfolioImage()" class="mt-2 w-full bg-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">📸 Meine Sammlung teilen</button>` : ""}`;
   btnEl.textContent = "Fertig";
 }
 
@@ -806,6 +855,7 @@ export function injectGrowthPanels() {
 export function afterAuthGrowth() {
   dailyCheckin();
   loadWishlist();
+  resumeSwitch();
 }
 
 export function routeGrowth() {
@@ -813,4 +863,19 @@ export function routeGrowth() {
   const cardId = params.get("card");
   if (cardId && /^[a-zA-Z0-9.\-_]{2,40}$/.test(cardId)) PS().openCard(cardId);
   if (params.get("legal") === "1") openLegal();
+  // Umzug aus einer anderen App (Link von /umzug): Sammlung öffnen und Import starten – nach dem Login automatisch
+  if (params.get("umzug") === "1") {
+    localStorage.setItem("ps_umzug", "1");
+    try { window.switchTab?.("portfolio"); } catch {}
+    if (state.user) { localStorage.removeItem("ps_umzug"); openImport(); }
+    else PS().openAccount?.("Kostenlos anmelden – danach importierst du deine Sammlung in 2 Minuten.");
+  }
+}
+
+/** Nach dem Login: begonnenen Umzug fortsetzen. */
+export function resumeSwitch() {
+  if (localStorage.getItem("ps_umzug") !== "1" || !state.user) return;
+  localStorage.removeItem("ps_umzug");
+  try { window.switchTab?.("portfolio"); } catch {}
+  setTimeout(openImport, 400);
 }
