@@ -49,7 +49,7 @@ export function trustedOrigin(c: Context): string | null {
   const host = hostOf(origin);
   if (!host) return null;
   const allowed = new Set([
-    new URL(c.req.url).host, c.req.header("host") || "", c.req.header("x-forwarded-host") || "",
+    new URL(c.req.url).host, c.req.header("host") || "",
     hostOf(process.env.URL), hostOf(process.env.DEPLOY_URL), hostOf(process.env.DEPLOY_PRIME_URL),
   ].filter(Boolean));
   const site = process.env.SITE_NAME;
@@ -60,7 +60,7 @@ export function trustedOrigin(c: Context): string | null {
   return allowed.has(host) || siteHosts || wwwVariant || local ? origin : null;
 }
 
-/** Basis-URL der Website für serverseitige Aufrufe (Identity-API). */
+/** Basis-URL der Website (z. B. für Links in Antworten). Für die Token-Prüfung siehe identityOrigin in auth.ts. */
 export function siteOrigin(c: Context): string {
   return trustedOrigin(c) || process.env.URL || new URL(c.req.url).origin;
 }

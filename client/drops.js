@@ -1,8 +1,7 @@
 // PokeSwipe & Radar – Restock- & Vorbestell-Radar, Graded-Portfolio mit Einsendungs-Tracker und KI-Fake-Check.
-import { $, esc, eur, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, btn } from "./core.js";
+import { $, esc, jsArg, safeUrl, eur, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, btn } from "./core.js";
 
 const PS = () => window.PS;
-const jsArg = (v) => esc(JSON.stringify(String(v ?? "")));
 const pill = (text, cls = "bg-yellow-400 text-slate-950") => `<span class="text-[10px] font-black uppercase ${cls} px-2.5 py-0.5 rounded-full">${text}</span>`;
 const box = (inner, border = "border-slate-800") => `<div class="bg-slate-950 rounded-2xl p-3 border ${border} text-xs space-y-2">${inner}</div>`;
 const field = (id, label, attrs = "") => `<label class="block text-[11px] text-slate-400 font-bold space-y-1"><span>${label}</span>
@@ -84,8 +83,8 @@ function renderDrops() {
   if (!drops) return;
   const d = drops;
   const stat = (v, l) => `<div class="bg-slate-950 border border-slate-800 rounded-2xl p-2"><p class="text-lg font-black text-white">${v}</p><p class="text-[10px] text-slate-400 font-bold">${l}</p></div>`;
-  $("ps-drops-stats").innerHTML = stat(d.stats.week, "Drops diese Woche") + stat(d.stats.watched, "Shop-Seiten überwacht")
-    + stat(d.delayMin ? `${d.delayMin} Min.` : "Sofort", "Deine Alarm-Zeit");
+  $("ps-drops-stats").innerHTML = stat(Number(d.stats?.week) || 0, "Drops diese Woche") + stat(Number(d.stats?.watched) || 0, "Shop-Seiten überwacht")
+    + stat(d.delayMin ? `${Number(d.delayMin) || 0} Min.` : "Sofort", "Deine Alarm-Zeit");
   renderSubscription();
   const feed = d.feed.filter((x) => x.status === "live" || x.status === "pending");
   $("ps-drops-feed").innerHTML = feed.length ? feed.map(dropCard).join("")
@@ -106,23 +105,23 @@ function renderSubscription() {
   const s = d.subscription;
   const pushOff = typeof Notification === "undefined" || Notification.permission !== "granted";
   const upsell = d.delayMin
-    ? `<div class="bg-yellow-400/10 border border-yellow-400/40 rounded-xl p-2.5 space-y-1.5"><p class="text-yellow-200 font-bold">⏱ Im Free-Tarif kommen Alarme ${d.delayMin} Minuten später. Bei beliebten Drops ist die Ware dann oft schon weg.</p>
+    ? `<div class="bg-yellow-400/10 border border-yellow-400/40 rounded-xl p-2.5 space-y-1.5"><p class="text-yellow-200 font-bold">⏱ Im Free-Tarif kommen Alarme ${Number(d.delayMin) || 0} Minuten später. Bei beliebten Drops ist die Ware dann oft schon weg.</p>
         ${btn("👑 Premium: Alarme sofort", "PS.openPro()", "w-full bg-yellow-400 text-slate-950")}</div>` : "";
   if (!s || !s.enabled) {
     el.innerHTML = box(`<p class="font-black text-white">🔔 Restock-Alarm ist aus</p><p class="text-slate-300">Push für alle neuen Drops und Vorbestellungen.</p>
       ${btn("🔔 Restock-Alarm aktivieren", "PS.subscribeDrops(true)", "w-full bg-rose-500 text-white")}${upsell}`, "border-rose-500/50");
     return;
   }
-  const shopChecks = d.shops.filter((x) => x.id !== "other").map((x) => `<label class="flex items-center gap-1.5"><input type="checkbox" class="rd-shop" value="${esc(x.id)}" ${s.shops.split(",").includes(x.id) ? "checked" : ""} ${d.filters ? "" : "disabled"} /> ${esc(x.label)}</label>`).join("");
-  el.innerHTML = box(`<div class="flex justify-between items-center gap-2"><p class="font-black text-emerald-300">🔔 Restock-Alarm aktiv ${d.delayMin ? `(+${d.delayMin} Min.)` : "(sofort)"}</p>
+  const shopChecks = d.shops.filter((x) => x.id !== "other").map((x) => `<label class="flex items-center gap-1.5"><input type="checkbox" class="rd-shop" value="${esc(x.id)}" ${String(s.shops || "").split(",").includes(x.id) ? "checked" : ""} ${d.filters ? "" : "disabled"} /> ${esc(x.label)}</label>`).join("");
+  el.innerHTML = box(`<div class="flex justify-between items-center gap-2"><p class="font-black text-emerald-300">🔔 Restock-Alarm aktiv ${d.delayMin ? `(+${Number(d.delayMin) || 0} Min.)` : "(sofort)"}</p>
       ${btn("Ausschalten", "PS.subscribeDrops(false)", "bg-slate-800 text-slate-200")}</div>
     ${pushOff ? `<div class="flex justify-between items-center gap-2 bg-slate-900 rounded-xl p-2"><p class="text-amber-300">Push ist auf diesem Gerät noch aus.</p>${btn("🔔 Push aktivieren", "PS.enablePush()")}</div>` : ""}
     <label class="flex items-center gap-2"><input id="rd-preorders" type="checkbox" ${s.preorders ? "checked" : ""} /> Auch Vorbestellungen melden</label>
     <details ${d.filters ? "open" : ""}><summary class="font-bold text-white cursor-pointer">🎯 Filter ${d.filters ? "" : "(Pro Trader)"}</summary>
       <div class="space-y-2 mt-2 ${d.filters ? "" : "opacity-60"}">
         <p class="text-slate-400">Nur diese Shops (leer = alle):</p><div class="grid grid-cols-2 sm:grid-cols-3 gap-1">${shopChecks}</div>
-        ${field("rd-keywords", "Nur Produkte mit diesen Wörtern (Komma-getrennt)", `value="${esc(s.keywords)}" placeholder="151, prismatisch, etb" ${d.filters ? "" : "disabled"}`)}
-        ${field("rd-max", "Höchstpreis (€)", `value="${s.maxPrice ?? ""}" inputmode="decimal" ${d.filters ? "" : "disabled"}`)}
+        ${field("rd-keywords", "Nur Produkte mit diesen Wörtern (Komma-getrennt)", `value="${esc(s.keywords ?? "")}" placeholder="151, prismatisch, etb" ${d.filters ? "" : "disabled"}`)}
+        ${field("rd-max", "Höchstpreis (€)", `value="${esc(s.maxPrice ?? "")}" inputmode="decimal" ${d.filters ? "" : "disabled"}`)}
         <label class="flex items-center gap-2"><input id="rd-uvp" type="checkbox" ${s.uvpOnly ? "checked" : ""} ${d.filters ? "" : "disabled"} /> Nur Drops zum UVP-Preis</label>
         ${d.filters ? "" : `<p class="text-purple-300 font-bold">Mit Pro Trader bekommst du nur die Drops, die du willst – z. B. nur 151-Displays bis 160 € bei Amazon.</p>`}
       </div></details>
@@ -136,7 +135,7 @@ function dropCard(x) {
   if (x.locked) {
     return `<div class="bg-slate-950 border border-yellow-400/50 rounded-2xl p-3 text-xs flex items-center justify-between gap-2">
       <div><p class="font-black text-white">${icon} 🔒 Neuer ${x.kind === "preorder" ? "Vorbestell-Drop" : "Restock"} bei ${esc(x.shopLabel)}</p>
-        <p class="text-yellow-200">Premium-Nutzer sehen ihn schon – für dich in ${x.unlockInMin} Min.</p></div>
+        <p class="text-yellow-200">Premium-Nutzer sehen ihn schon – für dich in ${Number(x.unlockInMin) || 0} Min.</p></div>
       ${btn("👑 Sofort sehen", "PS.openPro()", "bg-yellow-400 text-slate-950 shrink-0")}</div>`;
   }
   const pending = x.status === "pending";
@@ -144,12 +143,12 @@ function dropCard(x) {
     <div class="flex justify-between gap-2"><p class="font-black text-white">${icon} ${esc(x.title)}</p><span class="text-slate-500 shrink-0">${ago(x.liveAt || x.createdAt)}</span></div>
     <div class="flex flex-wrap items-center gap-1.5">${pill(esc(x.shopLabel), "bg-slate-800 text-slate-200")}${x.city ? pill(`📍 ${esc(x.city)}`, "bg-slate-800 text-slate-200") : ""}
       ${x.price ? `<span class="font-black text-white">${eur(x.price)}</span>` : ""}${x.price ? verdictPill(x.verdict) : ""}
-      ${x.source === "community" ? pill(`👥 ${x.confirmations} Bestätigung${x.confirmations === 1 ? "" : "en"}`, "bg-slate-800 text-slate-300") : pill(x.source === "auto" ? "🤖 Automatisch erkannt" : "✔ Vom Team", "bg-slate-800 text-slate-300")}</div>
-    ${pending ? `<p class="text-slate-400">Wartet auf Bestätigung (${x.confirmations}/${drops.confirmationsNeeded}).</p>` : ""}
+      ${x.source === "community" ? pill(`👥 ${Number(x.confirmations) || 0} Bestätigung${Number(x.confirmations) === 1 ? "" : "en"}`, "bg-slate-800 text-slate-300") : pill(x.source === "auto" ? "🤖 Automatisch erkannt" : "✔ Vom Team", "bg-slate-800 text-slate-300")}</div>
+    ${pending ? `<p class="text-slate-400">Wartet auf Bestätigung (${Number(x.confirmations) || 0}/${Number(drops.confirmationsNeeded) || 0}).</p>` : ""}
     <div class="flex gap-1.5">
-      ${x.hasLink ? btn("🛒 Zum Shop", `PS.dropGo(${x.id})`, "flex-1 bg-rose-500 text-white") : ""}
-      ${state.user && !x.mine ? btn(x.confirmed ? "✔ Bestätigt" : "✅ Gibt's noch", `PS.confirmDrop(${x.id})`, `flex-1 ${x.confirmed ? "bg-slate-800 text-slate-400" : "bg-emerald-500 text-slate-950"}`) : ""}
-      ${drops.isAdmin ? btn("🗑", `PS.removeDrop(${x.id})`, "bg-slate-800 text-rose-300") : ""}
+      ${x.hasLink ? btn("🛒 Zum Shop", `PS.dropGo(${Number(x.id)})`, "flex-1 bg-rose-500 text-white") : ""}
+      ${state.user && !x.mine ? btn(x.confirmed ? "✔ Bestätigt" : "✅ Gibt's noch", `PS.confirmDrop(${Number(x.id)})`, `flex-1 ${x.confirmed ? "bg-slate-800 text-slate-400" : "bg-emerald-500 text-slate-950"}`) : ""}
+      ${drops.isAdmin ? btn("🗑", `PS.removeDrop(${Number(x.id)})`, "bg-slate-800 text-rose-300") : ""}
     </div></div>`;
 }
 
@@ -161,7 +160,7 @@ function productCard(p) {
     ${best ? `<p class="text-emerald-300 font-bold">Bester Preis: ${eur(best.price)} bei ${esc(best.shopLabel)}</p>` : ""}
     <div class="space-y-1">${p.offers.map((o) => `<a href="/api/restock/watch/${Number(o.id)}/go" target="_blank" rel="noopener sponsored" class="flex items-center justify-between gap-2 bg-slate-900 hover:bg-slate-800 rounded-xl px-2.5 py-1.5">
       <span class="font-bold text-white">${esc(o.shopLabel)}</span>
-      <span class="flex items-center gap-1.5">${pill(STATUS[o.status]?.[0] || o.status, STATUS[o.status]?.[1] || "")}${o.price ? `<span class="font-black text-white">${eur(o.price)}</span>${o.verdict.level !== "unknown" ? `<span title="${esc(o.verdict.label)}">${o.verdict.level === "fair" ? "✅" : o.verdict.level === "scalper" ? "❌" : "⚠️"}</span>` : ""}` : ""}</span></a>`).join("")}</div>`);
+      <span class="flex items-center gap-1.5">${pill(STATUS[o.status]?.[0] || esc(o.status), STATUS[o.status]?.[1] || "")}${o.price ? `<span class="font-black text-white">${eur(o.price)}</span>${o.verdict && o.verdict.level !== "unknown" ? `<span title="${esc(o.verdict.label)}">${o.verdict.level === "fair" ? "✅" : o.verdict.level === "scalper" ? "❌" : "⚠️"}</span>` : ""}` : ""}</span></a>`).join("")}</div>`);
 }
 
 async function subscribeDrops(enabled) {
@@ -212,8 +211,12 @@ async function dropGo(id) {
   // Fenster sofort öffnen (sonst blockt der Browser es nach dem Abruf)
   const w = window.open("", "_blank");
   try {
-    const r = await api(`/api/restock/${id}/link`);
-    if (w) { w.opener = null; w.location.href = r.url; } else location.href = r.url;
+    const r = await api(`/api/restock/${Number(id)}/link`);
+    // Ziel stammt (bei Community-Meldungen) von Nutzern: nur http(s), niemals javascript:/data: –
+    // das leere Fenster ist same-origin, ein javascript:-Ziel würde dort mit unseren Rechten laufen.
+    const url = safeUrl(r?.url, { http: true });
+    if (!url) { w?.close(); toast("⚠️ Link ungültig", "Für diesen Drop ist kein gültiger Shop-Link hinterlegt."); return; }
+    if (w) { w.opener = null; w.location.href = url; } else location.href = url;
   } catch (e) { w?.close(); handleError(e); }
 }
 
@@ -228,7 +231,7 @@ async function loadDropsAdmin() {
   if (!el) return;
   try {
     const a = await api("/api/admin/restock");
-    el.innerHTML = `<details class="bg-slate-950 rounded-2xl p-3 border border-purple-500/50 text-xs"><summary class="font-black text-purple-300 cursor-pointer">🛠 Admin: Überwachte Produktseiten (${a.watches.length})</summary>
+    el.innerHTML = `<details class="bg-slate-950 rounded-2xl p-3 border border-purple-500/50 text-xs"><summary class="font-black text-purple-300 cursor-pointer">🛠 Admin: Überwachte Produktseiten (${Number(a.watches.length) || 0})</summary>
       <div class="space-y-3 mt-3">
         <p class="${a.amazonTag ? "text-emerald-300" : "text-amber-300"}">${a.amazonTag ? "✔ Amazon-Partner-Tag aktiv" : "⚠️ AMAZON_PARTNER_TAG nicht gesetzt – Amazon-Klicks bringen noch keine Provision."}</p>
         <p class="${a.cardmarketId ? "text-emerald-300" : "text-amber-300"}">${a.cardmarketId ? "✔ Cardmarket-Partner-ID aktiv" : "⚠️ CARDMARKET_PARTNER_ID nicht gesetzt."}</p>
@@ -241,8 +244,8 @@ async function loadDropsAdmin() {
         <div class="flex gap-2">${btn("➕ Produktseite hinzufügen", "PS.adminAddWatch()", "flex-1 bg-purple-600 text-white")}${btn("▶ Jetzt prüfen", "PS.adminRunRestock()", "bg-slate-800 text-white")}</div>
         <div class="space-y-1">${a.watches.map((w) => `<div class="flex items-center justify-between gap-2 bg-slate-900 rounded-xl px-2.5 py-1.5 ${w.active ? "" : "opacity-50"}">
           <div class="min-w-0"><p class="font-bold text-white truncate">${esc(w.name)} • ${esc(w.shop)}</p>
-            <p class="text-slate-500 truncate">${esc(STATUS[w.status]?.[0] || w.status)}${w.lastPrice ? ` • ${eur(w.lastPrice)}` : ""}${w.lastCheckedAt ? ` • geprüft ${ago(w.lastCheckedAt)}` : " • noch nicht geprüft"}${w.failCount ? ` • ⚠️ ${w.failCount} Fehler (Seite blockt evtl. – dann manuell melden)` : ""}</p></div>
-          <div class="flex gap-1 shrink-0">${btn(w.active ? "Pause" : "Aktiv", `PS.adminToggleWatch(${w.id}, ${!w.active})`, "bg-slate-800 text-white")}${btn("🗑", `PS.adminDeleteWatch(${w.id})`, "bg-slate-800 text-rose-300")}</div></div>`).join("")}</div>
+            <p class="text-slate-500 truncate">${esc(STATUS[w.status]?.[0] || w.status)}${w.lastPrice ? ` • ${eur(w.lastPrice)}` : ""}${w.lastCheckedAt ? ` • geprüft ${ago(w.lastCheckedAt)}` : " • noch nicht geprüft"}${w.failCount ? ` • ⚠️ ${Number(w.failCount) || 0} Fehler (Seite blockt evtl. – dann manuell melden)` : ""}</p></div>
+          <div class="flex gap-1 shrink-0">${btn(w.active ? "Pause" : "Aktiv", `PS.adminToggleWatch(${Number(w.id)}, ${!w.active})`, "bg-slate-800 text-white")}${btn("🗑", `PS.adminDeleteWatch(${Number(w.id)})`, "bg-slate-800 text-rose-300")}</div></div>`).join("")}</div>
         <p class="text-slate-500">Tipp: Als Admin gemeldete Drops (oben „Drop melden“) gehen sofort live – praktisch für Shops, die automatische Abrufe blockieren.</p>
       </div></details>`;
   } catch {}
@@ -342,31 +345,31 @@ function renderGraded() {
   const g = graded;
   const t = g.totals, profit = t.value - t.cost;
   const stat = (v, l, cls = "text-white") => `<div class="bg-slate-950 border border-slate-800 rounded-2xl p-2 text-center"><p class="text-base font-black ${cls}">${v}</p><p class="text-[10px] text-slate-400 font-bold">${l}</p></div>`;
-  $("ps-graded-totals").innerHTML = `<div class="grid grid-cols-3 gap-2">${stat(eur(t.value), "Wert der Slabs")}${stat(`${profit >= 0 ? "+" : ""}${eur(profit)}`, "Gewinn / Verlust", profit >= 0 ? "text-emerald-300" : "text-rose-300")}${stat(`${t.count}/${g.limits.graded}`, "Graded-Karten")}</div>
-    ${t.withoutValue ? `<p class="text-[11px] text-amber-300 mt-2">Bei ${t.withoutValue} Slab${t.withoutValue > 1 ? "s" : ""} fehlt der Wert – tippe auf „eBay-Verkäufe“ und trag den letzten Verkaufspreis ein.</p>` : ""}
-    ${g.plan === "free" ? `<div class="mt-2 bg-yellow-400/10 border border-yellow-400/40 rounded-xl p-2.5 text-xs flex items-center justify-between gap-2"><p class="text-yellow-200 font-bold">Free: ${g.limits.graded} Slabs & ${g.limits.submissions} Einsendung. Premium: 200 Slabs & 20 Einsendungen.</p>${btn("👑 Upgrade", "PS.openPro()", "bg-yellow-400 text-slate-950 shrink-0")}</div>` : ""}`;
+  $("ps-graded-totals").innerHTML = `<div class="grid grid-cols-3 gap-2">${stat(eur(t.value), "Wert der Slabs")}${stat(`${profit >= 0 ? "+" : ""}${eur(profit)}`, "Gewinn / Verlust", profit >= 0 ? "text-emerald-300" : "text-rose-300")}${stat(`${Number(t.count) || 0}/${Number(g.limits.graded) || 0}`, "Graded-Karten")}</div>
+    ${t.withoutValue ? `<p class="text-[11px] text-amber-300 mt-2">Bei ${Number(t.withoutValue) || 0} Slab${t.withoutValue > 1 ? "s" : ""} fehlt der Wert – tippe auf „eBay-Verkäufe“ und trag den letzten Verkaufspreis ein.</p>` : ""}
+    ${g.plan === "free" ? `<div class="mt-2 bg-yellow-400/10 border border-yellow-400/40 rounded-xl p-2.5 text-xs flex items-center justify-between gap-2"><p class="text-yellow-200 font-bold">Free: ${Number(g.limits.graded) || 0} Slabs & ${Number(g.limits.submissions) || 0} Einsendung. Premium: 200 Slabs & 20 Einsendungen.</p>${btn("👑 Upgrade", "PS.openPro()", "bg-yellow-400 text-slate-950 shrink-0")}</div>` : ""}`;
   $("ps-graded-list").innerHTML = g.items.length ? g.items.map((i) => {
     const p = i.value != null && i.purchasePrice != null ? i.value - i.purchasePrice : null;
     return `<div class="bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs flex gap-3 relative">
-      <button onclick="PS.removeGraded(${i.id})" class="absolute top-2 right-3 text-slate-500 hover:text-rose-400" aria-label="Entfernen">✕</button>
+      <button onclick="PS.removeGraded(${Number(i.id)})" class="absolute top-2 right-3 text-slate-500 hover:text-rose-400" aria-label="Entfernen">✕</button>
       <img src="${esc(cdn(i.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" class="w-14 h-20 object-contain rounded shrink-0" loading="lazy" />
       <div class="min-w-0 space-y-1 flex-1">
         <p class="font-black text-white truncate pr-4">${esc(i.name)}</p>
-        <p>${pill(`${esc(i.company)} ${String(i.grade).replace(".0", "")}`, "bg-cyan-400 text-slate-950")} ${i.certNumber ? (i.certUrl ? `<a href="${esc(i.certUrl)}" target="_blank" rel="noopener" class="text-cyan-300 underline">#${esc(i.certNumber)} prüfen</a>` : `<span class="text-slate-400">#${esc(i.certNumber)}</span>`) : ""}</p>
+        <p>${pill(`${esc(i.company)} ${esc(String(i.grade ?? "").replace(".0", ""))}`, "bg-cyan-400 text-slate-950")} ${i.certNumber ? (safeUrl(i.certUrl) ? `<a href="${esc(safeUrl(i.certUrl))}" target="_blank" rel="noopener" class="text-cyan-300 underline">#${esc(i.certNumber)} prüfen</a>` : `<span class="text-slate-400">#${esc(i.certNumber)}</span>`) : ""}</p>
         <p class="text-slate-300">Wert <strong class="text-white">${i.value != null ? eur(i.value) : "–"}</strong>${i.rawPrice ? ` • Raw ${eur(i.rawPrice)}` : ""}${p != null ? ` • <span class="${p >= 0 ? "text-emerald-300" : "text-rose-300"}">${p >= 0 ? "+" : ""}${eur(p)}</span>` : ""}</p>
-        <div class="flex gap-1.5"><a href="${esc(i.soldUrl)}" target="_blank" rel="noopener sponsored" class="bg-slate-800 text-white font-bold py-1.5 px-2 rounded-lg">💶 eBay-Verkäufe</a>
-          ${btn("✏️ Wert", `PS.editGradedValue(${i.id})`, "bg-slate-800 text-white !py-1.5")}</div>
+        <div class="flex gap-1.5">${safeUrl(i.soldUrl) ? `<a href="${esc(safeUrl(i.soldUrl))}" target="_blank" rel="noopener sponsored" class="bg-slate-800 text-white font-bold py-1.5 px-2 rounded-lg">💶 eBay-Verkäufe</a>` : ""}
+          ${btn("✏️ Wert", `PS.editGradedValue(${Number(i.id)})`, "bg-slate-800 text-white !py-1.5")}</div>
       </div></div>`;
   }).join("") : `<p class="text-xs text-slate-400 col-span-full">Noch keine Slabs. Füge deine erste gegradete Karte hinzu.</p>`;
   $("ps-graded-subs").innerHTML = g.submissions.length ? g.submissions.map((s) => {
     const idx = SUB_STEPS.findIndex(([k]) => k === s.status);
     const overdue = s.expectedDay && s.status !== "done" && new Date(s.expectedDay) < new Date(new Date().toDateString());
-    return box(`<div class="flex justify-between gap-2"><div><p class="font-black text-white">${esc(s.company)} • ${esc(s.title || `${s.cardCount} Karten`)}</p>
-        <p class="text-slate-400">${s.cardCount} Karte${s.cardCount > 1 ? "n" : ""}${s.service ? ` • ${esc(s.service)}` : ""}${s.cost != null ? ` • ${eur(s.cost)}` : ""}${s.submissionNumber ? ` • Nr. ${esc(s.submissionNumber)}` : ""}</p></div>
-        <button onclick="PS.removeSubmission(${s.id})" class="text-slate-500 hover:text-rose-400 self-start" aria-label="Löschen">✕</button></div>
+    return box(`<div class="flex justify-between gap-2"><div><p class="font-black text-white">${esc(s.company)} • ${esc(s.title || `${Number(s.cardCount) || 0} Karten`)}</p>
+        <p class="text-slate-400">${Number(s.cardCount) || 0} Karte${Number(s.cardCount) > 1 ? "n" : ""}${s.service ? ` • ${esc(s.service)}` : ""}${s.cost != null ? ` • ${eur(s.cost)}` : ""}${s.submissionNumber ? ` • Nr. ${esc(s.submissionNumber)}` : ""}</p></div>
+        <button onclick="PS.removeSubmission(${Number(s.id)})" class="text-slate-500 hover:text-rose-400 self-start" aria-label="Löschen">✕</button></div>
       <div class="flex gap-1">${SUB_STEPS.map(([k], i) => `<div class="h-1.5 flex-1 rounded-full ${i <= idx ? "bg-cyan-400" : "bg-slate-800"}"></div>`).join("")}</div>
       <div class="flex flex-wrap items-center gap-2">
-        <select onchange="PS.setSubmissionStatus(${s.id}, this.value)" class="bg-slate-900 border border-slate-700 rounded-xl px-2 py-1.5 text-white">${SUB_STEPS.map(([k, l]) => `<option value="${k}" ${k === s.status ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <select onchange="PS.setSubmissionStatus(${Number(s.id)}, this.value)" class="bg-slate-900 border border-slate-700 rounded-xl px-2 py-1.5 text-white">${SUB_STEPS.map(([k, l]) => `<option value="${k}" ${k === s.status ? "selected" : ""}>${l}</option>`).join("")}</select>
         ${s.sentDay ? `<span class="text-slate-400">📤 ${esc(new Date(s.sentDay).toLocaleDateString("de-DE"))}</span>` : ""}
         ${s.expectedDay ? `<span class="${overdue ? "text-rose-300 font-bold" : "text-slate-400"}">${overdue ? "⏰ überfällig seit" : "🎯 bis"} ${esc(new Date(s.expectedDay).toLocaleDateString("de-DE"))}</span>` : ""}
         ${s.tracking ? `<span class="text-slate-400">📦 ${esc(s.tracking)}</span>` : ""}
@@ -499,11 +502,11 @@ async function runFakeCheck() {
       suspicious: ["⚠️ Verdächtig – genauer prüfen", "border-amber-400/60", "text-amber-300"],
       likely_fake: ["❌ Wahrscheinlich gefälscht", "border-rose-500/70", "text-rose-300"],
       unclear: ["❔ Nicht eindeutig", "border-slate-600", "text-slate-300"],
-    }[r.verdict];
-    out.innerHTML = box(`<div class="flex justify-between items-center gap-2"><p class="font-black text-base ${V[2]}">${V[0]}</p><span class="text-slate-400">Sicherheit ${r.confidence} %</span></div>
+    }[r.verdict] || ["❔ Nicht eindeutig", "border-slate-600", "text-slate-300"];
+    out.innerHTML = box(`<div class="flex justify-between items-center gap-2"><p class="font-black text-base ${V[2]}">${V[0]}</p><span class="text-slate-400">Sicherheit ${Number(r.confidence) || 0} %</span></div>
       ${r.cardName ? `<p class="text-slate-300">Erkannt: <strong class="text-white">${esc(r.cardName)}</strong></p>` : ""}
-      <div class="space-y-1">${r.checks.map((c) => `<div class="flex gap-2"><span>${c.ok === true ? "✅" : c.ok === false ? "❌" : "➖"}</span><p><strong class="text-white">${esc(c.name)}</strong> <span class="text-slate-400">${esc(c.note)}</span></p></div>`).join("")}</div>
-      ${r.tips.length ? `<div><p class="font-bold text-white">Tipps zur weiteren Prüfung</p><ul class="list-disc pl-4 text-slate-300">${r.tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
+      <div class="space-y-1">${(r.checks || []).map((c) => `<div class="flex gap-2"><span>${c.ok === true ? "✅" : c.ok === false ? "❌" : "➖"}</span><p><strong class="text-white">${esc(c.name)}</strong> <span class="text-slate-400">${esc(c.note)}</span></p></div>`).join("")}</div>
+      ${r.tips?.length ? `<div><p class="font-bold text-white">Tipps zur weiteren Prüfung</p><ul class="list-disc pl-4 text-slate-300">${r.tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
       ${r.hadBack ? "" : `<p class="text-amber-300">Mit einem Foto der Rückseite wird die Prüfung deutlich genauer.</p>`}
       <p class="text-[10px] text-slate-500">KI-Einschätzung anhand von Fotos – keine Echtheitsgarantie. Bei teuren Karten zusätzlich Licht-Test, Lupe, Gewicht oder Grading nutzen.</p>`, V[1]);
   } catch (e) { out.innerHTML = ""; handleError(e); }

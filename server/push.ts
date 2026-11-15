@@ -56,7 +56,7 @@ const ALLOWED_PUSH_HOSTS = [
 export function isValidPushEndpoint(endpoint: string) {
   try {
     const u = new URL(endpoint);
-    return u.protocol === "https:" && ALLOWED_PUSH_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith("." + h));
+    return u.protocol === "https:" && !u.username && !u.password && (!u.port || u.port === "443") && ALLOWED_PUSH_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith("." + h));
   } catch {
     return false;
   }

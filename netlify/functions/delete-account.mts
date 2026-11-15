@@ -13,10 +13,19 @@ async function verifiedUser(req: Request) {
   const cookie = /(?:^|;\s*)nf_jwt=([^;]+)/.exec(req.headers.get("cookie") || "")?.[1];
   const token = header.startsWith("Bearer ") ? header.slice(7) : cookie ? decodeURIComponent(cookie) : "";
   if (!token || token.length > 4096) return null;
-  const res = await fetch(`${new URL(req.url).origin}/.netlify/identity/user`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) return null;
-  const data: any = await res.json();
-  return data?.id ? { id: String(data.id), email: String(data.email || "") } : null;
+  try {
+    // Identity-API der eigenen Website (feste Site-URL, nicht aus Anfrage-Headern abgeleitet)
+    const base = process.env.URL || new URL(req.url).origin;
+    const res = await fetch(`${base}/.netlify/identity/user`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    return data?.id ? { id: String(data.id), email: String(data.email || "") } : null;
+  } catch {
+    return null;
+  }
 }
 
 export default async (req: Request) => {

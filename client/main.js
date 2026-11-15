@@ -6,7 +6,7 @@ import {
 } from "@netlify/identity";
 
 import {
-  $, esc, jsArg, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
+  $, esc, jsArg, safeUrl, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart, hooks,
 } from "./core.js";
 import {
@@ -25,14 +25,24 @@ async function loadMe() {
   if (!state.user) { state.me = null; return; }
   try {
     state.me = await api("/api/me");
-    if (state.me.plan !== "free") localStorage.setItem("pokeswipe_pro", state.me.plan);
-    else localStorage.removeItem("pokeswipe_pro");
+    // Früher wurde der Tarif in localStorage gespiegelt und daraus Pro-Funktionen freigeschaltet –
+    // das ließ sich über die Konsole fälschen. Maßgeblich ist jetzt nur noch die Server-Antwort.
+    localStorage.removeItem("pokeswipe_pro");
     if (state.me.displayName) localStorage.setItem("pokeswipe_user", state.me.displayName);
   } catch (e) {
     state.me = null;
     if (e.status === 401) state.user = null;
   }
+  announcePlan();
 }
+
+/** Teilt der Oberfläche den vom Server bestätigten Tarif mit (Swipe-Limit, Sniper-Deals, Pro-Analyse). */
+function announcePlan() {
+  try { window.dispatchEvent(new CustomEvent("ps:plan", { detail: verifiedPlan() })); } catch {}
+}
+const verifiedPlan = () => (state.user && state.me && ["premium", "pro"].includes(state.me.plan) ? state.me.plan : "free");
+// Nur lesbar, nicht überschreibbar: der Tarif kommt ausschließlich aus /api/me (geprüftes Identity-Token)
+try { Object.defineProperty(window, "psVerifiedPlan", { get: verifiedPlan, configurable: false, enumerable: false }); } catch {}
 
 function renderHeader() {
   const t = $("authBtnText");
@@ -68,7 +78,7 @@ function openAccount(hint = "") {
     <div class="bg-slate-950 rounded-2xl p-3.5 border border-yellow-400/40 text-xs space-y-2">
       <div class="flex justify-between items-center">
         <span class="font-black text-white">Tarif: <span class="text-yellow-400">${esc(planLabel)}</span></span>
-        ${m?.rating?.count ? `<span class="text-amber-300 font-bold">⭐ ${m.rating.avg} (${m.rating.count})</span>` : ""}
+        ${m?.rating?.count ? `<span class="text-amber-300 font-bold">⭐ ${Number(m.rating.avg) || 0} (${Number(m.rating.count) || 0})</span>` : ""}
       </div>
       ${m && m.plan !== "free" ? `<p class="text-slate-400">${m.planInterval === "year" ? "Jahresabo • " : ""}${m.cancelAtPeriodEnd ? `Gekündigt – läuft bis ${until}` : `Verlängert sich am ${until}`}</p>
         ${m.cancelAtPeriodEnd ? btn("Abo fortsetzen", "PS.cancelPlan(true)", "w-full bg-emerald-500 text-slate-950") : btn("Abo kündigen", "PS.cancelPlan(false)", "w-full bg-slate-800 text-slate-200")}`
@@ -200,6 +210,7 @@ async function doLogout() {
   try { await logout(); } catch {}
   state.user = null; state.me = null; state.portfolio = null; state.alerts = null; state.trades = []; state.unread = 0;
   localStorage.removeItem("pokeswipe_pro");
+  announcePlan();
   closeModalEl("ps-account");
   renderHeader(); refreshAll();
   toast("👋 Abgemeldet", "Bis bald!");
@@ -338,7 +349,7 @@ async function openCard(cardId) {
             <select id="ps-al-dir" class="bg-slate-900 border border-slate-700 rounded-xl px-2 text-white"><option value="below">unter</option><option value="above">über</option></select>
             ${input("ps-al-price", `type="number" step="0.01" min="0.01" value="${price ? (price * 0.9).toFixed(2) : ""}" placeholder="Zielpreis €"`)}
           </div>
-          ${btn("Alarm aktivieren", `PS.createAlert('${esc(card.id)}')`, "w-full bg-yellow-400 text-slate-950")}
+          ${btn("Alarm aktivieren", `PS.createAlert(${jsArg(card.id)})`, "w-full bg-yellow-400 text-slate-950")}
         </div>
         <div class="bg-slate-950 rounded-2xl p-3 border border-emerald-500/40 space-y-2">
           <p class="font-black text-emerald-300">💼 Ins Portfolio</p>
@@ -346,7 +357,7 @@ async function openCard(cardId) {
             ${input("ps-pf-qty", 'type="number" min="1" max="999" value="1" placeholder="Anzahl"')}
             ${input("ps-pf-buy", 'type="number" step="0.01" min="0" placeholder="Einkauf €"')}
           </div>
-          ${btn("Hinzufügen", `PS.addCardToPortfolio('${esc(card.id)}')`, "w-full bg-emerald-500 text-slate-950")}
+          ${btn("Hinzufügen", `PS.addCardToPortfolio(${jsArg(card.id)})`, "w-full bg-emerald-500 text-slate-950")}
         </div>
       </div>
       <button onclick="PS.listCard(${jsArg(card.id)}, ${jsArg(card.name)}, ${Number(price) || 0})" class="w-full bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">🤝 Diese Karte im Tausch-Hub inserieren</button>
@@ -466,7 +477,7 @@ async function loadAlerts() {
     box.innerHTML = alerts.length ? alerts.map((a) => {
       const hit = a.price && (a.direction === "below" ? a.price <= a.targetPrice : a.price >= a.targetPrice);
       return `<div class="flex items-center gap-3 bg-slate-900 border ${hit ? "border-emerald-400" : "border-slate-800"} rounded-xl p-2.5 text-xs">
-        <img src="${esc(cdn(a.image || FALLBACK_IMG, 80))}" class="w-9 h-12 object-contain rounded shrink-0 cursor-pointer" onclick="PS.openCard('${esc(a.cardId)}')" />
+        <img src="${esc(cdn(a.image || FALLBACK_IMG, 80))}" class="w-9 h-12 object-contain rounded shrink-0 cursor-pointer" onclick="PS.openCard(${jsArg(a.cardId)})" />
         <div class="min-w-0 flex-1">
           <p class="font-bold text-white truncate">${esc(a.name)}</p>
           <p class="text-slate-400">Jetzt <strong class="text-emerald-400">${a.price ? eur(a.price) : "–"}</strong> • Ziel ${a.direction === "below" ? "≤" : "≥"} <strong class="text-yellow-300">${eur(a.targetPrice)}</strong> ${hit ? `<span class="text-emerald-400 font-black">• ZIEL ERREICHT</span>` : ""}</p>
@@ -474,7 +485,7 @@ async function loadAlerts() {
         <div class="hidden sm:block">${sparkline(a.history)}</div>
         <a href="${cm(a.name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2 py-1 rounded-lg">CM</a>
         <a href="${ebay(a.name)}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2 py-1 rounded-lg">eBay</a>
-        <button onclick="PS.deleteAlert(${a.id})" class="text-slate-400 hover:text-rose-400 px-1" aria-label="Alarm löschen">✕</button>
+        <button onclick="PS.deleteAlert(${Number(a.id)})" class="text-slate-400 hover:text-rose-400 px-1" aria-label="Alarm löschen">✕</button>
       </div>`;
     }).join("") : `<p class="text-xs text-slate-500 text-center py-2">Noch keine Alarme. Suche oben eine Karte und lege deinen Zielpreis fest.</p>`;
   } catch (e) { if (e.status !== 401) box.innerHTML = `<p class="text-xs text-rose-300">${esc(e.message)}</p>`; }
@@ -572,14 +583,14 @@ function renderServerPortfolio() {
     const d = i.cardId && dupeMap.get(i.cardId);
     if (!d || shownDupe.has(d.cardId)) return "";
     shownDupe.add(d.cardId);
-    return `<button onclick="event.stopPropagation();PS.sellSurplus('${esc(d.cardId)}')" class="mt-0.5 inline-block bg-amber-400 text-slate-950 text-[10px] font-black rounded-md px-1.5 py-0.5 text-left">♻️ ${esc(surplusBadge(d, eur))} • verkaufen</button>`;
+    return `<button onclick="event.stopPropagation();PS.sellSurplus(${jsArg(d.cardId)})" class="mt-0.5 inline-block bg-amber-400 text-slate-950 text-[10px] font-black rounded-md px-1.5 py-0.5 text-left">♻️ ${esc(surplusBadge(d, eur))} • verkaufen</button>`;
   };
   box.innerHTML = p.items.map((i) => `
     <div class="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs">
-      <div class="flex items-center gap-2.5 min-w-0 ${i.cardId ? "cursor-pointer" : ""}" ${i.cardId ? `onclick="PS.openCard('${esc(i.cardId)}')"` : ""}>
+      <div class="flex items-center gap-2.5 min-w-0 ${i.cardId ? "cursor-pointer" : ""}" ${i.cardId ? `onclick="PS.openCard(${jsArg(i.cardId)})"` : ""}>
         <img src="${esc(cdn(i.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" class="w-8 h-11 object-contain rounded shrink-0" />
         <div class="min-w-0">
-          <p class="font-bold text-white truncate">${i.quantity > 1 ? `${i.quantity}× ` : ""}${esc(i.name)}</p>
+          <p class="font-bold text-white truncate">${i.quantity > 1 ? `${Number(i.quantity) || 0}× ` : ""}${esc(i.name)}</p>
           <p><span class="text-emerald-400 font-bold">${eur(i.value)}</span>
             ${i.live ? `<span class="text-[10px] text-cyan-300 font-bold">• LIVE</span>` : `<span class="text-[10px] text-slate-500">• Schätzwert</span>`}
             ${i.change30 !== null ? `<span class="${i.change30 >= 0 ? "text-emerald-400" : "text-rose-400"} text-[10px] font-bold">${pct(i.change30)}</span>` : ""}
@@ -588,10 +599,10 @@ function renderServerPortfolio() {
         </div>
       </div>
       <div class="flex gap-1.5 shrink-0">
-        <button onclick="PS.editItem(${i.id})" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg" title="Anzahl / Einkaufspreis">✏️</button>
+        <button onclick="PS.editItem(${Number(i.id)})" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg" title="Anzahl / Einkaufspreis">✏️</button>
         <a href="${cm(i.name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2 py-1 rounded-lg">CM</a>
         <a href="${ebay(i.name)}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2 py-1 rounded-lg">eBay</a>
-        <button onclick="PS.removeItem(${i.id})" class="text-slate-400 hover:text-rose-400 px-1.5" aria-label="Entfernen">✕</button>
+        <button onclick="PS.removeItem(${Number(i.id)})" class="text-slate-400 hover:text-rose-400 px-1.5" aria-label="Entfernen">✕</button>
       </div>
     </div>`).join("");
 }
@@ -612,10 +623,10 @@ function editItem(id) {
   if (!i) return;
   modal("ps-card", `<h3 class="text-base font-black text-white">✏️ ${esc(i.name)}</h3>
     <div class="space-y-2 text-xs">
-      <label class="text-slate-300 font-bold">Anzahl</label>${input("ps-ed-qty", `type="number" min="1" max="999" value="${i.quantity}"`)}
-      <label class="text-slate-300 font-bold">Einkaufspreis pro Stück (€)</label>${input("ps-ed-buy", `type="number" step="0.01" min="0" value="${i.purchasePrice ?? ""}"`)}
-      ${i.live ? "" : `<label class="text-slate-300 font-bold">Geschätzter Wert pro Stück (€)</label>${input("ps-ed-val", `type="number" step="0.01" min="0" value="${i.manualValue ?? ""}"`)}`}
-      ${btn("Speichern", `PS.saveItem(${i.id})`, "w-full bg-emerald-500 text-slate-950")}
+      <label class="text-slate-300 font-bold">Anzahl</label>${input("ps-ed-qty", `type="number" min="1" max="999" value="${Number(i.quantity) || 1}"`)}
+      <label class="text-slate-300 font-bold">Einkaufspreis pro Stück (€)</label>${input("ps-ed-buy", `type="number" step="0.01" min="0" value="${esc(i.purchasePrice ?? "")}"`)}
+      ${i.live ? "" : `<label class="text-slate-300 font-bold">Geschätzter Wert pro Stück (€)</label>${input("ps-ed-val", `type="number" step="0.01" min="0" value="${esc(i.manualValue ?? "")}"`)}`}
+      ${btn("Speichern", `PS.saveItem(${Number(i.id)})`, "w-full bg-emerald-500 text-slate-950")}
     </div>`);
 }
 async function saveItem(id) {
@@ -706,16 +717,16 @@ function listingCard(l) {
           <h4 class="font-black text-white text-sm truncate">${esc(l.card_name)}</h4>
           <p><span class="font-black text-emerald-400">${eur(l.price)}</span>${l.market_price ? ` <span class="text-slate-500">(Markt ${eur(l.market_price)})</span>` : ""} • <span class="text-slate-400">📍 ${esc(l.city)}</span></p>
           <p class="text-amber-300 truncate">Sucht: ${esc(l.want)}</p>
-          <button onclick="PS.openUser('${esc(l.user_id)}')" class="text-slate-300 hover:text-white font-bold">${esc(l.seller)} ${l.verified ? `<span class="text-cyan-300">✔ Verifiziert</span>` : ""} ${l.rating_count ? `<span class="text-amber-300">⭐ ${l.rating} (${l.rating_count})</span>` : `<span class="text-slate-500">• neu</span>`}</button>
+          <button onclick="PS.openUser(${jsArg(l.user_id)})" class="text-slate-300 hover:text-white font-bold">${esc(l.seller)} ${l.verified ? `<span class="text-cyan-300">✔ Verifiziert</span>` : ""} ${l.rating_count ? `<span class="text-amber-300">⭐ ${Number(l.rating) || 0} (${Number(l.rating_count) || 0})</span>` : `<span class="text-slate-500">• neu</span>`}</button>
         </div>
       </div>
       <div class="flex flex-wrap gap-1.5 shrink-0 text-xs">
         ${own ? `
-          ${l.boosted ? "" : `<button onclick="PS.boost(${l.id})" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black px-2.5 py-1.5 rounded-xl">🚀 Boost</button>`}
-          <button onclick="PS.setListingStatus(${l.id}, 'sold')" class="bg-emerald-500/20 text-emerald-300 font-bold px-2.5 py-1.5 rounded-xl">✓ Verkauft</button>
-          <button onclick="PS.setListingStatus(${l.id}, 'removed')" class="bg-rose-500/20 text-rose-300 font-bold px-2.5 py-1.5 rounded-xl" aria-label="Löschen">🗑️</button>`
-        : `<button onclick="PS.requestTrade(${l.id})" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl">🤝 Anfragen</button>
-          <button onclick="PS.report('listing', '${l.id}')" class="bg-slate-800 text-slate-300 font-bold px-2 py-1.5 rounded-xl" title="Melden">⚠️</button>`}
+          ${l.boosted ? "" : `<button onclick="PS.boost(${Number(l.id)})" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black px-2.5 py-1.5 rounded-xl">🚀 Boost</button>`}
+          <button onclick="PS.setListingStatus(${Number(l.id)}, 'sold')" class="bg-emerald-500/20 text-emerald-300 font-bold px-2.5 py-1.5 rounded-xl">✓ Verkauft</button>
+          <button onclick="PS.setListingStatus(${Number(l.id)}, 'removed')" class="bg-rose-500/20 text-rose-300 font-bold px-2.5 py-1.5 rounded-xl" aria-label="Löschen">🗑️</button>`
+        : `<button onclick="PS.requestTrade(${Number(l.id)})" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl">🤝 Anfragen</button>
+          <button onclick="PS.report('listing', '${Number(l.id)}')" class="bg-slate-800 text-slate-300 font-bold px-2 py-1.5 rounded-xl" title="Melden">⚠️</button>`}
         <a href="${cm(l.card_name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2.5 py-1.5 rounded-xl">CM</a>
         <a href="${ebay(l.card_name)}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2.5 py-1.5 rounded-xl">eBay</a>
       </div>
@@ -774,7 +785,7 @@ function requestTrade(listingId) {
       <textarea id="ps-tr-offer" maxlength="400" rows="2" placeholder="z. B. Glurak ex 199/165 NM + 20 € oder ${eur(l.price)} per PayPal Waren & Dienstleistungen" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white"></textarea>
       <label class="text-slate-300 font-bold">Nachricht (optional)</label>
       <textarea id="ps-tr-msg" maxlength="1000" rows="2" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white"></textarea>
-      ${btn("Anfrage senden", `PS.sendTradeRequest(${l.id})`, "w-full bg-emerald-500 text-slate-950")}
+      ${btn("Anfrage senden", `PS.sendTradeRequest(${Number(l.id)})`, "w-full bg-emerald-500 text-slate-950")}
     </div>
     ${safetyTips()}`);
 }
@@ -819,9 +830,9 @@ function renderTrades(selectId) {
     <h3 class="text-base font-black text-white">🤝 Meine Tausche</h3>
     ${t.length ? `<div class="grid grid-cols-1 md:grid-cols-5 gap-3">
       <div class="md:col-span-2 space-y-1.5 max-h-[60vh] overflow-y-auto">
-        ${t.map((x) => `<button onclick="PS.selectTrade(${x.id})" class="w-full text-left bg-slate-900 border ${x.id === selectId ? "border-yellow-400" : "border-slate-800"} rounded-xl p-2.5 text-xs">
+        ${t.map((x) => `<button onclick="PS.selectTrade(${Number(x.id)})" class="w-full text-left bg-slate-900 border ${x.id === selectId ? "border-yellow-400" : "border-slate-800"} rounded-xl p-2.5 text-xs">
           <p class="font-bold text-white truncate">${esc(x.request)}</p>
-          <p class="text-slate-400 truncate">${x.role === "sender" ? `an ${esc(x.to_name)}` : `von ${esc(x.from_name)}`} • <span class="${statusLabel[x.status][1]}">${statusLabel[x.status][0]}</span></p>
+          <p class="text-slate-400 truncate">${x.role === "sender" ? `an ${esc(x.to_name)}` : `von ${esc(x.from_name)}`} • <span class="${(statusLabel[x.status] || statusLabel.pending)[1]}">${(statusLabel[x.status] || statusLabel.pending)[0]}</span></p>
         </button>`).join("")}
       </div>
       <div id="ps-trade-detail" class="md:col-span-3"></div>
@@ -851,31 +862,34 @@ async function selectTrade(id) {
         <div class="min-w-0">
           <p class="font-black text-white">${esc(x.request)}</p>
           <p class="text-slate-400">Angebot: <span class="text-amber-300">${esc(x.offer)}</span></p>
-          <button onclick="PS.openUser('${esc(partnerId)}')" class="text-slate-300 underline">Partner: ${esc(partner)}</button>
+          <button onclick="PS.openUser(${jsArg(partnerId)})" class="text-slate-300 underline">Partner: ${esc(partner)}</button>
         </div>
-        <span class="${statusLabel[x.status][1]} font-black shrink-0">${statusLabel[x.status][0]}</span>
+        <span class="${(statusLabel[x.status] || statusLabel.pending)[1]} font-black shrink-0">${(statusLabel[x.status] || statusLabel.pending)[0]}</span>
       </div>
       <div class="flex flex-wrap gap-1.5">
-        ${x.status === "pending" && recv ? btn("Annehmen", `PS.tradeAction(${x.id}, 'accept')`, "bg-emerald-500 text-slate-950") + btn("Ablehnen", `PS.tradeAction(${x.id}, 'decline')`, "bg-rose-500/20 text-rose-300") : ""}
-        ${x.status === "accepted" && !myConfirmed ? btn("📦 Erhalt bestätigen", `PS.tradeAction(${x.id}, 'complete')`, "bg-cyan-400 text-slate-950") : ""}
+        ${x.status === "pending" && recv ? btn("Annehmen", `PS.tradeAction(${Number(x.id)}, 'accept')`, "bg-emerald-500 text-slate-950") + btn("Ablehnen", `PS.tradeAction(${Number(x.id)}, 'decline')`, "bg-rose-500/20 text-rose-300") : ""}
+        ${x.status === "accepted" && !myConfirmed ? btn("📦 Erhalt bestätigen", `PS.tradeAction(${Number(x.id)}, 'complete')`, "bg-cyan-400 text-slate-950") : ""}
         ${x.status === "accepted" && myConfirmed ? `<span class="text-cyan-300 py-2">✓ Du hast bestätigt – wartet auf Partner</span>` : ""}
-        ${["pending", "accepted"].includes(x.status) ? btn("Abbrechen", `PS.tradeAction(${x.id}, 'cancel')`, "bg-slate-800 text-slate-300") : ""}
-        ${btn("⚠️ Melden", `PS.report('trade', '${x.id}')`, "bg-slate-800 text-slate-400")}
+        ${["pending", "accepted"].includes(x.status) ? btn("Abbrechen", `PS.tradeAction(${Number(x.id)}, 'cancel')`, "bg-slate-800 text-slate-300") : ""}
+        ${btn("⚠️ Melden", `PS.report('trade', '${Number(x.id)}')`, "bg-slate-800 text-slate-400")}
       </div>
       ${x.status === "completed" && !x.reviewed ? `<div class="border-t border-slate-800 pt-2 space-y-1.5">
         <p class="font-black text-yellow-300">⭐ Wie lief der Tausch mit ${esc(partner)}?</p>
         <div class="flex gap-1" id="ps-stars">${[1, 2, 3, 4, 5].map((n) => `<button onclick="PS.pickStars(${n})" data-star="${n}" class="text-2xl text-slate-600">★</button>`).join("")}</div>
         ${input("ps-rev-text", 'maxlength="500" placeholder="Kurzer Kommentar (optional)"')}
-        ${btn("Bewertung abgeben", `PS.sendReview(${x.id})`, "w-full bg-yellow-400 text-slate-950")}
+        ${btn("Bewertung abgeben", `PS.sendReview(${Number(x.id)})`, "w-full bg-yellow-400 text-slate-950")}
       </div>` : ""}
     </div>
     <div id="ps-chat" class="mt-2 bg-slate-950 rounded-2xl p-3 border border-slate-800 h-56 overflow-y-auto space-y-1.5 text-xs"></div>
     ${["declined", "cancelled"].includes(x.status) ? "" : `<div class="flex gap-2 mt-2">
       <input id="ps-chat-in" maxlength="1000" placeholder="Private Nachricht …" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
-      <button onclick="PS.sendMsg(${x.id})" class="bg-yellow-400 text-slate-950 font-black px-4 rounded-xl text-xs">Senden</button></div>`}
+      <button onclick="PS.sendMsg(${Number(x.id)})" class="bg-yellow-400 text-slate-950 font-black px-4 rounded-xl text-xs">Senden</button></div>`}
     ${x.status === "pending" || x.status === "accepted" ? safetyTips() : ""}`;
   $("ps-chat-in")?.addEventListener("keydown", (e) => e.key === "Enter" && sendMsg(x.id));
   await pollChat(id);
+  // Während des Ladens wurde evtl. schon ein anderer Tausch gewählt – sonst bliebe ein verwaister Timer übrig
+  if (state.openTrade !== id) return;
+  clearInterval(state.chatTimer);
   state.chatTimer = setInterval(() => { if (!document.hidden) pollChat(id); }, 4000);
 }
 
@@ -948,16 +962,16 @@ async function openUser(id) {
     modal("ps-user", `
       <h3 class="text-base font-black text-white">${esc(u.displayName)} ${u.verified ? `<span class="text-cyan-300 text-xs">✔ Verifizierter Händler</span>` : ""}</h3>
       <div class="grid grid-cols-3 gap-2 text-center text-xs">
-        <div class="bg-slate-950 rounded-xl p-2"><p class="text-lg font-black text-amber-300">${u.rating.count ? `⭐ ${u.rating.avg}` : "–"}</p><p class="text-slate-400">${u.rating.count} Bewertungen</p></div>
-        <div class="bg-slate-950 rounded-xl p-2"><p class="text-lg font-black text-emerald-400">${u.completedTrades}</p><p class="text-slate-400">Tausche</p></div>
+        <div class="bg-slate-950 rounded-xl p-2"><p class="text-lg font-black text-amber-300">${u.rating?.count ? `⭐ ${Number(u.rating.avg) || 0}` : "–"}</p><p class="text-slate-400">${Number(u.rating?.count) || 0} Bewertungen</p></div>
+        <div class="bg-slate-950 rounded-xl p-2"><p class="text-lg font-black text-emerald-400">${Number(u.completedTrades) || 0}</p><p class="text-slate-400">Tausche</p></div>
         <div class="bg-slate-950 rounded-xl p-2"><p class="text-sm font-black text-white">${new Date(u.memberSince).toLocaleDateString("de-DE", { month: "short", year: "numeric" })}</p><p class="text-slate-400">Dabei seit</p></div>
       </div>
       ${u.city ? `<p class="text-xs text-slate-400">📍 ${esc(u.city)}</p>` : ""}
       <div class="space-y-1.5 max-h-60 overflow-y-auto text-xs">
-        ${u.reviews.length ? u.reviews.map((r) => `<div class="bg-slate-900 rounded-xl p-2"><p><span class="text-yellow-400">${"★".repeat(r.stars)}${"☆".repeat(5 - r.stars)}</span> <span class="text-slate-400">von ${esc(r.reviewer)}</span></p>${r.comment ? `<p class="text-slate-200">${esc(r.comment)}</p>` : ""}</div>`).join("")
+        ${u.reviews.length ? u.reviews.map((r) => `<div class="bg-slate-900 rounded-xl p-2"><p><span class="text-yellow-400">${"★".repeat(Math.max(0, Math.min(5, Math.round(Number(r.stars) || 0))))}${"☆".repeat(5 - Math.max(0, Math.min(5, Math.round(Number(r.stars) || 0))))}</span> <span class="text-slate-400">von ${esc(r.reviewer)}</span></p>${r.comment ? `<p class="text-slate-200">${esc(r.comment)}</p>` : ""}</div>`).join("")
           : `<p class="text-slate-500">Noch keine Bewertungen.</p>`}
       </div>
-      ${state.user && state.user.id !== id ? btn("⚠️ Nutzer melden", `PS.report('user', '${esc(id)}')`, "w-full bg-slate-800 text-slate-300") : ""}`);
+      ${state.user && state.user.id !== id ? btn("⚠️ Nutzer melden", `PS.report('user', ${jsArg(id)})`, "w-full bg-slate-800 text-slate-300") : ""}`);
   } catch (e) { closeModalEl("ps-user"); handleError(e); }
 }
 
@@ -978,9 +992,9 @@ async function pollNotifications(initial = false) {
     const r = await api("/api/notifications");
     state.notifications = r.notifications; state.unread = r.unread;
     const fresh = r.notifications.filter((n) => n.id > state.lastNotifId && !n.read);
-    if (!initial) fresh.slice(0, 3).reverse().forEach((n) => toast(n.title, n.body, n.link.startsWith("http") ? n.link : ""));
+    if (!initial) fresh.slice(0, 3).reverse().forEach((n) => toast(n.title, n.body, String(n.link || "").startsWith("https://") ? n.link : ""));
     if (r.notifications[0]) { state.lastNotifId = Math.max(state.lastNotifId, r.notifications[0].id); localStorage.setItem("ps_last_notif", String(state.lastNotifId)); }
-    if (fresh.some((n) => n.title.includes("Tausch") || n.title.includes("Nachricht"))) loadMe().then(renderHeader);
+    if (fresh.some((n) => String(n.title || "").includes("Tausch") || String(n.title || "").includes("Nachricht"))) loadMe().then(renderHeader);
     renderHeader();
   } catch (e) { if (e.status === 401) { state.user = null; renderHeader(); } }
 }
@@ -994,10 +1008,11 @@ async function openNotifications() {
     <h3 class="text-base font-black text-white">🔔 Mitteilungen</h3>
     <div class="space-y-1.5 max-h-[60vh] overflow-y-auto text-xs">
       ${list.length ? list.map((n) => {
-        const sub = /^\/\?tab=(\w+)&sub=(\w+)$/.exec(n.link);
-        const link = n.link.startsWith("/?tab=trades") ? `PS.openTrades()` : n.link.startsWith("/?tab=map") ? `PS.goMarket()`
+        const nl = String(n.link || "");
+        const sub = /^\/\?tab=(\w+)&sub=(\w+)$/.exec(nl);
+        const link = nl.startsWith("/?tab=trades") ? `PS.openTrades()` : nl.startsWith("/?tab=map") ? `PS.goMarket()`
           : sub ? `PS.closeAll(); PS.showSub('${sub[1]}', '${sub[2]}')` : "";
-        const ext = n.link.startsWith("https://") ? n.link : "";
+        const ext = safeUrl(nl).startsWith("https://") ? nl : "";
         return `<div class="bg-slate-900 border ${n.read ? "border-slate-800" : "border-yellow-400/60"} rounded-xl p-2.5">
           <p class="font-black text-white">${esc(n.title)}</p><p class="text-slate-300">${esc(n.body)}</p>
           <div class="flex justify-between items-center mt-1"><span class="text-[10px] text-slate-500">${new Date(n.createdAt).toLocaleString("de-DE")}</span>
@@ -1022,10 +1037,10 @@ async function openAdmin() {
       <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
         ${tile("Monatl. Abo-Umsatz (MRR)", eur(stats.mrr), "text-emerald-400")}
         ${tile("Einnahmen diesen Monat", eur(stats.revenue_month_cents / 100), "text-emerald-400")}
-        ${tile("Nutzer", stats.users)}
-        ${tile("Premium / Pro", `${stats.premium} / ${stats.pro}`, "text-yellow-300")}
-        ${tile("Aktive Inserate", stats.active_listings)}
-        ${tile("Abgeschlossene Tausche", stats.completed_trades)}
+        ${tile("Nutzer", Number(stats.users) || 0)}
+        ${tile("Premium / Pro", `${Number(stats.premium) || 0} / ${Number(stats.pro) || 0}`, "text-yellow-300")}
+        ${tile("Aktive Inserate", Number(stats.active_listings) || 0)}
+        ${tile("Abgeschlossene Tausche", Number(stats.completed_trades) || 0)}
       </div>
       <h4 class="text-sm font-black text-white">Offene Meldungen (${reports.length})</h4>
       <div class="space-y-1.5 max-h-80 overflow-y-auto text-xs">
@@ -1033,10 +1048,10 @@ async function openAdmin() {
           <p><strong class="text-rose-300">${esc(r.target_type)} #${esc(r.target_id)}</strong> <span class="text-slate-400">von ${esc(r.reporter)} • ${new Date(r.created_at).toLocaleString("de-DE")}</span></p>
           <p class="text-slate-200">${esc(r.reason)}</p>
           <div class="flex flex-wrap gap-1.5 mt-1.5">
-            ${r.target_type === "listing" || r.target_type === "event" ? btn(r.target_type === "event" ? "Event entfernen" : "Inserat entfernen", `PS.resolveReport(${r.id}, {removeListing:true})`, "bg-rose-500/30 text-rose-200") : ""}
-            ${r.target_type !== "trade" ? btn("Nutzer sperren", `PS.resolveReport(${r.id}, {banUser:true, removeListing:true})`, "bg-rose-600 text-white") : ""}
-            ${btn("Erledigt", `PS.resolveReport(${r.id}, {})`, "bg-emerald-500/30 text-emerald-200")}
-            ${btn("Verwerfen", `PS.resolveReport(${r.id}, {dismiss:true})`, "bg-slate-800 text-slate-300")}
+            ${r.target_type === "listing" || r.target_type === "event" ? btn(r.target_type === "event" ? "Event entfernen" : "Inserat entfernen", `PS.resolveReport(${Number(r.id)}, {removeListing:true})`, "bg-rose-500/30 text-rose-200") : ""}
+            ${r.target_type !== "trade" ? btn("Nutzer sperren", `PS.resolveReport(${Number(r.id)}, {banUser:true, removeListing:true})`, "bg-rose-600 text-white") : ""}
+            ${btn("Erledigt", `PS.resolveReport(${Number(r.id)}, {})`, "bg-emerald-500/30 text-emerald-200")}
+            ${btn("Verwerfen", `PS.resolveReport(${Number(r.id)}, {dismiss:true})`, "bg-slate-800 text-slate-300")}
           </div></div>`).join("") : `<p class="text-slate-500">Keine offenen Meldungen 🎉</p>`}
       </div>
       ${await adminExtrasHtml()}

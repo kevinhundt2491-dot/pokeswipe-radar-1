@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db, profiles } from "../db/index.ts";
 import { PLANS, REFERRAL_BONUS_DAYS, effectivePlan, type PlanId } from "./plans.ts";
 import { notify } from "./prices.ts";
@@ -21,8 +21,14 @@ export async function getOrCreateCustomer(s: Stripe, profile: Profile) {
     name: profile.displayName,
     metadata: { userId: profile.userId },
   });
-  await db.update(profiles).set({ stripeCustomerId: customer.id }).where(eq(profiles.userId, profile.userId));
-  return customer.id;
+  // Nur übernehmen, wenn nicht parallel schon ein Kunde angelegt wurde (zwei Checkouts gleichzeitig)
+  const [claimed] = await db.update(profiles).set({ stripeCustomerId: customer.id })
+    .where(and(eq(profiles.userId, profile.userId), isNull(profiles.stripeCustomerId))).returning();
+  if (claimed) return customer.id;
+  await s.customers.del(customer.id).catch(() => {});
+  const [p] = await db.select({ id: profiles.stripeCustomerId }).from(profiles).where(eq(profiles.userId, profile.userId)).limit(1);
+  if (!p?.id) throw new Error("Stripe-Kunde konnte nicht zugeordnet werden");
+  return p.id;
 }
 
 function periodEnd(sub: Stripe.Subscription): Date | null {

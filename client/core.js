@@ -29,8 +29,30 @@ const cm = (q) => (window.buildCardmarketUrl ? window.buildCardmarketUrl(q) : "#
 const FALLBACK_IMG = "/card-fallback.svg";
 /** Kartenbild über das Netlify Image CDN: passend verkleinert und als WebP/AVIF ausgeliefert. */
 const CDN_HOSTS = ["assets.tcgdex.net", "images.pokemontcg.io", "raw.githubusercontent.com"];
+/**
+ * Sichere Link-Ziele für href/location: nur https: (optional http:) oder Pfade auf der eigenen Seite.
+ * Alles andere (javascript:, data:, vbscript:, …) ergibt "" – Aufrufer zeigen dann keinen Link an.
+ */
+const safeUrl = (u, { http = false } = {}) => {
+  const s = String(u ?? "").trim();
+  if (!s) return "";
+  try {
+    const p = new URL(s, location.origin);
+    if (p.protocol === "https:" || (http && p.protocol === "http:")) return s;
+    // relative Pfade ("/api/images/…") auch im lokalen http-Entwicklungsmodus
+    if (p.origin === location.origin && /^\/(?![\/\\])/.test(s)) return s;
+  } catch {}
+  return "";
+};
+/** Sichere Bildquelle: https:, eigene Pfade oder eingebettete Rasterbilder (data:image/jpeg|png|webp|gif). */
+const safeImg = (u) => {
+  const s = String(u ?? "").trim();
+  if (/^data:image\/(jpeg|jpg|png|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(s)) return s;
+  return safeUrl(s);
+};
 const cdn = (url, w = 240) => {
-  const s = String(url || "");
+  const s = safeImg(url);
+  if (!s) return FALLBACK_IMG;
   if (location.hostname === "localhost" && location.port !== "8889") return s;
   if (s.startsWith("/api/images/")) return `/.netlify/images?url=${encodeURIComponent(s)}&w=${w}`;
   try {
@@ -143,6 +165,6 @@ function areaChart(points, w = 640, h = 160) {
 
 
 export {
-  $, esc, jsArg, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, bearer, api, handleError, requireLogin,
+  $, esc, jsArg, safeUrl, safeImg, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, bearer, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart, hooks,
 };

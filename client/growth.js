@@ -2,7 +2,7 @@
 // Wunschliste mit Tausch-Matches, Teilen-Bilder, Grading-Rechner mit KI-Zustandscheck, Serien-Scan,
 // CSV-Import, Kalender, Abzeichen & Bestenliste, tägliche Serie, Shop-Statistik, Konto & Datenschutz, Offline-Hinweis.
 import {
-  $, esc, eur, pct, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, modal, closeModalEl, input, btn,
+  $, esc, jsArg, safeUrl, eur, pct, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, modal, closeModalEl, input, btn,
 } from "./core.js";
 import { csvToRows } from "./csv.js";
 import { gradingEstimate } from "../server/logic.ts";
@@ -10,7 +10,6 @@ import { gradingEstimate } from "../server/logic.ts";
 const PS = () => window.PS;
 const card = (inner, border = "border-slate-800") => `<div class="bg-slate-950 rounded-2xl p-3 border ${border} text-xs space-y-2">${inner}</div>`;
 const pill = (text, cls = "bg-yellow-400 text-slate-950") => `<span class="text-[10px] font-black uppercase ${cls} px-2.5 py-0.5 rounded-full">${text}</span>`;
-const jsArg = (v) => esc(JSON.stringify(String(v ?? "")));
 
 // ===========================================================================
 // 1. Wunschliste mit Tausch-Abgleich
@@ -39,7 +38,7 @@ async function searchWish() {
   try {
     const data = await (await fetch(`https://api.tcgdex.net/v2/de/cards?name=${encodeURIComponent(q)}`)).json();
     const list = (Array.isArray(data) ? data : []).filter((c) => c.image).slice(0, 18);
-    box.innerHTML = list.length ? list.map((c) => `<button onclick="PS.openCard('${esc(c.id)}')" class="bg-slate-900 border border-slate-800 hover:border-rose-400 rounded-xl p-1.5 text-center">
+    box.innerHTML = list.length ? list.map((c) => `<button onclick="PS.openCard(${jsArg(c.id)})" class="bg-slate-900 border border-slate-800 hover:border-rose-400 rounded-xl p-1.5 text-center">
         <img src="${esc(cdn(c.image + "/low.webp", 160))}" loading="lazy" class="h-24 mx-auto object-contain" />
         <p class="text-[10px] font-bold text-white truncate">${esc(c.name)} <span class="text-slate-500">${esc(c.localId || "")}</span></p></button>`).join("")
       : `<p class="col-span-full text-slate-400 text-xs text-center">Nichts gefunden.</p>`;
@@ -66,11 +65,11 @@ function renderWishlist() {
   box.innerHTML = `
     ${partners.length ? `<div class="space-y-2"><p class="font-black text-white text-sm">🔁 Passende Tausch-Partner</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">${partners.map((p) => card(`
-        <div class="flex justify-between items-center gap-2"><button onclick="PS.openUser('${esc(p.user_id)}')" class="font-black text-white hover:text-yellow-300">${esc(p.display_name)}</button>
+        <div class="flex justify-between items-center gap-2"><button onclick="PS.openUser(${jsArg(p.user_id)})" class="font-black text-white hover:text-yellow-300">${esc(p.display_name)}</button>
           ${p.perfect ? pill("⭐ Perfektes Match", "bg-emerald-400 text-slate-950") : ""}</div>
         ${p.city ? `<p class="text-slate-500">📍 ${esc(p.city)}</p>` : ""}
-        <p class="text-slate-300">Sucht von dir: <strong class="text-white">${p.they_want.slice(0, 4).map(esc).join(", ")}</strong></p>
-        ${p.they_offer.length ? `<p class="text-slate-300">Bietet dir an: <strong class="text-emerald-300">${p.they_offer.slice(0, 4).map(esc).join(", ")}</strong></p>` : ""}
+        <p class="text-slate-300">Sucht von dir: <strong class="text-white">${(p.they_want || []).slice(0, 4).map(esc).join(", ")}</strong></p>
+        ${p.they_offer?.length ? `<p class="text-slate-300">Bietet dir an: <strong class="text-emerald-300">${p.they_offer.slice(0, 4).map(esc).join(", ")}</strong></p>` : ""}
         ${p.listing_id ? btn("🤝 Tausch anfragen", `PS.wishRequest(${Number(p.listing_id)})`, "w-full bg-emerald-500 text-slate-950") : `<p class="text-[10px] text-slate-500">Schreib ihn über ein Inserat im Tausch-Hub an oder inseriere die gesuchte Karte – er bekommt dann eine Nachricht.</p>`}
       `, p.perfect ? "border-emerald-400/60" : "border-slate-800")).join("")}</div></div>` : ""}
     ${offers.length ? `<div class="space-y-2"><p class="font-black text-white text-sm">🔥 Jetzt im Angebot (${offers.length})</p>
@@ -78,12 +77,12 @@ function renderWishlist() {
         <div class="flex items-center gap-2 min-w-0"><img src="${esc(cdn(o.image || FALLBACK_IMG, 80))}" class="w-8 h-11 object-contain rounded shrink-0" />
           <div class="min-w-0"><p class="font-bold text-white truncate">${esc(o.card_name)}</p><p class="text-slate-400">${eur(o.price)} • ${esc(o.city)} • ${esc(o.seller)}${o.verified ? " ✔" : ""}</p></div></div>
         ${btn("Anfragen", `PS.wishRequest(${Number(o.id)})`, "bg-emerald-500 text-slate-950 shrink-0")}</div>`).join("")}</div></div>` : ""}
-    <div class="space-y-2"><div class="flex justify-between items-center"><p class="font-black text-white text-sm">❤️ Deine Wunschliste</p><span class="text-xs text-slate-400">${items.length}/${limit}</span></div>
+    <div class="space-y-2"><div class="flex justify-between items-center"><p class="font-black text-white text-sm">❤️ Deine Wunschliste</p><span class="text-xs text-slate-400">${items.length}/${Number(limit) || 0}</span></div>
       ${items.length ? `<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${items.map((i) => {
         const hits = offers.filter((o) => o.card_id === i.cardId).length;
         return `<div class="bg-slate-900 border ${hits ? "border-emerald-400/60" : "border-slate-800"} rounded-xl p-2 text-xs space-y-1 relative">
-          <button onclick="PS.removeWish(${i.id})" class="absolute top-1 right-2 text-slate-500 hover:text-rose-400" aria-label="Entfernen">✕</button>
-          <img src="${esc(cdn(i.image || FALLBACK_IMG, 160))}" onclick="PS.openCard('${esc(i.cardId)}')" class="h-24 mx-auto object-contain cursor-pointer" loading="lazy" />
+          <button onclick="PS.removeWish(${Number(i.id)})" class="absolute top-1 right-2 text-slate-500 hover:text-rose-400" aria-label="Entfernen">✕</button>
+          <img src="${esc(cdn(i.image || FALLBACK_IMG, 160))}" onclick="PS.openCard(${jsArg(i.cardId)})" class="h-24 mx-auto object-contain cursor-pointer" loading="lazy" />
           <p class="font-bold text-white truncate">${esc(i.name)}</p>
           <p class="text-slate-400">Markt ${i.price ? eur(i.price) : "–"}${i.maxPrice ? ` • max. ${eur(i.maxPrice)}` : ""}</p>
           ${hits ? `<p class="text-emerald-300 font-black">${hits} Angebot${hits > 1 ? "e" : ""}</p>` : ""}</div>`;
@@ -118,13 +117,13 @@ export function cardExtrasHtml(c) {
     <div class="bg-slate-950 rounded-2xl p-3 border border-rose-400/40 space-y-2">
       <p class="font-black text-rose-300">❤️ Wunschliste</p>
       ${input("ps-wish-max", `type="number" step="0.01" min="0" placeholder="Höchstpreis € (optional)"`)}
-      ${btn("Auf die Wunschliste", `PS.addWish('${esc(c.id)}')`, "w-full bg-rose-400 text-slate-950")}
+      ${btn("Auf die Wunschliste", `PS.addWish(${jsArg(c.id)})`, "w-full bg-rose-400 text-slate-950")}
     </div>
     <div class="bg-slate-950 rounded-2xl p-3 border border-cyan-400/40 space-y-2">
       <p class="font-black text-cyan-300">📣 Teilen & prüfen</p>
       <div class="grid grid-cols-2 gap-1.5">
-        ${btn("🔗 Link", `PS.shareCardPage('${esc(c.id)}', ${jsArg(c.name)})`, "bg-slate-800 text-white")}
-        ${btn("📸 Bild", `PS.shareCardImage('${esc(c.id)}')`, "bg-slate-800 text-white")}
+        ${btn("🔗 Link", `PS.shareCardPage(${jsArg(c.id)}, ${jsArg(c.name)})`, "bg-slate-800 text-white")}
+        ${btn("📸 Bild", `PS.shareCardImage(${jsArg(c.id)})`, "bg-slate-800 text-white")}
       </div>
       ${btn("🏆 Lohnt sich Grading?", `PS.gradingFor(${Number(price) || 0})`, "w-full bg-yellow-400 text-slate-950")}
     </div></div>`;
@@ -294,11 +293,11 @@ async function checkCondition(file) {
     if (!r.ok) { box.innerHTML = card(esc(r.message)); return; }
     const s = (label, v) => `<div class="bg-slate-900 rounded-xl p-2 text-center"><p class="text-[10px] text-slate-400 uppercase font-bold">${label}</p><p class="font-black text-white">${v ?? "–"}</p></div>`;
     box.innerHTML = card(`<div class="flex justify-between items-center"><p class="font-black text-cyan-300">🤖 KI-Einschätzung</p>
-        <p class="font-black text-yellow-300">PSA ${r.gradeLow ?? "?"}${r.gradeHigh && r.gradeHigh !== r.gradeLow ? `–${r.gradeHigh}` : ""}</p></div>
-      <div class="grid grid-cols-5 gap-1.5">${s("L/R", esc(r.centeringLR))}${s("O/U", esc(r.centeringTB))}${s("Ecken", r.corners)}${s("Kanten", r.edges)}${s("Oberfl.", r.surface)}</div>
-      ${r.issues.length ? `<ul class="list-disc pl-4 text-slate-300">${r.issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>` : ""}
+        <p class="font-black text-yellow-300">PSA ${esc(r.gradeLow ?? "?")}${r.gradeHigh && r.gradeHigh !== r.gradeLow ? `–${esc(r.gradeHigh)}` : ""}</p></div>
+      <div class="grid grid-cols-5 gap-1.5">${s("L/R", esc(r.centeringLR))}${s("O/U", esc(r.centeringTB))}${s("Ecken", esc(r.corners ?? "–"))}${s("Kanten", esc(r.edges ?? "–"))}${s("Oberfl.", esc(r.surface ?? "–"))}</div>
+      ${r.issues?.length ? `<ul class="list-disc pl-4 text-slate-300">${r.issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>` : ""}
       <p class="text-[10px] text-slate-500">Nur eine Schätzung anhand eines Fotos${r.photoQuality === "schlecht" ? " (Fotoqualität schlecht – Ergebnis unsicher)" : ""}. Kratzer und Rückseite prüfst du am besten mit Lupe und Licht.</p>`, "border-cyan-400/50");
-    const hi = r.gradeHigh || 0;
+    const hi = Number(r.gradeHigh) || 0;
     $("gc-p10").value = hi >= 10 ? 40 : hi >= 9 ? 15 : 3;
     $("gc-p9").value = hi >= 10 ? 45 : hi >= 9 ? 50 : hi >= 8 ? 25 : 10;
     calcGrading();
@@ -364,7 +363,7 @@ async function bulkScan(files) {
         row.innerHTML = `<img src="${esc(cdn(c.image, 60))}" class="w-7 h-10 object-contain" /><span class="text-emerald-300 font-bold">✅ ${esc(c.name)} (${esc(c.id)}) hinzugefügt</span>`;
       } else {
         row.innerHTML = `<span class="text-yellow-300 font-bold shrink-0">❓ ${esc(r.detected.name)}:</span><div class="flex gap-1 overflow-x-auto">${r.candidates.slice(0, 6).map((c) =>
-          `<button onclick="PS.bulkPick(this, '${esc(c.id)}')" class="shrink-0 bg-slate-900 border border-slate-700 hover:border-cyan-400 rounded-lg p-1" title="${esc(c.id)}"><img src="${esc(cdn(c.image, 60))}" class="w-8 h-11 object-contain" /></button>`).join("")}</div>`;
+          `<button onclick="PS.bulkPick(this, ${jsArg(c.id)})" class="shrink-0 bg-slate-900 border border-slate-700 hover:border-cyan-400 rounded-lg p-1" title="${esc(c.id)}"><img src="${esc(cdn(c.image, 60))}" class="w-8 h-11 object-contain" /></button>`).join("")}</div>`;
       }
     } catch (e) {
       row.innerHTML = `<span class="text-rose-300">✕ ${esc(e.message)}</span>`;
@@ -533,12 +532,12 @@ export async function loadCalendar() {
           <p class="text-lg font-black leading-tight">${d.getDate()}</p><p class="text-[10px] font-bold uppercase">${d.toLocaleDateString("de-DE", { weekday: "short" })}</p></div>
         <div class="flex-1 min-w-0 space-y-0.5">
           <p class="font-black text-white">${e.kind === "release" ? "📦 " : "📅 "}${esc(e.title)}</p>
-          <p class="text-slate-400">${e.city ? `📍 ${esc(e.city)} • ` : ""}${e.interested} interessiert${e.author && e.kind === "event" ? ` • von ${esc(e.author)}` : ""}</p>
+          <p class="text-slate-400">${e.city ? `📍 ${esc(e.city)} • ` : ""}${Number(e.interested) || 0} interessiert${e.author && e.kind === "event" ? ` • von ${esc(e.author)}` : ""}</p>
           ${e.description ? `<p class="text-slate-300">${esc(e.description)}</p>` : ""}
           <div class="flex flex-wrap gap-1.5 pt-1">
-            <button onclick="PS.toggleRemind(${e.id})" class="${e.reminded ? "bg-emerald-500 text-slate-950" : "bg-slate-800 text-white"} font-bold px-2.5 py-1 rounded-lg">${e.reminded ? "🔔 Erinnerung an" : "🔔 Erinnern"}</button>
-            ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener nofollow" class="bg-slate-800 text-white font-bold px-2.5 py-1 rounded-lg">Mehr ↗</a>` : ""}
-            ${e.mine || state.me?.isAdmin ? `<button onclick="PS.removeEvent(${e.id})" class="text-slate-400 hover:text-rose-400 px-1.5">Löschen</button>` : `<button onclick="PS.report('event', '${e.id}')" class="text-slate-500 hover:text-rose-400 px-1.5">Melden</button>`}
+            <button onclick="PS.toggleRemind(${Number(e.id)})" class="${e.reminded ? "bg-emerald-500 text-slate-950" : "bg-slate-800 text-white"} font-bold px-2.5 py-1 rounded-lg">${e.reminded ? "🔔 Erinnerung an" : "🔔 Erinnern"}</button>
+            ${safeUrl(e.url) ? `<a href="${esc(safeUrl(e.url))}" target="_blank" rel="noopener nofollow ugc" class="bg-slate-800 text-white font-bold px-2.5 py-1 rounded-lg">Mehr ↗</a>` : ""}
+            ${e.mine || state.me?.isAdmin ? `<button onclick="PS.removeEvent(${Number(e.id)})" class="text-slate-400 hover:text-rose-400 px-1.5">Löschen</button>` : `<button onclick="PS.report('event', '${Number(e.id)}')" class="text-slate-500 hover:text-rose-400 px-1.5">Melden</button>`}
           </div></div></div>`;
     }).join("");
   } catch { box.innerHTML = `<p class="text-rose-400 text-xs">Kalender gerade nicht erreichbar.</p>`; }
@@ -598,14 +597,14 @@ export async function loadRanks() {
       const b = await api("/api/badges");
       const earned = b.badges.filter((x) => x.earned).length;
       box.innerHTML = `<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mb-3">
-          ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Aktuelle Serie</p><p class="text-xl font-black text-orange-400">🔥 ${b.streak} ${b.streak === 1 ? "Tag" : "Tage"}</p>`)}
-          ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Rekord</p><p class="text-xl font-black text-white">${b.bestStreak}</p>`)}
+          ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Aktuelle Serie</p><p class="text-xl font-black text-orange-400">🔥 ${Number(b.streak) || 0} ${Number(b.streak) === 1 ? "Tag" : "Tage"}</p>`)}
+          ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Rekord</p><p class="text-xl font-black text-white">${Number(b.bestStreak) || 0}</p>`)}
           ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Abzeichen</p><p class="text-xl font-black text-amber-300">${earned}/${b.badges.length}</p>`)}
           ${card(`<label class="flex items-center gap-2 font-bold text-slate-200"><input type="checkbox" ${b.leaderboardOptIn ? "checked" : ""} onchange="PS.setPref('leaderboardOptIn', this.checked)" /> In Bestenliste zeigen</label>
             <label class="flex items-center gap-2 font-bold text-slate-200"><input type="checkbox" ${b.weeklyReport ? "checked" : ""} onchange="PS.setPref('weeklyReport', this.checked)" /> Wochen-Report</label>`)}
         </div>
         <div class="grid grid-cols-3 sm:grid-cols-5 gap-2">${b.badges.map((x) => `<div class="rounded-2xl p-2 text-center border ${x.earned ? "bg-amber-400/10 border-amber-400/60" : "bg-slate-950 border-slate-800 opacity-50 grayscale"}" title="${esc(x.description)}">
-          <p class="text-2xl">${x.icon}</p><p class="text-[11px] font-black text-white">${esc(x.label)}</p><p class="text-[10px] text-slate-400 leading-tight">${esc(x.description)}</p></div>`).join("")}</div>`;
+          <p class="text-2xl">${esc(x.icon)}</p><p class="text-[11px] font-black text-white">${esc(x.label)}</p><p class="text-[10px] text-slate-400 leading-tight">${esc(x.description)}</p></div>`).join("")}</div>`;
     } catch {}
   }
   board(boardType);
@@ -619,12 +618,12 @@ async function board(type) {
   const box = $("ps-board");
   if (!box) return;
   try {
-    const { entries } = await api(`/api/leaderboard?type=${type}`);
+    const { entries } = await api(`/api/leaderboard?type=${encodeURIComponent(type)}`);
     const me = state.me?.displayName;
     box.innerHTML = entries.length ? entries.map((e, i) => `<div class="flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs ${e.display_name === me ? "bg-amber-400/20 border border-amber-400/60" : "bg-slate-950 border border-slate-800"}">
         <span class="flex items-center gap-2 min-w-0"><span class="w-6 text-center font-black ${i < 3 ? "text-amber-300" : "text-slate-500"}">${i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</span>
           <span class="font-bold text-white truncate">${esc(e.display_name)}</span>${e.city ? `<span class="text-slate-500 truncate">${esc(e.city)}</span>` : ""}</span>
-        <strong class="text-white shrink-0">${type === "value" ? eur(e.score) : type === "trades" ? `${e.score} Tausche` : `${e.score} Tage`}</strong></div>`).join("")
+        <strong class="text-white shrink-0">${type === "value" ? eur(e.score) : type === "trades" ? `${Number(e.score) || 0} Tausche` : `${Number(e.score) || 0} Tage`}</strong></div>`).join("")
       : `<p class="text-xs text-slate-500">Noch niemand dabei – setz oben den Haken „In Bestenliste zeigen“ und sei die Nummer 1.</p>`;
   } catch {}
 }
@@ -649,25 +648,26 @@ async function openShopStats() {
   modal("ps-shop-stats", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Statistik …</p>`, { wide: true });
   try {
     const s = await api("/api/shop/stats");
-    const max = Math.max(1, ...s.days.map((d) => d.views + d.listing_views));
+    const n = (v) => Number(v) || 0;
+    const max = Math.max(1, ...s.days.map((d) => n(d.views) + n(d.listing_views)));
     const bars = s.days.map((d, i) => {
-      const hgt = ((d.views + d.listing_views) / max) * 100;
-      return `<rect x="${i * 10 + 1}" y="${100 - hgt}" width="8" height="${hgt}" rx="2" fill="#22d3ee"><title>${d.day}: ${d.views} Shop-Aufrufe, ${d.listing_views} Inserat-Aufrufe, ${d.requests} Anfragen</title></rect>`
+      const hgt = ((n(d.views) + n(d.listing_views)) / max) * 100;
+      return `<rect x="${i * 10 + 1}" y="${100 - hgt}" width="8" height="${hgt}" rx="2" fill="#22d3ee"><title>${esc(d.day)}: ${n(d.views)} Shop-Aufrufe, ${n(d.listing_views)} Inserat-Aufrufe, ${n(d.requests)} Anfragen</title></rect>`
         + (d.requests ? `<circle cx="${i * 10 + 5}" cy="${Math.max(4, 100 - hgt - 5)}" r="3" fill="#facc15"/>` : "");
     }).join("");
     const t = s.totals;
     modal("ps-shop-stats", `<h3 class="text-base font-black text-white">📊 Shop-Statistik (30 Tage)</h3>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-        ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Shop-Aufrufe</p><p class="text-lg font-black text-cyan-300">${t.views}</p>`)}
-        ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Inserat-Aufrufe</p><p class="text-lg font-black text-white">${t.listingViews}</p>`)}
-        ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Anfragen</p><p class="text-lg font-black text-yellow-300">${t.requests}</p>`)}
-        ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Abgeschlossen</p><p class="text-lg font-black text-emerald-400">${t.completed}</p>`)}
+        ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Shop-Aufrufe</p><p class="text-lg font-black text-cyan-300">${n(t.views)}</p>`)}
+        ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Inserat-Aufrufe</p><p class="text-lg font-black text-white">${n(t.listingViews)}</p>`)}
+        ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Anfragen</p><p class="text-lg font-black text-yellow-300">${n(t.requests)}</p>`)}
+        ${card(`<p class="text-slate-400 font-bold uppercase text-[10px]">Abgeschlossen</p><p class="text-lg font-black text-emerald-400">${n(t.completed)}</p>`)}
       </div>
       <div class="bg-slate-950 rounded-2xl p-3 border border-slate-800"><svg viewBox="0 0 300 100" preserveAspectRatio="none" class="w-full h-32">${bars}</svg>
         <p class="text-[10px] text-slate-500 flex justify-between"><span>${esc(s.days[0]?.day || "")}</span><span>🟦 Aufrufe • 🟡 Tage mit Anfragen</span><span>heute</span></p></div>
       <p class="text-sm font-black text-white">🔥 Gefragteste Inserate</p>
       <div class="space-y-1 text-xs">${s.top.length ? s.top.map((l) => `<div class="flex justify-between gap-2 bg-slate-900 rounded-xl px-3 py-2"><span class="truncate text-white">${esc(l.card_name)} <span class="text-slate-500">${eur(l.price)}${l.status !== "active" ? ` • ${esc(l.status)}` : ""}</span></span>
-        <strong class="text-yellow-300 shrink-0">${l.requests} Anfragen${l.completed ? ` • ${l.completed} ✓` : ""}</strong></div>`).join("") : `<p class="text-slate-500">Noch keine Inserate.</p>`}</div>
+        <strong class="text-yellow-300 shrink-0">${n(l.requests)} Anfragen${l.completed ? ` • ${n(l.completed)} ✓` : ""}</strong></div>`).join("") : `<p class="text-slate-500">Noch keine Inserate.</p>`}</div>
       <p class="text-[11px] text-slate-400">Tipp: Teile deinen Shop-Link auf Instagram & Discord und nutze deine Gratis-Boosts für die gefragtesten Karten.</p>`, { wide: true });
   } catch (e) { closeModalEl("ps-shop-stats"); handleError(e); }
 }
