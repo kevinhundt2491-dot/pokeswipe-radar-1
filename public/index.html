@@ -102,6 +102,15 @@
       50% { transform: rotate(6deg) scale(1.1); }
       75% { transform: rotate(-4deg) scale(1.06); }
     }
+    /* Progressive Disclosure: im einfachen Modus sind Profi-Werte ausgeblendet und einzeln aufklappbar */
+    body.ps-simple .ps-pro-only { display: none !important; }
+    body.ps-simple .ps-revealed .ps-pro-only { display: block !important; }
+    body.ps-simple [data-reveal-group]:not(.ps-revealed) .ps-simple-span { grid-column: 1 / -1; }
+    body:not(.ps-simple) .ps-simple-only { display: none !important; }
+    body.ps-simple .ps-monetize { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    body.ps-simple .ps-monetize > * { grid-column: auto !important; }
+    .ps-goal-card[aria-pressed="true"] { border-color: #facc15; background: rgba(250, 204, 21, .14); box-shadow: 0 0 0 2px rgba(250, 204, 21, .35); }
+    .ps-chip[aria-pressed="true"] { background: #facc15; color: #0f172a; border-color: #facc15; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
@@ -187,7 +196,7 @@
   <!-- 2. ATTRAKTIVES POKÉMON-HERO-DASHBOARD & NAVIGATION -->
   <div class="dex-reveal relative z-10 max-w-7xl w-full mx-auto px-3 sm:px-6 mt-5 space-y-3">
     <!-- Hero: Pokédex-Startbildschirm mit Holo-Kartenfächer -->
-    <section class="dex-hero p-5 sm:p-7 grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+    <section id="dex-hero" class="dex-hero p-5 sm:p-7 grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
       <div class="md:col-span-7 space-y-4 relative z-10">
         <div class="flex flex-wrap gap-1.5">
           <span class="type-chip" style="--c:var(--t-electric)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></i>Live-Preise</span>
@@ -246,24 +255,24 @@
       </div>
     </div>
 
-    <!-- Desktop 5-Reiter-Navigation -->
-    <div class="dex-nav hidden lg:grid grid-cols-5 gap-2 p-1.5 rounded-2xl">
+    <!-- Desktop-Navigation: 5 Kernbereiche (Entdecken, Live-Scanner, Flip-Radar, Meine Sammlung, Community & Markt) -->
+    <nav class="dex-nav hidden lg:grid grid-cols-5 gap-2 p-1.5 rounded-2xl" aria-label="Hauptbereiche">
       <button onclick="switchTab('swipe')" id="tab-swipe" class="tab-btn bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow">
-        🃏 <span>Arena, Swipe & Pack-Opener</span>
+        🃏 <span>Entdecken</span>
+      </button>
+      <button onclick="switchTab('scan')" id="tab-scan" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
+        📷 <span>Live-Scanner</span>
       </button>
       <button onclick="switchTab('flip')" id="tab-flip" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
-        ⚡ <span>Flip-Radar & Zubehör-Deals</span>
-      </button>
-      <button onclick="switchTab('community')" id="tab-community" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
-        📸 <span>Pull-Wall & Live-Chat</span>
-      </button>
-      <button onclick="switchTab('map')" id="tab-map" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
-        🤝 <span>Tausch-Hub (Unbegrenzt) & Map</span>
+        ⚡ <span>Flip-Radar</span>
       </button>
       <button onclick="switchTab('portfolio')" id="tab-portfolio" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
-        💼 <span>Portfolio & Grading-Tools</span>
+        💼 <span>Meine Sammlung</span>
       </button>
-    </div>
+      <button onclick="switchTab('map')" id="tab-map" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
+        🤝 <span>Community & Markt</span>
+      </button>
+    </nav>
   </div>
 
   <!-- 3. HAUPTINHALT -->
@@ -278,18 +287,12 @@
         <!-- LINKE SPALTE (7 Cols): POKESWIPE HOLO-ARENA -->
         <div class="lg:col-span-7 holo-border">
           <div class="poke-glass rounded-[1.35rem] p-4 sm:p-6">
-            <div class="flex flex-wrap justify-between items-center mb-3 gap-2">
-              <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
-                <button onclick="filterSwipeDeck('all')" data-deck="all" class="deck-btn bg-yellow-400 text-slate-950 font-black text-xs px-3 py-1 rounded-xl shrink-0">Alle Sets</button>
-                <button onclick="filterSwipeDeck('Stürmische Funken')" data-deck="Stürmische Funken" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">⚡ Stürmische Funken</button>
-                <button onclick="filterSwipeDeck('151')" data-deck="151" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">🔥 151</button>
-                <button onclick="filterSwipeDeck('Prismatische Entwicklungen')" data-deck="Prismatische Entwicklungen" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">💎 Prismatische Entw.</button>
-                <button onclick="filterSwipeDeck('Mega-Entwicklung')" data-deck="Mega-Entwicklung" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">🌀 Mega-Entwicklung</button>
-                <button onclick="filterSwipeDeck('Zenit der Könige')" data-deck="Zenit der Könige" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">👑 Zenit der Könige</button>
-                <button onclick="filterSwipeDeck('Obsidianflammen')" data-deck="Obsidianflammen" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">🌋 Obsidianflammen</button>
-                <button onclick="filterSwipeDeck('Drachenwandel')" data-deck="Drachenwandel" class="deck-btn bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1 rounded-xl shrink-0">🌙 Drachenwandel</button>
+            <!-- Filter der dynamischen Swipe-Arena (Sprache, Set, Seltenheit, Preis, Wunschliste, Deals) – befüllt von client/arena.js -->
+            <div id="arena-filters" class="mb-3 space-y-2">
+              <div class="flex flex-wrap justify-between items-center gap-2">
+                <p class="text-xs font-black text-white">🃏 Swipe-Arena</p>
+                <span id="swipe-rarity" class="text-[11px] font-black bg-yellow-400 text-slate-950 px-2.5 py-1 rounded-lg">Special Illustration Rare</span>
               </div>
-              <span id="swipe-rarity" class="text-[11px] font-black bg-yellow-400 text-slate-950 px-2.5 py-1 rounded-lg">Special Illustration Rare</span>
             </div>
 
             <div class="bg-gradient-to-b from-slate-950 via-indigo-950/70 to-slate-950 rounded-2xl p-4 sm:p-5 border border-yellow-400/30">
@@ -303,23 +306,32 @@
               </div>
 
               <div class="text-center mt-3">
+                <div class="flex justify-center flex-wrap gap-1.5 mb-1">
+                  <span id="swipe-lang" class="text-[10px] font-black uppercase bg-slate-800 text-slate-100 px-2 py-0.5 rounded-full">🇩🇪 Deutsch</span>
+                  <span id="swipe-kind" class="hidden text-[10px] font-black uppercase bg-emerald-500 text-slate-950 px-2 py-0.5 rounded-full"></span>
+                </div>
                 <h2 id="swipe-title" class="text-xl sm:text-2xl font-black text-white">Pikachu-ex (238/191)</h2>
                 <p id="swipe-set" class="text-xs text-amber-200/80 mt-0.5">Karmesin & Purpur – Stürmische Funken</p>
+                <p id="swipe-extra" class="hidden text-[11px] text-cyan-200 mt-1"></p>
               </div>
 
-              <div class="grid grid-cols-3 gap-2 mt-4 bg-slate-950/90 p-3 rounded-2xl border border-yellow-400/20 text-center">
-                <div>
-                  <p class="text-[10px] text-slate-400">Cardmarket-Trend</p>
+              <div class="grid grid-cols-3 gap-2 mt-4 bg-slate-950/90 p-3 rounded-2xl border border-yellow-400/20 text-center" data-reveal-group="swipe-pro">
+                <div class="ps-simple-span">
+                  <p id="swipe-cm-label" class="text-[10px] text-slate-400">Cardmarket-Trend</p>
                   <p id="swipe-cm" class="text-sm sm:text-base font-bold text-white">–</p>
                 </div>
-                <div>
-                  <p class="text-[10px] text-slate-400">Günstigstes Angebot</p>
+                <div class="ps-pro-only">
+                  <p id="swipe-price-label" class="text-[10px] text-slate-400">Günstigstes Angebot</p>
                   <p id="swipe-price" class="text-base sm:text-lg font-black text-emerald-400">–</p>
                 </div>
-                <div>
+                <div class="ps-pro-only">
                   <p class="text-[10px] text-slate-400">Unter Trend</p>
                   <p id="swipe-margin" class="text-sm sm:text-base font-extrabold text-yellow-400">–</p>
                 </div>
+              </div>
+              <div class="flex justify-center gap-2 mt-2 text-[11px]">
+                <button type="button" onclick="psToggleReveal('swipe-pro', this)" class="ps-simple-only text-slate-300 hover:text-white underline font-bold" aria-expanded="false">📊 Profi-Werte anzeigen</button>
+                <button type="button" onclick="psSwipeDetails()" class="text-yellow-300 hover:text-yellow-200 underline font-bold">🔍 Karten-Details</button>
               </div>
             </div>
 
@@ -331,11 +343,11 @@
             </div>
 
             <!-- Monetarisierungs-Leiste direkt unter jeder Karte -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-3 border-t border-slate-800 text-xs">
+            <div class="ps-monetize grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-3 border-t border-slate-800 text-xs">
               <a id="swipe-ebay-buy" href="#" target="_blank" rel="noopener sponsored" class="col-span-2 sm:col-span-1 text-center bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-2 px-2 rounded-xl shadow">🛒 Jetzt bei eBay kaufen*</a>
-              <a id="swipe-ebay-auction" href="#" target="_blank" rel="noopener sponsored" class="text-center bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2 px-2 rounded-xl shadow">🔨 eBay Auktion</a>
+              <a id="swipe-ebay-auction" href="#" target="_blank" rel="noopener sponsored" class="ps-pro-only text-center bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2 px-2 rounded-xl shadow">🔨 eBay Auktion</a>
               <a id="swipe-cm-link" href="#" target="_blank" rel="noopener" class="text-center bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold py-2 px-2 rounded-xl shadow">📊 Cardmarket</a>
-              <a id="swipe-psa-link" href="#" target="_blank" rel="noopener sponsored" class="text-center bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/40 font-bold py-2 px-2 rounded-xl">💎 PSA-10-Preise*</a>
+              <a id="swipe-psa-link" href="#" target="_blank" rel="noopener sponsored" class="ps-pro-only text-center bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/40 font-bold py-2 px-2 rounded-xl">💎 PSA-10-Preise*</a>
             </div>
           </div>
         </div>
@@ -394,6 +406,26 @@
           </div>
 
         </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- BEREICH: LIVE-SCANNER (KAMERA-SCAN, NUMMERN-SUCHE, FAKE-CHECK)      -->
+    <!-- =================================================================== -->
+    <section id="view-scan" class="hidden space-y-5">
+      <div id="scan-intro" class="poke-glass rounded-3xl p-4 sm:p-5 space-y-3 border border-cyan-400/40">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 class="text-base sm:text-lg font-black text-white">📷 Live-Scanner</h2>
+            <p class="text-xs text-slate-300 max-w-xl">Karte vor die Kamera halten oder fotografieren – PokeSwipe erkennt Name, Nummer und Sprache und zeigt dir sofort den Marktpreis.</p>
+          </div>
+          <button onclick="PS.openScanner()" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-xs px-4 py-2.5 rounded-xl shadow">📷 Kamera öffnen</button>
+        </div>
+        <div class="bg-slate-950 p-3 rounded-2xl border border-slate-800 flex gap-2 text-xs">
+          <input id="scan-quick-q" type="search" maxlength="60" placeholder="Ohne Kamera: Name oder Nummer (z. B. Glurak 199/165)" onkeydown="if(event.key==='Enter')PS.scanQuickSearch()" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+          <button onclick="PS.scanQuickSearch()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black px-4 py-2 rounded-xl shrink-0">🔎 Finden</button>
+        </div>
+        <div id="scan-quick-results" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 text-xs"></div>
       </div>
     </section>
 
@@ -698,11 +730,11 @@
   <!-- 4. MOBILE BOTTOM-NAVIGATION -->
   <nav class="dex-bottom fixed bottom-0 left-0 right-0 z-40 lg:hidden" style="padding-bottom: env(safe-area-inset-bottom);">
     <div class="max-w-md mx-auto grid grid-cols-5 gap-1 px-2 py-1.5">
-      <button onclick="switchTab('swipe')" id="mob-swipe" class="mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🃏</span><span class="text-[10px]">Arena</span></button>
-      <button onclick="switchTab('flip')" id="mob-flip" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">⚡</span><span class="text-[10px]">Deals</span></button>
-      <button onclick="switchTab('community')" id="mob-community" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">📸</span><span class="text-[10px]">Pulls</span></button>
-      <button onclick="switchTab('map')" id="mob-map" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🤝</span><span class="text-[10px]">Inserieren</span></button>
-      <button onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">💼</span><span class="text-[10px]">Portfolio</span></button>
+      <button onclick="switchTab('swipe')" id="mob-swipe" class="mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🃏</span><span class="text-[10px]">Entdecken</span></button>
+      <button onclick="switchTab('scan')" id="mob-scan" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">📷</span><span class="text-[10px]">Scanner</span></button>
+      <button onclick="switchTab('flip')" id="mob-flip" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">⚡</span><span class="text-[10px]">Flip-Radar</span></button>
+      <button onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">💼</span><span class="text-[10px]">Sammlung</span></button>
+      <button onclick="switchTab('map')" id="mob-map" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🤝</span><span class="text-[10px]">Markt</span></button>
     </div>
   </nav>
 
@@ -1245,37 +1277,84 @@
     let savedMatches = lsJSON("pokeswipe_matches_clean", []);
     let packsOpenedCount = parseInt(localStorage.getItem("pokeswipe_packs_count") || "0", 10);
 
+    const SWIPE_LANG = { de: "🇩🇪 Deutsch", en: "🇬🇧 Englisch", ja: "🇯🇵 Japanisch" };
+
+    /**
+     * Ersetzt (oder ergänzt) den Swipe-Stapel – die dynamische Arena (client/arena.js) liefert Karten aus dem
+     * mehrsprachigen Live-Katalog und Tausch-Inserate. Ohne Verbindung bleibt der feste Chase-Katalog aktiv.
+     */
+    function setSwipeDeck(items, append = false) {
+      if (!Array.isArray(items) || !items.length) return false;
+      if (append) {
+        const known = new Set(activeDeck.map((c) => c.key || c.id));
+        const add = items.filter((c) => !known.has(c.key || c.id));
+        const rest = activeDeck.slice(swipeIdx % activeDeck.length);
+        activeDeck = rest.concat(add);
+        swipeIdx = 0;
+      } else {
+        activeDeck = items.slice();
+        swipeIdx = 0;
+      }
+      renderSwipeCard();
+      return true;
+    }
+    window.setSwipeDeck = setSwipeDeck;
+    window.currentSwipeItem = () => (activeDeck.length ? activeDeck[swipeIdx % activeDeck.length] : null);
+
     function renderSwipeCard() {
       if (!activeDeck.length) activeDeck = [...swipeCatalog];
       const item = activeDeck[swipeIdx % activeDeck.length];
+      const isListing = item.kind === "listing";
       const diff = Math.max(0, (item.cm || 0) - (item.price || 0));
       const pct = item.cm ? Math.round((diff / item.cm) * 100) : 0;
 
-      document.getElementById("swipe-rarity").textContent = item.rarity;
+      document.getElementById("swipe-rarity").textContent = item.rarity || "Karte";
       document.getElementById("swipe-title").textContent = item.title;
-      document.getElementById("swipe-set").textContent = item.setFull;
-      document.getElementById("swipe-cm").textContent = fmtEur(item.cm);
-      document.getElementById("swipe-price").textContent = fmtEur(item.price);
+      document.getElementById("swipe-set").textContent = item.setFull || item.setTag || "";
+      const langEl = document.getElementById("swipe-lang");
+      if (langEl) langEl.textContent = SWIPE_LANG[item.lang || "de"] || SWIPE_LANG.de;
+      const kindEl = document.getElementById("swipe-kind");
+      if (kindEl) {
+        const label = isListing ? (item.boosted ? "🚀 Top-Inserat" : "🤝 Tausch-Inserat") : (item.dealPct >= 15 ? `🔥 ${item.dealPct} % unter Markt` : (item.wish ? "💛 Auf deiner Wunschliste" : ""));
+        kindEl.textContent = label;
+        kindEl.classList.toggle("hidden", !label);
+      }
+      const extra = document.getElementById("swipe-extra");
+      if (extra) {
+        const text = isListing
+          ? `Angebot von ${item.seller || "Sammler"}${item.city ? ` aus ${item.city}` : ""}${item.want ? ` • sucht: ${item.want}` : ""}`
+          : (item.usd ? `TCGplayer: ${item.usd.toLocaleString("de-DE", { style: "currency", currency: "USD" })}` : "");
+        extra.textContent = text;
+        extra.classList.toggle("hidden", !text);
+      }
+      const cmLabel = document.getElementById("swipe-cm-label");
+      if (cmLabel) cmLabel.textContent = item.source === "tcgplayer" ? "Marktwert (TCGplayer, in €)" : "Marktwert (Cardmarket-Trend)";
+      const priceLabel = document.getElementById("swipe-price-label");
+      if (priceLabel) priceLabel.textContent = isListing ? "Preis im Inserat" : "Günstigstes Angebot";
+      document.getElementById("swipe-cm").textContent = item.cm ? fmtEur(item.cm) : "–";
+      document.getElementById("swipe-price").textContent = item.price ? fmtEur(item.price) : "–";
       document.getElementById("swipe-margin").textContent = diff > 0 ? `-${fmtEur(diff)} (-${pct}%)` : "–";
       const img = document.getElementById("swipe-img");
       delete img.dataset.fallback;
-      img.src = item.img;
+      img.onerror = () => { if (!img.dataset.fallback) { img.dataset.fallback = "1"; img.src = "/card-fallback.svg"; } };
+      img.src = item.img || "/card-fallback.svg";
       img.alt = item.title;
 
       document.getElementById("swipe-ebay-buy").href = buildEbayUrl(item.query, "bin", "swipe");
       document.getElementById("swipe-ebay-auction").href = buildEbayUrl(item.query, "auction", "swipe");
-      document.getElementById("swipe-cm-link").href = buildCardmarketUrl(item.query.replace(/ \d+\/\d+$/, ""));
+      document.getElementById("swipe-cm-link").href = buildCardmarketUrl(String(item.query || "").replace(/ \d+\/\d+.*$/, ""));
       document.getElementById("swipe-psa-link").href = buildEbayUrl(item.query + " PSA 10", "sold", "swipe-psa");
+      try { window.dispatchEvent(new CustomEvent("ps:swipe-render", { detail: item })); } catch (e) {}
+      // Vorrat knapp → dynamische Arena lädt Nachschub
+      const left = activeDeck.length - (swipeIdx % activeDeck.length) - 1;
+      if (left < 6 && typeof window.psArenaNeedMore === "function") { try { window.psArenaNeedMore(); } catch (e) {} }
     }
 
+    // Fester Chase-Katalog (Ausweich-Stapel ohne Verbindung) nach Set filtern
     function filterSwipeDeck(tag) {
       activeDeck = tag === "all" ? [...swipeCatalog] : swipeCatalog.filter(c => c.setTag === tag);
       if (!activeDeck.length) activeDeck = [...swipeCatalog];
       swipeIdx = 0;
-      document.querySelectorAll(".deck-btn").forEach((b) => {
-        const on = b.dataset.deck === tag;
-        b.className = `deck-btn ${on ? "bg-yellow-400 text-slate-950 font-black" : "bg-slate-800 hover:bg-slate-700 text-white font-bold"} text-xs px-3 py-1 rounded-xl shrink-0`;
-      });
       renderSwipeCard();
     }
 
@@ -1287,9 +1366,28 @@
           localStorage.setItem("pokeswipe_matches_clean", JSON.stringify(savedMatches));
           renderMatches();
         }
+        if (typeof window.psArenaMatch === "function") { try { window.psArenaMatch(item); } catch (e) {} }
       }
       swipeIdx = (swipeIdx + 1) % activeDeck.length;
       renderSwipeCard();
+    }
+
+    // Profi-Werte für Einsteiger einzeln aufklappen (Progressive Disclosure)
+    function psToggleReveal(group, btn) {
+      const el = document.querySelector(`[data-reveal-group="${group}"]`);
+      if (!el) return;
+      const open = el.classList.toggle("ps-revealed");
+      if (btn) { btn.setAttribute("aria-expanded", open ? "true" : "false"); btn.textContent = open ? "📊 Profi-Werte ausblenden" : "📊 Profi-Werte anzeigen"; }
+    }
+
+    // Details der aktuellen Karte öffnen (Katalog-Detail, englischer/japanischer Druck oder Tausch-Inserat)
+    function psSwipeDetails() {
+      const item = activeDeck[swipeIdx % activeDeck.length];
+      if (!item || !window.PS) return;
+      if (item.kind === "listing" && item.listingId && window.PS.requestTrade) return window.PS.requestTrade(item.listingId);
+      if (item.printId && /^(en|ja):/.test(item.printId) && window.PS.openPrint) return window.PS.openPrint(item.printId);
+      const id = item.cardId || item.id;
+      if (id && window.PS.openCard) return window.PS.openCard(id);
     }
 
     function renderMatches() {
@@ -2237,8 +2335,11 @@
     }
 
     // NAVIGATION (5 REITER)
+    // Bereich → Navigationspunkt (Community und Tausch-Markt liegen gemeinsam unter „Community & Markt“)
+    const NAV_OF = { swipe: "swipe", scan: "scan", flip: "flip", portfolio: "portfolio", map: "map", community: "map" };
     function switchTab(tab) {
-      const tabs = ["swipe", "flip", "community", "map", "portfolio"];
+      const tabs = ["swipe", "scan", "flip", "community", "map", "portfolio"];
+      if (!tabs.includes(tab)) tab = "swipe";
       tabs.forEach(t => {
         document.getElementById(`view-${t}`).classList.add("hidden");
         const desk = document.getElementById(`tab-${t}`);
@@ -2248,12 +2349,14 @@
       });
 
       document.getElementById(`view-${tab}`).classList.remove("hidden");
-      const activeDesk = document.getElementById(`tab-${tab}`);
+      const navKey = NAV_OF[tab] || tab;
+      const activeDesk = document.getElementById(`tab-${navKey}`);
       if (activeDesk) activeDesk.className = "tab-btn bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow";
-      const activeMob = document.getElementById(`mob-${tab}`);
+      const activeMob = document.getElementById(`mob-${navKey}`);
       if (activeMob) activeMob.className = "mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center";
 
       if (tab === "map") initOrUpdateMap();
+      try { window.dispatchEvent(new CustomEvent("ps:tab", { detail: tab })); } catch (e) {}
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
 

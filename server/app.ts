@@ -17,6 +17,7 @@ import { registerLegal, LEGAL_VERSION } from "./legal.ts";
 import { registerCatalog } from "./catalog.ts";
 import { registerSeo } from "./seo.ts";
 import { registerViral } from "./viral.ts";
+import { registerIntlCatalog, printForPortfolio } from "./intl-catalog.ts";
 import { registerIntegrations, webhookSecrets, recordWebhook } from "./integrations.ts";
 import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker, cardmarketPartnerId } from "./prices.ts";
 import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan } from "./billing.ts";
@@ -167,7 +168,7 @@ app.get("/api/portfolio", auth, async (c) => {
   const items = await db.select({
     id: portfolioItems.id, cardId: portfolioItems.cardId, name: portfolioItems.name, image: portfolioItems.image,
     quantity: portfolioItems.quantity, purchasePrice: portfolioItems.purchasePrice, manualValue: portfolioItems.manualValue,
-    condition: portfolioItems.condition, addedAt: portfolioItems.addedAt,
+    condition: portfolioItems.condition, addedAt: portfolioItems.addedAt, lang: portfolioItems.lang, printId: portfolioItems.printId,
     trend: cards.trend, avg: cards.avg, low: cards.low, avg7: cards.avg7, avg30: cards.avg30, setName: cards.setName,
     priceUpdatedAt: cards.priceUpdatedAt,
   }).from(portfolioItems).leftJoin(cards, eq(cards.id, portfolioItems.cardId))
@@ -218,7 +219,16 @@ app.post("/api/portfolio", auth, async (c) => {
     return c.json({ error: `Limit erreicht (${PLANS[plan].portfolio} Karten im Tarif ${PLANS[plan].label}).`, upgrade: true }, 402);
   }
   let name = str(b.name, 120), image = "", cardId: string | null = null;
-  if (b.cardId) {
+  // Mehrsprachiger Katalog: englischer/japanischer Druck (z. B. "ja:SV2a-201")
+  let lang = "de", printId: string | null = null, printValue: string | null = null;
+  if (b.printId) {
+    const print = await printForPortfolio(str(b.printId, 50));
+    if (!print) return c.json({ error: "Karte nicht gefunden" }, 404);
+    lang = print.lang; printId = print.id; name = name || print.name; image = print.image;
+    // Englische Drucke teilen sich das Cardmarket-Produkt mit der deutschen Karte → Live-Wert über cards
+    if (print.baseCardId) cardId = print.baseCardId;
+    else printValue = print.priceEur;
+  } else if (b.cardId) {
     const id = str(b.cardId, 40);
     if (!CARD_ID_RE.test(id)) return c.json({ error: "Ungültige Karten-ID" }, 400);
     const card = await getCard(id);
@@ -233,8 +243,10 @@ app.post("/api/portfolio", auth, async (c) => {
     image: image || safeImage(b.image),
     quantity: int(b.quantity, 1, 999, 1),
     purchasePrice: money(b.purchasePrice),
-    manualValue: money(b.manualValue),
+    manualValue: money(b.manualValue) ?? printValue,
     condition: ["M", "NM", "EX", "GD", "LP", "PL", "PO", "PSA10", "PSA9"].includes(b.condition) ? b.condition : "NM",
+    lang,
+    printId,
   }).returning();
   return c.json(item, 201);
 });
@@ -953,6 +965,7 @@ registerLegal(app, { auth, adminOnly, body });
 registerSeo(app); // vor registerCatalog: eigene Teil-Sitemaps vor dem Muster /sitemaps/:file
 registerCatalog(app, { auth, adminOnly, body });
 registerViral(app, { auth, body, ensureCode: ensureReferralCode });
+registerIntlCatalog(app, { auth, adminOnly });
 registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
 

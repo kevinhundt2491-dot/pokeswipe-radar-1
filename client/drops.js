@@ -533,7 +533,7 @@ export function injectDropsPanels() {
   };
   if (!$("ps-drops")) add("flip", dropsPanelHtml(), "prepend");
   if (!$("ps-graded")) add("portfolio", gradedPanelHtml());
-  if (!$("ps-fakecheck")) add("portfolio", fakePanelHtml());
+  if (!$("ps-fakecheck")) add("scan", fakePanelHtml());
   const pickFile = (key) => (e) => {
     fakeFiles[key] = e.target.files[0] || null;
     const ok = $(`fc-${key}-ok`);

@@ -17,6 +17,8 @@ import { refreshDupes } from "./collector.js";
 import { groupDuplicates, surplusBadge } from "./collector-logic.js";
 import { initReelStudio, syncReelStudio } from "./reel-studio.js";
 import { initAutoReels, syncAutoReels, openAutoReels, routeAutoReels } from "./auto-reels.js";
+import { initArena, arenaApi, addSwipeItemToPortfolio } from "./arena.js";
+import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -645,10 +647,10 @@ function renderServerPortfolio() {
   };
   box.innerHTML = p.items.map((i) => `
     <div class="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs">
-      <div class="flex items-center gap-2.5 min-w-0 ${i.cardId ? "cursor-pointer" : ""}" ${i.cardId ? `onclick="PS.openCard(${jsArg(i.cardId)})"` : ""}>
+      <div class="flex items-center gap-2.5 min-w-0 ${i.cardId || i.printId ? "cursor-pointer" : ""}" ${i.printId ? `onclick="PS.openPrint(${jsArg(i.printId)})"` : i.cardId ? `onclick="PS.openCard(${jsArg(i.cardId)})"` : ""}>
         <img src="${esc(cdn(i.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" class="w-8 h-11 object-contain rounded shrink-0" />
         <div class="min-w-0">
-          <p class="font-bold text-white truncate">${i.quantity > 1 ? `${Number(i.quantity) || 0}× ` : ""}${esc(i.name)}</p>
+          <p class="font-bold text-white truncate">${langFlag(i.lang)}${i.quantity > 1 ? `${Number(i.quantity) || 0}× ` : ""}${esc(i.name)}</p>
           <p><span class="text-emerald-400 font-bold">${eur(i.value)}</span>
             ${i.live ? `<span class="text-[10px] text-cyan-300 font-bold">• LIVE</span>` : `<span class="text-[10px] text-slate-500">• Schätzwert</span>`}
             ${i.change30 !== null ? `<span class="${i.change30 >= 0 ? "text-emerald-400" : "text-rose-400"} text-[10px] font-bold">${pct(i.change30)}</span>` : ""}
@@ -715,10 +717,14 @@ function overridePortfolio() {
     addPortfolioQuick({ name: f.name, manualValue: f.value, image: f.img });
   };
   window.addCurrentSwipeToPortfolio = () => {
+    const item = window.currentSwipeItem?.();
+    // Tausch-Inserat im Stapel → Tauschanfrage statt Sammlung
+    if (item?.kind === "listing" && item.listingId) return requestTrade(item.listingId);
     if (!state.user) return origAddCurrentSwipe?.();
     try {
-      const item = activeDeck[swipeIdx % activeDeck.length];
-      addPortfolioQuick({ name: item.title, manualValue: item.cm, image: item.img });
+      if (item && (item.printId || item.cardId)) return addSwipeItemToPortfolio(item, () => addPortfolioQuick({ name: item.title, manualValue: item.cm, image: item.img }));
+      const cur = item || activeDeck[swipeIdx % activeDeck.length];
+      addPortfolioQuick({ name: cur.title, manualValue: cur.cm, image: cur.img });
     } catch { origAddCurrentSwipe?.(); }
   };
   window.addApiCardToPortfolio = (title, img) => {
@@ -1165,7 +1171,11 @@ window.PS = {
   openNotifications, openAdmin, resolveReport, openGenerator: openAutoReels, runTracker: runTrackerNow, goMarket,
   loadPortfolio, loadListings, listingCard, refreshMe: async () => { await loadMe(); renderHeader(); },
   closeAll: () => ["ps-notifs", "ps-account"].forEach(closeModalEl),
+  searchCards,
+  scanQuickSearch: () => searchCards(($("scan-quick-q")?.value || "").trim(), "scan-quick-results"),
   ...featureApi,
+  ...arenaApi,
+  ...shellApi,
 };
 hooks.openAccount = openAccount;
 hooks.openPro = openPro;
@@ -1180,6 +1190,8 @@ async function boot() {
   initFeatures();
   initReelStudio();
   initAutoReels();
+  initShell();
+  initArena();
 
   try {
     const result = await handleAuthCallback();
@@ -1201,8 +1213,9 @@ async function boot() {
   await confirmCheckoutFromUrl();
   const tab = new URLSearchParams(location.search).get("tab");
   if (tab === "trades") openTrades();
-  else if (["swipe", "flip", "community", "map", "portfolio"].includes(tab)) switchTabSafe(tab);
+  else if (["swipe", "scan", "flip", "community", "map", "portfolio"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
+  routeShell();
   routeAutoReels();
 
   onAuthChange(async (event, user) => {

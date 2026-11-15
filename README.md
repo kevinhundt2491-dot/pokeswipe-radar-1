@@ -56,6 +56,20 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
   (Marktpreis vs. UVP, Preis pro Booster, Verlauf), `/trends` (Gewinner/Verlierer 30 Tage, meistgesuchte Karten);
   alle mit strukturierten Daten und eigenen Teil-Sitemaps
 
+- **Navigation mit 5 Kernbereichen** – Entdecken (Swipe-Arena), Live-Scanner, Flip-Radar, Meine Sammlung, Community & Markt.
+  Einfache und Profi-Ansicht (Profi-Werte wie Margen, PSA-Links, Grading-Tools, Tausch-Rechner nur in „Profi“ oder einzeln
+  aufklappbar), 3-Schritte-Onboarding beim ersten Besuch (Ziel: Sammeln / Tauschen / Deals snipen, Sprachen, Ansicht) mit
+  Demo-Modus ohne Anmeldung. Wiederkehrende Nutzer behalten die volle Ansicht (`client/shell.js`)
+- **Mehrsprachiger Katalog (DE/EN/JA)** – englische und japanische Drucke als eigene Einträge (`card_prints`, `print_sets`)
+  mit eigenen Set-Codes, Nummern und Bildern; Preis-Feeds getrennt: Cardmarket (EUR, bei Japanisch eigene Produkte) und
+  TCGplayer (USD, über EZB-Kurse `fx_rates` umgerechnet). Widersprechen sich die Feeds um mehr als Faktor 4, gilt TCGplayer.
+  Import alle 10 Minuten (`netlify/functions/catalog-intl-import.mts`), Detailansicht `/api/prints/<lang>:<id>`.
+  Sammlungs-Einträge speichern Sprache und Druck (`portfolio_items.lang`, `print_id`)
+- **Dynamische Swipe-Arena** – der Stapel kommt live aus dem Katalog aller Sprachen und aus Tausch-Inseraten (`/api/swipe/deck`),
+  gewichtet nach Wert; Filter nach Sprache, Set, Seltenheit, Preisspanne, Wunschliste und „Nur Unter-Marktwert“ (ab 15 %,
+  Marktwert ab 3 €). Rechts wischen merkt die Karte und setzt sie mit Konto auf die Wunschliste (`client/arena.js`).
+  Ohne Verbindung bleibt der feste Chase-Katalog aktiv
+
 ## Echte Karten & Preise
 
 Swipe-Arena, Booster-Simulator, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten
@@ -83,6 +97,9 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | Konto löschen | `netlify/functions/delete-account.mts` |
 | Kartenkatalog-Import (alle 10 Minuten) | `netlify/functions/catalog-import.mts` → `server/catalog.ts` + `server/seo.ts` |
 | Pokémon-, Sealed- & Trend-Seiten | `server/seo.ts` |
+| Mehrsprachiger Katalog (EN/JA), Swipe-Deck-API | `server/intl-catalog.ts` + `server/intl-logic.ts`, Import `netlify/functions/catalog-intl-import.mts` |
+| Navigation, Onboarding, Einfach/Profi-Ansicht | `client/shell.js` |
+| Dynamische Swipe-Arena (Filter, Nachladen, Druck-Details) | `client/arena.js` |
 | Teilen-Links, Einladungsseite, Empfehlungs-Stufen | `server/viral.ts` + `client/viral.js`, Stufen in `server/plans.ts` |
 | Rechtstexte & Kündigungsbutton | `server/legal.ts` (`/rechtliches`, `/kuendigen`, `/api/legal`) |
 | Integrations-Check & Stripe-Webhook-Einrichtung | `server/integrations.ts` (Admin-Zentrale) |
