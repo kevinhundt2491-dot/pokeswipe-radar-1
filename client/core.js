@@ -1,6 +1,8 @@
 // Gemeinsame Helfer für alle Client-Module
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (window.sanitizeHTML ? window.sanitizeHTML(s) : String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`));
+/** Wert als sicheres JS-String-Argument in einem onclick="…"-Attribut (JSON + HTML-Escaping inkl. &). */
+const jsArg = (v) => esc(JSON.stringify(String(v ?? "")));
 const eur = (n) => `${(Number(n) || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u00A0€`;
 const pct = (n) => `${n > 0 ? "+" : ""}${Number(n).toFixed(1).replace(".", ",")} %`;
 /**
@@ -141,6 +143,6 @@ function areaChart(points, w = 640, h = 160) {
 
 
 export {
-  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, bearer, api, handleError, requireLogin,
+  $, esc, jsArg, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, bearer, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart, hooks,
 };

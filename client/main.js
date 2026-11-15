@@ -6,7 +6,7 @@ import {
 } from "@netlify/identity";
 
 import {
-  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
+  $, esc, jsArg, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart, hooks,
 } from "./core.js";
 import {
@@ -349,7 +349,7 @@ async function openCard(cardId) {
           ${btn("Hinzufügen", `PS.addCardToPortfolio('${esc(card.id)}')`, "w-full bg-emerald-500 text-slate-950")}
         </div>
       </div>
-      <button onclick="PS.listCard('${esc(card.id)}', ${JSON.stringify(card.name).replace(/"/g, "&quot;")}, ${price || 0})" class="w-full bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">🤝 Diese Karte im Tausch-Hub inserieren</button>
+      <button onclick="PS.listCard(${jsArg(card.id)}, ${jsArg(card.name)}, ${Number(price) || 0})" class="w-full bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">🤝 Diese Karte im Tausch-Hub inserieren</button>
       ${cardExtrasHtml(card)}
       <p class="text-[10px] text-slate-500">Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link</p>`, { wide: true });
   } catch (e) {
@@ -385,7 +385,7 @@ function listCard(cardId, name, price) {
       <label class="text-slate-300 font-bold">Preis / Tauschwert (€)</label>${input("ps-li-price", `type="number" step="0.01" min="0" value="${price ? price.toFixed(2) : ""}"`)}
       <label class="text-slate-300 font-bold">Suche im Tausch</label>${input("ps-li-want", 'maxlength="120" placeholder="z. B. Glurak ex SIR oder Gebot"')}
       <label class="text-slate-300 font-bold">Stadt</label>${input("ps-li-city", `maxlength="60" value="${esc(state.me?.city || "")}"`)}
-      ${btn("Jetzt inserieren", `PS.submitCardListing('${esc(cardId)}', ${JSON.stringify(name).replace(/"/g, "&quot;")})`, "w-full bg-emerald-500 text-slate-950")}
+      ${btn("Jetzt inserieren", `PS.submitCardListing(${jsArg(cardId)}, ${jsArg(name)})`, "w-full bg-emerald-500 text-slate-950")}
     </div>`);
 }
 
@@ -409,7 +409,7 @@ async function searchCards(q, boxId) {
     const list = (Array.isArray(data) ? data : []).filter((c) => c.image).slice(0, 24);
     if (!list.length) { box.innerHTML = `<p class="text-slate-400 col-span-full text-center py-4">Keine Karte gefunden. Versuche z. B. „Pikachu“, „Glurak“ oder „Mew“.</p>`; return; }
     box.innerHTML = list.map((c) => `
-      <button onclick="PS.openCard('${esc(c.id)}')" class="bg-slate-900 border border-slate-800 hover:border-yellow-400 rounded-xl p-2 flex flex-col gap-1.5 text-center transition">
+      <button onclick="PS.openCard(${jsArg(c.id)})" class="bg-slate-900 border border-slate-800 hover:border-yellow-400 rounded-xl p-2 flex flex-col gap-1.5 text-center transition">
         <img src="${esc(cdn(c.image + "/low.webp", 200))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-32 mx-auto object-contain rounded" />
         <p class="font-bold text-white truncate text-[11px] w-full">${esc(c.name)} <span class="text-slate-500">${esc(c.localId || "")}</span></p>
         <span class="text-[10px] font-black text-yellow-300">💶 Live-Preis & Alarm</span>

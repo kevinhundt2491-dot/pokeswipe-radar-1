@@ -1,7 +1,7 @@
 // PokeSwipe & Radar – Erweiterungen: Web-Push, Kamera-Scan, Set-Fortschritt, Sealed-Tracker,
 // Grading-Partner, Händler-Shops, Empfehlungsprogramm und die übersichtliche Unter-Navigation.
 import {
-  $, esc, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
+  $, esc, jsArg, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart,
 } from "./core.js";
 import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml, collectorApi } from "./collector.js";
@@ -232,7 +232,7 @@ function renderSetList() {
   const list = (allSets || []).filter((s) => !q || s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)).slice(0, q ? 40 : 12);
   const box = $("ps-set-list");
   if (!box) return;
-  box.innerHTML = list.length ? list.map((s) => `<button onclick="PS.openSet('${esc(s.id)}')" class="bg-slate-900 border border-slate-800 hover:border-emerald-400 rounded-xl p-2 text-left">
+  box.innerHTML = list.length ? list.map((s) => `<button onclick="PS.openSet(${jsArg(s.id)})" class="bg-slate-900 border border-slate-800 hover:border-emerald-400 rounded-xl p-2 text-left">
       <p class="font-bold text-white truncate">${esc(s.name)}</p><p class="text-slate-500">${s.cardCount.total} Karten</p></button>`).join("")
     : `<p class="col-span-full text-slate-500 text-center py-2">Kein Set gefunden.</p>`;
 }
@@ -462,7 +462,7 @@ async function openShop(slug) {
         ${shop.bio ? `<p class="text-xs text-slate-100 mt-2 whitespace-pre-line">${esc(shop.bio)}</p>` : ""}
       </div>
       <div class="flex gap-2 text-xs">
-        ${btn("🔗 Shop-Link teilen", `PS.shareLink('${esc(url)}', ${JSON.stringify(shop.title).replace(/"/g, "&quot;")})`, "bg-slate-800 text-white")}
+        ${btn("🔗 Shop-Link teilen", `PS.shareLink(${jsArg(url)}, ${jsArg(shop.title)})`, "bg-slate-800 text-white")}
         ${btn("⭐ Bewertungen", `PS.openUser('${esc(shop.userId)}')`, "bg-slate-800 text-white")}
       </div>
       <div class="space-y-2 max-h-[55vh] overflow-y-auto">${listings.length ? listings.map((l) => PS().listingCard(l)).join("") : `<p class="text-xs text-slate-500 text-center py-4">Gerade keine Angebote.</p>`}</div>`, {

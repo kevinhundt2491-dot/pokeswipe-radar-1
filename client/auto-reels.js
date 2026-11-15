@@ -590,10 +590,10 @@ const batchSel = new Set(); // im Serien-Modus ausgewählte Episoden
 
 // Make.com-Webhook-URL (einmal eintragen, bleibt im localStorage)
 const HOOK_KEY = "pokeswipe.autoReels.webhook";
-// Voreingestellter Make.com-Webhook – greift, solange im Browser nichts anderes gespeichert ist.
-// Wird das Feld geleert, bleibt das als "" gespeichert und Reels werden wieder lokal heruntergeladen.
-const DEFAULT_HOOK = "https://hook.eu1.make.com/pb4ym0nehyg8xdj8l6sobvyr0jwldhkt";
-const getHook = () => { try { const v = localStorage.getItem(HOOK_KEY); return v === null ? DEFAULT_HOOK : v; } catch { return DEFAULT_HOOK; } };
+// Voreingestellter Make.com-Webhook kommt vom Server (Umgebungsvariable MAKE_WEBHOOK_URL, nur für Admins)
+// und greift, solange in diesem Browser nichts anderes gespeichert ist. Wird das Feld geleert, bleibt
+// das als "" gespeichert und Reels werden wieder lokal heruntergeladen.
+const getHook = () => load(HOOK_KEY, "");
 function validHook(u) {
   try { const x = new URL(u); return x.protocol === "https:" ? x.href : null; } catch { return null; }
 }
@@ -645,6 +645,7 @@ const estMb = (D = duration) => (mbit * D) / 8 * 1.05; // +5 % Container-Overhea
 // Filter "token = <Wert>" setzen – Aufrufe ohne passenden Token laufen dann ins Leere.
 // Liegt nur im localStorage dieses Browsers, nie im Code oder Repository.
 const TOKEN_KEY = "pokeswipe.autoReels.token";
+const TOKEN_MANUAL_KEY = "pokeswipe.autoReels.tokenManual"; // "1" = Token wurde hier bewusst geändert
 const newToken = () => (crypto.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, "");
 function getToken() {
   let t = load(TOKEN_KEY, null);
@@ -757,7 +758,7 @@ function build() {
   ui.voiceId.addEventListener("change", () => { voiceId = ui.voiceId.value; save(VOICE_ID_KEY, voiceId); });
   ui.voiceTest.addEventListener("click", testVoice);
   ui.token.value = getToken();
-  ui.token.addEventListener("input", () => save(TOKEN_KEY, ui.token.value.trim()));
+  ui.token.addEventListener("input", () => { save(TOKEN_KEY, ui.token.value.trim()); save(TOKEN_MANUAL_KEY, "1"); });
   ui.mbit.addEventListener("change", () => { mbit = Number(ui.mbit.value) || 8; save(BITRATE_KEY, String(mbit)); updateSizeInfo(); });
   ui.limit.addEventListener("change", () => { limitMb = Number(ui.limit.value) || 100; save(LIMIT_KEY, String(limitMb)); updateSizeInfo(); });
   ctx = ui.canvas.getContext("2d");
@@ -774,7 +775,7 @@ function build() {
     if (act === "one") generateAll([EPISODES[n - 1]]);
     if (act === "sel-all") { EPISODES.forEach((ep) => batchSel.add(ep.n)); renderList(); }
     if (act === "sel-none") { batchSel.clear(); renderList(); }
-    if (act === "token-new") { ui.token.value = newToken(); save(TOKEN_KEY, ui.token.value); setStatus("🔐 Neuer Token erzeugt – den Filter im Make-Szenario entsprechend anpassen.", "ok"); }
+    if (act === "token-new") { ui.token.value = newToken(); save(TOKEN_KEY, ui.token.value); save(TOKEN_MANUAL_KEY, "1"); setStatus("🔐 Neuer Token erzeugt – den Filter im Make-Szenario entsprechend anpassen.", "ok"); }
     if (act === "token-copy") {
       navigator.clipboard?.writeText(ui.token.value.trim())
         .then(() => setStatus("📋 Token kopiert – im Make-Filter einfügen.", "ok"))
@@ -834,6 +835,7 @@ function updateVoiceInfo() {
 async function checkVoice() {
   try { voiceReady = await api("/api/admin/voiceover/status"); }
   catch (e) { voiceReady = { ready: false, error: e?.message || "Netzwerkfehler" }; }
+  applyMakeDefaults(voiceReady?.make);
   const voices = voiceReady?.voices || [];
   if (ui.voicePick) {
     ui.voicePick.hidden = !voiceOn || !voices.length;
@@ -843,6 +845,12 @@ async function checkVoice() {
     }
   }
   updateVoiceInfo();
+}
+/** Make.com-Vorgaben vom Server übernehmen, solange im Browser nichts Eigenes eingetragen wurde. */
+function applyMakeDefaults(make) {
+  if (!make || !ui.hook || ui.hook.disabled) return;
+  if (make.url && load(HOOK_KEY, null) === null && !ui.hook.value.trim()) { ui.hook.value = make.url; updateHookInfo(); }
+  if (make.token && load(TOKEN_MANUAL_KEY, "") !== "1" && ui.token.value !== make.token) { ui.token.value = make.token; save(TOKEN_KEY, make.token); }
 }
 let testAudio = null;
 async function testVoice() {

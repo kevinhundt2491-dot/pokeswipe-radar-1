@@ -19,6 +19,9 @@ export const EL_VOICES = [
 ];
 const DEFAULT_EL_VOICE = "nPczCjzI2devNBz1zQrb";
 const EL_MODEL = "eleven_multilingual_v2";
+// Bisheriges Make.com-Szenario als Rückfall, bis MAKE_WEBHOOK_URL in Netlify gesetzt ist.
+// Liegt nur auf dem Server und wird ausschließlich an Admins ausgeliefert.
+const DEFAULT_MAKE_WEBHOOK = "https://hook.eu1.make.com/pb4ym0nehyg8xdj8l6sobvyr0jwldhkt";
 
 type Provider = { id: string; voice: string; tts: (text: string) => Promise<ArrayBuffer> };
 
@@ -34,12 +37,16 @@ function provider(requested?: string): Provider | null {
         const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
           method: "POST",
           headers: { "xi-api-key": el, "Content-Type": "application/json", Accept: "audio/mpeg" },
+          signal: AbortSignal.timeout(45_000),
           body: JSON.stringify({
             text, model_id: EL_MODEL,
             voice_settings: { stability: 0.55, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true, speed: 1.05 },
           }),
         });
-        if (!res.ok) throw new Error(`ElevenLabs antwortet mit ${res.status}`);
+        if (!res.ok) {
+          const hint = res.status === 401 ? " – API-Schlüssel ungültig" : res.status === 429 ? " – Kontingent/Rate-Limit erreicht" : res.status === 422 ? " – Text oder Stimme abgelehnt" : "";
+          throw new Error(`ElevenLabs antwortet mit ${res.status}${hint}`);
+        }
         return res.arrayBuffer();
       },
     };
@@ -53,6 +60,7 @@ function provider(requested?: string): Provider | null {
         const res = await fetch("https://api.openai.com/v1/audio/speech", {
           method: "POST",
           headers: { Authorization: `Bearer ${oa}`, "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(45_000),
           body: JSON.stringify({
             model: "gpt-4o-mini-tts", voice, input: text, response_format: "mp3",
             instructions: "Sprich natürliches Hochdeutsch: freundlich, warm, motiviert und klar – wie ein sympathischer Erklär-Sprecher in einem Social-Media-Reel. Zügiges, aber gut verständliches Tempo.",
@@ -81,7 +89,12 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     const voices = isEl
       ? [...(custom && !EL_VOICES.some((v) => v.id === custom) ? [{ id: custom, name: "Eigene Stimme", desc: "aus ELEVENLABS_VOICE_ID" }] : []), ...EL_VOICES]
       : [];
-    return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null, voices, defaultVoice: p?.voice || null });
+    // Make.com-Ziel kommt aus den Netlify-Umgebungsvariablen (nicht mehr fest im öffentlichen Browser-Code)
+    const hook = String(process.env.MAKE_WEBHOOK_URL || DEFAULT_MAKE_WEBHOOK).trim();
+    let makeUrl: string | null = null;
+    try { makeUrl = hook && new URL(hook).protocol === "https:" ? new URL(hook).href : null; } catch { makeUrl = null; }
+    const makeToken = String(process.env.MAKE_WEBHOOK_TOKEN || "").trim().slice(0, 200) || null;
+    return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null, voices, defaultVoice: p?.voice || null, make: { url: makeUrl, token: makeToken } });
   });
 
   app.post("/api/admin/voiceover", auth, adminOnly, async (c: any) => {
@@ -119,7 +132,8 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
       await Promise.all([worker(), worker()]);
     } catch (e: any) {
       console.error("Voiceover-Fehler", e);
-      return c.json({ error: `Sprachausgabe fehlgeschlagen: ${e?.message || "unbekannt"}` }, 502);
+      const msg = e?.name === "TimeoutError" ? "Zeitüberschreitung beim Sprachdienst" : e?.message || "unbekannt";
+      return c.json({ error: `Sprachausgabe fehlgeschlagen: ${msg}` }, 502);
     }
     return c.json({ provider: p.id.split(":")[0], clips: out });
   });

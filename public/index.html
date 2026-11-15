@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0f19" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -24,9 +24,9 @@
   <meta property="og:image" content="https://pokeswipe-radar.de/.netlify/images?url=https%3A%2F%2Fimages.pokemontcg.io%2Fsv8%2F238_hires.png&w=600&fm=jpg" />
   <meta name="twitter:card" content="summary_large_image" />
 
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/assets/tailwind.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 
@@ -828,7 +828,7 @@
       <p><strong>Affiliate-Hinweis (*):</strong> Als Partner des eBay Partner Networks (CampID: 5339244109) verdienen wir an qualifizierten Käufen über gekennzeichnete eBay-Links eine kleine Provision, ohne Mehrkosten für dich.</p>
       <div class="max-h-[55vh] overflow-y-auto space-y-3 pr-1">
       <p><strong>Datenschutz – Überblick:</strong> Ohne Konto bleiben Portfolio-, Merklisten- und Push-Einstellungen lokal im Browser (LocalStorage). Mit Konto werden Login (Netlify Identity), Portfolio, Wunschliste, Preisalarme, Inserate, Tausche, private Tausch-Nachrichten, Bewertungen, Abzeichen und Kalendereinträge verschlüsselt übertragen und bei unserem Hosting-Anbieter Netlify gespeichert (Rechtsgrundlage: Vertragserfüllung, Art. 6 Abs. 1 lit. b DSGVO).</p>
-      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Beim Laden der Seite werden Schriftarten und Skripte von Google Fonts, cdn.tailwindcss.com und unpkg.com abgerufen; dabei wird technisch bedingt deine IP-Adresse übermittelt.</p>
+      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Beim Laden der Seite werden Schriftarten und Skripte von Google Fonts und unpkg.com (Kartenansicht) abgerufen; dabei wird technisch bedingt deine IP-Adresse übermittelt.</p>
       <p><strong>Öffentlich sichtbar:</strong> dein Sammlername, Stadt, Inserate, Bewertungen, Shop-Seite, eingetragene Events sowie – für Tausch-Vorschläge – welche Karten du auf der Wunschliste hast. In der Bestenliste erscheinst du nur, wenn du es selbst einschaltest.</p>
       <p><strong>Speicher im Browser:</strong> Wir verwenden keine Werbe- oder Tracking-Cookies. Gespeichert werden nur technisch notwendige Daten: Login-Token, Einstellungen und eine Offline-Kopie deiner Sammlung (wird beim Abmelden gelöscht).</p>
       <p><strong>Deine Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Im Konto unter „Datenschutz & Konto“ kannst du alle Daten als Datei herunterladen und dein Konto selbst löschen. Verantwortlich für die Datenverarbeitung ist der im Impressum genannte Betreiber.</p>
@@ -1713,6 +1713,8 @@
 
     // KARTE & RADAR
     function initOrUpdateMap() {
+      // Leaflet lädt per defer – bei sehr frühem Aufruf (z. B. ?tab=map) bis zum Seitenende warten
+      if (typeof L === "undefined") { window.addEventListener("load", () => { if (typeof L !== "undefined") initOrUpdateMap(); }, { once: true }); return; }
       if (!mapInstance) {
         mapInstance = L.map("radarMap").setView([51.1657, 10.4515], 6);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap" }).addTo(mapInstance);
