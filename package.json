@@ -8,7 +8,7 @@
     "db:generate": "drizzle-kit generate",
     "test": "node --test \"tests/*.test.ts\"",
     "build:css": "tailwindcss -i client/tailwind.css -o public/assets/tailwind.css --minify",
-    "build:js": "esbuild client/main.js --bundle --minify --format=esm --target=es2020 --outfile=public/assets/app.js"
+    "build:js": "esbuild client/main.js --bundle --minify --format=esm --target=es2020 --splitting --outdir=public/assets --entry-names=app --chunk-names=chunks/[name]-[hash]"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

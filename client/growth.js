@@ -126,7 +126,7 @@ export function cardExtrasHtml(c) {
         ${btn("🔗 Link", `PS.shareCardPage('${esc(c.id)}', ${jsArg(c.name)})`, "bg-slate-800 text-white")}
         ${btn("📸 Bild", `PS.shareCardImage('${esc(c.id)}')`, "bg-slate-800 text-white")}
       </div>
-      ${btn("🏆 Lohnt sich Grading?", `PS.gradingFor(${Number(price) || 0})`, "w-full bg-yellow-400 text-slate-950")}
+      ${btn("💬 Im Live-Chat verhandeln", `PS.closeAll(); window.shareToChat('[karte:${esc(c.id)}]')`, "w-full bg-yellow-400 text-slate-950")}
     </div></div>`;
 }
 
@@ -793,7 +793,7 @@ function registerOffline() {
 // Start
 // ===========================================================================
 export const growthApi = {
-  addWish, removeWish, wishRequest, shareCardPage, shareCardImage, sharePortfolioImage, gradingFor, bulkPick,
+  addWish, removeWish, wishRequest, shareCardPage, shareCardImage, sharePortfolioImage, bulkPick,
   openImport, addEvent, toggleRemind, removeEvent, board, setPref, openShopStats, exportData, deleteAccount,
   confirmDelete, openLegal, adminSaveLegal, adminRunGrowth, loadWishlist,
 };
@@ -810,14 +810,6 @@ export function injectGrowthPanels() {
     return el;
   };
   if (!$("ps-wishlist")) add("portfolio", wishlistPanelHtml());
-  if (!$("ps-calendar")) add("community", calendarPanelHtml());
-  if (!$("ps-ranks")) add("community", ranksPanelHtml());
-  const grading = $("ps-grading");
-  if (grading && !$("ps-gradecalc")) {
-    const tmp = document.createElement("div");
-    tmp.innerHTML = gradingCalcHtml();
-    grading.before(tmp.firstElementChild);
-  }
   const dash = $("ps-pf-dash");
   if (dash && !$("ps-import-bar")) {
     const tmp = document.createElement("div");
@@ -833,9 +825,6 @@ export function injectGrowthPanels() {
   $("ps-wish-go")?.addEventListener("click", searchWish);
   $("ps-wish-q")?.addEventListener("keydown", (e) => e.key === "Enter" && searchWish());
   $("ps-bulk-input")?.addEventListener("change", (e) => { bulkScan(e.target.files); e.target.value = ""; });
-  $("gc-photo")?.addEventListener("change", (e) => { checkCondition(e.target.files[0]); e.target.value = ""; });
-  ["gc-raw", "gc-10", "gc-9", "gc-fee", "gc-ship", "gc-p10", "gc-p9"].forEach((id) => $(id)?.addEventListener("input", calcGrading));
-  calcGrading();
 
   // Impressum-Platzhalter im bestehenden Rechtliches-Fenster
   const legal = $("legal-modal");

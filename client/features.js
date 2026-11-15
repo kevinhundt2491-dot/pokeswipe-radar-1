@@ -6,9 +6,8 @@ import {
 } from "./core.js";
 import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml, collectorApi } from "./collector.js";
 import {
-  injectGrowthPanels, afterAuthGrowth, routeGrowth, growthApi, loadWishlist, loadCalendar, loadRanks, adminGrowthHtml,
+  injectGrowthPanels, afterAuthGrowth, routeGrowth, growthApi, loadWishlist, adminGrowthHtml,
 } from "./growth.js";
-import { injectDropsPanels, afterAuthDrops, routeDrops, dropsApi, loadDrops, loadGraded, loadFakeLeft } from "./drops.js";
 
 const PS = () => window.PS;
 const KIND_LABEL = { display: "Display", etb: "Elite-Trainer-Box", ttb: "Top-Trainer-Box", bundle: "Booster-Bundle", booster: "Booster", tin: "Tin", collection: "Kollektion", other: "Sonstiges" };
@@ -605,54 +604,24 @@ async function adminSealedAdd() {
 // ===========================================================================
 // 9. Übersichtliche Navigation: Unter-Reiter je Bereich
 // ===========================================================================
+// Bewusst schlank: nur die Sammlung hat Unter-Reiter. Swipe, Tausch-Hub und Chat sind je eine Ansicht.
 const SUBTABS = {
-  swipe: [
-    { key: "swipe", label: "Swipen & Booster", fallback: true, match: () => false },
-    { key: "search", label: "Kartensuche & Rip or Keep", match: (el) => el.querySelector("#tcgdex-search-inp, #ripkeep-select") },
-  ],
-  flip: [
-    { key: "drops", label: "🚨 Restock & Vorbestellung", match: (el) => el.id === "ps-drops" },
-    { key: "alerts", label: "Preisalarme", match: (el) => el.id === "ps-tracker" },
-    { key: "sealed", label: "Sealed", match: (el) => el.id === "ps-sealed" },
-    { key: "deals", label: "Flip-Deals", fallback: true, match: () => false },
-  ],
-  map: [
-    { key: "market", label: "Inserate", fallback: true, match: () => false },
-    { key: "shops", label: "Händler-Shops", match: (el) => el.id === "ps-shops" },
-    { key: "calc", label: "Tausch-Rechner", match: (el) => el.querySelector("#trade-sum-a") },
-    { key: "radar", label: "Sammler-Radar", match: (el) => el.querySelector("#radarMap") },
-  ],
-  community: [
-    { key: "feed", label: "Live-Community", fallback: true, match: () => false },
-    { key: "calendar", label: "Kalender & Events", match: (el) => el.id === "ps-calendar" },
-    { key: "ranks", label: "Abzeichen & Bestenliste", match: (el) => el.id === "ps-ranks" },
-  ],
   portfolio: [
     { key: "overview", label: "Portfolio", fallback: true, match: () => false },
-    { key: "wishlist", label: "Wunschliste", match: (el) => el.id === "ps-wishlist" },
-    { key: "scan", label: "Scan & Fake-Check", match: (el) => el.id === "ps-scan" || el.id === "ps-fakecheck" },
-    { key: "graded", label: "🏅 Graded", match: (el) => el.id === "ps-graded" },
-    { key: "sets", label: "Sets", match: (el) => el.id === "ps-sets" },
-    { key: "grading", label: "Grading & Tools", match: (el) => el.id === "ps-grading" || el.id === "ps-gradecalc" || el.querySelector("#centering-img, #masterset-list") },
+    { key: "alerts", label: "🎯 Preisalarme", match: (el) => el.id === "ps-tracker" },
+    { key: "wishlist", label: "❤️ Wunschliste", match: (el) => el.id === "ps-wishlist" },
+    { key: "scan", label: "📷 KI-Scan", match: (el) => el.id === "ps-scan" },
   ],
 };
 const subLoaders = {
-  "flip:sealed": () => loadSealed(),
-  "map:shops": () => loadShops(),
-  "portfolio:sets": () => { loadTrackedSets(); loadSetList(); },
-  "portfolio:grading": () => loadPartners(),
-  "portfolio:scan": () => { renderScanLeft(); loadFakeLeft(); },
-  "portfolio:graded": () => loadGraded(),
-  "flip:drops": () => loadDrops(),
+  "portfolio:scan": () => renderScanLeft(),
   "portfolio:wishlist": () => loadWishlist(),
-  "community:calendar": () => loadCalendar(),
-  "community:ranks": () => loadRanks(),
 };
 
 function buildSubtabs() {
   for (const [view, tabs] of Object.entries(SUBTABS)) {
     const section = $(`view-${view}`);
-    if (!section || section.dataset.subtabs) continue;
+    if (!section || section.dataset.subtabs || tabs.length < 2) continue;
     section.dataset.subtabs = "1";
     const children = [...section.children];
     const panels = Object.fromEntries(tabs.map((t) => {
@@ -678,9 +647,12 @@ function buildSubtabs() {
 }
 
 export function showSub(view, key, { silent = false } = {}) {
+  // Ältere Links (z. B. aus Mitteilungen) auf entfernte Bereiche landen in der passenden Ansicht
+  if (view === "flip") { view = "portfolio"; key = "alerts"; }
   const section = $(`view-${view}`);
   if (!section) return;
   if (!silent && section.classList.contains("hidden")) { try { window.switchTab(view); } catch {} }
+  if (!SUBTABS[view]) return;
   if (!section.querySelector(`[data-sub="${key}"]`)) key = SUBTABS[view]?.[0]?.key;
   section.querySelectorAll("[data-sub]").forEach((p) => p.classList.toggle("hidden", p.dataset.sub !== key));
   section.querySelectorAll("[data-subbtn]").forEach((b) => {
@@ -689,9 +661,6 @@ export function showSub(view, key, { silent = false } = {}) {
     b.setAttribute("aria-selected", on ? "true" : "false");
   });
   localStorage.setItem(`ps_sub_${view}`, key);
-  if (view === "map" && key === "radar") {
-    setTimeout(() => { try { if (typeof mapInstance !== "undefined" && mapInstance) mapInstance.invalidateSize(); else window.initOrUpdateMap?.(); } catch {} }, 80);
-  }
   subLoaders[`${view}:${key}`]?.();
 }
 
@@ -708,21 +677,16 @@ function injectPanels() {
     tmp.innerHTML = html;
     section[where](tmp.firstElementChild);
   };
-  if (!$("ps-sealed")) add("flip", sealedPanelHtml());
-  if (!$("ps-shops")) add("map", shopsPanelHtml());
   if (!$("ps-dupes") && $("portfolio-list")) {
     const tmp = document.createElement("div");
     tmp.innerHTML = dupesPanelHtml();
     $("portfolio-list").after(tmp.firstElementChild);
   }
   if (!$("ps-scan")) add("portfolio", scanPanelHtml());
-  if (!$("ps-sets")) add("portfolio", setsPanelHtml());
-  if (!$("ps-grading")) add("portfolio", gradingPanelHtml());
 
   $("ps-scan-input")?.addEventListener("change", (e) => { handleScan(e.target.files[0]); e.target.value = ""; });
-  $("ps-set-q")?.addEventListener("input", renderSetList);
 
-  // Push-Zentrale: echte Web-Push-Freigabe
+  // Push-Einstellungen: echte Web-Push-Freigabe
   const pm = $("push-modal")?.querySelector(".space-y-2\\.5");
   if (pm && !$("ps-push-box")) {
     const box = document.createElement("div");
@@ -733,23 +697,8 @@ function injectPanels() {
   }
 }
 
-/** Klare Namen für die Hauptnavigation und ein aufgeräumter Kopfbereich. */
+/** Beim Wechsel in die Sammlung den zuletzt genutzten Unter-Reiter wiederherstellen. */
 function tidyLayout() {
-  const svg = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-  const icons = {
-    swipe: svg('<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M13 7l-3 5h4l-3 5"/>'),
-    flip: svg('<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>'),
-    community: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.9.6 3.1 2.5 3.5 5.5"/>'),
-    map: svg('<path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>'),
-    portfolio: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h6M15 12h6"/><circle cx="12" cy="12" r="3"/>'),
-  };
-  const names = { swipe: ["electric", "Arena"], flip: ["fire", "Preise"], community: ["psychic", "Community"], map: ["water", "Tausch"], portfolio: ["grass", "Sammlung"] };
-  for (const [k, [type, label]] of Object.entries(names)) {
-    const d = $(`tab-${k}`);
-    if (d) { d.dataset.type = type; d.innerHTML = `<span class="ico">${icons[k]}</span><span>${label}</span>`; }
-    const m = $(`mob-${k}`);
-    if (m) { m.dataset.type = type; m.innerHTML = `<span class="ico">${icons[k]}</span><span class="text-[10px] mt-0.5">${label}</span>`; }
-  }
   const origSwitch = window.switchTab;
   window.switchTab = (tab) => {
     origSwitch(tab);
@@ -762,13 +711,11 @@ function tidyLayout() {
 // Start
 // ===========================================================================
 export const featureApi = {
-  enablePush, disablePush, openScanner, openSet, trackSet, untrackSet,
+  enablePush, disablePush, openScanner,
   ...collectorApi,
-  sealedKind: (k) => { sealedKind = k; renderSealed(); },
-  openSealed, createSealedAlert, deleteSealedAlert, listSealed, openShop, openShopSettings, saveShop, shareLink,
+  openShop, openShopSettings, saveShop, shareLink,
   adminSealedPrice, adminSealedHide, adminSealedAdd, showSub,
   ...growthApi,
-  ...dropsApi,
 };
 
 export function initFeatures() {
@@ -776,7 +723,6 @@ export function initFeatures() {
   tidyLayout();
   injectPanels();
   injectGrowthPanels();
-  injectDropsPanels();
   buildSubtabs();
   window.enableBrowserPush = () => (state.user ? enablePush() : requireLogin());
 }
@@ -786,20 +732,16 @@ export function afterAuthFeatures() {
   claimReferral();
   renderPushBox();
   renderScanLeft();
-  loadTrackedSets();
-  loadSealedAlerts();
   afterAuthGrowth();
-  afterAuthDrops();
 }
 
 export function routeFeatures() {
   const params = new URLSearchParams(location.search);
   const m = /^\/shop\/([a-z0-9-]{3,30})\/?$/.exec(location.pathname);
   const slug = m?.[1] || (/^[a-z0-9-]{3,30}$/.test(params.get("shop") || "") ? params.get("shop") : null);
-  if (slug) { showSub("map", "shops"); openShop(slug); }
+  if (slug) { try { window.switchTab("map"); } catch {} openShop(slug); }
   const tab = params.get("tab"), sub = params.get("sub");
   if (tab && sub && SUBTABS[tab]) showSub(tab, sub);
   if (params.get("scan") === "1") openScanner();
   routeGrowth();
-  routeDrops();
 }

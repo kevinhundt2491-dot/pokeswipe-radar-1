@@ -15,8 +15,27 @@ import {
 import { cardExtrasHtml, accountExtrasHtml } from "./growth.js";
 import { refreshDupes } from "./collector.js";
 import { groupDuplicates, surplusBadge } from "./collector-logic.js";
-import { initReelStudio, syncReelStudio } from "./reel-studio.js";
-import { initAutoReels, syncAutoReels, openAutoReels, routeAutoReels } from "./auto-reels.js";
+
+// Admin-Werkzeuge (Reel-Studio, Auto-Reels) sind groß und nur für Admins relevant →
+// sie werden erst geladen, wenn ein Admin angemeldet ist oder ein Generator-Link geöffnet wird.
+const ADMIN_HASHES = ["#generator", "#auto-reels", "#reel-studio"];
+let adminTools = null;
+function loadAdminTools() {
+  if (!adminTools) {
+    adminTools = Promise.all([import("./reel-studio.js"), import("./auto-reels.js")]).then(([rs, ar]) => {
+      rs.initReelStudio(); ar.initAutoReels();
+      return { ...rs, ...ar };
+    });
+    adminTools.catch(() => { adminTools = null; });
+  }
+  return adminTools;
+}
+function syncAdminTools() {
+  if (!state.me?.isAdmin && !adminTools) return;
+  loadAdminTools().then((t) => { t.syncReelStudio(); t.syncAutoReels(); }).catch(() => {});
+}
+function openAutoReels() { loadAdminTools().then((t) => t.openAutoReels()).catch(() => {}); }
+function routeAutoReels() { if (ADMIN_HASHES.slice(0, 2).includes(location.hash)) openAutoReels(); }
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -44,8 +63,13 @@ function renderHeader() {
   const tc = $("ps-trade-count");
   const open = state.me?.usage?.open_trades || 0;
   if (tc) { tc.textContent = String(open); tc.classList.toggle("hidden", !open); }
-  syncReelStudio();
-  syncAutoReels();
+  const pro = !!state.me && state.me.plan !== "free";
+  document.body.classList.toggle("is-auth", !!state.user);
+  document.body.classList.toggle("is-pro", pro || (!state.user && !!localStorage.getItem("pokeswipe_pro")));
+  const hp = $("hdr-pro-btn");
+  if (hp) hp.classList.toggle("hidden", pro);
+  try { window.renderSwipeQuota?.(); window.syncChatName?.(); } catch {}
+  syncAdminTools();
 }
 
 function openAccount(hint = "") {
@@ -76,7 +100,7 @@ function openAccount(hint = "") {
       ${m ? `<p class="text-slate-500">Portfolio ${m.usage.portfolio}/${m.planInfo.portfolio} • Alarme ${m.usage.alerts}/${m.planInfo.alerts} • Inserate ${m.usage.listings}/${m.planInfo.listings}${m.planInfo.freeBoostsPerMonth ? ` • Gratis-Boosts ${m.freeBoostsLeft}/${m.planInfo.freeBoostsPerMonth}` : ""}</p>` : ""}
     </div>
     <div class="grid grid-cols-2 gap-2">
-      ${btn("🔔 Push auf diesem Gerät", "PS.enablePush()", "bg-slate-800 text-white")}
+      ${btn("🔔 Benachrichtigungen", "PS.closeAll(); openModal('push-modal')", "bg-slate-800 text-white")}
       ${btn(m?.shop?.enabled ? "🏪 Mein Händler-Shop" : "🏪 Händler-Shop (Pro)", "PS.openShopSettings()", "bg-slate-800 text-cyan-300")}
     </div>
     ${referralHtml()}
@@ -247,17 +271,17 @@ function openPro(interval) {
   const p = plans || { free: { portfolio: 25, alerts: 3, listings: 5 }, premium: { portfolio: 500, alerts: 50, listings: 40 }, pro: { alerts: 500, listings: 500, freeBoostsPerMonth: 3 } };
   modal("ps-pro", `
     <span class="bg-yellow-400 text-slate-950 text-xs font-black px-3 py-1 rounded-full">👑 POKESWIPE PREMIUM</span>
-    <h3 class="text-lg font-black text-white">Mehr Gewinn bei jedem Deal</h3>
+    <h3 class="text-lg font-black text-white">Unbegrenzt swipen. Preisstürze zuerst sehen. Schneller tauschen.</h3>
     ${trialBanner()}
-    <p class="text-xs text-slate-300">Restock-Alarme ohne Wartezeit, echte Cardmarket-Preise, stündlicher Preis-Tracker, KI-Kartenscan & Fake-Check, sichere Tausche. Sichere Zahlung über Stripe (Karte, Apple Pay, Google Pay, Klarna u. a.).</p>
+    <p class="text-xs text-slate-300">${m?.trialDays ? `Die ersten ${m.trialDays} Tage sind gratis – du kannst jederzeit vorher kündigen.` : "Jederzeit kündbar."} Sichere Zahlung über Stripe (Karte, Apple Pay, Google Pay, Klarna u. a.).</p>
     <div class="flex justify-center"><div class="inline-flex bg-slate-900 border border-slate-700 rounded-2xl p-1 text-xs font-black">
       <button onclick="PS.openPro('month')" class="px-4 py-2 rounded-xl ${yearly ? "text-slate-300" : "bg-yellow-400 text-slate-950"}">Monatlich</button>
       <button onclick="PS.openPro('year')" class="px-4 py-2 rounded-xl ${yearly ? "bg-yellow-400 text-slate-950" : "text-slate-300"}">Jährlich <span class="${yearly ? "text-emerald-700" : "text-emerald-400"}">2 Monate gratis</span></button>
     </div></div>
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-      ${tier("free", "border-slate-700", [`${p.free.portfolio} Portfolio-Karten`, `${p.free.alerts} Preisalarme`, `${p.free.listings} aktive Inserate`, `${p.free.scansPerDay || 3} KI-Scans pro Tag`, `Restock-Alarm (${p.free.restockDelayMin ?? 15} Min. verzögert)`, `${p.free.fakeChecksPerMonth ?? 1} Fake-Check pro Monat`, "Push-Alarme", "Sicherer Tausch & Bewertungen"])}
-      ${tier("premium", "border-yellow-400/60", ["🚨 Restock-Alarme sofort (ohne Wartezeit)", `🕵️ ${p.premium.fakeChecksPerMonth ?? 20} KI-Fake-Checks pro Monat`, `🏅 Graded-Portfolio (${p.premium.gradedCards ?? 200} Slabs) & Einsendungs-Tracker`, `${p.premium.portfolio} Portfolio-Karten`, `${p.premium.alerts} Preisalarme (stündlich)`, "👑 Sniper-Deals >25 % unter Marktwert", "🏆 Grading-Profit-Analyse", "Wertverlauf & Top-Mover", `${p.premium.scansPerDay || 40} KI-Scans pro Tag`, `${p.premium.sets || 10} Sets verfolgen`, `${p.premium.listings} aktive Inserate`, "Unbegrenzte Swipes", "Goldenes Badge"])}
-      ${tier("pro", "border-purple-500", ["Alles aus Premium", "🎯 Restock-Filter: Shop, Stichwort, Höchstpreis, nur UVP", `🕵️ ${p.pro.fakeChecksPerMonth ?? 200} Fake-Checks pro Monat`, "🏪 Eigener Händler-Shop", "Unbegrenzte Alarme & Inserate", "✔ Verifizierter Händler-Badge", `${p.pro.freeBoostsPerMonth || 3} Gratis-Boosts pro Monat`, "Inserate vor Free & Premium", "Portfolio-Export (CSV)", "📊 Shop-Statistik"])}
+      ${tier("free", "border-slate-700", ["30 Swipes pro Tag", `${p.free.portfolio} Karten in der Sammlung`, `${p.free.alerts} Preisalarme`, `${p.free.listings} aktive Inserate`, "Live-Chat & sicherer Tausch", `${p.free.scansPerDay || 3} KI-Scans pro Tag`])}
+      ${tier("premium", "border-yellow-400/60", ["♾️ Unbegrenzte Swipes", `🎯 ${p.premium.alerts} Preisalarme, stündlich geprüft`, "📈 Wertverlauf & Top-Mover deiner Sammlung", `${p.premium.portfolio} Karten in der Sammlung`, `${p.premium.listings} aktive Inserate`, `${p.premium.scansPerDay || 40} KI-Scans pro Tag`, "👑 Goldenes Badge im Tausch-Hub & Chat"])}
+      ${tier("pro", "border-purple-500", ["Alles aus Premium", "✔ Verifizierter Händler-Badge", "Inserate stehen vor Free & Premium", `🚀 ${p.pro.freeBoostsPerMonth || 3} Gratis-Boosts pro Monat`, "Unbegrenzte Alarme & Inserate", "🏪 Eigener Händler-Shop", "Sammlung als CSV exportieren"])}
     </div>
     <p class="text-[11px] text-slate-400">🚀 Einzel-Boost für jedes Inserat: ${eur((m?.boost?.priceCents || 199) / 100)} für ${m?.boost?.days || 7} Tage ganz oben im Tausch-Hub.</p>
     ${m && !m.paymentsEnabled ? `<p class="text-xs text-amber-300">⏳ Zahlungen werden gerade eingerichtet – bitte versuche es in Kürze erneut.</p>` : ""}`, { wide: true });
@@ -423,7 +447,7 @@ async function searchCards(q, boxId) {
 // Preis-Tracker (Flip-Radar)
 // ---------------------------------------------------------------------------
 function injectTracker() {
-  const view = $("view-flip");
+  const view = $("view-portfolio");
   if (!view || $("ps-tracker")) return;
   const el = document.createElement("div");
   el.id = "ps-tracker";
@@ -432,7 +456,7 @@ function injectTracker() {
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div>
         <span class="text-[10px] font-black uppercase bg-emerald-400 text-slate-950 px-2.5 py-0.5 rounded-full">📡 Live-Preis-Tracker • Cardmarket</span>
-        <h2 class="text-base sm:text-lg font-black text-white mt-1">Preisalarme: Wir beobachten deine Wunschkarten stündlich</h2>
+        <h2 class="text-base sm:text-lg font-black text-white mt-1">Preisalarme: Wir beobachten deine Karten stündlich</h2>
         <p class="text-xs text-slate-300">Karte suchen → Zielpreis festlegen → Mitteilung, sobald der Preis fällt (oder steigt). Auch neue Inserate unter deinem Zielpreis melden sich sofort.</p>
       </div>
       <span id="ps-alert-usage" class="text-xs font-black text-yellow-300"></span>
@@ -443,7 +467,7 @@ function injectTracker() {
     </div>
     <div id="ps-track-results" class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-xs max-h-80 overflow-y-auto"></div>
     <div id="ps-alert-list" class="space-y-2"></div>`;
-  view.prepend(el);
+  view.append(el);
   const go = () => searchCards($("ps-track-q").value.trim(), "ps-track-results");
   $("ps-track-go").onclick = go;
   $("ps-track-q").addEventListener("keydown", (e) => e.key === "Enter" && go());
@@ -656,15 +680,6 @@ function overridePortfolio() {
     if (!state.user) return origAddApiCard?.(title, img);
     addPortfolioQuick({ name: title, image: img });
   };
-  // Die Arena-Kartensuche öffnet jetzt die Detailansicht mit Live-Preis
-  window.searchTCGdexLive = () => searchCards(($("tcgdex-search-inp")?.value || "").trim(), "tcgdex-results");
-  // Alte lokale Preis-Wächter → echter Preis-Tracker
-  window.addWishlistRule = () => {
-    const q = ($("wish-card")?.value || "").trim();
-    switchTabSafe("flip");
-    if ($("ps-track-q")) { $("ps-track-q").value = q; if (q) searchCards(q, "ps-track-results"); }
-    $("ps-tracker")?.scrollIntoView({ behavior: "smooth" });
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -675,7 +690,41 @@ async function loadListings() {
     const { listings } = await api("/api/listings");
     state.listings = listings;
     renderMarket();
+    try { if (window.currentCard) swipeMarket(window.currentCard()); } catch {}
   } catch {}
+}
+
+/** Angebote im Tausch-Hub zur gerade angezeigten Swipe-Karte. */
+function swipeMarket(item) {
+  const box = $("swipe-market");
+  if (!box || !item) return;
+  const name = String(item.name || item.title || "").toLowerCase().split(" (")[0];
+  const num = String(item.title || "").match(/\((\d+)\//)?.[1];
+  const hits = state.listings.filter((l) => l.card_id === item.id
+    || (name && (l.card_name || "").toLowerCase().includes(name) && (!num || (l.card_name || "").includes(num))));
+  if (!hits.length) {
+    box.innerHTML = `<p class="text-slate-400">Noch kein Angebot für <strong class="text-white">${esc(item.title)}</strong>.</p>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="listCurrentCard()" class="gw-btn-soft py-2">🤝 Als Erste:r inserieren</button>
+        <button onclick="chatAboutCurrentCard()" class="gw-btn-soft py-2">💬 Im Chat suchen</button>
+      </div>`;
+    return;
+  }
+  const best = Math.min(...hits.map((l) => Number(l.price) || Infinity));
+  box.innerHTML = `<p class="text-slate-400">${hits.length} Angebot${hits.length > 1 ? "e" : ""} · ab <strong class="text-emerald-400">${eur(best)}</strong>${item.cm ? ` · Markt ${eur(item.cm)}` : ""}</p>
+    ${hits.slice(0, 3).map((l) => `<div class="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2">
+      <div class="min-w-0"><p class="font-bold text-white truncate">${esc(l.seller || "Sammler")} <span class="text-slate-500 font-semibold">· 📍 ${esc(l.city)}</span></p>
+        <p><strong class="text-emerald-400">${eur(l.price)}</strong> <span class="text-slate-400">· sucht ${esc(l.want)}</span></p></div>
+      ${l.user_id === state.user?.id ? `<span class="text-[10px] text-slate-500 shrink-0">Dein Inserat</span>` : `<button onclick="PS.requestTrade(${l.id})" class="gw-btn-accent px-3 py-1.5 text-[11px] shrink-0">💬 Verhandeln</button>`}
+    </div>`).join("")}`;
+}
+
+let marketMode = "all";
+function marketFilter(k) {
+  marketMode = k;
+  document.querySelectorAll("#market-filter [data-mf]").forEach((b) => b.classList.toggle("is-on", b.dataset.mf === k));
+  if (k === "city" && !state.me?.city) toast("📍 Meine Stadt", state.user ? "Trag im Konto deine Stadt ein, dann siehst du Angebote in deiner Nähe." : "Melde dich an und trag deine Stadt ein.");
+  renderMarket();
 }
 
 const priceBadge = { deal: ["🔥 Top-Deal", "bg-emerald-500 text-slate-950"], fair: ["✓ Fairer Preis", "bg-slate-700 text-slate-100"], high: ["Über Markt", "bg-rose-500/30 text-rose-200"] };
@@ -684,10 +733,13 @@ function renderMarket() {
   const box = $("market-list");
   if (!box) return;
   const f = ($("market-search")?.value || "").toLowerCase().trim();
-  const list = f ? state.listings.filter((m) => (m.card_name || "").toLowerCase().includes(f) || (m.city || "").toLowerCase().includes(f)) : state.listings;
+  const city = (state.me?.city || "").toLowerCase().trim();
+  let list = f ? state.listings.filter((m) => (m.card_name || "").toLowerCase().includes(f) || (m.city || "").toLowerCase().includes(f)) : state.listings;
+  if (marketMode === "deal") list = list.filter((m) => m.priceCheck === "deal" || (m.market_price && m.price < m.market_price));
+  if (marketMode === "city" && city) list = list.filter((m) => (m.city || "").toLowerCase().includes(city));
   if ($("marketTotalBadge")) $("marketTotalBadge").textContent = state.listings.length;
   if ($("statMarketCount")) $("statMarketCount").textContent = state.listings.length;
-  if (!list.length) { box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">Noch keine passenden Inserate. Nutze links das Stapel-Inserat!</div>`; return; }
+  if (!list.length) { box.innerHTML = `<div class="gw-panel p-6 text-center text-xs text-slate-400 md:col-span-2">Keine passenden Angebote. <button onclick="toggleCreateListing(true)" class="underline font-bold text-white">Jetzt selbst inserieren</button></div>`; return; }
   box.innerHTML = list.map(listingCard).join("");
 }
 
@@ -695,7 +747,7 @@ function listingCard(l) {
   {
     const own = l.user_id === state.user?.id;
     const pb = l.priceCheck ? priceBadge[l.priceCheck] : null;
-    return `<div class="poke-glass rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${l.boosted ? "border-2 border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,.25)]" : ""}">
+    return `<div class="gw-panel p-3.5 flex flex-col gap-3 ${l.boosted ? "!border-yellow-400/70" : ""}">
       <div class="flex items-center gap-3 min-w-0">
         <img src="${esc(cdn(l.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
         <div class="min-w-0 text-xs space-y-0.5">
@@ -709,15 +761,15 @@ function listingCard(l) {
           <button onclick="PS.openUser('${esc(l.user_id)}')" class="text-slate-300 hover:text-white font-bold">${esc(l.seller)} ${l.verified ? `<span class="text-cyan-300">✔ Verifiziert</span>` : ""} ${l.rating_count ? `<span class="text-amber-300">⭐ ${l.rating} (${l.rating_count})</span>` : `<span class="text-slate-500">• neu</span>`}</button>
         </div>
       </div>
-      <div class="flex flex-wrap gap-1.5 shrink-0 text-xs">
+      <div class="flex flex-wrap items-center gap-1.5 text-xs">
         ${own ? `
           ${l.boosted ? "" : `<button onclick="PS.boost(${l.id})" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black px-2.5 py-1.5 rounded-xl">🚀 Boost</button>`}
           <button onclick="PS.setListingStatus(${l.id}, 'sold')" class="bg-emerald-500/20 text-emerald-300 font-bold px-2.5 py-1.5 rounded-xl">✓ Verkauft</button>
           <button onclick="PS.setListingStatus(${l.id}, 'removed')" class="bg-rose-500/20 text-rose-300 font-bold px-2.5 py-1.5 rounded-xl" aria-label="Löschen">🗑️</button>`
-        : `<button onclick="PS.requestTrade(${l.id})" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl">🤝 Anfragen</button>
-          <button onclick="PS.report('listing', '${l.id}')" class="bg-slate-800 text-slate-300 font-bold px-2 py-1.5 rounded-xl" title="Melden">⚠️</button>`}
-        <a href="${cm(l.card_name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2.5 py-1.5 rounded-xl">CM</a>
-        <a href="${ebay(l.card_name)}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2.5 py-1.5 rounded-xl">eBay</a>
+        : `<button onclick="PS.requestTrade(${l.id})" class="gw-btn-accent px-3 py-1.5">💬 Verhandeln</button>
+          <button onclick="PS.report('listing', '${l.id}')" class="gw-mini" title="Melden" aria-label="Melden">⚠️</button>`}
+        <button onclick="shareToChat('[inserat:${l.id}]')" class="gw-mini" title="Im Live-Chat teilen">📣 Chat</button>
+        <a href="${cm(l.card_name)}" target="_blank" rel="noopener" class="gw-mini">CM ↗</a>
       </div>
     </div>`;
   }
@@ -825,7 +877,7 @@ function renderTrades(selectId) {
         </button>`).join("")}
       </div>
       <div id="ps-trade-detail" class="md:col-span-3"></div>
-    </div>` : `<p class="text-xs text-slate-400 text-center py-6">Noch keine Tausche. Im Tausch-Hub kannst du bei jedem Inserat „🤝 Anfragen“ tippen.</p>`}`, { wide: true, onClose: stopChat });
+    </div>` : `<p class="text-xs text-slate-400 text-center py-6">Noch keine Tausche. Im Tausch-Hub kannst du bei jedem Angebot „💬 Verhandeln“ tippen.</p>`}`, { wide: true, onClose: stopChat });
   if (selectId && t.find((x) => x.id === selectId)) selectTrade(selectId);
 }
 
@@ -870,13 +922,16 @@ async function selectTrade(id) {
       </div>` : ""}
     </div>
     <div id="ps-chat" class="mt-2 bg-slate-950 rounded-2xl p-3 border border-slate-800 h-56 overflow-y-auto space-y-1.5 text-xs"></div>
-    ${["declined", "cancelled"].includes(x.status) ? "" : `<div class="flex gap-2 mt-2">
+    ${["declined", "cancelled"].includes(x.status) ? "" : `<div class="flex flex-wrap gap-1.5 mt-2 text-[11px]">
+      ${["Deal! 🤝", "Geht da noch was am Preis?", "Zustand? Bitte Fotos von Vorder- & Rückseite 📸", "Versand versichert mit Sendungsnummer?"].map((q) => `<button onclick="PS.quickMsg(${x.id}, ${jsArg(q)})" class="gw-pill">${esc(q)}</button>`).join("")}
+    </div>
+    <div class="flex gap-2 mt-2">
       <input id="ps-chat-in" maxlength="1000" placeholder="Private Nachricht …" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
       <button onclick="PS.sendMsg(${x.id})" class="bg-yellow-400 text-slate-950 font-black px-4 rounded-xl text-xs">Senden</button></div>`}
     ${x.status === "pending" || x.status === "accepted" ? safetyTips() : ""}`;
   $("ps-chat-in")?.addEventListener("keydown", (e) => e.key === "Enter" && sendMsg(x.id));
   await pollChat(id);
-  state.chatTimer = setInterval(() => { if (!document.hidden) pollChat(id); }, 4000);
+  state.chatTimer = setInterval(() => { if (!document.hidden) pollChat(id); }, 2500);
 }
 
 let stars = 0;
@@ -918,6 +973,13 @@ async function sendMsg(id) {
   inp.value = "";
   try { await api(`/api/trades/${id}/messages`, { method: "POST", body: { body: text } }); pollChat(id); }
   catch (e) { inp.value = text; handleError(e); }
+}
+
+function quickMsg(id, text) {
+  const inp = $("ps-chat-in");
+  if (!inp) return;
+  inp.value = text;
+  sendMsg(id);
 }
 
 async function tradeAction(id, action) {
@@ -1091,7 +1153,10 @@ window.PS = {
   sendTradeRequest, openTrades, selectTrade, tradeAction, sendMsg, pickStars, sendReview, openUser, report,
   openNotifications, openAdmin, resolveReport, openGenerator: openAutoReels, runTracker: runTrackerNow, goMarket,
   loadPortfolio, loadListings, listingCard, refreshMe: async () => { await loadMe(); renderHeader(); },
-  closeAll: () => ["ps-notifs", "ps-account"].forEach(closeModalEl),
+  closeAll: () => ["ps-notifs", "ps-account", "ps-card", "ps-pro"].forEach(closeModalEl),
+  swipeMarket, marketFilter, quickMsg,
+  findListing: (id) => state.listings.find((l) => l.id === id),
+  myCity: () => state.me?.city || "",
   ...featureApi,
 };
 hooks.openAccount = openAccount;
@@ -1105,8 +1170,8 @@ async function boot() {
   overridePortfolio();
   overrideMarket();
   initFeatures();
-  initReelStudio();
-  initAutoReels();
+  if (ADMIN_HASHES.includes(location.hash)) loadAdminTools();
+  window.addEventListener("hashchange", () => { if (ADMIN_HASHES.includes(location.hash)) loadAdminTools().then((t) => t.syncReelStudio()).catch(() => {}); });
 
   try {
     const result = await handleAuthCallback();
@@ -1128,7 +1193,8 @@ async function boot() {
   await confirmCheckoutFromUrl();
   const tab = new URLSearchParams(location.search).get("tab");
   if (tab === "trades") openTrades();
-  else if (["swipe", "flip", "community", "map", "portfolio"].includes(tab)) switchTabSafe(tab);
+  else if (tab === "flip") window.PS.showSub("portfolio", "alerts");
+  else if (["swipe", "community", "map", "portfolio"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
   routeAutoReels();
 
