@@ -8,6 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="PokeSwipe" />
   <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/fonts/fonts.css" />
   <title>PokeSwipe & Radar | Die Pokémon TCG Community & Preis-Arena</title>
@@ -545,7 +547,6 @@
           </div>
           <div id="chat-messages" class="space-y-2 h-80 overflow-y-auto bg-slate-950/90 p-3 rounded-xl border border-slate-800 text-xs"></div>
           <div class="flex gap-2">
-            <input id="chat-name" type="text" maxlength="35" placeholder="Dein Name" class="w-1/3 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white" />
             <input id="chat-input" type="text" maxlength="500" placeholder="Nachricht schreiben..." onkeydown="if(event.key==='Enter')sendChatMessage()" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
             <button onclick="sendChatMessage()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black text-xs px-3.5 py-2 rounded-xl">Senden</button>
           </div>
@@ -959,7 +960,7 @@
 
     // PWA INSTALLER
     let deferredInstallPrompt = null;
-    window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstallPrompt = e; });
+    window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstallPrompt = e; window.psInstallPrompt = e; window.dispatchEvent(new Event("ps:installable")); });
     function triggerNativeInstall() {
       if (deferredInstallPrompt) { deferredInstallPrompt.prompt(); closeModal("install-modal"); }
       else alert("Wähle im Browser-Menü 'Zum Startbildschirm hinzufügen'.");
@@ -2198,37 +2199,9 @@
           document.getElementById("liveVisitorCount").textContent = Math.max(1, count);
         });
 
-        // 3. Live-Chat
-        dbRefChat = db.ref("pokeswipe_radar/chat");
-        listen(dbRefChat.limitToLast(60), "value", snap => {
-          const entries = snap.val() ? Object.entries(snap.val()) : [];
-          renderChatList(entries.map(([, v]) => v).filter((m) => !isDummyEntry(m, { maxAgeDays: 30, textFields: ["user", "text"] })).slice(-30));
-        }, (err) => {
-          console.warn("Chat nicht verfügbar", err);
-          const box = document.getElementById("chat-messages");
-          if (box) box.innerHTML = `<p class="text-rose-300 text-center py-6">Live-Chat gerade nicht erreichbar. Bitte Seite später neu laden.</p>`;
-        });
-
-        // 4. Pull-Wall inkl. Echtzeit-Push bei neuen Hits
-        dbRefWall = db.ref("pokeswipe_radar/pullwall");
-        listen(dbRefWall.limitToLast(40), "value", snap => {
-          const prevNewest = wallPosts[0] && wallPosts[0].firebaseKey;
-          const entries = snap.val() ? Object.entries(snap.val()) : [];
-          wallPosts = entries.filter(([k, v]) => safeKey(k) && !isDummyEntry(v, { textFields: ["user", "caption"] }))
-            .map(([k, v]) => ({ firebaseKey: k, ...v })).reverse();
-          renderPullWall();
-          const newest = wallPosts[0];
-          if (initialWallLoaded && newest && newest.firebaseKey !== prevNewest && pushSettings.wall && newest.uid !== fbUid) {
-            if (matchesKeywordFilter(newest.caption)) {
-              triggerSmartPush("📸 Neuer Pull-Wall Hit!", `${String(newest.user || "").slice(0, 35)}: ${String(newest.caption || "").slice(0, 120)}`);
-            }
-          }
-          initialWallLoaded = true;
-        }, (err) => {
-          console.warn("Pull-Wall nicht verfügbar", err);
-          const box = document.getElementById("pullwall-feed");
-          if (box) box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-rose-300">Pull-Wall gerade nicht erreichbar. Bitte später erneut versuchen.</div>`;
-        });
+        // 3. + 4. Live-Chat und Pull-Wall laufen seit Phase 4 über die eigene API mit Login-Pflicht,
+        //        Wort-/Link-Filter, Limits und Moderation (/api/community/*, siehe client/community.js).
+        //        Die alten, anonymen Firebase-Knoten werden nicht mehr gelesen oder beschrieben.
 
         // 5. Tausch-Hub: läuft jetzt sicher über die eigene API (/api/listings), siehe /assets/app.js
 

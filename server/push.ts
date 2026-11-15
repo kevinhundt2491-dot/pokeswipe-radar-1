@@ -2,6 +2,7 @@ import * as webpush from "web-push";
 import { getStore } from "@netlify/blobs";
 import { eq, inArray } from "drizzle-orm";
 import { db, pushSubscriptions } from "../db/index.ts";
+import { sendNativePush } from "./native-push.ts";
 
 type Vapid = { publicKey: string; privateKey: string };
 let vapid: Vapid | null = null;
@@ -30,6 +31,8 @@ export async function getVapid(): Promise<Vapid> {
 
 /** Schickt eine Push-Nachricht an alle Geräte eines Nutzers; abgelaufene Abos werden entfernt. */
 export async function sendPush(userId: string, payload: { title: string; body: string; url: string }) {
+  // Native App (Capacitor): parallel über Firebase Cloud Messaging, falls eingerichtet
+  try { await sendNativePush(userId, payload); } catch (e: any) { console.warn("Native Push fehlgeschlagen", e?.message); }
   const subs = await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
   if (!subs.length) return;
   await getVapid();

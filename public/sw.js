@@ -1,12 +1,14 @@
 // PokeSwipe & Radar – Service Worker: echte Web-Push-Nachrichten (auch bei geschlossener App)
 // und Offline-Modus (App, Sammlung und Bilder bleiben auf Messen & Börsen ohne Netz verfügbar).
-const VERSION = "v6";
+const VERSION = "v7";
 const STATIC = `ps-static-${VERSION}`;
 const API = "ps-api";
 const IMG = "ps-img";
-const SHELL = ["/", "/assets/app.js", "/assets/scan-worker.js", "/assets/tailwind.css", "/theme.css", "/fonts/fonts.css", "/icon.svg", "/manifest.json"];
+const PAGES = "ps-pages";
+const SHELL = ["/", "/assets/app.js", "/assets/scan-worker.js", "/assets/tailwind.css", "/theme.css", "/fonts/fonts.css", "/icon.svg", "/manifest.json", "/icons/icon-192.png", "/icons/badge-96.png", "/card-fallback.svg"];
 // Nur diese Daten werden für den Offline-Modus zwischengespeichert (beim Abmelden gelöscht)
-const OFFLINE_API = /^\/api\/(me|portfolio|wishlist|alerts|calendar|badges|listings|sets\/tracked|sealed|scan\/index)(\?|$)/;
+// Phase 4: zusätzlich Offline-Katalog (Sets, Swipe-Stapel), Community-Feed, Bestellungen und öffentliche Profile
+const OFFLINE_API = /^\/api\/(me|portfolio|wishlist|alerts|calendar|badges|listings|sets\/tracked|sealed|scan\/index|catalog\/(meta|sets)|swipe\/(sets|deck)|community\/(feed|me)|orders|market\/meta|me\/public-profile|u\/[^/?]+)(\?|$)/;
 const CDN_HOSTS = ["www.gstatic.com"];
 
 self.addEventListener("install", (event) => {
@@ -61,8 +63,13 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin === self.location.origin) {
-    if (req.mode === "navigate" && !/^\/(karte|api|\.netlify)\//.test(url.pathname) && url.pathname !== "/sitemap.xml") {
+    // Nur die App selbst (/, /index.html, /shop/…) als Offline-Startseite – Server-Seiten wie /karte, /u, /p, /pokemon
+    // dürfen nicht als Startseite zwischengespeichert werden
+    if (req.mode === "navigate" && (url.pathname === "/" || url.pathname === "/index.html" || url.pathname.startsWith("/shop/"))) {
       event.respondWith(networkFirst(req, STATIC, "/"));
+    } else if (req.mode === "navigate" && /^\/(karte|u|p|set|sets|pokemon|sealed|trends)(\/|$)/.test(url.pathname)) {
+      // Öffentliche Seiten: frisch laden, offline die zuletzt gesehene Version
+      event.respondWith(networkFirst(req, PAGES).catch(async () => (await caches.match("/")) || Response.error()));
     } else if (url.pathname.startsWith("/.netlify/images") || url.pathname.startsWith("/api/images/")) {
       event.respondWith(cacheFirstImage(req));
     } else if (OFFLINE_API.test(url.pathname + url.search)) {
@@ -89,8 +96,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "PokeSwipe & Radar";
   event.waitUntil(self.registration.showNotification(title, {
     body: data.body || "",
-    icon: "/icon.svg",
-    badge: "/icon.svg",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/badge-96.png",
     tag: data.tag || undefined,
     data: { url: typeof data.url === "string" && (data.url.startsWith("/") || data.url.startsWith("https://")) ? data.url : "/" },
   }));

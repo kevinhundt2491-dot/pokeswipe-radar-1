@@ -69,6 +69,27 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
   gewichtet nach Wert; Filter nach Sprache, Set, Seltenheit, Preisspanne, Wunschliste und „Nur Unter-Marktwert“ (ab 15 %,
   Marktwert ab 3 €). Rechts wischen merkt die Karte und setzt sie mit Konto auf die Wunschliste (`client/arena.js`).
   Ohne Verbindung bleibt der feste Chase-Katalog aktiv
+- **Authentifizierte Community (Phase 4)** – Pull-Wall, Kommentare und Live-Chat laufen über die eigene API mit Login-Pflicht
+  (Netlify Identity, bestätigte E-Mail) statt anonym über Firebase (`server/community.ts`, `client/community.js`).
+  Trust-Score 0–100 (Kontoalter, E-Mail, Tausche/Käufe, Bewertungen, Abo, verifizierter Verkäufer, Verstöße) mit Stufen
+  🌱 Neu · ✅ Bekannt · 🛡️ Vertrauenswürdig · 🏅 Top-Sammler. Schreib-Limits je Stufe (datenbankgestützt), Wort-/Link-Filter
+  (Beleidigungen auch mit Ersatzzeichen, Kurz-/Einladungslinks, Telefonnummern, „PayPal Freunde“, Schreien, Spam, Doppel-Posts;
+  fremde Links erst ab „Bekannt“, bis „Top“ mit Prüfung) – Regeln in `server/community-logic.ts`. Melden, Blockieren (beidseitig,
+  auch für Tausch- und Kaufanfragen), automatisches Ausblenden ab 3 Meldungen, Admin-Moderation (entfernen, wiederherstellen,
+  stummschalten, sperren/entsperren, Protokoll)
+- **Öffentliche Sammler-Profile & Social Feed** – `/u/<name>` (nur mit Zustimmung) mit Showcase, Tausch-Ordner (Inserate +
+  doppelte Karten), Wunschliste, Abzeichen, Wert-Stufe statt Euro-Betrag, Bewertungen, Follower und letzten Pulls; Folgen,
+  Feed „⭐ Gefolgt“, teilbare Beiträge `/p/<id>`, dynamische OpenGraph-Bilder (JPEG-Kartenfächer, `/api/og/…`) für WhatsApp & Co.,
+  Teil-Sitemap `/sitemaps/profiles.xml` (`server/profiles.ts`, `server/og-image.ts`, `client/profile.js`)
+- **Marktplatz mit Käuferschutz (Treuhand)** – Stripe Connect Express für Verkäufer, Sofort-Kauf und verbindliche Preisangebote
+  (ab 50 %), Zahlung an die Plattform, Lieferadresse erst nach Zahlung, Auszahlung nach Erhalt-Bestätigung oder automatisch
+  14 Tage nach Versand, Erstattung bei fehlendem Versand nach 7 Tagen, Reklamationen mit Admin-Entscheidung, Bewertungen.
+  Provision des Verkäufers: Free 6,5 %, Premium 5 %, Pro-Pass 3 % (min. 0,49 €). Fristen-Job `market-escrow` alle 15 Min.
+  (`server/market.ts`, `server/market-logic.ts`, `client/market.js`)
+- **PWA Deluxe & native App** – Manifest mit PNG-/Maskable-Icons und Shortcuts, Installations-Hinweis (Android-Dialog bzw.
+  iPhone-Anleitung „Zum Home-Bildschirm“), Offline-Katalog im Service Worker. Capacitor-Konfiguration (`capacitor.config.ts`,
+  `npm run cap:add|cap:sync|cap:ios|cap:android`, Berechtigungs-Skript `scripts/cap-native-setup.mjs`), Push in der App über
+  Firebase Cloud Messaging, Universal/App Links – Anleitung in `native/README.md`
 
 ## Echte Karten & Preise
 
@@ -192,6 +213,13 @@ Werte ändern: `server/plans.ts`.
    **Kündigungsbestätigung per E-Mail (optional):** `RESEND_API_KEY` und `MAIL_FROM` (z. B. `PokeSwipe <kontakt@pokeswipe-radar.de>`)
    setzen. Ohne diese Variablen wird die Bestätigung auf der Seite angezeigt, als Datei angeboten und im Konto hinterlegt.
 9. **Set-Releases:** Als Admin unter Community → Kalender eintragen (Art „Set-Release“). Nutzer können sich erinnern lassen.
+10. **Marktplatz mit Käuferschutz:** Im Stripe-Dashboard **Connect** aktivieren (Plattform-Profil: „Marktplatz“, Verkäufer als
+   Express-Konten, Land Deutschland). Weitere Schlüssel sind nicht nötig – der bestehende `STRIPE_SECRET_KEY` und Webhook genügen.
+   Reklamationen und Treuhand-Summen stehen in der Admin-Zentrale unter „⚖️ Marktplatz & Reklamationen“.
+11. **Community:** Läuft ohne Einrichtung. Chat und Pull-Wall nutzen Firebase nicht mehr – die aktualisierten Regeln aus
+   `firebase/database.rules*.json` (Chat/Pull-Wall gesperrt) in der Firebase-Konsole übernehmen.
+12. **Native App (optional):** siehe `native/README.md` – Push über `FCM_SERVICE_ACCOUNT`, App-Links über `APPLE_TEAM_ID`
+   und `ANDROID_CERT_SHA256`.
 
 ## Auto-Reels & Make.com
 

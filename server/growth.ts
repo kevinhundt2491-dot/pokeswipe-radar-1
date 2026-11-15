@@ -690,6 +690,18 @@ export function registerGrowth(app: any, hlp: {
       restockAlerts: rows(await db.execute(sql`SELECT * FROM restock_subscriptions WHERE user_id = ${userId}`)),
       restockReports: rows(await db.execute(sql`SELECT id, title, shop, url, city, price, status, created_at FROM restock_drops WHERE reported_by = ${userId}`)),
       notifications: await db.select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt)).limit(500),
+      // Phase 4: Community, Follower, Blockierungen, Marktplatz-Bestellungen
+      communityPosts: rows(await db.execute(sql`SELECT id, caption, image, card_id, status, like_count, comment_count, created_at FROM community_posts WHERE user_id = ${userId}`)),
+      communityComments: rows(await db.execute(sql`SELECT id, post_id, body, status, created_at FROM community_comments WHERE user_id = ${userId}`)),
+      chatMessages: rows(await db.execute(sql`SELECT id, body, status, created_at FROM chat_messages WHERE user_id = ${userId} ORDER BY id DESC LIMIT 2000`)),
+      likes: rows(await db.execute(sql`SELECT post_id, created_at FROM community_likes WHERE user_id = ${userId}`)),
+      following: rows(await db.execute(sql`SELECT p.display_name, f.created_at FROM follows f JOIN profiles p ON p.user_id = f.followee_id WHERE f.follower_id = ${userId}`)),
+      followersCount: Number(rows(await db.execute(sql`SELECT count(*)::int AS n FROM follows WHERE followee_id = ${userId}`))[0]?.n ?? 0),
+      blocked: rows(await db.execute(sql`SELECT p.display_name, b.created_at FROM user_blocks b JOIN profiles p ON p.user_id = b.blocked_id WHERE b.blocker_id = ${userId}`)),
+      marketOrders: rows(await db.execute(sql`SELECT id, listing_id, title, status, price_cents, shipping_cents, fee_cents, carrier, tracking_number, dispute_reason, paid_at, shipped_at, released_at, created_at,
+        CASE WHEN buyer_id = ${userId} THEN 'buyer' ELSE 'seller' END AS role,
+        CASE WHEN buyer_id = ${userId} THEN shipping_address END AS my_shipping_address
+        FROM market_orders WHERE buyer_id = ${userId} OR seller_id = ${userId}`)),
     };
     return c.body(JSON.stringify(data, null, 2), 200, {
       "Content-Type": "application/json; charset=utf-8",

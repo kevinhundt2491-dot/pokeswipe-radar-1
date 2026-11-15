@@ -78,6 +78,8 @@ function bearer() {
 }
 
 async function api(path, { method = "GET", body } = {}) {
+  // Schreibende Anfragen immer als JSON senden – der Server lehnt sonst ab (CSRF-Schutz, auch für DELETE ohne Inhalt)
+  if (method !== "GET" && method !== "HEAD" && body === undefined) body = {};
   const headers = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const token = bearer();
