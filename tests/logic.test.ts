@@ -151,3 +151,19 @@ test("CSV: Export aus anderen Sammler-Apps (englische Spalten wie Average Cost P
   assert.equal(rows[0].quantity, 2);
   assert.equal(rows[0].purchasePrice, 310.5);
 });
+
+test("Voiceover: Satz-Zeitstempel aus dem ElevenLabs-Alignment", async () => {
+  const { marksFromAlignment } = await import("../server/voiceover.ts");
+  const lines = ["Hallo.", "Tschüss."];
+  const text = lines.join(" ");
+  const chars = [...text];
+  const al = { characters: chars, character_start_times_seconds: chars.map((_, i) => i * 0.1), character_end_times_seconds: chars.map((_, i) => i * 0.1 + 0.1) };
+  const { marks, duration } = marksFromAlignment(lines, al);
+  assert.equal(marks.length, 2);
+  assert.equal(marks[0].start, 0);
+  assert.ok(Math.abs(marks[1].start - 0.7) < 1e-9);
+  assert.ok(Math.abs(duration - 1.5) < 1e-9);
+  // passt das Alignment nicht zum Text, wird nach Zeichenanzahl verteilt
+  const fb = marksFromAlignment(lines, { characters: ["x"], character_start_times_seconds: [0], character_end_times_seconds: [3] });
+  assert.ok(fb.marks[1].start > 0 && fb.marks[1].start < 3);
+});

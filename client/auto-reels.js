@@ -6,7 +6,7 @@
 // Nutzt die Zeichen-Engine, Farben, Schriften und echten Karten (REAL_CARDS) des Admin-Reel-Studios.
 import { reelEngine as E } from "./reel-studio.js";
 import { toast, hooks, state, api } from "./core.js";
-import { pickAvMime, unlockAudio, startSoundtrack, cuesFromTimeline, placeVoice } from "./reel-audio.js";
+import { pickAvMime, unlockAudio, startSoundtrack, cuesFromTimeline } from "./reel-audio.js";
 
 const { W, H, FPS, C, disp, font, eur, km, clamp, prog, lerp, eOut, eIn, eInOut, eBack, rgba,
   rr, circle, text, wrap, drawCard, drawBackground, dexBar, caption, watermark, pill, button, tapRipple } = E;
@@ -21,15 +21,17 @@ const base = {
   alert: "🚨 PREIS-ALARM: Wunschbudget erreicht auf Cardmarket & eBay!",
   radarLabel: (n) => `📡 Live-Radar · ${n} Deals unter Cardmarket-Trend`,
 };
+// Gemeinsamer Abschluss-Satz: nennt alle vier Kernfunktionen (passend zu den Badges im CTA-Screen)
+const VO_CTA = "Preis-Check, Binder-Scanner, Tausch-Match und Flip-Radar, alles in einer App. Teste PokeSwipe Radar jetzt kostenlos, den Link findest du in der Bio.";
 const EPISODES = [
   { ...base, n: 1,
-    vo: ["Folge eins: der Binder-Scanner.","Halte deine Karte einfach in die Kamera. PokeSwipe Radar erkennt sie sofort und zeigt dir den aktuellen Cardmarket-Preis.","Mit einem Tippen landet sie in deinem digitalen Binder, und du siehst jederzeit, was deine Sammlung wert ist.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Weißt du, was deine frischen Pulls wirklich wert sind?","Mit dem Binder-Scanner hältst du deine Karte einfach in die Kamera. PokeSwipe Radar erkennt sie sofort und zeigt dir den aktuellen Cardmarket-Preis.","Mit einem Tippen landet sie in deinem digitalen Binder, und du siehst jederzeit, was deine Sammlung wert ist.",VO_CTA],
     capHook: "Weißt du, was deine Pulls wirklich wert sind? 👀", tags: "#binderscanner #cardmarket",
     title: "Virtueller Binder-Scanner & Live Cardmarket-Preis-Check",
     slogan: "Frische Pulls direkt in den digitalen Binder scannen und Cardmarket-Preise live prüfen! ⚡️💎",
     scenes: [["scan", 3], ["binder", 2]], ctaTag: "Scannen, sammeln, Preise live checken" },
   { ...base, n: 2,
-    vo: ["Folge zwei: das Tausch-Match.","Wische nach links, wenn dich eine Karte nicht interessiert, und nach rechts, wenn du sie haben möchtest.","Wollt ihr beide tauschen, gibt es ein Match mit einem Sammler aus deiner Nähe.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Schluss mit endlosem Suchen in Tauschgruppen.","Beim Tausch-Match wischst du nach links, wenn dich eine Karte nicht interessiert, und nach rechts, wenn du sie haben möchtest. So einfach wie bei einer Dating-App.","Wollt ihr beide tauschen, gibt es sofort ein Match mit einem Sammler aus deiner Nähe.",VO_CTA],
     capHook: "Schluss mit endlosem Suchen in Tauschgruppen. 💚", tags: "#pokemontausch #tauschen",
     title: "Tinder-Swipe für Tauschkarten & lokales Match",
     slogan: "Swipe nach rechts für dein nächstes Tausch-Match mit Sammlern direkt in deiner Nähe! 💚🤝",
@@ -37,20 +39,20 @@ const EPISODES = [
     swipe: "Swipe rechts = Tausch-Match 📍", alert: "🤝 TAUSCH-MATCH: Ein Sammler in deiner Nähe will tauschen!",
     radarLabel: (n) => `📡 Tausch-Radar · ${n} Sammler im Umkreis von 10 km`, ctaTag: "Sicher tauschen mit Sammlern in deiner Nähe" },
   { ...base, n: 3,
-    vo: ["Folge drei: der Flip-Radar.","Der Radar prüft rund um die Uhr eBay und Cardmarket und schlägt Alarm, sobald eine Karte unter dem Trendpreis angeboten wird.","Dazu siehst du auf einen Blick, welche Preise gerade steigen und welche fallen.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Das nächste Schnäppchen wartet schon. Du musst es nur rechtzeitig sehen.","Der Flip-Radar prüft rund um die Uhr eBay und Cardmarket und schlägt sofort Alarm, sobald eine Karte unter dem Trendpreis angeboten wird.","Dazu siehst du auf einen Blick, welche Preise gerade steigen und welche fallen.",VO_CTA],
     capHook: "Das nächste Schnäppchen wartet schon – du musst es nur rechtzeitig sehen. 🚨", tags: "#flipradar #schnäppchen",
     title: "Live Flip-Radar & Schnäppchen-Alarm für eBay/Cardmarket",
     slogan: "Der Flip-Radar schlägt Alarm – Schnäppchen unter Cardmarket-Trend auf eBay & Cardmarket! 🚨💸",
     scenes: [["radar", 3], ["movers", 1.3]], dealCount: 3,
     radarLabel: (n) => `📡 Flip-Radar · ${n} Deals unter Trend`, ctaTag: "Nie wieder ein Schnäppchen verpassen" },
   { ...base, n: 4,
-    vo: ["Folge vier: dein Portfolio.","Jede gescannte Karte fließt direkt in deine Sammlung.","So siehst du den Gesamtwert live, mit dem Verlauf der letzten dreißig Tage.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Deine Sammlung ist wahrscheinlich viel mehr wert, als du denkst.","Jede Karte, die du scannst, fließt direkt in dein persönliches Portfolio.","So siehst du den Gesamtwert deiner Sammlung live, mit dem Verlauf der letzten dreißig Tage und dem aktuellen Cardmarket-Preis jeder einzelnen Karte.",VO_CTA],
     capHook: "Deine Sammlung ist mehr wert, als du denkst. 📈", tags: "#portfolio #sammlungswert",
     title: "Portfolio-Wert & Sammlungs-Tracker",
     slogan: "Dein Portfolio-Wert live im Blick – jede Karte, jeder Euro, jedes Set! 📈💼",
     scenes: [["scan", 1.4], ["portfolio", 3]], scan: "Karte scannen = Portfolio wächst 📈", ctaTag: "Deine Sammlung. Dein Wert. Live." },
   { ...base, n: 5,
-    vo: ["Folge fünf: Tauschen vor Ort.","Die Umkreiskarte zeigt dir Tauschpartner in deiner Nähe und schlägt einen sicheren Treffpunkt für die Übergabe vor.","Und der Radar meldet sich, sobald jemand tauschen möchte.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Tauschen wie früher auf dem Schulhof, nur deutlich sicherer.","Die Umkreiskarte zeigt dir Tauschpartner in deiner Nähe und schlägt einen sicheren, öffentlichen Treffpunkt für die Übergabe vor.","Und der Radar meldet sich sofort, sobald ein Sammler in der Nähe mit dir tauschen möchte.",VO_CTA],
     capHook: "Tauschen wie früher auf dem Schulhof – nur sicherer. 📍", tags: "#pokemontausch #lokaltauschen",
     title: "Umkreis-Radar auf der Karte für sichere Übergabe vor Ort",
     slogan: "Tauschpartner im Umkreis finden und sicher vor Ort übergeben! 📍🛡️",
@@ -58,32 +60,32 @@ const EPISODES = [
     alert: "📍 IN DEINER NÄHE: Tauschpartner gefunden – sicher vor Ort übergeben!",
     radarLabel: (n) => `📡 Umkreis-Radar · ${n} Sammler bis 10 km`, ctaTag: "Lokal tauschen – sicher & persönlich" },
   { ...base, n: 6,
-    vo: ["Folge sechs: die Pull-Wall.","Hier zeigt die Community ihre besten Pulls, jeweils mit dem aktuellen Cardmarket-Wert.","Du hast selbst etwas Besonderes gezogen? Einfach scannen und posten.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Dieser Pull verdient ein großes Publikum.","Auf der Pull-Wall zeigt die Community ihre besten Hits, jeweils mit dem aktuellen Cardmarket-Wert. Hier siehst du sofort, was gerade gezogen wird.","Du hast selbst etwas Besonderes gezogen? Dann scanne die Karte einfach und poste sie direkt auf der Wall.",VO_CTA],
     capHook: "Dieser Pull verdient ein Publikum. 🔥", tags: "#pullwall #packopening",
     title: "Pull-Wall & Community-Feed für die besten Hits",
     slogan: "Zeig deine krassesten Pulls auf der Pull-Wall und feier die Hits der Community! 📸🔥",
     scenes: [["pullwall", 3], ["scan", 1.2]], scan: "Pull gezogen? Ab auf die Wall! 📸", ctaTag: "Die Community für deutsche Sammler" },
   { ...base, n: 7,
-    vo: ["Folge sieben: der Tausch-Chat.","Du hast die passende Karte gefunden? Dann schreib direkt an.","Im Chat schickst du dein Angebot, klärst die Details und bestätigst den Tausch, ganz ohne Gebühren.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Vom Match zum fertigen Tausch in nur wenigen Nachrichten.","Du hast über das Tausch-Match die passende Karte gefunden? Dann schreib den Sammler direkt an.","Im Tausch-Chat schickst du dein Angebot, klärst alle Details und bestätigst den Tausch mit einem Tippen, ganz ohne Gebühren.",VO_CTA],
     capHook: "Vom Match zum fertigen Tausch in wenigen Nachrichten. 💬", tags: "#pokemontausch #tauschchat",
     title: "P2P Tausch-Hub & Direkt-Chat",
     slogan: "Tausch-Hub mit Direkt-Chat – Angebot schicken, Deal klarmachen, fertig! 💬🤝",
     scenes: [["swipe", 1.2], ["chat", 3]], swipeDirs: [-1, 1], swipe: "Karte gefunden? Direkt anschreiben 💬",
     ctaTag: "Tauschen ohne Gebühren – direkt im Chat" },
   { ...base, n: 8,
-    vo: ["Folge acht: die Top-Mover.","Welche Karten steigen gerade, und welche verlieren an Wert? Hier siehst du es sofort.","Fällt ein Preis deutlich, meldet sich der Radar mit einem Alarm.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Diese Karten bewegen gerade den Markt.","Welche Karten steigen gerade, und welche verlieren an Wert? Die Top-Mover zeigen es dir sofort, mit echten Cardmarket-Daten der letzten dreißig Tage.","Und fällt ein Preis deutlich, meldet sich der Flip-Radar sofort mit einem Alarm auf deinem Handy.",VO_CTA],
     capHook: "Diese Karten bewegen gerade den Markt. 📊", tags: "#cardmarket #preischeck",
     title: "Top-Mover & Preissturz-Analyse aktueller Sets",
     slogan: "Top-Mover & Preisstürze – diese Karten bewegen gerade den Markt! 📊📉",
     scenes: [["movers", 3], ["radar", 1.3]], dealCount: 2, ctaTag: "Markt verstehen. Clever kaufen." },
   { ...base, n: 9,
-    vo: ["Folge neun: die Wunschliste.","Trag deine Wunschkarten ein, und die App findet sie automatisch bei anderen Sammlern.","Gibt es einen Treffer, geht es direkt weiter in den Chat.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Deine Wunschkarte liegt vielleicht schon im Binder von jemandem in deiner Nähe.","Trag deine Wunschkarten einfach in die Wunschliste ein. PokeSwipe Radar gleicht sie automatisch mit den Bindern anderer Sammler ab.","Gibt es einen Treffer, geht es direkt weiter in den Chat.",VO_CTA],
     capHook: "Deine Wunschkarte liegt vielleicht schon im Binder von jemandem in deiner Nähe. ⭐", tags: "#wunschliste #pokemontausch",
     title: "Automatischer Wunschlisten-Abgleich beim Tauschen",
     slogan: "Deine Wunschliste tauscht mit – der automatische Abgleich findet sofort passende Karten! ⭐🔄",
     scenes: [["wishlist", 3], ["chat", 1.6]], ctaTag: "Wunschkarten finden – automatisch" },
   { ...base, n: 10,
-    vo: ["Folge zehn: die komplette App.","Karten scannen und Preise prüfen.","Wischen und Tauschpartner finden.","Deals unter dem Trendpreis entdecken.","Sicher vor Ort tauschen.","Den Wert deiner Sammlung verfolgen.","Und deine besten Pulls zeigen.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    vo: ["Eine App für alles, was Sammler wirklich brauchen.","Karten scannen und Cardmarket-Preise live prüfen.","Nach rechts wischen und Tauschpartner finden.","Deals unter dem Trendpreis sofort entdecken.","Sicher vor Ort mit Sammlern tauschen.","Den Wert deiner Sammlung live verfolgen.","Und deine besten Pulls mit der ganzen Community teilen.","Das alles steckt in PokeSwipe Radar. Teste die App jetzt kostenlos, den Link findest du in der Bio."],
     capHook: "Eine App für alles, was Sammler brauchen. 🚀", tags: "#pokemonapp #cardmarket",
     title: "All-in-One App-Tour",
     slogan: "Scannen, Swipen, Tauschen & Sparen – die komplette Pokémon-TCG-App für deutsche Sammler! 🚀🔥",
@@ -91,19 +93,35 @@ const EPISODES = [
     ctaTag: "Binder, Swipe, Radar, Tausch & Portfolio" },
 ];
 
-const DURATIONS = [15, 20, 30, 45, 60];
-// 30 s: genug Zeit, damit die Sprecherin jede Szene in natürlichem Tempo erklärt (≈ 31 MB bei 8 Mbit/s)
-let duration = 30;
+// Jedes Reel ist exakt 30 Sekunden lang (Bild und Ton) – Sprecherin, Musik und Animationen füllen die volle Länge.
+const REEL_SECONDS = 30;
+const DURATIONS = [REEL_SECONDS];
+const duration = REEL_SECONDS;
+// Sprecherin setzt nach VO_LEAD s ein und ist spätestens VO_TAIL s vor dem Ende fertig (Musik klingt danach aus)
+const VO_LEAD = 0.35, VO_TAIL = 0.45;
+// Ideallänge der Sprachaufnahme; akzeptiert wird alles zwischen VO_MIN und VO_MAX (sonst Tempo nachjustieren)
+const VO_MAX = REEL_SECONDS - VO_LEAD - VO_TAIL, VO_IDEAL = VO_MAX - 0.5, VO_MIN = VO_MAX - 2.2;
+// Szenenwechsel kommen kurz VOR dem zugehörigen Satz – das Bild ist da, wenn das Wort fällt
+const CUT_PRE = 0.18;
+// Echte Satz-Zeitstempel je Episode (aus der Matilda-Aufnahme): Episode -> [{ start, end }] in Videozeit
+const voiceMarks = new Map();
 
-/** Szenen-Zeitplan: Hook + Feature-Szenen (nach Gewicht) + Call to Action, auf die Länge D skaliert. */
-function timeline(ep, D) {
-  const hook = clamp(D * 0.12, 2, 3.2), cta = clamp(D * 0.15, 2.6, 4.5);
-  const rest = D - hook - cta, sum = ep.scenes.reduce((s, [, w]) => s + w, 0);
-  const out = [["hook", 0, hook]];
-  let at = hook;
-  ep.scenes.forEach(([name, w]) => { const d = rest * (w / sum); out.push([name, at, at + d]); at += d; });
-  out.push(["cta", at, D]);
-  return out;
+/** Geschätzte Satzzeiten (nach Zeichenanzahl) – für Vorschau und Aufnahmen ohne Sprecherin. */
+function estimateMarks(ep) {
+  const lens = ep.vo.map((l) => l.length + 1), total = lens.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  return lens.map((n) => { const start = VO_LEAD + (acc / total) * VO_IDEAL; acc += n; return { start, end: VO_LEAD + (acc / total) * VO_IDEAL }; });
+}
+
+/**
+ * Szenen-Zeitplan: Hook, Feature-Szenen und Call to Action – jede Szene beginnt mit "ihrem" gesprochenen Satz
+ * und dauert genau so lange, bis der nächste Satz beginnt. So passen Bild und Ton über die vollen 30 s zusammen.
+ */
+function timeline(ep, D = duration) {
+  const marks = voiceMarks.get(ep.n) || estimateMarks(ep);
+  const names = ["hook", ...ep.scenes.map(([name]) => name), "cta"];
+  const starts = names.map((_, i) => (i === 0 ? 0 : clamp(marks[i].start - CUT_PRE, 0.8, D - 2)));
+  return names.map((name, i) => [name, starts[i], i === names.length - 1 ? D : starts[i + 1]]);
 }
 
 // Die vier Kernfunktionen – stehen in jeder Caption und auf dem Abschluss-Screen jedes Reels
@@ -130,6 +148,8 @@ function reelCaption(ep) {
     "",
     "Das steckt in PokeSwipe Radar:",
     ...CORE_FEATURES.map(([, , long]) => `✅ ${long}`),
+    "",
+    "💡 Nie wieder überzahlen, nie wieder einen Deal verpassen und in Sekunden den passenden Tauschpartner finden.",
     "",
     "👉 Jetzt kostenlos starten: Link in der Bio oder auf pokeswipe-radar.de",
     "💬 Welche Karte jagst du gerade? Schreib es in die Kommentare!",
@@ -658,7 +678,8 @@ const save = (k, v) => { try { localStorage.setItem(k, v); } catch { /* privater
 // Video-Bitrate (Mbit/s) – bestimmt die Dateigröße: MB ≈ Mbit/s × Sekunden ÷ 8
 // Mindestens 8 Mbit/s für gestochen scharfe Karten, Holo-Effekte und UI-Texte; höhere Stufen nutzen
 // das Make.com-Core-Limit (100 MB) bei kurzen Reels weiter aus. Alte, niedrigere Einstellungen werden angehoben.
-const BITRATES = [8, 10, 12, 16];
+// 30 s × 24 Mbit/s ≈ 95 MB – die höchste Stufe passt noch unter das Make.com-Core-Limit von 100 MB
+const BITRATES = [8, 10, 12, 16, 20, 24];
 const BITRATE_KEY = "pokeswipe.autoReels.mbit.v2";
 let mbit = BITRATES.includes(Number(load(BITRATE_KEY, 8))) ? Number(load(BITRATE_KEY, 8)) : 8;
 // Maximale Dateigröße, die das Make.com-Szenario annimmt (je nach Make-Tarif). Größere Reels werden
@@ -675,29 +696,45 @@ const MATILDA_ID = "XrExE9yKIg1WjnnlVkGX";
 let voiceOn = load(VOICE_KEY, "1") !== "0";
 const voiceModes = new Map(); // Episode -> "voice" | "off" (geht als Feld voiceover_mode an Make)
 const voiceId = MATILDA_ID;
-const voiceCache = new Map(); // Stimme|Text -> AudioBuffer (pro Sitzung; serverseitig zusätzlich in Blobs)
+const voiceCache = new Map(); // Skript|Tempo -> { buffer, marks, duration } (pro Sitzung; serverseitig zusätzlich in Blobs)
 const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
+const SPEED_MIN = 0.9, SPEED_MAX = 1.12; // gleicher Spielraum wie auf dem Server – Tonhöhe bleibt unverändert
 
-/** Sprecher-Clips einer Episode holen (Server: ElevenLabs/OpenAI TTS), dekodieren und auf die Szenen legen. */
+async function narrationTake(ep, speed, ac) {
+  const k = `${voiceId}|${speed}|${ep.vo.join("\n")}`;
+  if (voiceCache.has(k)) return voiceCache.get(k);
+  const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines: ep.vo, speed } });
+  if (!res?.audio || !Array.isArray(res.marks) || res.marks.length !== ep.vo.length) throw new Error("Sprachausgabe unvollständig");
+  const buffer = await ac.decodeAudioData(b64ToBuf(res.audio));
+  const take = { buffer, marks: res.marks, speech: Number(res.duration) || buffer.duration, speed: res.speed ?? speed };
+  voiceCache.set(k, take);
+  return take;
+}
+
+/**
+ * Sprecheraufnahme einer Episode holen: das ganze Skript in EINEM natürlichen Take (Matilda), damit die
+ * Stimme ohne Schnitte und künstliche Pausen von Sekunde 0 bis kurz vor Sekunde 30 durchspricht.
+ * Passt die Länge nicht, wird das Sprechtempo minimal (tonhöhenneutral) angepasst und neu gesprochen.
+ * Die Satz-Zeitstempel bestimmen anschließend die Szenenwechsel (voiceMarks → timeline()).
+ */
 async function loadVoice(ep, D, ac) {
-  const tl = timeline(ep, D);
-  if (!Array.isArray(ep.vo) || ep.vo.length !== tl.length) throw new Error(`Sprechertext passt nicht zu den Szenen von Episode ${ep.n}`);
-  const vk = (text) => `${voiceId}|${text}`;
-  // Nachbarsätze als Kontext mitschicken → durchgehende, natürliche Satzmelodie über das ganze Reel
-  const missing = ep.vo.map((text, i) => ({ id: String(i), text, prev: ep.vo[i - 1] || "", next: ep.vo[i + 1] || "" }))
-    .filter((l) => !voiceCache.has(vk(l.text)));
-  if (missing.length) {
-    const res = await api("/api/admin/voiceover", { method: "POST", body: { lines: missing.map((l, i) => ({ ...l, id: String(i) })) } });
-    for (const clip of res.clips || []) {
-      const line = missing[Number(clip.id)];
-      if (!line) continue;
-      voiceCache.set(vk(line.text), await ac.decodeAudioData(b64ToBuf(clip.audio)));
-    }
+  if (!Array.isArray(ep.vo) || ep.vo.length !== ep.scenes.length + 2) throw new Error(`Sprechertext passt nicht zu den Szenen von Episode ${ep.n}`);
+  const takes = [];
+  let speed = 1;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const take = await narrationTake(ep, speed, ac);
+    takes.push(take);
+    if (take.speech >= VO_MIN && take.speech <= VO_MAX) break;
+    const next = Math.round(clamp(speed * (take.speech / VO_IDEAL), SPEED_MIN, SPEED_MAX) * 100) / 100;
+    if (next === speed) break;
+    speed = next;
   }
-  const clips = tl.map(([, a, b], i) => ({ id: tl[i][0], at: a, end: b, buffer: voiceCache.get(vk(ep.vo[i])), keep: i === 0 || i === tl.length - 1 }));
-  if (clips.some((c) => !c.buffer)) throw new Error("Sprachausgabe unvollständig");
-  const placed = placeVoice(clips, D);
-  return { placed, dropped: clips.length - placed.length };
+  // Bester Take: passt in die 30 s und füllt sie am vollständigsten
+  const fitting = takes.filter((t) => t.speech <= VO_MAX && VO_LEAD + t.buffer.duration <= D);
+  const take = fitting.sort((a, b) => b.speech - a.speech)[0];
+  if (!take) throw new Error(`Sprechertext ist zu lang für ${D} s (${takes[takes.length - 1].speech.toFixed(1)} s gesprochen)`);
+  voiceMarks.set(ep.n, take.marks.map((m) => ({ start: VO_LEAD + m.start, end: VO_LEAD + m.end })));
+  return { placed: [{ id: "narration", start: VO_LEAD, stop: VO_LEAD + take.buffer.duration, buffer: take.buffer, rate: 1 }], speech: take.speech, speed: take.speed };
 }
 const estMb = (D = duration) => (mbit * D) / 8 * 1.05; // +5 % Container-Overhead
 
@@ -738,7 +775,7 @@ function build() {
         <div class="ar-col">
           <div class="ar-bar">
             <label for="ar-len" style="font-size:13px;font-weight:800">Länge pro Reel:</label>
-            <select id="ar-len">${DURATIONS.map((s) => `<option value="${s}"${s === duration ? " selected" : ""}>${s} Sekunden${s === 15 ? " (Reels/Shorts)" : ""}</option>`).join("")}</select>
+            <select id="ar-len" title="Fest: Bild und Ton laufen exakt ${REEL_SECONDS} Sekunden">${DURATIONS.map((s) => `<option value="${s}" selected>${s} Sekunden (Bild + Ton, fest)</option>`).join("")}</select>
           </div>
           <div class="ar-hook">
             <label for="ar-hook">🔗 Make.com Webhook-URL</label>
@@ -851,7 +888,6 @@ function build() {
     box.checked ? batchSel.add(n) : batchSel.delete(n);
     updateBatchLabel();
   });
-  ui.len.addEventListener("change", () => { duration = Number(ui.len.value) || 15; updateTotal(); updateSizeInfo(); if (previewEp) startPreview(previewEp); });
   updateTotal();
   updateHookInfo();
 }
@@ -983,7 +1019,8 @@ async function recordEpisode(ep, D, mime, onTick, withAudio = false, voice = nul
   // Mit Voiceover nie stumm aufnehmen – lieber abbrechen, als ein Reel ohne Sprecher zu veröffentlichen
   if (voice && !sound) { video.getTracks().forEach((tr) => tr.stop()); throw new Error("Tonspur mit Sprecherstimme konnte nicht gestartet werden"); }
   const stream = sound ? new MediaStream([...video.getVideoTracks(), sound.track]) : video;
-  const opts = { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: mbit * 1_000_000, ...(sound ? { audioBitsPerSecond: 192_000 } : {}) };
+  // Konstante Bitrate (wo unterstützt) = gleichbleibend scharfe Karten auch bei schnellen Swipes
+  const opts = { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: mbit * 1_000_000, bitrateMode: "constant", ...(sound ? { audioBitsPerSecond: 192_000 } : {}) };
   let rec;
   try { rec = new MediaRecorder(stream, opts); }
   catch (e) {
@@ -998,14 +1035,18 @@ async function recordEpisode(ep, D, mime, onTick, withAudio = false, voice = nul
   rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
   rec.onerror = (e) => { error = e.error?.message || "unbekannt"; aborted = true; };
   rec.start(250);
+  // Taktgeber: Mit Ton läuft das Bild auf der Audio-Uhr – Stimme, Effekte und Szenenwechsel bleiben
+  // über die vollen D Sekunden synchron (kein Auseinanderdriften durch ruckelnde Frames).
   const start = performance.now();
+  const clock = sound && ac ? () => ac.currentTime - sound.t0 : () => (performance.now() - start) / 1000;
   await new Promise((resolve) => {
-    const loop = (now) => {
+    const loop = () => {
       if (aborted) return resolve();
-      const t = Math.min((now - start) / 1000, D);
+      const t = clamp(clock(), 0, D);
       renderEpisode(ctx, t, ep, D);
       onTick(t);
-      if (t >= D) return resolve(); // exakt D Sekunden, kein Nachlauf
+      // exakt D Sekunden, kein Nachlauf (Sicherheitsnetz, falls die Audio-Uhr hängen sollte)
+      if (t >= D || (performance.now() - start) / 1000 > D + 2) return resolve();
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -1138,11 +1179,12 @@ async function generateAll(list = EPISODES) {
         try {
           const v = await loadVoice(ep, D, ac);
           voice = v.placed;
-          if (v.dropped) setStatus(`🎙️ Episode ${ep.n}: ${v.dropped} Satz/Sätze passen nicht in ${D} s und werden ausgelassen.`, "err");
+          setStatus(`🎙️ Episode ${ep.n}: Matilda spricht ${v.speech.toFixed(1).replace(".", ",")} s durchgehend (Tempo ${Math.round(v.speed * 100)} %), Szenen werden auf den Text gelegt …`);
         } catch (e) {
           throw new Error(`Voiceover fehlgeschlagen (${e.message}) – Episode wurde nicht gesendet`);
         }
       }
+      if (!voice) voiceMarks.delete(ep.n); // ohne Sprecherin: geschätzte Satzzeiten
       voiceModes.set(ep.n, voice ? "voice" : "off");
       let res = null;
       while (!res && !stopAll) {

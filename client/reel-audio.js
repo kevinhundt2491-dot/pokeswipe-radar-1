@@ -69,7 +69,7 @@ const PROGRESSIONS = [
  * @param {Array<[number,string]>} cues  Soundeffekte: [Zeitpunkt in s, Typ]
  * @param {number} seed     Variation (z. B. Episodennummer)
  * @param {Array<{start:number, buffer:AudioBuffer, rate:number}>} voice  Sprecher-Clips (siehe placeVoice)
- * @returns {{ track: MediaStreamTrack, stop: () => void }}
+ * @returns {{ track: MediaStreamTrack, t0: number, stop: () => void }}  t0 = AudioContext-Zeit von Sekunde 0
  */
 export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
   const dest = ac.createMediaStreamDestination();
@@ -205,8 +205,9 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
         g.gain.setTargetAtTime(base, b + 0.1, 0.35);
       });
     };
-    duck(music, music.gain.value, 0.07);
-    duck(sfx, sfx.gain.value, 0.12);
+    // Unter der durchgehenden Sprecherin bleibt die Musik dezent hörbar (nicht stumm) – über die vollen 30 s
+    duck(music, music.gain.value, 0.1);
+    duck(sfx, sfx.gain.value, 0.15);
     voice.forEach(({ start, buffer }) => {
       const src = track(ac.createBufferSource());
       src.buffer = buffer; src.playbackRate.value = 1;
@@ -218,6 +219,7 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
   const out = dest.stream.getAudioTracks()[0];
   return {
     track: out,
+    t0: T0,
     stop() {
       nodes.forEach((n) => { try { n.stop(); } catch { /* schon beendet */ } });
       try { master.disconnect(); comp.disconnect(); limiter.disconnect(); } catch { /* egal */ }
