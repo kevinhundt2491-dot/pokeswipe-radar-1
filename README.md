@@ -149,8 +149,16 @@ Werte ändern: `server/plans.ts`.
 4. **Grading-Affiliate (optional):** Sobald du Partner-Links hast, als Umgebungsvariablen setzen:
    `AFF_PSA_URL`, `AFF_CGC_URL`, `AFF_BGS_URL`, `AFF_TAG_URL` (vollständige https-Links). Ohne Variable führt der Button
    direkt zur Anbieter-Website. Klicks pro Partner siehst du in der Admin-Zentrale.
-5. **Sealed-Preise:** In der Admin-Zentrale unter „Sealed-Referenzpreise“ Preise eintragen (z. B. vom Cardmarket-Trend)
-   und neue Produkte anlegen. Jede Änderung landet im Preisverlauf und löst passende Alarme aus.
+5. **Sealed-Preise:** Laufen automatisch (Job `update-sealed-prices`, alle 3 Stunden): echte eBay-Verkäufe → beendete
+   Auktionen → unteres Quartil der Sofort-Kaufen-Angebote → Community-Inserate. Ein Preis aus der Admin-Zentrale oder dem
+   CSV-Import gilt als manueller Override und wird gesperrt; im Flip-Radar (Admin-Bereich) lässt er sich wieder freigeben.
+   Jede Änderung landet im Preisverlauf und löst passende Alarme aus.
+5a. **Live Flip-Radar (eBay):** `EBAY_CLIENT_ID` und `EBAY_CLIENT_SECRET` (Production-Keyset einer App auf
+   developer.ebay.com) als Netlify-Variablen setzen. Dann fragt der Job `flip-radar-sync` alle 10 Minuten die eBay Browse API ab,
+   speichert echte Einzelangebote mit ePN-Partner-Link (Campaign-ID 5339244109) und berechnet Deals ab 20 % unter Marktwert.
+   Echte Verkaufsdaten (Marketplace Insights API) nutzt der Server automatisch, sobald eBay die App dafür freischaltet;
+   bis dahin zählen beendete Auktionen mit Geboten als Verkäufe. Ohne Schlüssel läuft der Radar im gekennzeichneten
+   Demo-Modus mit echten Cardmarket-Tiefstpreisen.
 6. **Web-Push:** Funktioniert ohne Einrichtung – die Schlüssel erzeugt der Server beim ersten Aufruf selbst.
    Auf dem iPhone muss die App dafür zum Home-Bildschirm hinzugefügt werden (iOS 16.4+).
 7. **Firebase-Regeln:** Den Inhalt von `firebase/database.rules.json` in der Firebase-Konsole

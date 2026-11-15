@@ -502,6 +502,8 @@ export function registerFeatures(app: any, h: {
     const [p] = await db.insert(sealedProducts).values({
       name, setName: str(b.setName, 120), kind: SEALED_KINDS.includes(b.kind) ? b.kind : "other",
       image: adminImage(b.image), refPrice: ref, refUpdatedAt: ref ? new Date() : null,
+      // Admin-Preis = manueller Override: der automatische Sealed-Preis-Job lässt ihn stehen
+      priceLocked: !!ref,
     }).returning();
     return c.json(p, 201);
   });
@@ -510,7 +512,12 @@ export function registerFeatures(app: any, h: {
     const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
     const b = await body(c);
     const updates: Record<string, any> = {};
-    if (b.refPrice !== undefined) { updates.refPrice = money(b.refPrice); updates.refUpdatedAt = new Date(); }
+    if (b.refPrice !== undefined) {
+      updates.refPrice = money(b.refPrice); updates.refUpdatedAt = new Date();
+      // Mit Preis: Override sperren; Preis leeren: wieder dem automatischen Job überlassen
+      updates.priceLocked = !!updates.refPrice; updates.priceSource = updates.refPrice ? "admin" : "auto";
+    }
+    if (typeof b.priceLocked === "boolean") updates.priceLocked = b.priceLocked;
     if (b.name !== undefined) updates.name = str(b.name, 120);
     if (b.setName !== undefined) updates.setName = str(b.setName, 120);
     if (b.kind !== undefined && SEALED_KINDS.includes(b.kind)) updates.kind = b.kind;

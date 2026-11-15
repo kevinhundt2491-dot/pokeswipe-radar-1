@@ -323,9 +323,10 @@ export async function openPrint(id) {
         </div>
       </div>
       ${series.length > 1 ? `<div class="bg-slate-950 rounded-2xl p-3 border border-slate-800">${sparkline(series, 400, 60)}</div>` : ""}
+      <div id="ps-print-comps"></div>
       <div class="grid grid-cols-2 gap-2">
         ${btn("💼 Zur Sammlung", `PS.addPrintToPortfolio(${jsArg(p.id)})`, "bg-emerald-500 text-slate-950")}
-        ${p.baseCardId ? btn("🔔 Preisalarm & Wunschliste", `PS.openCard(${jsArg(p.baseCardId)})`, "bg-yellow-400 text-slate-950") : `<a href="${esc(window.buildEbayUrl ? window.buildEbayUrl(q + " PSA 10", "sold", "print-psa") : "#")}" target="_blank" rel="noopener sponsored" class="bg-slate-800 text-purple-300 font-black py-2.5 px-3 rounded-xl text-xs text-center">💎 PSA-10-Verkäufe*</a>`}
+        ${p.baseCardId ? btn("🔔 Preisalarm & Wunschliste", `PS.openCard(${jsArg(p.baseCardId)})`, "bg-yellow-400 text-slate-950") : btn("💎 PSA-Werte & Verkäufe", `PS.openComps("print", ${jsArg(p.id)})`, "bg-slate-800 text-purple-300")}
         <a href="${esc(window.buildEbayUrl ? window.buildEbayUrl(q, "bin", `print-${p.lang}`) : "#")}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-black py-2.5 px-3 rounded-xl text-xs text-center">🛒 eBay*</a>
         <a href="${esc(window.buildCardmarketUrl ? window.buildCardmarketUrl(p.name) : "#")}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-black py-2.5 px-3 rounded-xl text-xs text-center">📊 Cardmarket</a>
       </div>
@@ -336,6 +337,7 @@ export async function openPrint(id) {
             <span class="block truncate">${esc(FLAG[r.lang] || "")} ${r.price ? eur(r.price) : "–"}</span>
           </button>`).join("")}</div></div>` : ""}
       <p class="text-[10px] text-slate-500">Preise: Cardmarket und TCGplayer über TCGdex, getrennt gespeichert. ${esc(rate)} *Affiliate-Link</p>`, { wide: true });
+    window.PS?.compsSummary?.("ps-print-comps", "print", p.id);
   } catch (e) {
     closeModalEl("ps-card");
     handleError(e);

@@ -349,11 +349,12 @@ async function openSealed(id) {
           ${state.user?.id === o.user_id ? `<span class="text-slate-500">dein Angebot</span>` : btn("🤝 Anfragen", `PS.requestTrade(${Number(o.id)})`, "bg-emerald-500 text-slate-950")}</div>`).join("")
           : `<p class="text-slate-500">Noch keine Angebote – sei der Erste!</p>`}
       </div>
+      <button onclick="PS.openComps('sealed', ${jsArg(p.id)})" class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-black py-2.5 rounded-xl text-xs">📈 eBay-Angebote, Verkäufe & Preisherkunft</button>
       <div class="flex gap-2 text-xs">
         <a href="${cm(p.name)}" target="_blank" rel="noopener" class="flex-1 text-center bg-indigo-600 text-white font-bold py-2 rounded-xl">Cardmarket ↗</a>
         <a href="${ebay(p.name + " Pokemon OVP")}" target="_blank" rel="noopener sponsored" class="flex-1 text-center bg-blue-600 text-white font-bold py-2 rounded-xl">eBay* ↗</a>
       </div>
-      <p class="text-[10px] text-slate-500">Referenzpreise werden vom PokeSwipe-Team gepflegt; Community-Werte stammen aus aktiven Inseraten. *Affiliate-Link</p>`, { wide: true });
+      <p class="text-[10px] text-slate-500">Referenzpreise werden automatisch aus eBay-Verkäufen, -Angeboten und Community-Inseraten berechnet; Sonderprodukte pflegt das PokeSwipe-Team von Hand. *Affiliate-Link</p>`, { wide: true });
   } catch (e) { closeModalEl("ps-sealed-m"); handleError(e); }
 }
 

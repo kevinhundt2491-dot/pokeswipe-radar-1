@@ -372,6 +372,14 @@ export const sealedProducts = pgTable("sealed_products", {
   contents: text().notNull().default(""), // Inhalt, z. B. "36 Booster" oder "9 Booster, 65 Hüllen, Würfel"
   boosterCount: integer("booster_count"), // für „Preis pro Booster“
   description: text().notNull().default(""),
+  // Automatische Preise (Phase 2, Job update-sealed-prices): eBay-Verkäufe/-Angebote + Community-Inserate.
+  // price_locked = Admin-Override (CSV/Formular) – der Job lässt den Referenzpreis dann unverändert.
+  priceLocked: boolean("price_locked").notNull().default(false),
+  autoPrice: numeric("auto_price", { precision: 10, scale: 2 }),
+  autoPriceAt: timestamp("auto_price_at", { withTimezone: true }),
+  autoPriceSource: text("auto_price_source"), // ebay-sold | ebay-auction | ebay-ask | community
+  autoSample: integer("auto_sample").notNull().default(0),
+  ebayQuery: text("ebay_query").notNull().default(""), // optionaler Suchbegriff (sonst aus dem Namen gebildet)
 }, (t) => [uniqueIndex("sealed_products_slug").on(t.slug), uniqueIndex("sealed_products_ean").on(t.ean)]);
 
 export const sealedPriceHistory = pgTable("sealed_price_history", {
@@ -615,3 +623,107 @@ export const referralRewards = pgTable("referral_rewards", {
   creditCents: integer("credit_cents").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("referral_rewards_unique").on(t.userId, t.kind, t.reference), index("referral_rewards_user").on(t.userId)]);
+
+// ---------------------------------------------------------------------------
+// Phase 2: Live Flip-Radar, Verkaufspreise (Sold Comps) & PSA-Werte
+// ---------------------------------------------------------------------------
+// Ziele (Karte, Druck, Sealed), die der Job flip-radar-sync reihum bei eBay abfragt
+export const flipTargets = pgTable("flip_targets", {
+  id: text().primaryKey(), // "<kind>:<targetId>", z. B. card:sv03.5-199, print:ja:SV2a-201, sealed:12
+  targetKind: text("target_kind").notNull(), // card | print | sealed
+  targetId: text("target_id").notNull(),
+  query: text().notNull().default(""),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  lastOffers: integer("last_offers").notNull().default(0),
+  lastDeals: integer("last_deals").notNull().default(0),
+  insightsAt: timestamp("insights_at", { withTimezone: true }),
+  errors: integer().notNull().default(0),
+}, (t) => [index("flip_targets_synced").on(t.lastSyncedAt)]);
+
+// Echte Einzelangebote (eBay Browse API) mit Abgleich gegen den Referenz-Marktpreis
+export const marketOffers = pgTable("market_offers", {
+  id: text().primaryKey(), // "ebay:<itemId>"
+  source: text().notNull().default("ebay"),
+  targetKind: text("target_kind").notNull(),
+  targetId: text("target_id").notNull(),
+  gradeKey: text("grade_key").notNull().default("raw"), // raw | psa10 | psa9 | psa8 | bgs | cgc | other
+  grade: text().notNull().default(""), // Anzeige, z. B. "PSA 10"
+  rawCondition: text("raw_condition").notNull().default(""), // nm | lp | dmg | ""
+  lang: text(), // de | en | ja | null (aus dem Titel)
+  title: text().notNull(),
+  price: numeric({ precision: 10, scale: 2 }).notNull(),
+  shipping: numeric({ precision: 10, scale: 2 }),
+  total: numeric({ precision: 10, scale: 2 }).notNull(),
+  buyingOption: text("buying_option").notNull(), // FIXED_PRICE | AUCTION
+  bidCount: integer("bid_count").notNull().default(0),
+  endAt: timestamp("end_at", { withTimezone: true }),
+  itemUrl: text("item_url").notNull(),
+  image: text().notNull().default(""),
+  seller: text().notNull().default(""),
+  sellerFeedbackPct: numeric("seller_feedback_pct", { precision: 5, scale: 1 }),
+  sellerFeedbackScore: integer("seller_feedback_score"),
+  itemCondition: text("item_condition").notNull().default(""),
+  country: text().notNull().default(""),
+  refPrice: numeric("ref_price", { precision: 10, scale: 2 }),
+  refSource: text("ref_source"), // cardmarket | tcgplayer | sold | sealed
+  discountPct: numeric("discount_pct", { precision: 5, scale: 1 }),
+  isDeal: boolean("is_deal").notNull().default(false),
+  suspicious: boolean().notNull().default(false),
+  status: text().notNull().default("active"), // active | gone | ended
+  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  goneAt: timestamp("gone_at", { withTimezone: true }),
+  notifiedAt: timestamp("notified_at", { withTimezone: true }),
+}, (t) => [
+  index("market_offers_target").on(t.targetKind, t.targetId, t.status),
+  index("market_offers_deals").on(t.status, t.isDeal, t.discountPct),
+]);
+
+// Verkaufte Exemplare (eBay Marketplace Insights, beendete Auktionen mit Geboten, abgeschlossene Tausch-Hub-Verkäufe)
+export const soldComps = pgTable("sold_comps", {
+  id: serial().primaryKey(),
+  externalId: text("external_id").notNull(),
+  source: text().notNull(), // ebay-sold | ebay-auction | community
+  targetKind: text("target_kind").notNull(),
+  targetId: text("target_id").notNull(),
+  gradeKey: text("grade_key").notNull().default("raw"),
+  grade: text().notNull().default(""),
+  lang: text(),
+  title: text().notNull().default(""),
+  price: numeric({ precision: 10, scale: 2 }).notNull(), // EUR inkl. Versand
+  soldAt: timestamp("sold_at", { withTimezone: true }).notNull(),
+  url: text().notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("sold_comps_external").on(t.externalId), index("sold_comps_target").on(t.targetKind, t.targetId, t.gradeKey, t.soldAt)]);
+
+// Verdichtete Werte je Zustand/Grading (Median 30/90 Tage, günstigstes aktives Angebot)
+export const gradeValues = pgTable("grade_values", {
+  id: serial().primaryKey(),
+  targetKind: text("target_kind").notNull(),
+  targetId: text("target_id").notNull(),
+  gradeKey: text("grade_key").notNull(),
+  median90: numeric("median_90", { precision: 10, scale: 2 }),
+  median30: numeric("median_30", { precision: 10, scale: 2 }),
+  sample90: integer("sample_90").notNull().default(0),
+  sample30: integer("sample_30").notNull().default(0),
+  low90: numeric("low_90", { precision: 10, scale: 2 }),
+  high90: numeric("high_90", { precision: 10, scale: 2 }),
+  askLow: numeric("ask_low", { precision: 10, scale: 2 }),
+  askCount: integer("ask_count").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("grade_values_target_grade").on(t.targetKind, t.targetId, t.gradeKey)]);
+
+// Protokoll der Läufe (Admin-Zentrale)
+export const flipSyncRuns = pgTable("flip_sync_runs", {
+  id: serial().primaryKey(),
+  job: text().notNull(), // flip | sealed
+  mode: text().notNull(), // live | demo
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  queries: integer().notNull().default(0),
+  offers: integer().notNull().default(0),
+  deals: integer().notNull().default(0),
+  comps: integer().notNull().default(0),
+  updated: integer().notNull().default(0),
+  error: text(),
+}, (t) => [index("flip_sync_runs_job").on(t.job, t.startedAt)]);

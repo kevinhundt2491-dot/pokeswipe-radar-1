@@ -19,6 +19,7 @@ import { initReelStudio, syncReelStudio } from "./reel-studio.js";
 import { initAutoReels, syncAutoReels, openAutoReels, routeAutoReels } from "./auto-reels.js";
 import { initArena, arenaApi, addSwipeItemToPortfolio } from "./arena.js";
 import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
+import { initFlip, flipApi, syncFlip } from "./flip.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -402,6 +403,7 @@ async function openCard(cardId) {
         </div>
       </div>
       <div class="bg-slate-950 rounded-2xl p-3 border border-slate-800">${sparkline(history.map((h) => h.trend), 400, 60)}</div>
+      <div id="ps-card-comps"></div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
         <div class="bg-slate-950 rounded-2xl p-3 border border-yellow-400/40 space-y-2">
           <p class="font-black text-yellow-300">🎯 Preisalarm</p>
@@ -423,6 +425,8 @@ async function openCard(cardId) {
       <button onclick="PS.listCard(${jsArg(card.id)}, ${jsArg(card.name)}, ${Number(price) || 0})" class="w-full bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">🤝 Diese Karte im Tausch-Hub inserieren</button>
       ${cardExtrasHtml(card)}
       <p class="text-[10px] text-slate-500">Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link</p>`, { wide: true });
+    // Verkaufspreise, PSA-Werte & bestes eBay-Angebot (Flip-Radar Phase 2)
+    flipApi.compsSummary("ps-card-comps", "card", card.id);
   } catch (e) {
     closeModalEl("ps-card");
     handleError(e);
@@ -1158,6 +1162,7 @@ function goMarket() { ["ps-notifs", "ps-account"].forEach(closeModalEl); switchT
 
 function refreshAll() {
   loadPortfolio(); loadAlerts(); loadListings(); pollNotifications(true);
+  syncFlip();
 }
 
 // ---------------------------------------------------------------------------
@@ -1176,6 +1181,7 @@ window.PS = {
   ...featureApi,
   ...arenaApi,
   ...shellApi,
+  ...flipApi,
 };
 hooks.openAccount = openAccount;
 hooks.openPro = openPro;
@@ -1192,6 +1198,7 @@ async function boot() {
   initAutoReels();
   initShell();
   initArena();
+  initFlip();
 
   try {
     const result = await handleAuthCallback();
