@@ -109,6 +109,19 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | Zahlungen | Stripe Checkout (Abos & Boosts) |
 | Firebase-Regeln | `firebase/database.rules.json` |
 
+## Live-Scanner (auf dem Gerät)
+
+Der Bereich **Live-Scanner → ⚡ Live-Scan** erkennt Karten direkt im Browser, ohne Foto-Upload und ohne Server-KI pro Bild:
+
+- `client/scanner/live-scanner.js`: Rückkamera (`getUserMedia`), Rahmenführung, Taschenlampe, Live-HUD mit Name, Sprache, Marktpreis,
+  PSA-10-Wert und den Knöpfen *Zur Sammlung*, *Auf Wishlist*, *Flip-Check*, außerdem eine Liste der in der Sitzung gescannten Karten.
+- `client/scanner/scan-worker.js` (wird zu `public/assets/scan-worker.js` gebündelt): Kantenerkennung, Perspektivkorrektur,
+  pHash/dHash, Suche im lokalen Index, Kartennummer per Texterkennung bzw. Ziffern-Vorlagen – ca. 5–20 ms pro Bild.
+- `server/scan-logic.ts`: gemeinsame Bildverarbeitung für Browser, Server und Tests.
+- Job `scan-hash-index` (alle 10 Minuten): berechnet die Referenz-Fingerabdrücke aus den TCGdex-Bildern (wertvolle Karten zuerst).
+  `/api/scan/index?lang=de|en|ja` liefert den Index (CDN-gecacht, offline über den Service Worker), `/api/scan/lookup` die Details.
+- Kennt der Index eine Karte noch nicht, bleibt der bisherige KI-Foto-Scan als Rückfall erhalten.
+
 ## Tarife
 
 | | Free | Premium 4,99 €/Monat oder 49 €/Jahr | Pro Trader 9,99 €/Monat oder 99 €/Jahr |
@@ -149,8 +162,20 @@ Werte ändern: `server/plans.ts`.
 4. **Grading-Affiliate (optional):** Sobald du Partner-Links hast, als Umgebungsvariablen setzen:
    `AFF_PSA_URL`, `AFF_CGC_URL`, `AFF_BGS_URL`, `AFF_TAG_URL` (vollständige https-Links). Ohne Variable führt der Button
    direkt zur Anbieter-Website. Klicks pro Partner siehst du in der Admin-Zentrale.
-5. **Sealed-Preise:** In der Admin-Zentrale unter „Sealed-Referenzpreise“ Preise eintragen (z. B. vom Cardmarket-Trend)
-   und neue Produkte anlegen. Jede Änderung landet im Preisverlauf und löst passende Alarme aus.
+5. **Sealed-Preise:** Laufen automatisch (Job `update-sealed-prices`, alle 3 Stunden): echte eBay-Verkäufe → beendete
+   Auktionen → unteres Quartil der Sofort-Kaufen-Angebote → Community-Inserate. Ein Preis aus der Admin-Zentrale oder dem
+   CSV-Import gilt als manueller Override und wird gesperrt; im Flip-Radar (Admin-Bereich) lässt er sich wieder freigeben.
+   Jede Änderung landet im Preisverlauf und löst passende Alarme aus.
+5a. **Live Flip-Radar (eBay):** `EBAY_CLIENT_ID` und `EBAY_CLIENT_SECRET` (Production-Keyset einer App auf
+   developer.ebay.com) als Netlify-Variablen setzen. Dann fragt der Job `flip-radar-sync` alle 10 Minuten die eBay Browse API ab,
+   speichert echte Einzelangebote mit ePN-Partner-Link (Campaign-ID 5339244109) und berechnet Deals ab 20 % unter Marktwert.
+   Echte Verkaufsdaten (Marketplace Insights API) nutzt der Server automatisch, sobald eBay die App dafür freischaltet;
+   bis dahin zählen beendete Auktionen mit Geboten als Verkäufe. Ohne Schlüssel läuft der Radar im gekennzeichneten
+   Demo-Modus mit echten Cardmarket-Tiefstpreisen.
+5b. **eBay-Kontolöschungs-Webhook (Pflicht für Production-Keys):** Einen eigenen Token (32–80 Zeichen: A–Z, a–z, 0–9, `_`, `-`)
+   als `EBAY_VERIFICATION_TOKEN` in Netlify setzen und neu deployen. Im eBay-Developer-Portal unter „Alerts & Notifications →
+   Marketplace account deletion“ denselben Token und die URL `https://pokeswipe-radar.de/.netlify/functions/ebay-account-deletion`
+   eintragen (bei anderer URL zusätzlich `EBAY_ENDPOINT_URL` setzen). Ohne Token antwortet der Endpoint mit 503.
 6. **Web-Push:** Funktioniert ohne Einrichtung – die Schlüssel erzeugt der Server beim ersten Aufruf selbst.
    Auf dem iPhone muss die App dafür zum Home-Bildschirm hinzugefügt werden (iOS 16.4+).
 7. **Firebase-Regeln:** Den Inhalt von `firebase/database.rules.json` in der Firebase-Konsole

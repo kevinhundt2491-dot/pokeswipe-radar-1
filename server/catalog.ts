@@ -236,7 +236,8 @@ export async function importSealed(items: SealedImportRow[], source: "admin" | "
       id = row.id; created++;
     }
     if (ref) {
-      await db.update(sealedProducts).set({ refPrice: ref, refUpdatedAt: new Date(), priceSource: source }).where(eq(sealedProducts.id, id));
+      // CSV-/Admin-Preis = manueller Override für Sonderprodukte: der automatische Job (update-sealed-prices) überschreibt ihn nicht
+      await db.update(sealedProducts).set({ refPrice: ref, refUpdatedAt: new Date(), priceSource: source, priceLocked: true }).where(eq(sealedProducts.id, id));
       await db.insert(sealedPriceHistory).values({ productId: id, day: today(), refPrice: ref })
         .onConflictDoUpdate({ target: [sealedPriceHistory.productId, sealedPriceHistory.day], set: { refPrice: ref } });
       await evaluateSealedAlerts(id, Number(ref));

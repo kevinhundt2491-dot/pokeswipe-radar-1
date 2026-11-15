@@ -3,6 +3,7 @@
 
 # Build-Ausgabe (wird bei jedem Deploy aus client/ erzeugt)
 /public/assets/app.js
+/public/assets/scan-worker.js
 /public/assets/tailwind.css
 
 # Lokal
