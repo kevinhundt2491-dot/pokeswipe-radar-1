@@ -25,6 +25,8 @@ export const profiles = pgTable("profiles", {
   referralRewarded: boolean("referral_rewarded").notNull().default(false),
   usedTrial: boolean("used_trial").notNull().default(false),
   bonusUntil: timestamp("bonus_until", { withTimezone: true }),
+  // Wechsel-Bonus (einmalig beim Import einer Sammlung aus einer anderen App)
+  switchBonusAt: timestamp("switch_bonus_at", { withTimezone: true }),
   planInterval: text("plan_interval").notNull().default("month"), // month | year
   // Bindung: tägliche Serie, Bestenliste, Wochen-Report
   streak: integer().notNull().default(0),

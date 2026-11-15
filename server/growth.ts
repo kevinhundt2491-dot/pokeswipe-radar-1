@@ -2,13 +2,13 @@
 // tägliche Serie, Abzeichen, Bestenliste, Kalender (Releases & Events), Wochen-Report, Shop-Statistik,
 // CSV-Import, KI-Zustandscheck, Rechtliches (Impressum, Daten-Export).
 import Anthropic from "@anthropic-ai/sdk";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
 import {
   db, profiles, cards, priceHistory, portfolioItems, priceAlerts, notifications, listings, trades, tradeMessages, reviews,
   wishlistItems, userBadges, calendarEvents, calendarReminders, cardScans, sealedAlerts, trackedSets,
 } from "../db/index.ts";
-import { PLANS, type PlanId } from "./plans.ts";
+import { PLANS, SWITCH_BONUS_DAYS, SWITCH_MIN_CARDS, type PlanId } from "./plans.ts";
 import { CARD_ID_RE, getCard, cardPrice, notify } from "./prices.ts";
 import { verifyIdentityToken, isAdmin } from "./auth.ts";
 import { searchTcgdex, fetchSet, normNum, pool } from "./features.ts";
@@ -596,6 +596,27 @@ export function registerGrowth(app: any, hlp: {
     return c.json({ imported: done.size, matched, unmatched: unmatched.slice(0, 50), retry, overLimit: input.length - todo.length });
   });
 
+  // ------------------------- Wechsel-Bonus (Umzug aus einer anderen App) -------------------------
+  // Einmalig pro Konto: Wer mindestens SWITCH_MIN_CARDS erkannte Karten importiert hat, bekommt
+  // SWITCH_BONUS_DAYS Tage Premium (über bonusUntil, wie beim Empfehlungsprogramm).
+  app.post("/api/switch-bonus", auth, async (c: any) => {
+    const user = c.get("user"), profile = c.get("profile");
+    if (profile.switchBonusAt) return c.json({ error: "Der Wechsel-Bonus wurde für dieses Konto schon eingelöst.", used: true }, 409);
+    if (profile.stripeSubscriptionId) return c.json({ error: "Der Wechsel-Bonus gilt nur für neue Konten ohne Abo." }, 409);
+    const [cnt] = await db.select({ n: sql<number>`count(*)::int` }).from(portfolioItems)
+      .where(and(eq(portfolioItems.userId, user.id), sql`${portfolioItems.cardId} IS NOT NULL`));
+    const n = Number(cnt?.n ?? 0);
+    if (n < SWITCH_MIN_CARDS) {
+      return c.json({ error: `Für den Wechsel-Bonus brauchst du mindestens ${SWITCH_MIN_CARDS} importierte Karten mit Live-Preis (aktuell ${n}).`, missing: SWITCH_MIN_CARDS - n }, 400);
+    }
+    const base = profile.bonusUntil && profile.bonusUntil.getTime() > Date.now() ? profile.bonusUntil.getTime() : Date.now();
+    const bonusUntil = new Date(base + SWITCH_BONUS_DAYS * 86400_000);
+    const [updated] = await db.update(profiles).set({ bonusUntil, switchBonusAt: new Date() })
+      .where(and(eq(profiles.userId, user.id), isNull(profiles.switchBonusAt))).returning({ id: profiles.userId });
+    if (!updated) return c.json({ error: "Der Wechsel-Bonus wurde für dieses Konto schon eingelöst.", used: true }, 409);
+    return c.json({ ok: true, bonusUntil, days: SWITCH_BONUS_DAYS });
+  });
+
   // ------------------------- KI-Zustandscheck (Grading) --------------------
   app.post("/api/scan/condition", auth, async (c: any) => {
     const user = c.get("user"), plan: PlanId = c.get("plan");
@@ -706,7 +727,9 @@ export function registerGrowth(app: any, hlp: {
       SELECT shop_slug FROM profiles WHERE shop_slug IS NOT NULL AND plan = 'pro' AND plan_until > now() AND NOT banned LIMIT 500
     `));
     const base = SITE();
+    const pages = ["/umzug", "/ratgeber/pokemon-karten-wert", "/ratgeber/pokemon-karten-fake-erkennen", "/ratgeber/pokemon-displays-zum-uvp"];
     const urls = [`<url><loc>${base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`]
+      .concat(pages.map((p) => `<url><loc>${base}${p}</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>`))
       .concat(list.map((r: any) => `<url><loc>${h(`${base}/karte/${encodeURIComponent(r.id)}/${slugify(r.name)}`)}</loc>${r.updated ? `<lastmod>${new Date(r.updated).toISOString().slice(0, 10)}</lastmod>` : ""}<changefreq>daily</changefreq></url>`))
       .concat(shops.map((s: any) => `<url><loc>${h(`${base}/shop/${s.shop_slug}`)}</loc><changefreq>daily</changefreq></url>`));
     c.header("Cache-Control", "public, max-age=3600");

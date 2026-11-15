@@ -143,3 +143,11 @@ test("Cardmarket-CSV: Kopfzeile, Semikolon und Escaping", () => {
   assert.equal(lines[1], "794611;4;Pikachu ex;Pikachu-ex;SSP;Surging Sparks;238;German;NM;;;;199.30;via PokeSwipe Radar");
   assert.match(lines[2], /"Karte; mit ""Zeichen"""/);
 });
+
+test("CSV: Export aus anderen Sammler-Apps (englische Spalten wie Average Cost Paid)", () => {
+  const rows = csvToRows(`Portfolio Name,Category,Set,Product Name,Card Number,Quantity,Average Cost Paid\nMain,Pokemon,Scarlet & Violet 151,Charizard ex,199/165,2,310.50`);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "Charizard ex");
+  assert.equal(rows[0].quantity, 2);
+  assert.equal(rows[0].purchasePrice, 310.5);
+});

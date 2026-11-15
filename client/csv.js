@@ -1,10 +1,10 @@
 // CSV-Import: liest Exporte aus Cardmarket, Excel, Google Sheets oder anderen Sammler-Apps.
 const ALIASES = {
-  name: ["name", "karte", "kartenname", "card", "card name", "cardname", "product", "produkt", "product name", "pokemon", "pokémon"],
-  number: ["number", "nummer", "nr", "nr.", "card number", "collector number", "kartennummer", "localid", "no", "no."],
-  set: ["set", "expansion", "edition", "serie", "set name", "setname", "erweiterung"],
-  quantity: ["quantity", "count", "anzahl", "menge", "qty", "amount", "stück", "stk"],
-  purchasePrice: ["purchase price", "einkaufspreis", "kaufpreis", "ek", "paid", "price paid", "preis", "price", "einkauf"],
+  name: ["name", "karte", "kartenname", "card", "card name", "cardname", "product", "produkt", "product name", "pokemon", "pokémon", "card title", "item name"],
+  number: ["number", "nummer", "nr", "nr.", "card number", "collector number", "kartennummer", "localid", "no", "no.", "card #", "card no", "number in set"],
+  set: ["set", "expansion", "edition", "serie", "set name", "setname", "erweiterung", "expansion name", "group", "series"],
+  quantity: ["quantity", "count", "anzahl", "menge", "qty", "amount", "stück", "stk", "quantity owned", "owned", "total quantity"],
+  purchasePrice: ["purchase price", "einkaufspreis", "kaufpreis", "ek", "paid", "price paid", "preis", "price", "einkauf", "average cost paid", "avg cost paid", "average cost", "cost", "cost basis", "purchase cost", "buy price"],
 };
 
 /** Zerlegt CSV-Text in Zeilen und Zellen (mit Anführungszeichen, ; , oder Tab als Trenner). */

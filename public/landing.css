@@ -1,0 +1,42 @@
+/* Gemeinsame Styles für Umzugs- und Ratgeber-Seiten (statisch, ohne Tailwind) */
+:root{--y:#ffcb05;--g:#34d399;--r:#fb7185;--bg:#070a14;--card:#0f1528;--line:#1f2a4a;--ink:#f3efe4;--soft:#b9b7c9;
+  --display:"Lilita One","Trebuchet MS",sans-serif;--body:"Figtree","Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:radial-gradient(900px 600px at 90% -10%,rgba(217,54,62,.22),transparent 60%),radial-gradient(800px 600px at -10% 30%,rgba(74,155,224,.16),transparent 60%),var(--bg);
+  color:var(--ink);font:16px/1.6 var(--body)}
+a{color:var(--y)}
+.wrap{max-width:860px;margin:0 auto;padding:16px 18px 48px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0 18px}
+.logo{font-family:var(--display);font-size:22px;color:var(--ink);text-decoration:none;letter-spacing:.3px}
+.logo span{color:var(--y)}
+.btn{display:inline-block;font-weight:900;text-decoration:none;border-radius:14px;padding:12px 20px;font-size:15px;border:0;cursor:pointer}
+.btn.y{background:var(--y);color:#1a1420}.btn.g{background:var(--g);color:#06231a}.btn.o{border:2px solid var(--line);color:var(--ink)}
+.hero{padding:22px 0 8px}
+.chip{display:inline-block;background:var(--y);color:#1a1420;font-weight:900;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;border-radius:999px;padding:4px 12px}
+h1{font-family:var(--display);font-weight:400;font-size:clamp(30px,6vw,46px);line-height:1.08;margin:12px 0 10px;letter-spacing:.3px}
+h1 em{font-style:normal;color:var(--y)}
+h2{font-family:var(--display);font-weight:400;font-size:clamp(22px,4vw,28px);margin:34px 0 10px;letter-spacing:.3px}
+h3{font-size:17px;margin:0 0 6px}
+p{margin:0 0 12px}.lead{font-size:18px;color:var(--soft)}
+.muted{color:var(--soft);font-size:14px}
+.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.steps{counter-reset:s;list-style:none;padding:0;margin:0;display:grid;gap:12px}
+.steps li{counter-increment:s;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px 16px 16px 62px;position:relative}
+.steps li::before{content:counter(s);position:absolute;left:16px;top:14px;width:32px;height:32px;border-radius:50%;background:var(--y);color:#1a1420;font-weight:900;display:grid;place-items:center}
+.bonus{background:linear-gradient(120deg,rgba(255,203,5,.18),rgba(52,211,153,.16));border:2px solid rgba(255,203,5,.6);border-radius:22px;padding:18px;margin:22px 0}
+table{width:100%;border-collapse:collapse;font-size:14px;background:var(--card);border-radius:16px;overflow:hidden}
+th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:#141c36;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--soft)}
+td.y{color:var(--g);font-weight:800}
+ul.check{list-style:none;padding:0;margin:0 0 12px}ul.check li{padding-left:28px;position:relative;margin:6px 0}
+ul.check li::before{content:"✔";position:absolute;left:4px;color:var(--g);font-weight:900}
+ul.warn li::before{content:"⚠";color:var(--y)}
+details{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 16px;margin:8px 0}
+summary{font-weight:800;cursor:pointer}
+.related{display:grid;gap:8px;margin-top:10px}.related a{display:block;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;text-decoration:none;color:var(--ink);font-weight:800}
+.related a:hover,.btn:hover{filter:brightness(1.08)}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--soft);font-size:12px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}

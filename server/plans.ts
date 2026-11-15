@@ -33,6 +33,10 @@ export const REFERRAL_TRIAL_DAYS = 30;
 export const REFERRAL_BONUS_DAYS = 30;
 /** Testphase für jedes erste Abo (ohne Empfehlung) */
 export const TRIAL_DAYS = 7;
+/** Wechsel-Bonus: Premium-Tage für Nutzer, die ihre Sammlung aus einer anderen App importieren (einmalig) */
+export const SWITCH_BONUS_DAYS = 30;
+/** Mindestzahl importierter Karten mit Live-Preis (liegt unter dem Free-Limit, damit es jeder erreichen kann) */
+export const SWITCH_MIN_CARDS = 20;
 
 /**
  * Bezahlter Tarif gilt, solange das Abo-Ende in der Zukunft liegt (+1 Tag Kulanz).

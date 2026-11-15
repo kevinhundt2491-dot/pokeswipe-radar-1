@@ -77,6 +77,7 @@ export async function extraMe(c: any, profile: Profile, plan: PlanId) {
     referred: Boolean(profile.referredBy),
     planInterval: profile.planInterval,
     bonusUntil: profile.bonusUntil,
+    switchBonusAvailable: !profile.switchBonusAt && !profile.stripeSubscriptionId,
     shop: { slug: profile.shopSlug, title: profile.shopTitle, bio: profile.shopBio, enabled: PLANS[plan].shop },
     scansLeft: Math.max(0, PLANS[plan].scansPerDay - (await scansToday(profile.userId))),
     setsTracked: Number(sets?.n ?? 0),
