@@ -19,6 +19,14 @@ const VOICE_SETTINGS = { stability: 0.6, similarity_boost: 0.78, style: 0, use_s
 // Bewusst eng gehalten, damit die Sprecherin immer wie ein normaler Muttersprachler klingt.
 export const SPEED_MIN = 0.9, SPEED_MAX = 1.12;
 const NARRATION_MAX_CHARS = 900;
+// Wortlimit der Live-Reels: 32–36 Wörter (15 s) bzw. 65–72 Wörter (30 s) – mehr wird nicht gesprochen,
+// damit die Stimme entspannt und vollständig bis zum letzten Wort durchspricht.
+export const NARRATION_MAX_WORDS = 72;
+/** Wörter wie gesprochen: alles mit Buchstabe oder Ziffer zählt (gleiche Regel wie client/reel-scripts.js). */
+export function countWords(text: string | string[]) {
+  const s = Array.isArray(text) ? text.join(" ") : String(text ?? "");
+  return s.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+}
 // Fester Seed = gleiche Zeile klingt bei jeder Neuerzeugung gleich
 const SEED = 20261115;
 // Bisheriges Make.com-Szenario als Rückfall, bis MAKE_WEBHOOK_URL in Netlify gesetzt ist.
@@ -146,6 +154,8 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     const lines = (Array.isArray(b.lines) ? b.lines.slice(0, MAX_LINES) : []).map((l: any) => speakable(String(l ?? "")).slice(0, MAX_CHARS));
     if (!lines.length || lines.some((l: string) => !l)) return c.json({ error: "Sprechertext fehlt oder enthält leere Sätze." }, 400);
     if (lines.join(" ").length > NARRATION_MAX_CHARS) return c.json({ error: "Sprechertext zu lang." }, 400);
+    const words = countWords(lines);
+    if (words > NARRATION_MAX_WORDS) return c.json({ error: `Sprechertext zu lang (${words} Wörter, höchstens ${NARRATION_MAX_WORDS}).` }, 400);
     const sp = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(b.speed) || 1)) * 100) / 100;
     const store = getStore("voiceover");
     const id = await sha(`narration:v1|${EL_MODEL}|${MATILDA.id}|${JSON.stringify(VOICE_SETTINGS)}|${sp}|${JSON.stringify(lines)}`);

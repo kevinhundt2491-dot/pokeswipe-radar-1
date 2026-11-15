@@ -252,7 +252,16 @@ Netlify-Umgebungsvariablen und werden nur an Admins ausgeliefert:
 | `FIREBASE_WEB_API_KEY` | Optional: Firebase-Web-API-Schlüssel für die anonyme Anmeldung (strenge Firebase-Regeln). |
 | `ELEVENLABS_API_KEY` | Sprecherstimme für die Auto-Reels (fest: ElevenLabs „Matilda“). Ohne Schlüssel startet der Generator mit Voiceover nicht. |
 
-Jedes Reel ist fest 30 Sekunden lang. Das Skript einer Episode wird in einem durchgehenden Take gesprochen
-(`/api/admin/voiceover/narration`, mit Zeitstempeln pro Satz); die Szenenwechsel folgen diesen Zeitstempeln.
+Reel Studio und Auto-Reels (10x) erzeugen **ausschließlich echte Live-Aufnahmen der Website**: Die App läuft
+in einer 9:16-Live-Stage (iframe `/?reel=1`, 414×736 CSS-px → 1080×1920), darauf laufen echte Swipes, Taps und
+Scrolls (`client/reel-scenarios.js`). Aufnahme-Modi: Live-DOM-to-Canvas über SVG `foreignObject`
+(`client/dom-capture.js`, bis 30 FPS, Standard für Auto-Reels) oder native Tab-Aufnahme per `getDisplayMedia`
+(`preferCurrentTab`, 60 FPS, Reel Studio). Ablauf (`client/reel-recorder.js`): Sprecherin komplett erzeugen und
+dekodieren → Live-Seite inkl. API-Daten und Bilder fertig laden → Frame 0 zeichnen → `MediaRecorder.start()` →
+Stopp beim `onended` der Stimme + 0,5 s. Skripte (`client/reel-scripts.js`) haben 32–36 Wörter (15 s) bzw.
+65–72 Wörter (30 s); der Server nimmt höchstens 72 Wörter an. Zu jedem Video entsteht eine separate
+Post-Beschreibung (Hook, Mehrwert, CTA, 5–8 Hashtags) – mit Kopier-Button, als `.txt` neben dem MP4 und als
+Make-Felder `caption`, `title`, `hashtags`, `hashtags_json`, `meta` und `caption_file`.
+Dafür erlauben `X-Frame-Options: SAMEORIGIN` und `frame-ancestors 'self'` das Einbetten nur vom eigenen Ursprung.
 
 Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorgabe nur in diesem Browser.
