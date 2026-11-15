@@ -299,3 +299,105 @@ export const shopStats = pgTable("shop_stats", {
   views: integer().notNull().default(0),
   listingViews: integer("listing_views").notNull().default(0),
 }, (t) => [uniqueIndex("shop_stats_user_day").on(t.userId, t.day)]);
+
+// ---------------------------------------------------------------------------
+// Restock- & Vorbestell-Radar
+// ---------------------------------------------------------------------------
+// Beobachtete Produktseiten (Admin): ein Produkt in einem Online-Shop, optional automatisch geprüft
+export const restockWatches = pgTable("restock_watches", {
+  id: serial().primaryKey(),
+  name: text().notNull(),
+  setName: text("set_name").notNull().default(""),
+  kind: text().notNull().default("display"), // display | etb | ttb | bundle | booster | tin | collection | other
+  shop: text().notNull(), // amazon | pokemoncenter | smyths | mueller | mediamarkt | saturn | otto | galeria | thalia | spielemax | cardmarket | other
+  url: text().notNull(),
+  uvp: numeric({ precision: 10, scale: 2 }),
+  releaseDay: date("release_day"),
+  autoCheck: boolean("auto_check").notNull().default(true),
+  status: text().notNull().default("unknown"), // unknown | in_stock | preorder | out_of_stock
+  lastPrice: numeric("last_price", { precision: 10, scale: 2 }),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  lastChangeAt: timestamp("last_change_at", { withTimezone: true }),
+  failCount: integer("fail_count").notNull().default(0),
+  active: boolean().notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("restock_watches_active").on(t.active, t.lastCheckedAt)]);
+
+// Gemeldete oder automatisch erkannte Drops (Restock oder Vorbestellung)
+export const restockDrops = pgTable("restock_drops", {
+  id: serial().primaryKey(),
+  watchId: integer("watch_id").references(() => restockWatches.id, { onDelete: "set null" }),
+  kind: text().notNull().default("restock"), // restock | preorder
+  source: text().notNull().default("auto"), // auto | admin | community
+  title: text().notNull(),
+  shop: text().notNull(),
+  url: text().notNull().default(""),
+  city: text().notNull().default(""), // nur bei Laden-Meldungen
+  price: numeric({ precision: 10, scale: 2 }),
+  uvp: numeric({ precision: 10, scale: 2 }),
+  reportedBy: text("reported_by").references(() => profiles.userId, { onDelete: "set null" }),
+  confirmations: integer().notNull().default(0),
+  status: text().notNull().default("pending"), // pending (Community, noch nicht bestätigt) | live | removed
+  liveAt: timestamp("live_at", { withTimezone: true }),
+  paidNotified: boolean("paid_notified").notNull().default(false),
+  freeNotified: boolean("free_notified").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("restock_drops_status").on(t.status, t.liveAt)]);
+
+export const restockConfirmations = pgTable("restock_confirmations", {
+  id: serial().primaryKey(),
+  dropId: integer("drop_id").notNull().references(() => restockDrops.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("restock_confirmations_drop_user").on(t.dropId, t.userId)]);
+
+// Wer Restock-Alarme bekommt (Filter nur für Pro Trader)
+export const restockSubscriptions = pgTable("restock_subscriptions", {
+  userId: text("user_id").primaryKey().references(() => profiles.userId, { onDelete: "cascade" }),
+  enabled: boolean().notNull().default(true),
+  preorders: boolean().notNull().default(true),
+  shops: text().notNull().default(""), // kommagetrennt, leer = alle
+  keywords: text().notNull().default(""), // kommagetrennt, leer = alle
+  maxPrice: numeric("max_price", { precision: 10, scale: 2 }),
+  uvpOnly: boolean("uvp_only").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Graded-Portfolio & Grading-Einsendungen
+// ---------------------------------------------------------------------------
+export const gradedCards = pgTable("graded_cards", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  cardId: text("card_id").references(() => cards.id),
+  name: text().notNull(),
+  image: text().notNull().default(""),
+  company: text().notNull().default("PSA"), // PSA | CGC | BGS | TAG | other
+  grade: numeric({ precision: 3, scale: 1 }).notNull(),
+  certNumber: text("cert_number").notNull().default(""),
+  purchasePrice: numeric("purchase_price", { precision: 10, scale: 2 }),
+  value: numeric({ precision: 10, scale: 2 }),
+  valueUpdatedAt: timestamp("value_updated_at", { withTimezone: true }),
+  submissionId: integer("submission_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("graded_cards_user").on(t.userId)]);
+
+export const gradingSubmissions = pgTable("grading_submissions", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  company: text().notNull().default("PSA"),
+  service: text().notNull().default(""),
+  title: text().notNull().default(""),
+  cardCount: integer("card_count").notNull().default(1),
+  declaredValue: numeric("declared_value", { precision: 10, scale: 2 }),
+  cost: numeric({ precision: 10, scale: 2 }),
+  status: text().notNull().default("prep"), // prep | sent | arrived | grading | shipped | done
+  sentDay: date("sent_day"),
+  expectedDay: date("expected_day"),
+  tracking: text().notNull().default(""),
+  submissionNumber: text("submission_number").notNull().default(""),
+  notes: text().notNull().default(""),
+  reminderSent: boolean("reminder_sent").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("grading_submissions_user").on(t.userId), index("grading_submissions_due").on(t.status, t.expectedDay)]);

@@ -27,6 +27,12 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
   „Set vervollständigen“-Modus mit Cardmarket- und eBay-Links je fehlender Karte und Wants-Listen-Export
 - **Duplikat-Radar** – Überschuss-Badges ab 2x, 1-Klick-Inserat im Tausch-Hub, Cardmarket-Verkaufs-Assistent und
   CSV-Bulk-Export für den Cardmarket-Bestands-Import
+- **Restock- & Vorbestell-Radar** – automatische Prüfung beobachteter Shop-Produktseiten alle 2 Minuten (schema.org-Verfügbarkeit),
+  Community-Meldungen mit 2 Bestätigungen, UVP-Ampel, Vorbestell-Preisvergleich je Shop. Push für Premium/Pro sofort, Free 15 Min. später;
+  Pro mit Filtern (Shop, Stichwort, Höchstpreis, nur UVP). Shop-Links mit Amazon-Partner-Tag (`AMAZON_PARTNER_TAG`) und Klick-Zählung
+- **Graded-Portfolio** – Slabs mit Firma, Note, Zertifikat-Link, Wert, Gewinn und eBay-„Verkauft“-Link; **Grading-Einsendungs-Tracker**
+  mit Status und Push-Erinnerung bei Überfälligkeit
+- **KI-Fake-Check** – Vorder- und Rückseite, Prüfung auf typische Fälschungsmerkmale (Claude Sonnet über Netlify AI Gateway)
 - **Datenschutz** – Daten-Export (JSON), Konto selbst löschen, Impressum in der Admin-Zentrale pflegbar
 
 ## Echte Karten & Preise
@@ -51,6 +57,7 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | API (Netlify Server, Hono) | `netlify/server/index.ts` → `server/*.ts`, Pfad `/api/*` |
 | Datenbank (Netlify Database, Drizzle) | `db/schema.ts`, Migrationen in `netlify/database/migrations/` |
 | Preis-Tracker (stündlich) | `netlify/functions/price-tracker.mts` |
+| Restock-Radar (alle 2 Minuten) | `netlify/functions/restock-radar.mts` → `server/drops.ts` |
 | Erinnerungen & Wochen-Report (stündlich) | `netlify/functions/growth-jobs.mts` |
 | Konto löschen | `netlify/functions/delete-account.mts` |
 | Styles (Tailwind, beim Deploy kompiliert) | `client/tailwind.css` + `tailwind.config.js` → `public/assets/tailwind.css` |
@@ -74,6 +81,10 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | Verifiziert-Badge, Platzierung vor anderen | – | – | ✓ |
 | Gratis-Boosts pro Monat | – | – | 3 |
 | CSV-Export | – | – | ✓ |
+| Restock-Alarm | 15 Min. verzögert | sofort | sofort + Filter |
+| KI-Fake-Checks pro Monat | 1 | 20 | 200 |
+| Graded-Karten (Slabs) | 3 | 200 | 5000 |
+| Offene Grading-Einsendungen | 1 | 20 | 500 |
 
 Das erste Abo kann 7 Tage gratis getestet werden (mit Empfehlung 30 Tage).
 Einzel-Boost: 1,99 € für 7 Tage ganz oben im Tausch-Hub. Alle Limits werden auf dem Server geprüft.
