@@ -858,7 +858,7 @@
       <p><strong>Affiliate-Hinweis (*):</strong> Als Partner des eBay Partner Networks (CampID: 5339244109) verdienen wir an qualifizierten Käufen über gekennzeichnete eBay-Links eine kleine Provision, ohne Mehrkosten für dich.</p>
       <div class="max-h-[55vh] overflow-y-auto space-y-3 pr-1">
       <p><strong>Datenschutz – Überblick:</strong> Ohne Konto bleiben Portfolio-, Merklisten- und Push-Einstellungen lokal im Browser (LocalStorage). Mit Konto werden Login (Netlify Identity), Portfolio, Wunschliste, Preisalarme, Inserate, Tausche, private Tausch-Nachrichten, Bewertungen, Abzeichen und Kalendereinträge verschlüsselt übertragen und bei unserem Hosting-Anbieter Netlify gespeichert (Rechtsgrundlage: Vertragserfüllung, Art. 6 Abs. 1 lit. b DSGVO).</p>
-      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Schriftarten und die Kartenansicht (Leaflet) liefern wir selbst aus – es gibt keine Verbindung zu Google Fonts. Für den Live-Bereich wird das Firebase-Skript von Google (gstatic.com) nach dem Seitenaufbau nachgeladen; die Kartenkacheln kommen von OpenStreetMap, beim Setzen eines Radar-Pins ohne GPS wird der eingegebene Ort an OpenStreetMap Nominatim gesendet. Dabei wird technisch bedingt deine IP-Adresse übermittelt. Radar-Pins speichern nur einen ungefähren Standort (ca. 1 km Raster), nie deine genaue GPS-Position.</p>
+      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (anonymer Besucherzähler und Online-Anzeige; dafür vergibt Firebase eine zufällige, anonyme Kennung – Chat, Pull-Wall und Radar-Pins speichern wir in unserer eigenen Datenbank bei Netlify), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Schriftarten und die Kartenansicht (Leaflet) liefern wir selbst aus – es gibt keine Verbindung zu Google Fonts. Für den Live-Bereich wird das Firebase-Skript von Google (gstatic.com) nach dem Seitenaufbau nachgeladen; die Kartenkacheln kommen von OpenStreetMap, beim Setzen eines Radar-Pins ohne GPS wird der eingegebene Ort an OpenStreetMap Nominatim gesendet. Dabei wird technisch bedingt deine IP-Adresse übermittelt. Radar-Pins speichern nur einen ungefähren Standort (ca. 1 km Raster), nie deine genaue GPS-Position.</p>
       <p><strong>Öffentlich sichtbar:</strong> dein Sammlername, Stadt, Inserate, Bewertungen, Shop-Seite, eingetragene Events sowie – für Tausch-Vorschläge – welche Karten du auf der Wunschliste hast. In der Bestenliste erscheinst du nur, wenn du es selbst einschaltest.</p>
       <p><strong>Speicher im Browser:</strong> Wir verwenden keine Werbe- oder Tracking-Cookies. Gespeichert werden nur technisch notwendige Daten: Login-Token, Einstellungen und eine Offline-Kopie deiner Sammlung (wird beim Abmelden gelöscht).</p>
       <p><strong>Deine Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Im Konto unter „Datenschutz & Konto“ kannst du alle Daten als Datei herunterladen und dein Konto selbst löschen. Verantwortlich für die Datenverarbeitung ist der im Impressum genannte Betreiber.</p>
@@ -927,9 +927,12 @@
       });
     window.PS_PUBLIC_CONFIG = publicConfigPromise;
     const firebaseConfig = {
-      databaseURL: "https://pyro-planer-web-app-default-rtdb.europe-west1.firebasedatabase.app"
-      // apiKey/authDomain kommen (optional) aus der Netlify-Umgebungsvariable FIREBASE_WEB_API_KEY
-      // über /api/public-config – damit ist die anonyme Firebase-Anmeldung aktiv (strenge Regeln).
+      // Firebase-Projekt „pokeswiperadar“ (Realtime Database in europe-west1) – hier gelten die strengen Regeln
+      // (nur stats/totalVisits und presence, beides nur mit Anmeldung beschreibbar).
+      databaseURL: "https://pokeswiperadar-default-rtdb.europe-west1.firebasedatabase.app"
+      // apiKey kommt aus der Netlify-Umgebungsvariable FIREBASE_WEB_API_KEY über /api/public-config,
+      // authDomain/projectId werden aus der databaseURL abgeleitet (pokeswiperadar.firebaseapp.com).
+      // Ohne apiKey gibt es keine anonyme Anmeldung – dann lehnen die Regeln Zähler und Präsenz ab.
     };
 
     function sanitizeHTML(str) {
@@ -2180,7 +2183,8 @@
 
         // 1. Echter Besucherzähler
         const visitsRef = db.ref("pokeswipe_radar/stats/totalVisits");
-        if (!sessionStorage.getItem("pokeswipe_counted")) {
+        // Schreiben erlauben die Regeln nur mit Firebase-Anmeldung (auth != null) – ohne Anmeldung nur lesen
+        if (fbUid && !sessionStorage.getItem("pokeswipe_counted")) {
           visitsRef.transaction(current => (current === null ? 1 : Number(current) + 1), (err, committed) => {
             if (!err && committed) sessionStorage.setItem("pokeswipe_counted", "1");
           });
@@ -2191,15 +2195,17 @@
         });
 
         // 2. Echte Online-Präsenz (mit Herzschlag, damit verwaiste Einträge nicht mitgezählt werden)
-        const myPresence = db.ref("pokeswipe_radar/presence/" + fbOwnerKey());
-        const beat = () => myPresence.set({ online: true, ts: firebase.database.ServerValue.TIMESTAMP }).catch(() => {});
+        //    Regel: presence/<uid> darf nur die angemeldete Firebase-UID selbst schreiben (auth.uid === $uid)
+        const myPresence = fbUid ? db.ref("pokeswipe_radar/presence/" + fbUid) : null;
+        const beat = () => { if (myPresence) myPresence.set({ online: true, ts: firebase.database.ServerValue.TIMESTAMP }).catch(() => {}); };
+        const armDisconnect = () => { if (myPresence) myPresence.onDisconnect().remove().catch(() => {}); };
         beat();
-        myPresence.onDisconnect().remove();
+        armDisconnect();
         setInterval(() => { if (document.visibilityState === "visible") beat(); }, 4 * 60 * 1000);
         listen(db.ref(".info/connected"), "value", (snap) => {
           const dot = document.getElementById("liveVisitorCount");
           if (dot) dot.title = snap.val() ? "Live verbunden" : "Verbindung unterbrochen – verbinde neu …";
-          if (snap.val()) { myPresence.onDisconnect().remove(); beat(); }
+          if (snap.val()) { armDisconnect(); beat(); }
         });
         listen(db.ref("pokeswipe_radar/presence"), "value", snap => {
           const all = snap.val() || {};
