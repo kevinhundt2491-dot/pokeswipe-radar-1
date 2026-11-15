@@ -1,6 +1,6 @@
 // PokeSwipe & Radar – Service Worker: echte Web-Push-Nachrichten (auch bei geschlossener App)
 // und Offline-Modus (App, Sammlung und Bilder bleiben auf Messen & Börsen ohne Netz verfügbar).
-const VERSION = "v7";
+const VERSION = "v8";
 const STATIC = `ps-static-${VERSION}`;
 const API = "ps-api";
 const IMG = "ps-img";
@@ -8,7 +8,7 @@ const PAGES = "ps-pages";
 const SHELL = ["/", "/assets/app.js", "/assets/scan-worker.js", "/assets/tailwind.css", "/theme.css", "/fonts/fonts.css", "/icon.svg", "/manifest.json", "/icons/icon-192.png", "/icons/badge-96.png", "/card-fallback.svg"];
 // Nur diese Daten werden für den Offline-Modus zwischengespeichert (beim Abmelden gelöscht)
 // Phase 4: zusätzlich Offline-Katalog (Sets, Swipe-Stapel), Community-Feed, Bestellungen und öffentliche Profile
-const OFFLINE_API = /^\/api\/(me|portfolio|wishlist|alerts|calendar|badges|listings|sets\/tracked|sealed|scan\/index|catalog\/(meta|sets)|swipe\/(sets|deck)|community\/(feed|me)|orders|market\/meta|me\/public-profile|u\/[^/?]+)(\?|$)/;
+const OFFLINE_API = /^\/api\/(me|portfolio|wishlist|alerts|calendar|badges|listings|sets\/tracked|sealed|scan\/index|catalog\/(meta|sets)|swipe\/(sets|deck)|community\/(feed|me)|orders|market\/meta|me\/public-profile|u\/[^/?]+|radar|flip\/community-deals|booster\/ev)(\?|$)/;
 const CDN_HOSTS = ["www.gstatic.com"];
 
 self.addEventListener("install", (event) => {
@@ -63,11 +63,11 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin === self.location.origin) {
-    // Nur die App selbst (/, /index.html, /shop/…) als Offline-Startseite – Server-Seiten wie /karte, /u, /p, /pokemon
+    // Nur die App selbst (/, /index.html) als Offline-Startseite – Server-Seiten wie /karte, /u, /p, /shop, /pokemon
     // dürfen nicht als Startseite zwischengespeichert werden
-    if (req.mode === "navigate" && (url.pathname === "/" || url.pathname === "/index.html" || url.pathname.startsWith("/shop/"))) {
+    if (req.mode === "navigate" && (url.pathname === "/" || url.pathname === "/index.html")) {
       event.respondWith(networkFirst(req, STATIC, "/"));
-    } else if (req.mode === "navigate" && /^\/(karte|u|p|set|sets|pokemon|sealed|trends)(\/|$)/.test(url.pathname)) {
+    } else if (req.mode === "navigate" && /^\/(karte|u|p|shop|set|sets|pokemon|sealed|trends)(\/|$)/.test(url.pathname)) {
       // Öffentliche Seiten: frisch laden, offline die zuletzt gesehene Version
       event.respondWith(networkFirst(req, PAGES).catch(async () => (await caches.match("/")) || Response.error()));
     } else if (url.pathname.startsWith("/.netlify/images") || url.pathname.startsWith("/api/images/")) {

@@ -91,6 +91,24 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
   `npm run cap:add|cap:sync|cap:ios|cap:android`, Berechtigungs-Skript `scripts/cap-native-setup.mjs`), Push in der App über
   Firebase Cloud Messaging, Universal/App Links – Anleitung in `native/README.md`
 
+- **Phase 5 – Abschluss-Ausbau**
+  - *Preference-Learning in der Swipe-Arena* – jeder Rechts-/Links-Swipe (und das Öffnen der Details) verändert Gewichte für
+    Seltenheit, Sprache, Set und Preisband; ab 5 Swipes wird der Stapel serverseitig danach gewichtet (`server/arena-logic.ts`,
+    `server/arena.ts`, Tabelle `swipe_preferences`; ohne Konto bleibt das Profil auf dem Gerät und geht als `?pw=` mit)
+  - *Set-Booster-Simulator* – Booster aller Sets aus dem Live-Katalog (🇩🇪/🇬🇧/🇯🇵) mit Slot-Aufbau und Zieh-Raten der
+    Karmesin-&-Purpur-Ära, 1/10/36 Packs, Pack-Wert-Bilanz und Sitzungs-Bilanz je Set; „Rip or Keep“ zeigt den Erwartungswert
+    des ganzen Displays (`/api/booster/open`, `/api/booster/ev`, `client/booster.js`, Karten-Pools 30 Min. im Server-Cache)
+  - *Geteilte Community-Deals* im Flip-Radar (`/api/flip/community-deals`, Tabellen `community_deals`, `community_deal_votes`):
+    für alle sichtbar, 72 Std. aktiv, Marktwert-Abgleich über die Kartennummer, Abstimmung „noch da / weg“, Melden & Blockieren
+  - *Sammler-Radar mit Login-Pflicht* (`/api/radar`, Tabelle `radar_pins`): ein Pin pro Konto, Koordinaten serverseitig auf ein
+    ~1-km-Raster gerundet, Filter, Limits, Melden, Blockieren, Admin-Moderation (`server/deals-radar.ts`, `client/deals-radar.js`)
+  - *Händler-Shops* – öffentliche Seite `/shop/<name>` (Server-Rendering, OpenGraph-Bild `/api/og/shop/<name>.jpg`, JSON-LD) mit
+    Banner, Logo, Akzentfarbe, ✔-Badge, Antwortzeit, Bewertungen, Kennzahlen und 🇩🇪/🇬🇧/🇯🇵-Filter; Inventar im App-Dialog
+    alle 30 Sek. live (`server/shops.ts`). Inserate speichern die Sprache (`listings.lang`)
+  - *Scanner-Basis-Index* – vorberechnete Fingerabdrücke aller TCGdex-Karten mit Bild (`server/scan-seed/*.ts`, in Teilen à ~90 KB, erzeugt mit
+    `node scripts/build-scan-seed.ts`); der Job `scan-hash-index` übernimmt sie beim ersten Lauf für jede Katalogkarte mit
+    identischem Bild, „Index jetzt erweitern“ stößt das sofort an
+
 ## Echte Karten & Preise
 
 Swipe-Arena, Booster-Simulator, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten
@@ -216,8 +234,9 @@ Werte ändern: `server/plans.ts`.
 10. **Marktplatz mit Käuferschutz:** Im Stripe-Dashboard **Connect** aktivieren (Plattform-Profil: „Marktplatz“, Verkäufer als
    Express-Konten, Land Deutschland). Weitere Schlüssel sind nicht nötig – der bestehende `STRIPE_SECRET_KEY` und Webhook genügen.
    Reklamationen und Treuhand-Summen stehen in der Admin-Zentrale unter „⚖️ Marktplatz & Reklamationen“.
-11. **Community:** Läuft ohne Einrichtung. Chat und Pull-Wall nutzen Firebase nicht mehr – die aktualisierten Regeln aus
-   `firebase/database.rules*.json` (Chat/Pull-Wall gesperrt) in der Firebase-Konsole übernehmen.
+11. **Community:** Läuft ohne Einrichtung. Chat, Pull-Wall, Community-Deals und Sammler-Radar nutzen Firebase nicht mehr –
+   die aktualisierten Regeln aus `firebase/database.rules.json` (alles außer Besucherzähler/Online-Anzeige gesperrt,
+   Schreiben nur mit Firebase-Anmeldung) in der Firebase-Konsole übernehmen.
 12. **Native App (optional):** siehe `native/README.md` – Push über `FCM_SERVICE_ACCOUNT`, App-Links über `APPLE_TEAM_ID`
    und `ANDROID_CERT_SHA256`.
 

@@ -98,7 +98,7 @@ export async function extraMe(c: any, profile: Profile, plan: PlanId) {
     bonusPlan: profile.bonusPlan,
     shareBonus,
     switchBonusAvailable: !profile.switchBonusAt && !profile.stripeSubscriptionId,
-    shop: { slug: profile.shopSlug, title: profile.shopTitle, bio: profile.shopBio, enabled: PLANS[plan].shop },
+    shop: { slug: profile.shopSlug, title: profile.shopTitle, bio: profile.shopBio, enabled: PLANS[plan].shop, banner: profile.shopBanner, logo: profile.shopLogo, accent: profile.shopAccent },
     scansLeft: Math.max(0, PLANS[plan].scansPerDay + shareBonus - (await scansToday(profile.userId))),
     setsTracked: Number(sets?.n ?? 0),
   };
@@ -570,43 +570,7 @@ export function registerFeatures(app: any, h: {
   });
 
   // ---------------------------- Händler-Shops ------------------------------
-  app.get("/api/shops", async (c: any) => {
-    const list = rows(await db.execute(sql`
-      SELECT p.user_id, p.shop_slug, COALESCE(NULLIF(p.shop_title, ''), p.display_name) AS title, p.shop_bio, p.display_name, p.city,
-        (SELECT count(*)::int FROM listings l WHERE l.user_id = p.user_id AND l.status = 'active') AS listing_count,
-        (SELECT round(avg(r.stars)::numeric, 1)::float FROM reviews r WHERE r.reviewee_id = p.user_id) AS rating,
-        (SELECT count(*)::int FROM reviews r WHERE r.reviewee_id = p.user_id) AS rating_count
-      FROM profiles p
-      WHERE p.shop_slug IS NOT NULL AND p.plan = 'pro' AND p.plan_until > now() AND NOT p.banned
-      ORDER BY rating_count DESC, listing_count DESC LIMIT 60
-    `));
-    return c.json({ shops: list });
-  });
-
-  app.get("/api/shops/:slug", async (c: any) => {
-    const slug = str(c.req.param("slug"), 30).toLowerCase();
-    const [p] = await db.select().from(profiles).where(eq(profiles.shopSlug, slug)).limit(1);
-    if (!p || p.banned || effectivePlan({ plan: p.plan, planUntil: p.planUntil }) !== "pro") return c.json({ error: "Shop nicht gefunden" }, 404);
-    await recordShopView(c, p.userId);
-    const items = rows(await db.execute(sql`
-      SELECT l.id, l.card_id, l.sealed_product_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.created_at, l.user_id,
-        (l.boosted_until > now()) AS boosted, COALESCE(c.trend, c.avg)::float AS market_price
-      FROM listings l LEFT JOIN cards c ON c.id = l.card_id
-      WHERE l.user_id = ${p.userId} AND l.status = 'active'
-      ORDER BY (l.boosted_until > now()) DESC NULLS LAST, l.created_at DESC LIMIT 200
-    `));
-    const [done] = rows(await db.execute(sql`SELECT count(*)::int AS n FROM trades WHERE status = 'completed' AND (from_user = ${p.userId} OR to_user = ${p.userId})`));
-    return c.json({
-      shop: {
-        slug: p.shopSlug, title: p.shopTitle || p.displayName, bio: p.shopBio, displayName: p.displayName, city: p.city,
-        userId: p.userId, memberSince: p.createdAt, rating: await h.ratingOf(p.userId), completedTrades: Number(done?.n ?? 0),
-      },
-      listings: items.map((l: any) => ({
-        ...l, seller: p.displayName, verified: true,
-        priceCheck: l.market_price ? (l.price / l.market_price < 0.85 ? "deal" : l.price / l.market_price <= 1.1 ? "fair" : "high") : null,
-      })),
-    });
-  });
+  // Seit Phase 5 in server/shops.ts (Branding, Sprachfilter, Antwortzeit, öffentliche Shop-Seite mit Vorschaubild)
 
   // ------------------------- Empfehlungsprogramm ---------------------------
   app.post("/api/referral/claim", auth, async (c: any) => {

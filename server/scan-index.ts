@@ -8,7 +8,11 @@ import { sql } from "drizzle-orm";
 import jpeg from "jpeg-js";
 import { db } from "../db/index.ts";
 import { rows, rateLimit, clientIp, str } from "./util.ts";
+import { gunzipSync } from "node:zlib";
 import { referenceHashes, wordsToHex, hexToWords, packWords, encodeBase64, WORDS } from "./scan-logic.ts";
+import * as seedDe from "./scan-seed/de.ts";
+import * as seedEn from "./scan-seed/en.ts";
+import * as seedJa from "./scan-seed/ja.ts";
 
 const LANGS = ["de", "en", "ja"] as const;
 type Lang = (typeof LANGS)[number];
@@ -66,9 +70,83 @@ async function hashOne(t: Todo) {
   }
 }
 
-/** Geplanter Lauf: so viele Karten wie in die Zeit passen (parallel, je Bild ~100 ms). */
-export async function runHashIndex({ deadlineMs = 24_000, max = 600, concurrency = 8 } = {}) {
+// ---------------------------------------------------------------------------
+// Vorberechneter Basis-Index (scripts/build-scan-seed.ts): Fingerabdrücke aller TCGdex-Karten DE/EN/JA mit Bild.
+// Wird für jede Katalogkarte ohne Fingerabdruck übernommen, wenn das Bild identisch ist – der Scanner kennt so
+// sofort den ganzen Katalog, statt erst über viele Job-Läufe aufzubauen. Neue Karten rechnet der Job wie bisher selbst.
+// ---------------------------------------------------------------------------
+type SeedEntry = { path: string; artP: string; artD: string; fullP: string };
+const SEEDS: Record<Lang, { PARTS: string[]; COUNT: number; BUILT_AT: string }> = { de: seedDe, en: seedEn, ja: seedJa };
+const seedCache = new Map<Lang, Map<string, SeedEntry>>();
+const HEX16 = /^[0-9a-f]{16}$/;
+
+export function seedMap(lang: Lang): Map<string, SeedEntry> {
+  const hit = seedCache.get(lang);
+  if (hit) return hit;
+  const map = new Map<string, SeedEntry>();
+  try {
+    for (const part of SEEDS[lang].PARTS) {
+      const text = gunzipSync(Buffer.from(part, "base64")).toString("utf8");
+      for (const line of text.split("\n")) {
+        const [id, path, artP, artD, fullP] = line.split("\t");
+        if (id && path && HEX16.test(artP) && HEX16.test(artD) && HEX16.test(fullP)) map.set(id, { path, artP, artD, fullP });
+      }
+    }
+  } catch (e) {
+    console.error("Scanner-Basis-Index konnte nicht gelesen werden", lang, e);
+  }
+  seedCache.set(lang, map);
+  return map;
+}
+
+export const seedInfo = () => LANGS.map((l) => ({ lang: l, count: SEEDS[l].COUNT, builtAt: SEEDS[l].BUILT_AT }));
+
+/** Bildpfad aus der gespeicherten Adresse: https://assets.tcgdex.net/<pfad>/high.webp → <pfad> */
+const imagePath = (image: string) => (IMAGE_RE.test(image) ? image.slice("https://assets.tcgdex.net/".length, -"/high.webp".length) : "");
+
+let seedDoneAt = 0;
+/** Übernimmt Basis-Fingerabdrücke für alle Karten ohne Eintrag (höchstens alle 5 Minuten, in Blöcken zu 500). */
+export async function applySeedIndex({ force = false, deadlineMs = 15_000 } = {}) {
+  if (!force && Date.now() - seedDoneAt < 5 * 60_000) return { seeded: 0, skipped: true };
   const started = Date.now();
+  const todo = rows(await db.execute(sql`
+    SELECT x.key, x.kind, x.id, x.lang, x.image FROM (
+      SELECT 'card:' || c.id AS key, 'card'::text AS kind, c.id, 'de'::text AS lang, c.image FROM cards c WHERE c.image <> ''
+      UNION ALL
+      SELECT 'print:' || p.id, 'print', p.id, p.lang, p.image FROM card_prints p WHERE p.image <> ''
+    ) x LEFT JOIN card_hashes h ON h.id = x.key
+    WHERE h.id IS NULL OR (h.art_p IS NULL AND h.source_image = x.image)
+    LIMIT 60000`));
+  const values: any[] = [];
+  for (const r of todo) {
+    const lang = String(r.lang) as Lang;
+    if (!(LANGS as readonly string[]).includes(lang)) continue;
+    const tcgdexId = r.kind === "print" ? String(r.id).replace(/^(en|ja):/, "") : String(r.id);
+    const hit = seedMap(lang).get(tcgdexId);
+    if (!hit || hit.path !== imagePath(String(r.image))) continue;
+    values.push(sql`(${String(r.key)}, ${String(r.kind)}, ${String(r.id)}, ${lang}, ${hit.artP}, ${hit.artD}, ${hit.fullP}, ${String(r.image)}, now(), 1, NULL)`);
+  }
+  let seeded = 0;
+  for (let i = 0; i < values.length && Date.now() - started < deadlineMs; i += 500) {
+    const chunk = values.slice(i, i + 500);
+    await db.execute(sql`
+      INSERT INTO card_hashes (id, target_kind, target_id, lang, art_p, art_d, full_p, source_image, computed_at, attempts, error)
+      VALUES ${sql.join(chunk, sql`, `)}
+      ON CONFLICT (id) DO UPDATE SET art_p = EXCLUDED.art_p, art_d = EXCLUDED.art_d, full_p = EXCLUDED.full_p,
+        source_image = EXCLUDED.source_image, computed_at = now(), error = NULL`);
+    seeded += chunk.length;
+  }
+  if (seeded === values.length) seedDoneAt = Date.now();
+  return { seeded, candidates: values.length, skipped: false };
+}
+
+/** Geplanter Lauf: erst den Basis-Index übernehmen, dann so viele Karten wie in die Zeit passen (parallel, je Bild ~100 ms). */
+export async function runHashIndex({ deadlineMs = 24_000, max = 600, concurrency = 8, forceSeed = false } = {}) {
+  const started = Date.now();
+  const seed = await applySeedIndex({ force: forceSeed, deadlineMs: Math.min(15_000, deadlineMs / 2) }).catch((e) => {
+    console.error("Scanner-Basis-Index", e);
+    return { seeded: 0, skipped: false, error: String(e?.message || e) };
+  });
   const queue = await dueCards(max);
   let ok = 0, failed = 0;
   const worker = async () => {
@@ -78,7 +156,7 @@ export async function runHashIndex({ deadlineMs = 24_000, max = 600, concurrency
     }
   };
   await Promise.all(Array.from({ length: concurrency }, worker));
-  return { hashed: ok, failed, remaining: queue.length, ms: Date.now() - started };
+  return { hashed: ok, failed, seeded: seed.seeded || 0, remaining: queue.length, ms: Date.now() - started };
 }
 
 export async function scanIndexStatus() {
@@ -98,6 +176,7 @@ export async function scanIndexStatus() {
       return { lang: l, total: Number(r.total) || 0, hashed: Number(r.hashed) || 0, failed: Number(r.failed) || 0 };
     }),
     lastHashedAt: last?.at ?? null,
+    seed: seedInfo(),
   };
 }
 
@@ -204,7 +283,7 @@ export function registerScanIndex(app: any, { auth, adminOnly }: { auth: any; ad
   });
 
   app.post("/api/admin/scan-index/run", auth, adminOnly, async (c: any) => {
-    const result = await runHashIndex({ deadlineMs: 20_000, max: 400 });
+    const result = await runHashIndex({ deadlineMs: 20_000, max: 400, forceSeed: true });
     return c.json({ result, status: await scanIndexStatus() });
   });
 }

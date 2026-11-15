@@ -149,12 +149,15 @@ export function trustLevel(score: number): TrustLevel {
 }
 
 /** Schreib-Limits je Vertrauensstufe (pro Minute / pro Stunde) – serverseitig über die Datenbank gezählt. */
-export function writeLimits(score: number, kind: "chat" | "post" | "comment") {
+export function writeLimits(score: number, kind: "chat" | "post" | "comment" | "deal" | "radar") {
   const lvl = trustLevel(score).key;
   const table = {
     chat: { new: [4, 40], known: [8, 120], trusted: [12, 240], top: [20, 400] },
     post: { new: [1, 3], known: [2, 10], trusted: [3, 20], top: [5, 40] },
     comment: { new: [3, 20], known: [6, 60], trusted: [10, 120], top: [15, 200] },
+    // Phase 5: Community-Deals im Flip-Radar und Sammler-Radar-Pins
+    deal: { new: [1, 3], known: [2, 10], trusted: [3, 20], top: [5, 40] },
+    radar: { new: [1, 2], known: [1, 4], trusted: [2, 6], top: [2, 10] },
   } as const;
   const [perMinute, perHour] = table[kind][lvl];
   return { perMinute, perHour };
@@ -176,4 +179,32 @@ export function valueTier(value: number): { label: string; icon: string } | null
   ];
   for (const [min, label, icon] of steps) if (value >= min) return { label, icon };
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: Sammler-Radar – Koordinaten serverseitig auf ein ~1-km-Raster runden
+// ---------------------------------------------------------------------------
+/** 1 km in Breitengraden (≈ 111,2 km pro Grad). */
+export const RADAR_GRID_KM = 1;
+const KM_PER_DEG_LAT = 111.2;
+
+/**
+ * Rundet auf die Mitte einer ~1 × 1 km großen Rasterzelle. Der Längengrad-Schritt wird mit dem Breitengrad
+ * skaliert, damit die Zelle überall etwa 1 km breit ist. Ungültige Werte → null.
+ */
+export function radarRound(lat: unknown, lng: unknown): { lat: number; lng: number } | null {
+  const a = Number(lat), o = Number(lng);
+  if (!Number.isFinite(a) || !Number.isFinite(o) || a < -85 || a > 85 || o < -180 || o > 180) return null;
+  const stepLat = RADAR_GRID_KM / KM_PER_DEG_LAT;
+  const cellLat = Math.floor(a / stepLat) * stepLat + stepLat / 2;
+  const stepLng = RADAR_GRID_KM / (KM_PER_DEG_LAT * Math.max(0.05, Math.cos((cellLat * Math.PI) / 180)));
+  const cellLng = Math.floor(o / stepLng) * stepLng + stepLng / 2;
+  return { lat: Math.round(cellLat * 10000) / 10000, lng: Math.round(Math.max(-180, Math.min(180, cellLng)) * 10000) / 10000 };
+}
+
+/** Kartennummer im Freitext eines Deals („Glurak ex 199/165“) → { num: "199", total: 165 } */
+export function parseCardNumber(text: string): { num: string; total: number } | null {
+  const m = /(?:^|\D)(\d{1,3})\s*\/\s*(\d{2,3})(?:\D|$)/.exec(String(text || ""));
+  if (!m) return null;
+  return { num: String(Number(m[1])), total: Number(m[2]) };
 }

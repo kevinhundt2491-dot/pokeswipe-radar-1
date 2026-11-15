@@ -3,8 +3,10 @@
 // Wunschliste. Filter: Sprache, Set, Seltenheit, Preisspanne, Wunschliste, „Nur Unter-Marktwert-Deals“.
 // Ohne Verbindung bleibt der feste Chase-Katalog aus index.html als Stapel aktiv.
 import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl, btn, sparkline } from "./core.js";
+import { updatePrefs, encodePrefParam, prefSummary, sanitizeScores, COLD_START_SWIPES } from "../server/arena-logic.ts";
 
 const STORE_KEY = "ps_arena_filters";
+const PREF_KEY = "ps_arena_prefs";
 const SEEN_KEY = "ps_arena_seen";
 const LANGS = [
   { lang: "de", flag: "🇩🇪", short: "DE", label: "Deutsch" },
@@ -61,8 +63,83 @@ function markSeen(key) {
   sessionStorage.setItem(SEEN_KEY, JSON.stringify(list.slice(-100)));
 }
 
+// ---------------------------------------------------------------------------
+// Preference-Learning: jeder Rechts-/Links-Swipe verändert die Gewichte für Seltenheit, Sprache, Set und Preisband.
+// Ohne Konto bleibt das Profil auf dem Gerät (und geht als ?pw=… an den Server), mit Konto wird es serverseitig gespeichert.
+// ---------------------------------------------------------------------------
+let prefs = loadPrefs();
+let pendingEvents = [];
+let flushTimer = null;
+let swipesSinceReload = 0;
+
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREF_KEY) || "null");
+    if (p && typeof p === "object") return { scores: sanitizeScores(p.scores), swipes: Number(p.swipes) || 0, likes: Number(p.likes) || 0 };
+  } catch {}
+  return { scores: {}, swipes: 0, likes: 0 };
+}
+const savePrefs = () => localStorage.setItem(PREF_KEY, JSON.stringify(prefs));
+
+function featureEvent(item, dir) {
+  return {
+    dir, lang: item.lang || "de", rarity: item.rarityBucket || null,
+    set: item.setId ? `${item.lang || "de"}:${item.setId}` : null, price: Number(item.cm) || 0,
+  };
+}
+
+async function flushEvents() {
+  clearTimeout(flushTimer); flushTimer = null;
+  if (!state.user || !pendingEvents.length) { pendingEvents = []; return; }
+  const events = pendingEvents.splice(0, 50);
+  try {
+    const r = await api("/api/swipe/feedback", { method: "POST", body: { events, device: prefs } });
+    if (r?.profile) { prefs = { scores: sanitizeScores(r.profile.scores), swipes: Number(r.profile.swipes) || 0, likes: Number(r.profile.likes) || 0 }; savePrefs(); }
+  } catch { /* nächster Versuch beim nächsten Swipe */ }
+}
+
+function onSwipe(item, dir) {
+  if (!item || item.kind === "listing" && dir === "detail") return;
+  const ev = featureEvent(item, dir);
+  prefs = updatePrefs(prefs, [ev]);
+  savePrefs();
+  if (state.user) {
+    pendingEvents.push(ev);
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushEvents, pendingEvents.length >= 8 ? 0 : 4000);
+  }
+  if (dir !== "detail") swipesSinceReload++;
+  renderTaste();
+  // Sobald genug gelernt ist, den Stapel einmal neu (personalisiert) laden
+  if (prefs.swipes === COLD_START_SWIPES && usingLive) { swipesSinceReload = 0; loadMore(); }
+}
+
+function renderTaste() {
+  const el = $("arena-taste");
+  if (!el) return;
+  const s = prefSummary(prefs);
+  if (s.learning) {
+    el.innerHTML = `🧠 Lerne deinen Geschmack … noch ${Math.max(0, COLD_START_SWIPES - s.swipes)} Swipes`;
+    return;
+  }
+  const likes = s.likesTop.map((x) => esc(x.label)).join(", ");
+  el.innerHTML = `🧠 Für dich gewichtet${likes ? `: mehr ${likes}` : ""}${s.dislikes.length ? ` • weniger ${s.dislikes.map((x) => esc(x.label)).join(", ")}` : ""}
+    <button type="button" onclick="PS.arenaResetTaste()" class="underline text-slate-500 ml-1">zurücksetzen</button>`;
+}
+
+async function resetTaste() {
+  prefs = { scores: {}, swipes: 0, likes: 0 };
+  savePrefs();
+  pendingEvents = [];
+  if (state.user) { try { await api("/api/swipe/prefs", { method: "DELETE" }); } catch {} }
+  renderTaste();
+  reloadDeck();
+  toast("🧠 Geschmack zurückgesetzt", "Die Arena lernt ab jetzt neu aus deinen Swipes.");
+}
+
 function deckQuery(excludeSeen = true) {
   const p = new URLSearchParams();
+  if (prefs.swipes) p.set("pw", encodePrefParam(prefs));
   p.set("lang", filters.langs.join(","));
   if (filters.set) p.set("set", filters.set);
   p.set("rarity", filters.rarity || "hits");
@@ -111,6 +188,8 @@ function toDeckItem(it) {
     city: it.city || "",
     want: it.want || "",
     boosted: !!it.boosted,
+    rarityBucket: it.rarityBucket || null,
+    setId: it.setId || null,
   };
 }
 
@@ -237,7 +316,9 @@ function renderFilterBar() {
       <label class="col-span-2 flex items-center gap-2 text-slate-300"><input id="arena-listings" type="checkbox" ${filters.listings ? "checked" : ""} class="accent-yellow-400" /> Tausch-Inserate anderer Sammler in den Stapel mischen</label>
       <button type="button" onclick="PS.arenaApplyDrawer()" class="col-span-2 bg-yellow-400 text-slate-950 font-black py-2 rounded-xl">Filter anwenden</button>
     </div>
-    <p id="arena-status" class="hidden"></p>`;
+    <p id="arena-status" class="hidden"></p>
+    <p id="arena-taste" class="text-[10px] text-slate-400"></p>`;
+  renderTaste();
   if (drawerOpen) fillSetSelect();
 }
 
@@ -376,6 +457,7 @@ export const arenaApi = {
   arenaRarity: (v) => { if (RARITIES.some(([k]) => k === v)) filters.rarity = v; },
   arenaReset: () => { filters = { ...DEFAULTS, langs: filters.langs }; drawerOpen = false; saveFilters(); renderFilterBar(); reloadDeck(); },
   arenaReload: reloadDeck,
+  arenaResetTaste: resetTaste,
   openPrint,
   addPrintToPortfolio,
 };
@@ -384,6 +466,8 @@ export function initArena() {
   renderFilterBar();
   window.psArenaNeedMore = loadMore;
   window.psArenaMatch = onMatch;
+  window.psArenaSwipe = onSwipe;
+  document.addEventListener("visibilitychange", () => { if (document.hidden) flushEvents(); });
   window.addEventListener("ps:swipe-render", (e) => markSeen(e.detail?.key));
   // Arena erst laden, wenn sie sichtbar ist (spart Anfragen bei Direktlinks in andere Bereiche)
   const start = () => { if (!lastLoadAt) reloadDeck(); };

@@ -1,6 +1,8 @@
 {
   "rules": {
     "pokeswipe_radar": {
+      ".read": false,
+      ".write": false,
       "stats": {
         ".read": true,
         ".write": false,
@@ -9,14 +11,16 @@
           ".validate": "newData.isNumber() && newData.val() === (data.exists() ? data.val() + 1 : 1)"
         },
         "$other": {
+          ".write": false,
           ".validate": false
         }
       },
       "presence": {
         ".read": true,
+        ".indexOn": ["ts"],
         "$uid": {
           ".write": "auth != null && auth.uid === $uid",
-          ".validate": "!newData.exists() || (newData.hasChildren(['online', 'ts']) && newData.child('online').isBoolean() && newData.child('ts').isNumber() && newData.child('ts').val() <= now + 60000)",
+          ".validate": "!newData.exists() || (newData.hasChildren(['online', 'ts']) && newData.child('ts').val() <= now + 60000 && newData.child('ts').val() >= now - 60000)",
           "online": {
             ".validate": "newData.isBoolean()"
           },
@@ -29,13 +33,8 @@
         }
       },
       "rate": {
-        "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
-          ".write": "auth != null && auth.uid === $uid",
-          "$kind": {
-            ".validate": "$kind.matches(/^(radar)$/) && newData.isNumber() && newData.val() === now && (!data.exists() || now - data.val() >= 3000)"
-          }
-        }
+        ".read": false,
+        ".write": false
       },
       "chat": {
         ".read": false,
@@ -46,38 +45,15 @@
         ".write": false
       },
       "radar_users": {
-        ".read": true,
-        ".indexOn": [
-          "timestamp"
-        ],
-        "$uid": {
-          ".write": "auth != null && auth.uid === $uid",
-          ".validate": "!newData.exists() || newData.hasChildren(['name', 'city', 'lat', 'lng', 'cards', 'timestamp'])",
-          "name": {
-            ".validate": "newData.isString() && newData.val().length <= 35"
-          },
-          "city": {
-            ".validate": "newData.isString() && newData.val().length <= 60"
-          },
-          "cards": {
-            ".validate": "newData.isString() && newData.val().length <= 120"
-          },
-          "lat": {
-            ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90"
-          },
-          "lng": {
-            ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180"
-          },
-          "timestamp": {
-            ".validate": "newData.isNumber() && newData.val() <= now + 60000"
-          },
-          "$other": {
-            ".validate": false
-          }
-        }
+        ".read": false,
+        ".write": false
       },
       "market": {
-        ".read": true,
+        ".read": false,
+        ".write": false
+      },
+      "deals": {
+        ".read": false,
         ".write": false
       },
       "$other": {
