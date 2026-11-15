@@ -124,4 +124,7 @@ Netlify-Umgebungsvariablen und werden nur an Admins ausgeliefert:
 | `MAKE_WEBHOOK_TOKEN` | Optional: gemeinsamer Token für den Filter `token = …` im Make-Szenario (gilt für alle Admin-Browser). |
 | `ELEVENLABS_API_KEY` | Sprecherstimme für die Auto-Reels (fest: ElevenLabs „Matilda“). Ohne Schlüssel startet der Generator mit Voiceover nicht. |
 
+Jedes Reel ist fest 30 Sekunden lang. Das Skript einer Episode wird in einem durchgehenden Take gesprochen
+(`/api/admin/voiceover/narration`, mit Zeitstempeln pro Satz); die Szenenwechsel folgen diesen Zeitstempeln.
+
 Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorgabe nur in diesem Browser.
