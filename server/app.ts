@@ -21,6 +21,12 @@ import { registerIntlCatalog, printForPortfolio } from "./intl-catalog.ts";
 import { registerIntegrations, webhookSecrets, recordWebhook } from "./integrations.ts";
 import { registerFlip } from "./flip.ts";
 import { registerScanIndex } from "./scan-index.ts";
+import { registerCommunity, afterCommunityReport, applyModeration, isBlockedBetween, COMMUNITY_TARGETS } from "./community.ts";
+import { registerProfiles } from "./profiles.ts";
+import { registerMarket, fulfillOrderSession } from "./market.ts";
+import { registerNative } from "./native.ts";
+import { profileSlug } from "./community-logic.ts";
+import { CONDITIONS, MARKET_MAX_SHIPPING_CENTS } from "./market-logic.ts";
 import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker, cardmarketPartnerId } from "./prices.ts";
 import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan } from "./billing.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
@@ -50,6 +56,11 @@ const auth = async (c: any, next: any) => {
   if (!user) return c.json({ error: "Bitte melde dich an." }, 401);
   let profile = await ensureProfile(user);
   profile = await syncProfilePlan(profile);
+  // Bestätigte E-Mail (Netlify Identity) merken – fließt in den Trust-Score der Community ein
+  if (user.confirmed && !profile.emailConfirmed) {
+    await db.update(profiles).set({ emailConfirmed: true }).where(eq(profiles.userId, user.id));
+    profile = { ...profile, emailConfirmed: true };
+  }
   if (profile.banned && c.req.method !== "GET") return c.json({ error: "Dein Konto ist gesperrt." }, 403);
   if (c.req.method !== "GET" && !rateLimit(`w:${user.id}`, 60, 60_000)) {
     return c.json({ error: "Zu viele Aktionen in kurzer Zeit. Bitte kurz warten." }, 429);
@@ -117,6 +128,10 @@ app.get("/api/me", auth, async (c) => {
     planUntil: profile.planUntil,
     cancelAtPeriodEnd: profile.cancelAtPeriodEnd,
     isAdmin: isAdmin(user),
+    emailConfirmed: user.confirmed,
+    profileSlug: profileSlug(profile.displayName),
+    publicProfile: profile.publicProfile,
+    sellerReady: profile.stripeAccountReady,
     usage: counts,
     rating: await ratingOf(user.id),
     freeBoostsLeft: await freeBoostsLeft(user.id, plan),
@@ -426,7 +441,8 @@ app.get("/api/listings", async (c) => {
   const list = rows(await db.execute(sql`
     SELECT l.id, l.card_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.created_at, l.user_id,
       l.status, l.sealed_product_id, (l.boosted_until > now()) AS boosted, l.boosted_until,
-      p.display_name AS seller,
+      (l.buy_now AND p.stripe_account_ready) AS buy_now, l.shipping_cents, l.condition,
+      p.display_name AS seller, p.public_profile AS seller_public,
       (p.plan = 'pro' AND p.plan_until > now()) AS verified,
       COALESCE(c.trend, c.avg)::float AS market_price,
       (SELECT round(avg(r.stars)::numeric, 1)::float FROM reviews r WHERE r.reviewee_id = l.user_id) AS rating,
@@ -447,7 +463,7 @@ app.get("/api/listings", async (c) => {
         const r = l.price / l.market_price;
         priceCheck = r < 0.85 ? "deal" : r <= 1.1 ? "fair" : "high";
       }
-      return { ...l, priceCheck };
+      return { ...l, priceCheck, seller_slug: profileSlug(l.seller) };
     }),
   });
 });
@@ -477,8 +493,12 @@ app.post("/api/listings", auth, async (c) => {
     }
     if (typeof it.img === "string" && it.img.startsWith("data:")) image = (await storeDataUrlImage(it.img, user.id)) || image;
     else image = image || safeImage(it.img);
+    // Sofort-Kauf mit Käuferschutz nur mit verifiziertem Stripe-Connect-Verkäuferkonto
+    const buyNow = it.buyNow === true && profile.stripeAccountReady && Number(price) >= 1;
+    const shippingCents = buyNow ? int(it.shippingCents, 0, MARKET_MAX_SHIPPING_CENTS, 0) : 0;
+    const condition = CONDITIONS[String(it.condition || "")] ? String(it.condition) : "";
     const [row] = await db.insert(listings).values({
-      userId: user.id, cardId, sealedProductId, cardName, image, price,
+      userId: user.id, cardId, sealedProductId, cardName, image, price, buyNow, shippingCents, condition,
       want: str(it.want, 120) || "Tausch / Gebot",
       city: str(it.city, 60) || profile.city || "Deutschland",
     }).returning();
@@ -550,6 +570,7 @@ app.post("/api/trades", auth, async (c) => {
   const [listing] = await db.select().from(listings).where(and(eq(listings.id, listingId), eq(listings.status, "active"))).limit(1);
   if (!listing) return c.json({ error: "Inserat nicht mehr verfügbar." }, 404);
   if (listing.userId === user.id) return c.json({ error: "Das ist dein eigenes Inserat." }, 400);
+  if (await isBlockedBetween(user.id, listing.userId)) return c.json({ error: "Tauschanfrage nicht möglich." }, 403);
   const [dup] = await db.select({ id: trades.id }).from(trades).where(and(
     eq(trades.listingId, listingId), eq(trades.fromUser, user.id), inArray(trades.status, ["pending", "accepted"]),
   )).limit(1);
@@ -661,6 +682,7 @@ app.get("/api/users/:id", async (c) => {
     .from(reviews).innerJoin(profiles, eq(profiles.userId, reviews.reviewerId))
     .where(eq(reviews.revieweeId, id)).orderBy(desc(reviews.createdAt)).limit(10);
   return c.json({
+    id: p.userId, slug: profileSlug(p.displayName), publicProfile: p.publicProfile, sellerVerified: p.stripeAccountReady,
     displayName: p.displayName, city: p.city, memberSince: p.createdAt,
     verified: effectivePlan(p) === "pro", rating: await ratingOf(id), completedTrades: Number(done?.n ?? 0), reviews: latest,
   });
@@ -670,10 +692,15 @@ app.post("/api/reports", auth, async (c) => {
   const user = c.get("user");
   if (!rateLimit(`report:${user.id}`, 5, 600_000)) return c.json({ error: "Zu viele Meldungen." }, 429);
   const b = await body(c);
-  const targetType = ["listing", "user", "trade", "event"].includes(b.targetType) ? b.targetType : null;
+  const targetType = ["listing", "user", "trade", "event", "order", ...COMMUNITY_TARGETS].includes(b.targetType) ? b.targetType : null;
   const reason = str(b.reason, 500);
   if (!targetType || !b.targetId || reason.length < 3) return c.json({ error: "Bitte einen Grund angeben." }, 400);
-  await db.insert(reports).values({ reporterId: user.id, targetType, targetId: str(b.targetId, 80), reason });
+  const targetId = str(b.targetId, 80);
+  // Pro Nutzer und Ziel nur eine offene Meldung (zählt für das automatische Ausblenden)
+  const [dup] = await db.select({ id: reports.id }).from(reports).where(and(eq(reports.reporterId, user.id), eq(reports.targetType, targetType), eq(reports.targetId, targetId), eq(reports.status, "open"))).limit(1);
+  if (dup) return c.json({ ok: true, duplicate: true }, 200);
+  await db.insert(reports).values({ reporterId: user.id, targetType, targetId, reason });
+  await afterCommunityReport(targetType, targetId);
   return c.json({ ok: true }, 201);
 });
 
@@ -796,6 +823,8 @@ async function fulfillSession(sessionId: string, expectedUserId?: string) {
   const s = stripe();
   if (!s) throw new Error("Stripe fehlt");
   const session = await s.checkout.sessions.retrieve(sessionId, { expand: ["subscription"] });
+  // Marktplatz-Käufe (Treuhand) laufen getrennt und zählen nicht als Plattform-Umsatz
+  if (session.metadata?.kind === "order") return fulfillOrderSession(session, expectedUserId);
   const userId = session.metadata?.userId;
   if (!userId || session.client_reference_id !== userId) return { ok: false, reason: "invalid" };
   if (expectedUserId && userId !== expectedUserId) return { ok: false, reason: "foreign" };
@@ -833,7 +862,7 @@ app.post("/api/billing/confirm", auth, async (c) => {
   const sessionId = str((await body(c)).sessionId, 200);
   if (!/^cs_[A-Za-z0-9_]+$/.test(sessionId)) return c.json({ error: "Ungültige Sitzung" }, 400);
   const result = await fulfillSession(sessionId, c.get("user").id);
-  if (!result.ok) return c.json({ error: "Zahlung konnte nicht bestätigt werden.", reason: result.reason }, 402);
+  if (!result.ok) return c.json({ error: "Zahlung konnte nicht bestätigt werden.", reason: (result as any).reason }, 402);
   return c.json(result);
 });
 
@@ -931,6 +960,14 @@ app.post("/api/admin/reports/:id", auth, adminOnly, async (c) => {
   const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
   const [rep] = await db.select().from(reports).where(eq(reports.id, id)).limit(1);
   if (!rep) return c.json({ error: "Nicht gefunden" }, 404);
+  // Community-Inhalte (Pull-Wall, Kommentare, Chat): Inhalt entfernen bzw. Autor sperren
+  if ((COMMUNITY_TARGETS as readonly string[]).includes(rep.targetType)) {
+    const actorId = c.get("user").id;
+    if (b.removeListing) await applyModeration({ actorId, targetType: rep.targetType, targetId: rep.targetId, action: "remove", reason: rep.reason });
+    if (b.banUser) await applyModeration({ actorId, targetType: rep.targetType, targetId: rep.targetId, action: "ban", reason: rep.reason });
+    await db.update(reports).set({ status: b.dismiss ? "dismissed" : "resolved" }).where(eq(reports.id, id));
+    return c.json({ ok: true });
+  }
   if (b.removeListing && rep.targetType === "listing") {
     await db.update(listings).set({ status: "removed" }).where(eq(listings.id, Number(rep.targetId) || 0));
   }
@@ -965,6 +1002,10 @@ registerCollector(app, { auth, body });
 registerDrops(app, { auth, adminOnly, body });
 registerLegal(app, { auth, adminOnly, body });
 registerSeo(app); // vor registerCatalog: eigene Teil-Sitemaps vor dem Muster /sitemaps/:file
+registerCommunity(app, { auth, adminOnly, body, safeImage, storeDataUrlImage });
+registerProfiles(app, { auth, body }); // ebenfalls vor registerCatalog (/sitemaps/profiles.xml)
+registerMarket(app, { auth, adminOnly, body });
+registerNative(app, { auth, body });
 registerCatalog(app, { auth, adminOnly, body });
 registerViral(app, { auth, body, ensureCode: ensureReferralCode });
 registerIntlCatalog(app, { auth, adminOnly });

@@ -352,7 +352,7 @@ const xml = (c: any, body: string) => {
 const loc = (path: string, lastmod?: unknown, extra = "<changefreq>daily</changefreq>") =>
   `<url><loc>${h(`${SITE()}${path}`)}</loc>${lastmod ? `<lastmod>${new Date(String(lastmod)).toISOString().slice(0, 10)}</lastmod>` : ""}${extra}</url>`;
 
-export const SEO_SITEMAPS = ["/sitemaps/pokemon.xml", "/sitemaps/sealed.xml"];
+export const SEO_SITEMAPS = ["/sitemaps/pokemon.xml", "/sitemaps/sealed.xml", "/sitemaps/profiles.xml"];
 export const SEO_STATIC_PAGES = ["/pokemon", "/sealed", "/trends"];
 
 export function registerSeo(app: any) {

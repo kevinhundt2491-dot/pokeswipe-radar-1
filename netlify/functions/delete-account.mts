@@ -1,7 +1,7 @@
 import type { Config } from "@netlify/functions";
 import { admin } from "@netlify/identity";
 import { getStore } from "@netlify/blobs";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import Stripe from "stripe";
 import { db, profiles, listings } from "../../db/index.ts";
 
@@ -43,6 +43,13 @@ export default async (req: Request) => {
   if (!user) return Response.json({ error: "Bitte melde dich an." }, { status: 401 });
 
   const [profile] = await db.select().from(profiles).where(eq(profiles.userId, user.id)).limit(1);
+  // Laufende Treuhand-Käufe/-Verkäufe zuerst abschließen – sonst ginge Geld der Gegenseite verloren
+  const [open] = (await db.execute(sql`SELECT count(*)::int AS n FROM market_orders
+    WHERE (buyer_id = ${user.id} OR seller_id = ${user.id}) AND status IN ('paid', 'shipped', 'disputed', 'releasing')`)) as any;
+  const openCount = Number((open?.rows?.[0] ?? open)?.n ?? 0);
+  if (openCount > 0) {
+    return Response.json({ error: `Du hast noch ${openCount} laufende Käufe/Verkäufe mit Käuferschutz. Bitte schließe sie ab (Erhalt bestätigen oder Erstattung), dann kannst du dein Konto löschen.` }, { status: 409 });
+  }
   if (profile?.stripeSubscriptionId && process.env.STRIPE_SECRET_KEY) {
     try {
       await new Stripe(process.env.STRIPE_SECRET_KEY).subscriptions.cancel(profile.stripeSubscriptionId);
@@ -54,8 +61,11 @@ export default async (req: Request) => {
     // Hochgeladene Inserat-Fotos entfernen
     const own = await db.select({ image: listings.image }).from(listings).where(eq(listings.userId, user.id));
     const store = getStore("listing-images");
-    for (const l of own) {
-      const key = /^\/api\/images\/([a-f0-9-]{36})$/.exec(l.image)?.[1];
+    // Pull-Wall-Fotos (Phase 4) liegen im selben Speicher
+    const posts = (await db.execute(sql`SELECT image FROM community_posts WHERE user_id = ${user.id}`)) as any;
+    const postRows: any[] = Array.isArray(posts) ? posts : posts?.rows ?? [];
+    for (const l of [...own, ...postRows]) {
+      const key = /^\/api\/images\/([a-f0-9-]{36})$/.exec(String(l.image || ""))?.[1];
       if (key) await store.delete(key).catch(() => {});
     }
     await db.delete(profiles).where(eq(profiles.userId, user.id)); // alle verknüpften Daten folgen per Cascade

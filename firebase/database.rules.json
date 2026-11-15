@@ -33,93 +33,17 @@
           ".read": "auth != null && auth.uid === $uid",
           ".write": "(auth != null && auth.uid === $uid) || (auth == null && $uid.matches(/^u_[a-z0-9]{4,12}_[0-9]{10,14}$/))",
           "$kind": {
-            ".validate": "$kind.matches(/^(chat|wall|comment|radar)$/) && newData.isNumber() && newData.val() === now && (!data.exists() || now - data.val() >= 3000)"
+            ".validate": "$kind.matches(/^(radar)$/) && newData.isNumber() && newData.val() === now && (!data.exists() || now - data.val() >= 3000)"
           }
         }
       },
       "chat": {
-        ".read": true,
-        ".indexOn": [
-          "timestamp"
-        ],
-        "$msg": {
-          ".write": "!data.exists() && newData.exists()",
-          ".validate": "newData.hasChildren(['user', 'text', 'timestamp'])",
-          "user": {
-            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 35"
-          },
-          "text": {
-            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 500"
-          },
-          "timestamp": {
-            ".validate": "newData.isNumber() && newData.val() <= now + 60000 && newData.val() >= now - 600000"
-          },
-          "uid": {
-            ".validate": "newData.isString() && (auth == null ? newData.val().length <= 128 : newData.val() === auth.uid)"
-          },
-          "$other": {
-            ".validate": false
-          }
-        }
+        ".read": false,
+        ".write": false
       },
       "pullwall": {
-        ".read": true,
-        ".indexOn": [
-          "timestamp"
-        ],
-        "$post": {
-          ".write": "!data.exists() && newData.exists()",
-          ".validate": "newData.hasChildren(['user', 'caption', 'img', 'timestamp'])",
-          "user": {
-            ".validate": "newData.isString() && newData.val().length <= 35"
-          },
-          "caption": {
-            ".validate": "newData.isString() && newData.val().length <= 300"
-          },
-          "img": {
-            ".validate": "newData.isString() && newData.val().length <= 200000 && (newData.val().matches(/^data:image\\/(jpeg|png|webp);base64,[A-Za-z0-9+\\/=]+$/) || newData.val().matches(/^https:\\/\\/[A-Za-z0-9.-]+\\/[^\\s<>]*$/) || newData.val().matches(/^\\/[A-Za-z0-9][A-Za-z0-9._\\/-]*$/))"
-          },
-          "timestamp": {
-            ".validate": "newData.isNumber() && newData.val() <= now + 60000 && newData.val() >= now - 600000"
-          },
-          "uid": {
-            ".validate": "newData.isString() && (auth == null ? newData.val().length <= 128 : newData.val() === auth.uid)"
-          },
-          "likes": {
-            ".write": "true",
-            ".validate": "newData.isNumber() && newData.val() === (data.exists() ? data.val() + 1 : 1) && (auth == null || (!data.parent().child('likers').child(auth.uid).exists() && newData.parent().child('likers').child(auth.uid).val() === true))"
-          },
-          "likers": {
-            "$liker": {
-              ".write": "auth != null && auth.uid === $liker && !data.exists()",
-              ".validate": "newData.val() === true"
-            }
-          },
-          "comments": {
-            "$c": {
-              ".write": "!data.exists() && newData.exists()",
-              ".validate": "newData.hasChildren(['author', 'text', 'timestamp'])",
-              "author": {
-                ".validate": "newData.isString() && newData.val().length <= 35"
-              },
-              "text": {
-                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 300"
-              },
-              "timestamp": {
-                ".validate": "newData.isNumber() && newData.val() <= now + 60000 && newData.val() >= now - 600000"
-              },
-              "uid": {
-                ".validate": "newData.isString() && (auth == null ? newData.val().length <= 128 : newData.val() === auth.uid)"
-              },
-              "$other": {
-                ".validate": false
-              }
-            }
-          },
-          "$other": {
-            ".validate": false
-          }
-        }
+        ".read": false,
+        ".write": false
       },
       "radar_users": {
         ".read": true,

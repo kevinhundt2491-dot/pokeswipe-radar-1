@@ -37,6 +37,16 @@ export const profiles = pgTable("profiles", {
   leaderboardOptIn: boolean("leaderboard_opt_in").notNull().default(false),
   weeklyReport: boolean("weekly_report").notNull().default(true),
   lastWeeklyReport: timestamp("last_weekly_report", { withTimezone: true }),
+  // Phase 4: öffentliches Profil /u/<name> (nur mit Zustimmung), Community-Moderation, Stripe-Connect-Verkäuferkonto
+  bio: text().notNull().default(""),
+  emailConfirmed: boolean("email_confirmed").notNull().default(false),
+  publicProfile: boolean("public_profile").notNull().default(false),
+  showWishlist: boolean("show_wishlist").notNull().default(true),
+  showValueTier: boolean("show_value_tier").notNull().default(false),
+  mutedUntil: timestamp("muted_until", { withTimezone: true }),
+  stripeAccountId: text("stripe_account_id"),
+  stripeAccountReady: boolean("stripe_account_ready").notNull().default(false),
+  sellerTermsAt: timestamp("seller_terms_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("profiles_display_name_lower").on(t.displayName),
@@ -266,6 +276,10 @@ export const listings = pgTable("listings", {
   status: text().notNull().default("active"), // active | sold | removed
   sealedProductId: integer("sealed_product_id"),
   boostedUntil: timestamp("boosted_until", { withTimezone: true }),
+  // Phase 4: Sofort-Kauf mit Käuferschutz (Treuhand über Stripe Connect)
+  buyNow: boolean("buy_now").notNull().default(false),
+  shippingCents: integer("shipping_cents").notNull().default(0),
+  condition: text().notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("listings_status").on(t.status, t.createdAt), index("listings_user").on(t.userId)]);
 
@@ -293,13 +307,19 @@ export const tradeMessages = pgTable("trade_messages", {
 
 export const reviews = pgTable("reviews", {
   id: serial().primaryKey(),
-  tradeId: integer("trade_id").notNull().references(() => trades.id, { onDelete: "cascade" }),
+  tradeId: integer("trade_id").references(() => trades.id, { onDelete: "cascade" }),
+  // Phase 4: Bewertungen nach Treuhand-Käufen (genau eine von trade_id / order_id ist gesetzt)
+  orderId: integer("order_id"),
   reviewerId: text("reviewer_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
   revieweeId: text("reviewee_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
   stars: integer().notNull(),
   comment: text().notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("reviews_trade_reviewer").on(t.tradeId, t.reviewerId), index("reviews_reviewee").on(t.revieweeId)]);
+}, (t) => [
+  uniqueIndex("reviews_trade_reviewer").on(t.tradeId, t.reviewerId),
+  uniqueIndex("reviews_order_reviewer").on(t.orderId, t.reviewerId),
+  index("reviews_reviewee").on(t.revieweeId),
+]);
 
 export const reports = pgTable("reports", {
   id: serial().primaryKey(),
@@ -745,3 +765,120 @@ export const cardHashes = pgTable("card_hashes", {
   attempts: integer().notNull().default(0),
   error: text(),
 }, (t) => [index("card_hashes_lang").on(t.lang), index("card_hashes_target").on(t.targetKind, t.targetId)]);
+
+// ---------------------------------------------------------------------------
+// Phase 4: Authentifizierte Community (Pull-Wall, Live-Chat), Follower, Blockieren, Moderation
+// ---------------------------------------------------------------------------
+export const communityPosts = pgTable("community_posts", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  caption: text().notNull().default(""),
+  image: text().notNull().default(""), // /api/images/<uuid> oder TCGdex-Bild
+  cardId: text("card_id"),
+  status: text().notNull().default("visible"), // visible | hidden (wartet auf Prüfung) | removed
+  flagReason: text("flag_reason"),
+  likeCount: integer("like_count").notNull().default(0),
+  commentCount: integer("comment_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("community_posts_feed").on(t.status, t.id), index("community_posts_user").on(t.userId, t.id)]);
+
+export const communityComments = pgTable("community_comments", {
+  id: serial().primaryKey(),
+  postId: integer("post_id").notNull().references(() => communityPosts.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  body: text().notNull(),
+  status: text().notNull().default("visible"),
+  flagReason: text("flag_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("community_comments_post").on(t.postId, t.id), index("community_comments_user").on(t.userId, t.createdAt)]);
+
+export const communityLikes = pgTable("community_likes", {
+  postId: integer("post_id").notNull().references(() => communityPosts.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("community_likes_post_user").on(t.postId, t.userId)]);
+
+export const chatMessages = pgTable("chat_messages", {
+  id: serial().primaryKey(),
+  room: text().notNull().default("global"),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  body: text().notNull(),
+  status: text().notNull().default("visible"),
+  flagReason: text("flag_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("chat_messages_room").on(t.room, t.id), index("chat_messages_user").on(t.userId, t.createdAt)]);
+
+export const userBlocks = pgTable("user_blocks", {
+  blockerId: text("blocker_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  blockedId: text("blocked_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("user_blocks_pair").on(t.blockerId, t.blockedId), index("user_blocks_blocked").on(t.blockedId)]);
+
+export const follows = pgTable("follows", {
+  followerId: text("follower_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  followeeId: text("followee_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("follows_pair").on(t.followerId, t.followeeId), index("follows_followee").on(t.followeeId)]);
+
+// Protokoll aller Moderations-Aktionen (Admins und automatischer Filter)
+export const moderationLog = pgTable("moderation_log", {
+  id: serial().primaryKey(),
+  actorId: text("actor_id"), // null = automatischer Filter
+  action: text().notNull(), // hide | restore | remove | mute | unmute | ban | unban | auto_hide | auto_block
+  targetType: text("target_type").notNull(), // post | comment | chat | user | listing | order
+  targetId: text("target_id").notNull(),
+  userId: text("user_id"), // betroffener Nutzer
+  reason: text().notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("moderation_log_created").on(t.createdAt), index("moderation_log_user").on(t.userId)]);
+
+// ---------------------------------------------------------------------------
+// Phase 4: P2P-Marktplatz mit Treuhand (Stripe Connect Express, getrennte Zahlung & Auszahlung)
+// ---------------------------------------------------------------------------
+export const marketOrders = pgTable("market_orders", {
+  id: serial().primaryKey(),
+  listingId: integer("listing_id").references(() => listings.id, { onDelete: "set null" }),
+  buyerId: text("buyer_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  sellerId: text("seller_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  title: text().notNull(),
+  image: text().notNull().default(""),
+  // offered → awaiting_payment → paid → shipped → released (oder refunded / cancelled / disputed)
+  status: text().notNull().default("awaiting_payment"),
+  priceCents: integer("price_cents").notNull(),
+  shippingCents: integer("shipping_cents").notNull().default(0),
+  feeCents: integer("fee_cents").notNull().default(0),
+  feeBps: integer("fee_bps").notNull().default(0),
+  message: text().notNull().default(""),
+  stripeSessionId: text("stripe_session_id"),
+  paymentIntentId: text("payment_intent_id"),
+  chargeId: text("charge_id"),
+  transferId: text("transfer_id"),
+  refundId: text("refund_id"),
+  shippingAddress: text("shipping_address"), // JSON, erst nach Zahlung für den Verkäufer sichtbar
+  carrier: text().notNull().default(""),
+  trackingNumber: text("tracking_number").notNull().default(""),
+  disputeReason: text("dispute_reason").notNull().default(""),
+  payBy: timestamp("pay_by", { withTimezone: true }),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  shippedAt: timestamp("shipped_at", { withTimezone: true }),
+  releaseAfter: timestamp("release_after", { withTimezone: true }),
+  releasedAt: timestamp("released_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("market_orders_buyer").on(t.buyerId, t.createdAt),
+  index("market_orders_seller").on(t.sellerId, t.createdAt),
+  index("market_orders_status").on(t.status, t.releaseAfter),
+  uniqueIndex("market_orders_session").on(t.stripeSessionId),
+]);
+
+// ---------------------------------------------------------------------------
+// Phase 4: Native App (Capacitor) – Push-Tokens für iOS (APNs über FCM) und Android (FCM)
+// ---------------------------------------------------------------------------
+export const nativePushTokens = pgTable("native_push_tokens", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  token: text().notNull(),
+  platform: text().notNull(), // ios | android
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("native_push_tokens_token").on(t.token), index("native_push_tokens_user").on(t.userId)]);

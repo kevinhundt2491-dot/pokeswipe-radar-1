@@ -20,6 +20,10 @@ import { initAutoReels, syncAutoReels, openAutoReels, routeAutoReels } from "./a
 import { initArena, arenaApi, addSwipeItemToPortfolio } from "./arena.js";
 import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
 import { initFlip, flipApi, syncFlip } from "./flip.js";
+import { initCommunity, communityApi, syncCommunity, routeCommunity, communityAdminHtml } from "./community.js";
+import { profileApi, routeProfile, userSocialHtml } from "./profile.js";
+import { marketApi, routeMarket, listingFormExtras, listingFormValues, listingBuyHtml, listingMetaHtml } from "./market.js";
+import { initPwa, pwaApi, wrapEnablePush, afterLoginPwa } from "./pwa.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -96,6 +100,14 @@ function openAccount(hint = "") {
     </div>
     ${referralHtml()}
     ${accountExtrasHtml()}
+    <div class="grid grid-cols-2 gap-2">
+      ${btn(m?.publicProfile ? "🌐 Mein öffentliches Profil" : "🌐 Profil öffentlich machen", m?.publicProfile ? `PS.openProfile(${jsArg(m?.profileSlug || "")})` : "PS.openProfileSettings()", "bg-slate-800 text-yellow-300")}
+      ${btn("🛒 Käufe & Verkäufe", "PS.openOrders()", "bg-slate-800 text-white")}
+      ${btn(m?.sellerReady ? "🔒 Verkäuferkonto ✓" : "🔒 Verkaufen mit Käuferschutz", "PS.openSeller()", "bg-slate-800 text-cyan-300")}
+      ${btn("⭐ Gefolgt & Follower", "PS.openFollowing()", "bg-slate-800 text-white")}
+      ${btn("🚫 Blockierte Nutzer", "PS.openBlocks()", "bg-slate-800 text-slate-300")}
+      ${btn("📲 Als App installieren", "PS.installApp()", "bg-slate-800 text-white")}
+    </div>
     <div class="grid grid-cols-2 gap-2">
       ${btn("🤝 Meine Tausche", "PS.openTrades()", "bg-slate-800 text-white")}
       ${btn("🔔 Mitteilungen", "PS.openNotifications()", "bg-slate-800 text-white")}
@@ -460,13 +472,14 @@ function listCard(cardId, name, price) {
       <label class="text-slate-300 font-bold">Preis / Tauschwert (€)</label>${input("ps-li-price", `type="number" step="0.01" min="0" value="${price ? price.toFixed(2) : ""}"`)}
       <label class="text-slate-300 font-bold">Suche im Tausch</label>${input("ps-li-want", 'maxlength="120" placeholder="z. B. Glurak ex SIR oder Gebot"')}
       <label class="text-slate-300 font-bold">Stadt</label>${input("ps-li-city", `maxlength="60" value="${esc(state.me?.city || "")}"`)}
+      ${listingFormExtras()}
       ${btn("Jetzt inserieren", `PS.submitCardListing(${jsArg(cardId)}, ${jsArg(name)})`, "w-full bg-emerald-500 text-slate-950")}
     </div>`);
 }
 
 async function submitCardListing(cardId, name) {
   try {
-    await api("/api/listings", { method: "POST", body: { items: [{ cardId, card: name, price: $("ps-li-price").value, want: $("ps-li-want").value, city: $("ps-li-city").value }] } });
+    await api("/api/listings", { method: "POST", body: { items: [{ cardId, card: name, price: $("ps-li-price").value, want: $("ps-li-want").value, city: $("ps-li-city").value, ...listingFormValues() }] } });
     closeModalEl("ps-card");
     toast("🚀 Inserat live", `${name} ist jetzt im Tausch-Hub.`);
     loadListings(); loadMe().then(renderHeader);
@@ -781,6 +794,7 @@ function listingCard(l) {
           <div class="flex flex-wrap gap-1">
             ${l.boosted ? `<span class="text-[9px] font-black bg-yellow-400 text-slate-950 px-1.5 rounded">🚀 TOP</span>` : ""}
             ${pb ? `<span class="text-[9px] font-black ${pb[1]} px-1.5 rounded" title="Vergleich mit Cardmarket-Trend ${l.market_price ? eur(l.market_price) : ""}">${pb[0]}</span>` : ""}
+            ${listingMetaHtml(l)}
           </div>
           <h4 class="font-black text-white text-sm truncate">${esc(l.card_name)}</h4>
           <p><span class="font-black text-emerald-400">${eur(l.price)}</span>${l.market_price ? ` <span class="text-slate-500">(Markt ${eur(l.market_price)})</span>` : ""} • <span class="text-slate-400">📍 ${esc(l.city)}</span></p>
@@ -791,9 +805,10 @@ function listingCard(l) {
       <div class="flex flex-wrap gap-1.5 shrink-0 text-xs">
         ${own ? `
           ${l.boosted ? "" : `<button onclick="PS.boost(${Number(l.id)})" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black px-2.5 py-1.5 rounded-xl">🚀 Boost</button>`}
+          ${listingBuyHtml(l)}
           <button onclick="PS.setListingStatus(${Number(l.id)}, 'sold')" class="bg-emerald-500/20 text-emerald-300 font-bold px-2.5 py-1.5 rounded-xl">✓ Verkauft</button>
           <button onclick="PS.setListingStatus(${Number(l.id)}, 'removed')" class="bg-rose-500/20 text-rose-300 font-bold px-2.5 py-1.5 rounded-xl" aria-label="Löschen">🗑️</button>`
-        : `<button onclick="PS.requestTrade(${Number(l.id)})" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl">🤝 Anfragen</button>
+        : `${listingBuyHtml(l)}<button onclick="PS.requestTrade(${Number(l.id)})" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl">🤝 Anfragen</button>
           <button onclick="PS.report('listing', '${Number(l.id)}')" class="bg-slate-800 text-slate-300 font-bold px-2 py-1.5 rounded-xl" title="Melden">⚠️</button>`}
         <a href="${cm(l.card_name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2.5 py-1.5 rounded-xl">CM</a>
         <a href="${ebay(l.card_name)}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2.5 py-1.5 rounded-xl">eBay</a>
@@ -1039,6 +1054,7 @@ async function openUser(id) {
         ${u.reviews.length ? u.reviews.map((r) => `<div class="bg-slate-900 rounded-xl p-2"><p><span class="text-yellow-400">${"★".repeat(Math.max(0, Math.min(5, Math.round(Number(r.stars) || 0))))}${"☆".repeat(5 - Math.max(0, Math.min(5, Math.round(Number(r.stars) || 0))))}</span> <span class="text-slate-400">von ${esc(r.reviewer)}</span></p>${r.comment ? `<p class="text-slate-200">${esc(r.comment)}</p>` : ""}</div>`).join("")
           : `<p class="text-slate-500">Noch keine Bewertungen.</p>`}
       </div>
+      ${userSocialHtml(u)}
       ${state.user && state.user.id !== id ? btn("⚠️ Nutzer melden", `PS.report('user', ${jsArg(id)})`, "w-full bg-slate-800 text-slate-300") : ""}`);
   } catch (e) { closeModalEl("ps-user"); handleError(e); }
 }
@@ -1078,7 +1094,10 @@ async function openNotifications() {
       ${list.length ? list.map((n) => {
         const nl = String(n.link || "");
         const sub = /^\/\?tab=(\w+)&sub=(\w+)$/.exec(nl);
+        const post = /^\/\?tab=community&post=(\d+)$/.exec(nl);
         const link = nl.startsWith("/?tab=trades") ? `PS.openTrades()` : nl.startsWith("/?tab=map") ? `PS.goMarket()`
+          : nl.startsWith("/?orders=1") ? `PS.closeAll(); PS.openOrders()` : post ? `PS.closeAll(); PS.openPost(${Number(post[1])})`
+          : nl.startsWith("/?tab=community") ? `PS.closeAll(); switchTab('community')`
           : sub ? `PS.closeAll(); PS.showSub('${sub[1]}', '${sub[2]}')` : "";
         const ext = safeUrl(nl).startsWith("https://") ? nl : "";
         return `<div class="bg-slate-900 border ${n.read ? "border-slate-800" : "border-yellow-400/60"} rounded-xl p-2.5">
@@ -1117,11 +1136,13 @@ async function openAdmin() {
           <p class="text-slate-200">${esc(r.reason)}</p>
           <div class="flex flex-wrap gap-1.5 mt-1.5">
             ${r.target_type === "listing" || r.target_type === "event" ? btn(r.target_type === "event" ? "Event entfernen" : "Inserat entfernen", `PS.resolveReport(${Number(r.id)}, {removeListing:true})`, "bg-rose-500/30 text-rose-200") : ""}
+            ${["post", "comment", "chat"].includes(r.target_type) ? btn("Inhalt entfernen", `PS.resolveReport(${Number(r.id)}, {removeListing:true})`, "bg-rose-500/30 text-rose-200") : ""}
             ${r.target_type !== "trade" ? btn("Nutzer sperren", `PS.resolveReport(${Number(r.id)}, {banUser:true, removeListing:true})`, "bg-rose-600 text-white") : ""}
             ${btn("Erledigt", `PS.resolveReport(${Number(r.id)}, {})`, "bg-emerald-500/30 text-emerald-200")}
             ${btn("Verwerfen", `PS.resolveReport(${Number(r.id)}, {dismiss:true})`, "bg-slate-800 text-slate-300")}
           </div></div>`).join("") : `<p class="text-slate-500">Keine offenen Meldungen 🎉</p>`}
       </div>
+      ${await communityAdminHtml()}
       ${await adminExtrasHtml()}
       ${btn("📡 Preis-Tracker jetzt ausführen", "PS.runTracker()", "w-full bg-slate-800 text-white")}`, { wide: true });
   } catch (e) { closeModalEl("ps-admin"); handleError(e); }
@@ -1163,6 +1184,7 @@ function goMarket() { ["ps-notifs", "ps-account"].forEach(closeModalEl); switchT
 function refreshAll() {
   loadPortfolio(); loadAlerts(); loadListings(); pollNotifications(true);
   syncFlip();
+  syncCommunity();
 }
 
 // ---------------------------------------------------------------------------
@@ -1182,6 +1204,12 @@ window.PS = {
   ...arenaApi,
   ...shellApi,
   ...flipApi,
+  ...communityApi,
+  ...profileApi,
+  ...marketApi,
+  ...pwaApi,
+  enablePush: wrapEnablePush(featureApi.enablePush),
+  openPost: (id) => { history.replaceState(null, "", `/?tab=community&post=${Number(id)}`); routeCommunity(); },
 };
 hooks.openAccount = openAccount;
 hooks.openPro = openPro;
@@ -1199,6 +1227,8 @@ async function boot() {
   initShell();
   initArena();
   initFlip();
+  initCommunity();
+  initPwa();
 
   try {
     const result = await handleAuthCallback();
@@ -1212,7 +1242,7 @@ async function boot() {
 
   state.user = await getUser();
   await loadMe();
-  if (state.user) { await migrateLocalPortfolio(); afterAuthFeatures(); }
+  if (state.user) { await migrateLocalPortfolio(); afterAuthFeatures(); afterLoginPwa(); }
   renderHeader();
   refreshAll();
   if (state.recovery || state.invite) openAccount();
@@ -1224,6 +1254,9 @@ async function boot() {
   routeFeatures();
   routeShell();
   routeAutoReels();
+  routeCommunity();
+  routeProfile();
+  routeMarket();
 
   onAuthChange(async (event, user) => {
     if (event === "login" && user && !state.user) { state.user = user; await loadMe(); renderHeader(); refreshAll(); afterAuthFeatures(); }
