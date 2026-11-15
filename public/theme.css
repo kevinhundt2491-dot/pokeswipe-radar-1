@@ -303,3 +303,12 @@ footer { font-family: var(--font-body); }
   .card-fan .tcg:nth-child(1) { --x: -112%; }
   .card-fan .tcg:nth-child(3) { --x: 12%; }
 }
+
+/* Barrierefreiheit: Zoomen ist wieder erlaubt. Ab 16px Schrift zoomt iOS beim Antippen von Feldern nicht automatisch. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: 16px !important; }
+}
+/* Bewegungsempfindliche Nutzer: Dauer-Animationen (schwebende Pokémon usw.) abschalten */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

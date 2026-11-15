@@ -31,6 +31,7 @@ export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> 
     const origin = siteOrigin(c);
     const res = await fetch(`${origin}/.netlify/identity/user`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
     });
     if (res.ok) {
       const data: any = await res.json();

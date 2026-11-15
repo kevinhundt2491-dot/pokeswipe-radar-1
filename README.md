@@ -53,6 +53,7 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | Preis-Tracker (stündlich) | `netlify/functions/price-tracker.mts` |
 | Erinnerungen & Wochen-Report (stündlich) | `netlify/functions/growth-jobs.mts` |
 | Konto löschen | `netlify/functions/delete-account.mts` |
+| Styles (Tailwind, beim Deploy kompiliert) | `client/tailwind.css` + `tailwind.config.js` → `public/assets/tailwind.css` |
 | Tests | `npm test` (`tests/`) |
 | Login | Netlify Identity (E-Mail, optional Google) |
 | Zahlungen | Stripe Checkout (Abos & Boosts) |
@@ -100,3 +101,16 @@ Werte ändern: `server/plans.ts`.
 8. **Impressum:** Wird bewusst nicht im Code gespeichert. In der Admin-Zentrale eintragen (oder Umgebungsvariable
    `IMPRESSUM_TEXT`); es erscheint dann im Fenster „Impressum & Datenschutz“.
 9. **Set-Releases:** Als Admin unter Community → Kalender eintragen (Art „Set-Release“). Nutzer können sich erinnern lassen.
+
+## Auto-Reels & Make.com
+
+Der Auto-Reels-Generator (nur Admins) schickt fertige MP4s per POST an Make.com. Ziel und Token kommen aus den
+Netlify-Umgebungsvariablen und werden nur an Admins ausgeliefert:
+
+| Variable | Zweck |
+| --- | --- |
+| `MAKE_WEBHOOK_URL` | Make.com-Webhook (https). Ohne Variable greift das bisherige Szenario als Rückfall. |
+| `MAKE_WEBHOOK_TOKEN` | Optional: gemeinsamer Token für den Filter `token = …` im Make-Szenario (gilt für alle Admin-Browser). |
+| `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | Sprecherstimme (alternativ `OPENAI_TTS_API_KEY`). Ohne Schlüssel: `voiceover_mode=placeholder`. |
+
+Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorgabe nur in diesem Browser.

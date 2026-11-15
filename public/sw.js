@@ -1,13 +1,13 @@
 // PokeSwipe & Radar – Service Worker: echte Web-Push-Nachrichten (auch bei geschlossener App)
 // und Offline-Modus (App, Sammlung und Bilder bleiben auf Messen & Börsen ohne Netz verfügbar).
-const VERSION = "v3";
+const VERSION = "v4";
 const STATIC = `ps-static-${VERSION}`;
 const API = "ps-api";
 const IMG = "ps-img";
-const SHELL = ["/", "/assets/app.js", "/theme.css", "/icon.svg", "/manifest.json"];
+const SHELL = ["/", "/assets/app.js", "/assets/tailwind.css", "/theme.css", "/icon.svg", "/manifest.json"];
 // Nur diese Daten werden für den Offline-Modus zwischengespeichert (beim Abmelden gelöscht)
 const OFFLINE_API = /^\/api\/(me|portfolio|wishlist|alerts|calendar|badges|listings|sets\/tracked|sealed)(\?|$)/;
-const CDN_HOSTS = ["cdn.tailwindcss.com", "unpkg.com", "www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];
+const CDN_HOSTS = ["unpkg.com", "www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(STATIC).then((c) => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));
