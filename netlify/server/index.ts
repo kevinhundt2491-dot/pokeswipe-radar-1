@@ -18,6 +18,7 @@ export const config = {
     "/impressum",
     "/agb",
     "/widerruf",
+    "/datenschutz",
     "/kuendigen",
     "/pokemon",
     "/pokemon/*",

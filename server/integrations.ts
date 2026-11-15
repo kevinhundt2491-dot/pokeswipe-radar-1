@@ -21,7 +21,8 @@ export const WEBHOOK_EVENTS = [
 type AutoWebhook = { id: string; secret: string; url: string; createdAt: string };
 type WebhookStatus = { lastEventAt: string | null; lastEventType: string | null; lastError: string | null; lastErrorAt: string | null };
 
-const store = () => getStore("app-config");
+// Strenge Konsistenz: ein gerade per Admin-Klick gespeichertes Webhook-Geheimnis gilt sofort (ohne Deploy, ohne CDN-Verzögerung)
+const store = () => getStore({ name: "app-config", consistency: "strong" });
 const webhookUrl = () => `${(process.env.URL || SITE()).replace(/\/$/, "")}/api/billing/webhook`;
 
 async function autoWebhook(): Promise<AutoWebhook | null> {

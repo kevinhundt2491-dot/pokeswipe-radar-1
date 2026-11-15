@@ -14,7 +14,18 @@ const SCOPE_INSIGHTS = "https://api.ebay.com/oauth/api_scope/buy.marketplace.ins
 export const EBAY_CATEGORY_SINGLES = "183454";
 export const EBAY_CATEGORY_SEALED = "183456";
 
-const env = (k: string) => String(process.env[k] || "").trim();
+/** Alternative Namen aus dem eBay-Developer-Portal: „App ID“ = Client-ID, „Cert ID“ = Client-Secret. */
+const ALIASES: Record<string, string[]> = {
+  EBAY_CLIENT_ID: ["EBAY_CLIENT_ID", "EBAY_APP_ID", "EBAY_APPID"],
+  EBAY_CLIENT_SECRET: ["EBAY_CLIENT_SECRET", "EBAY_CERT_ID", "EBAY_CERTID"],
+};
+const env = (k: string) => {
+  for (const name of ALIASES[k] || [k]) {
+    const v = String(process.env[name] || "").trim();
+    if (v) return v;
+  }
+  return "";
+};
 export const ebayConfigured = () => !!(env("EBAY_CLIENT_ID") && env("EBAY_CLIENT_SECRET"));
 
 type Token = { value: string; expiresAt: number };
