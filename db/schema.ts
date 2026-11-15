@@ -55,7 +55,35 @@ export const cards = pgTable("cards", {
   avg30: numeric({ precision: 10, scale: 2 }),
   priceUpdatedAt: timestamp("price_updated_at", { withTimezone: true }),
   checkedAt: timestamp("checked_at", { withTimezone: true }),
-});
+  // Katalog-Felder (deutscher Kartenkatalog, automatisch aus TCGdex importiert)
+  setId: text("set_id"),
+  localId: text("local_id"),
+  rarity: text(),
+  category: text(), // Pokémon | Trainer | Energie
+  illustrator: text(),
+  importedAt: timestamp("imported_at", { withTimezone: true }),
+}, (t) => [index("cards_set_id").on(t.setId, t.localId), index("cards_checked_at").on(t.checkedAt)]);
+
+// Deutscher Set-Katalog (TCGdex) – Grundlage für öffentliche Set-Seiten und den Karten-Import
+export const cardSets = pgTable("card_sets", {
+  id: text().primaryKey(), // TCGdex-Set-ID, z. B. sv08
+  name: text().notNull(),
+  slug: text().notNull().default(""),
+  serieId: text("serie_id").notNull().default(""),
+  serieName: text("serie_name").notNull().default(""),
+  abbreviation: text().notNull().default(""),
+  logo: text().notNull().default(""),
+  symbol: text().notNull().default(""),
+  releaseDate: date("release_date"),
+  cardCountOfficial: integer("card_count_official").notNull().default(0),
+  cardCountTotal: integer("card_count_total").notNull().default(0),
+  // Import-Status: wann die Kartenliste und zuletzt die Preise geholt wurden
+  cardsImportedAt: timestamp("cards_imported_at", { withTimezone: true }),
+  detailsCheckedAt: timestamp("details_checked_at", { withTimezone: true }),
+  priority: integer().notNull().default(0), // höher = früher importieren (neue Sets zuerst)
+  active: boolean().notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("card_sets_release").on(t.releaseDate)]);
 
 export const priceHistory = pgTable("price_history", {
   id: serial().primaryKey(),
@@ -215,7 +243,15 @@ export const sealedProducts = pgTable("sealed_products", {
   refUpdatedAt: timestamp("ref_updated_at", { withTimezone: true }),
   active: boolean().notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  // Katalog-/Import-Felder für Sealed-Produkte (SEO-Seiten & automatischer Preis-Import)
+  slug: text(),
+  setId: text("set_id"),
+  uvp: numeric({ precision: 10, scale: 2 }),
+  ean: text(),
+  releaseDate: date("release_date"),
+  cardmarketUrl: text("cardmarket_url").notNull().default(""),
+  priceSource: text("price_source").notNull().default("admin"), // admin | import | community
+}, (t) => [uniqueIndex("sealed_products_slug").on(t.slug), uniqueIndex("sealed_products_ean").on(t.ean)]);
 
 export const sealedPriceHistory = pgTable("sealed_price_history", {
   id: serial().primaryKey(),
@@ -403,3 +439,21 @@ export const gradingSubmissions = pgTable("grading_submissions", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("grading_submissions_user").on(t.userId), index("grading_submissions_due").on(t.status, t.expectedDay)]);
+
+// Kündigungen über den Kündigungsbutton (§ 312k BGB) – Nachweis mit Eingangszeitpunkt
+export const cancellations = pgTable("cancellations", {
+  id: serial().primaryKey(),
+  reference: text().notNull(), // Kündigungsnummer für die Bestätigung, z. B. K-20261115-7F3A9C
+  userId: text("user_id").references(() => profiles.userId, { onDelete: "set null" }),
+  name: text().notNull(),
+  email: text().notNull(),
+  contractRef: text("contract_ref").notNull().default(""),
+  kind: text().notNull().default("ordentlich"), // ordentlich | ausserordentlich
+  reason: text().notNull().default(""),
+  timing: text().notNull().default("next"), // next = nächstmöglicher Zeitpunkt | date = Wunschtermin
+  requestedDate: date("requested_date"),
+  status: text().notNull().default("received"), // received | applied | no_contract | review
+  effectiveAt: timestamp("effective_at", { withTimezone: true }),
+  verified: boolean().notNull().default(false), // true = beim Absenden angemeldet
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("cancellations_reference").on(t.reference), index("cancellations_email").on(t.email), index("cancellations_user").on(t.userId)]);

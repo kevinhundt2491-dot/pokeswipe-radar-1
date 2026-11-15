@@ -8,9 +8,10 @@
   # Die App ist statisches HTML + API – das in Netlify installierte Next.js-Plugin überspringen
   NETLIFY_NEXT_PLUGIN_SKIP = "true"
 
-# Der API-Server beantwortet /api/*, die öffentlichen Kartenseiten und die Sitemap – alles andere ist die statische App
+# Der API-Server beantwortet /api/*, die öffentlichen Karten- & Set-Seiten, die Rechtsseiten (inkl. Kündigungsbutton)
+# und die Sitemaps – alles andere ist die statische App
 [server]
-  path = ["/api/*", "/karte/*", "/sitemap.xml"]
+  path = ["/api/*", "/karte/*", "/sitemap.xml", "/sitemaps/*", "/sets", "/set/*", "/rechtliches", "/impressum", "/agb", "/widerruf", "/kuendigen"]
 
 # Kartenbilder über das Netlify Image CDN (verkleinert, WebP/AVIF)
 [images]

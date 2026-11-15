@@ -24,9 +24,8 @@
 
   <link rel="stylesheet" href="/assets/tailwind.css" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
-  <script defer src="/vendor/leaflet/leaflet.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+  <!-- Firebase (Live-Chat, Pull-Wall, Radar) wird erst nach dem ersten Bildaufbau nachgeladen – blockiert die Seite nicht -->
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
 
   <style>
     :root {
@@ -826,11 +825,12 @@
       <p><strong>Affiliate-Hinweis (*):</strong> Als Partner des eBay Partner Networks (CampID: 5339244109) verdienen wir an qualifizierten Käufen über gekennzeichnete eBay-Links eine kleine Provision, ohne Mehrkosten für dich.</p>
       <div class="max-h-[55vh] overflow-y-auto space-y-3 pr-1">
       <p><strong>Datenschutz – Überblick:</strong> Ohne Konto bleiben Portfolio-, Merklisten- und Push-Einstellungen lokal im Browser (LocalStorage). Mit Konto werden Login (Netlify Identity), Portfolio, Wunschliste, Preisalarme, Inserate, Tausche, private Tausch-Nachrichten, Bewertungen, Abzeichen und Kalendereinträge verschlüsselt übertragen und bei unserem Hosting-Anbieter Netlify gespeichert (Rechtsgrundlage: Vertragserfüllung, Art. 6 Abs. 1 lit. b DSGVO).</p>
-      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Schriftarten und die Kartenansicht (Leaflet) liefern wir selbst aus – es gibt keine Verbindung zu Google Fonts. Für den Live-Bereich wird das Firebase-Skript von Google (gstatic.com) geladen; die Kartenkacheln kommen von OpenStreetMap, beim Setzen eines Radar-Pins ohne GPS wird der eingegebene Ort an OpenStreetMap Nominatim gesendet. Dabei wird technisch bedingt deine IP-Adresse übermittelt. Radar-Pins speichern nur einen ungefähren Standort (ca. 1 km Raster), nie deine genaue GPS-Position.</p>
+      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Schriftarten und die Kartenansicht (Leaflet) liefern wir selbst aus – es gibt keine Verbindung zu Google Fonts. Für den Live-Bereich wird das Firebase-Skript von Google (gstatic.com) nach dem Seitenaufbau nachgeladen; die Kartenkacheln kommen von OpenStreetMap, beim Setzen eines Radar-Pins ohne GPS wird der eingegebene Ort an OpenStreetMap Nominatim gesendet. Dabei wird technisch bedingt deine IP-Adresse übermittelt. Radar-Pins speichern nur einen ungefähren Standort (ca. 1 km Raster), nie deine genaue GPS-Position.</p>
       <p><strong>Öffentlich sichtbar:</strong> dein Sammlername, Stadt, Inserate, Bewertungen, Shop-Seite, eingetragene Events sowie – für Tausch-Vorschläge – welche Karten du auf der Wunschliste hast. In der Bestenliste erscheinst du nur, wenn du es selbst einschaltest.</p>
       <p><strong>Speicher im Browser:</strong> Wir verwenden keine Werbe- oder Tracking-Cookies. Gespeichert werden nur technisch notwendige Daten: Login-Token, Einstellungen und eine Offline-Kopie deiner Sammlung (wird beim Abmelden gelöscht).</p>
       <p><strong>Deine Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Im Konto unter „Datenschutz & Konto“ kannst du alle Daten als Datei herunterladen und dein Konto selbst löschen. Verantwortlich für die Datenverarbeitung ist der im Impressum genannte Betreiber.</p>
-      <p><strong>Abos:</strong> Premium (4,99 €/Monat oder 49 €/Jahr) und Pro Trader (9,99 €/Monat oder 99 €/Jahr). Das erste Abo kann 7 Tage kostenlos getestet werden (mit Einladung 30 Tage). Kündigung jederzeit im Konto unter „Abo kündigen“ – die Vorteile bleiben bis zum Ende des bezahlten Zeitraums aktiv.</p>
+      <p><strong>Abos:</strong> Premium (4,99 €/Monat oder 49 €/Jahr) und Pro Trader (9,99 €/Monat oder 99 €/Jahr). Das erste Abo kann 7 Tage kostenlos getestet werden (mit Einladung 30 Tage). Kündigung jederzeit im Konto unter „Abo kündigen“ oder ohne Anmeldung über <a href="/kuendigen" class="underline font-bold">„Verträge hier kündigen“</a> – die Vorteile bleiben bis zum Ende des bezahlten Zeitraums aktiv. Es gelten die <a href="/rechtliches#agb" class="underline">AGB</a> und die <a href="/rechtliches#widerruf" class="underline">Widerrufsbelehrung</a>.</p>
+      <p><strong>Optionaler E-Mail-Versand:</strong> Kündigungsbestätigungen können über den Dienstleister Resend per E-Mail zugestellt werden (Empfängeradresse und Bestätigungstext).</p>
       </div>
     </div>
   </div>
@@ -840,7 +840,8 @@
       <div>
         <p class="font-black text-slate-200">Impressum</p>
         <p>Anbieterkennzeichnung nach § 5 DDG und Kontakt:</p>
-        <p><button onclick="openModal('legal-modal')" class="hover:text-white underline font-bold">Impressum öffnen</button></p>
+        <p class="flex flex-wrap gap-x-3 gap-y-1"><a href="/rechtliches#impressum" class="hover:text-white underline font-bold">Impressum</a><a href="/rechtliches#agb" class="hover:text-white underline">AGB</a><a href="/rechtliches#widerruf" class="hover:text-white underline">Widerrufsbelehrung</a><button onclick="openModal('legal-modal')" class="hover:text-white underline">Datenschutz</button></p>
+        <p class="mt-2"><a href="/kuendigen" class="inline-block bg-rose-600 hover:bg-rose-500 text-white font-black rounded-xl px-3 py-2">Verträge hier kündigen</a></p>
       </div>
       <div>
         <p class="font-black text-slate-200">Affiliate-Hinweis</p>
@@ -881,6 +882,17 @@
       CARDMARKET_UTM: { utm_source: "pokeswipe_radar", utm_medium: "referral", utm_campaign: "pokeswipe" },
     });
     const EPN_CAMPAIGN_ID = CONFIG.EPN_CAMPAIGN_ID;
+    // Partner-IDs aus den Netlify-Umgebungsvariablen (CARDMARKET_PARTNER_ID) – einmal laden, überall nutzen
+    let cardmarketPartnerId = CONFIG.CARDMARKET_PARTNER_ID;
+    const publicConfigPromise = fetch("/api/public-config", { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}))
+      .then((cfg) => {
+        const id = String((cfg && cfg.cardmarketPartnerId) || "");
+        if (/^[A-Za-z0-9_.-]{1,40}$/.test(id)) cardmarketPartnerId = id;
+        return cfg || {};
+      });
+    window.PS_PUBLIC_CONFIG = publicConfigPromise;
     const firebaseConfig = {
       databaseURL: "https://pyro-planer-web-app-default-rtdb.europe-west1.firebasedatabase.app"
       // apiKey/authDomain kommen (optional) aus der Netlify-Umgebungsvariable FIREBASE_WEB_API_KEY
@@ -1015,11 +1027,16 @@
       try {
         const u = new URL(url);
         Object.entries(CONFIG.CARDMARKET_UTM || {}).forEach(([k, v]) => { if (v && !u.searchParams.has(k)) u.searchParams.set(k, v); });
-        if (CONFIG.CARDMARKET_PARTNER_ID) u.searchParams.set("referrer", CONFIG.CARDMARKET_PARTNER_ID);
+        if (cardmarketPartnerId && /(^|\.)cardmarket\.com$/.test(u.hostname)) u.searchParams.set("referrer", cardmarketPartnerId);
         return u.toString();
       } catch (e) { return url; }
     }
     window.withCardmarketTracking = withCardmarketTracking;
+    // Sicherheitsnetz: Links, die vor dem Laden der Partner-ID gerendert wurden, beim Klick nachrüsten
+    document.addEventListener("click", (ev) => {
+      const a = ev.target && ev.target.closest ? ev.target.closest('a[href*="cardmarket.com"]') : null;
+      if (a) a.href = withCardmarketTracking(a.href);
+    }, true);
     function buildCardmarketUrl(query) {
       return withCardmarketTracking(`https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(String(query || "").slice(0, 120))}`);
     }
@@ -1719,7 +1736,12 @@
     // KARTE & RADAR
     function initOrUpdateMap() {
       // Leaflet lädt per defer – bei sehr frühem Aufruf (z. B. ?tab=map) bis zum Seitenende warten
-      if (typeof L === "undefined") { window.addEventListener("load", () => { if (typeof L !== "undefined") initOrUpdateMap(); }, { once: true }); return; }
+      // Leaflet wird erst beim Öffnen der Karte geladen (spart ~150 KB beim Seitenstart)
+      if (typeof L === "undefined") {
+        loadScriptOnce("/vendor/leaflet/leaflet.js").then(() => { if (typeof L !== "undefined") initOrUpdateMap(); })
+          .catch((e) => console.warn("Karte konnte nicht geladen werden", e));
+        return;
+      }
       if (!mapInstance) {
         mapInstance = L.map("radarMap").setView([51.1657, 10.4515], 6);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap" }).addTo(mapInstance);
@@ -1975,16 +1997,13 @@
       try {
         let apiKey = "";
         try {
-          const res = await fetch("/api/public-config", { headers: { Accept: "application/json" }, signal: AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined });
-          if (res.ok) apiKey = String((await res.json()).firebaseApiKey || "");
+          const cfg = await Promise.race([publicConfigPromise, new Promise((r) => setTimeout(() => r({}), 2500))]);
+          apiKey = String((cfg && cfg.firebaseApiKey) || "");
         } catch (e) {}
         if (!apiKey || !/^[A-Za-z0-9_-]{20,60}$/.test(apiKey)) return null;
         await new Promise((resolve, reject) => {
           if (firebase.auth) return resolve();
-          const sc = document.createElement("script");
-          sc.src = "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js";
-          sc.onload = resolve; sc.onerror = reject;
-          document.head.appendChild(sc);
+          loadScriptOnce(FIREBASE_SDK + "firebase-auth-compat.js").then(resolve, reject);
         });
         const projectId = new URL(firebaseConfig.databaseURL).hostname.split(".")[0].replace(/-default-rtdb$/, "");
         return { apiKey, authDomain: `${projectId}.firebaseapp.com`, projectId };
@@ -1994,9 +2013,45 @@
       }
     }
 
-    async function initFirebase() {
+    // Firebase-Skripte nicht-blockierend nachladen (erst nach dem ersten Bildaufbau, im Leerlauf des Browsers)
+    const FIREBASE_SDK = "https://www.gstatic.com/firebasejs/10.7.1/";
+    function loadScriptOnce(src) {
+      return new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[data-src="${src}"]`);
+        if (existing) { existing.dataset.loaded ? resolve() : (existing.addEventListener("load", resolve, { once: true }), existing.addEventListener("error", reject, { once: true })); return; }
+        const sc = document.createElement("script");
+        sc.src = src; sc.async = true; sc.dataset.src = src;
+        sc.onload = () => { sc.dataset.loaded = "1"; resolve(); };
+        sc.onerror = () => reject(new Error("Skript nicht geladen: " + src));
+        document.head.appendChild(sc);
+      });
+    }
+    async function loadFirebaseSdk() {
+      if (typeof firebase !== "undefined" && firebase.database) return true;
       try {
-        if (typeof firebase === "undefined") { fbReadyResolve(); return; }
+        await loadScriptOnce(FIREBASE_SDK + "firebase-app-compat.js");
+        await loadScriptOnce(FIREBASE_SDK + "firebase-database-compat.js");
+        return typeof firebase !== "undefined";
+      } catch (e) {
+        console.warn("Firebase konnte nicht geladen werden – Live-Bereich offline", e);
+        return false;
+      }
+    }
+    function whenIdle(fn) {
+      const run = () => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 2500 }) : setTimeout(fn, 200));
+      if (document.readyState === "complete") run();
+      else window.addEventListener("load", run, { once: true });
+    }
+
+    function initFirebase() {
+      whenIdle(() => { startFirebase(); });
+    }
+    async function startFirebase() {
+      try {
+        if (!(await loadFirebaseSdk())) {
+          fbReadyResolve();
+          return;
+        }
         // Optionale anonyme Anmeldung VOR dem Start, damit Datenbank und Auth dieselbe App nutzen
         const authCfg = firebase.apps.length ? null : await fbSignIn();
         if (!firebase.apps.length) firebase.initializeApp(authCfg ? { ...firebaseConfig, ...authCfg } : firebaseConfig);

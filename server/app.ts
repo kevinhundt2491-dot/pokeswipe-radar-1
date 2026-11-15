@@ -13,7 +13,10 @@ import { registerGrowth, notifyWishlistListing } from "./growth.ts";
 import { registerCollector } from "./collector.ts";
 import { registerDrops } from "./drops.ts";
 import { registerVoiceover } from "./voiceover.ts";
-import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker } from "./prices.ts";
+import { registerLegal, LEGAL_VERSION } from "./legal.ts";
+import { registerCatalog } from "./catalog.ts";
+import { registerIntegrations, webhookSecrets, recordWebhook } from "./integrations.ts";
+import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker, cardmarketPartnerId } from "./prices.ts";
 import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan } from "./billing.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
 
@@ -661,6 +664,9 @@ app.post("/api/reports", auth, async (c) => {
 // ---------------------------------------------------------------------------
 // Zahlungen (Stripe Checkout) – Freischaltung nur nach serverseitiger Prüfung
 // ---------------------------------------------------------------------------
+/** Nachweis der Bestell-Zustimmung (AGB-Version, Zeitpunkt, Verlangen des sofortigen Leistungsbeginns) in Stripe. */
+const consentMeta = () => ({ legal_version: LEGAL_VERSION, terms_accepted_at: new Date().toISOString(), early_start_requested: "true" });
+
 function appOrigin(c: any) {
   return trustedOrigin(c) || process.env.URL || new URL(c.req.url).origin;
 }
@@ -673,6 +679,10 @@ app.post("/api/billing/checkout", auth, async (c) => {
   if (!plan) return c.json({ error: "Unbekannter Tarif" }, 400);
   const yearly = b.interval === "year";
   const profile = c.get("profile");
+  // Bestellhinweise (AGB, Widerrufsbelehrung, sofortiger Leistungsbeginn) müssen bestätigt sein
+  if (b.acceptTerms !== true || b.earlyStart !== true) {
+    return c.json({ error: "Bitte bestätige vor der Bestellung die AGB und den sofortigen Leistungsbeginn.", needsConsent: true }, 428);
+  }
   if (c.get("plan") === plan && !profile.cancelAtPeriodEnd && (profile.planInterval === "year") === yearly) {
     return c.json({ error: "Dieser Tarif ist bereits aktiv." }, 409);
   }
@@ -697,9 +707,10 @@ app.post("/api/billing/checkout", auth, async (c) => {
         },
       },
     }],
-    metadata: { userId: profile.userId, kind: "subscription", plan, interval: yearly ? "year" : "month" },
+    metadata: { userId: profile.userId, kind: "subscription", plan, interval: yearly ? "year" : "month", ...consentMeta() },
+    custom_text: { submit: { message: `${trial ? `Die ersten ${trial} Tage sind kostenlos, danach ` : ""}${euro((yearly ? PLANS[plan].yearlyPriceCents : PLANS[plan].priceCents) / 100)} pro ${yearly ? "Jahr" : "Monat"}, verlängert sich automatisch, jederzeit kündbar. Mit dem Klick schließt du eine zahlungspflichtige Bestellung ab.` } },
     subscription_data: {
-      metadata: { userId: profile.userId, plan },
+      metadata: { userId: profile.userId, plan, ...consentMeta() },
       ...(trial ? { trial_period_days: trial } : {}),
     },
     success_url: `${origin}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
@@ -732,6 +743,9 @@ app.post("/api/billing/boost", auth, async (c) => {
 
   const s = stripe();
   if (!s) return c.json({ error: "Zahlungen sind noch nicht eingerichtet." }, 503);
+  if (b.acceptTerms !== true || b.earlyStart !== true) {
+    return c.json({ error: "Bitte bestätige vor der Bestellung die AGB und den sofortigen Leistungsbeginn.", needsConsent: true, kind: "boost" }, 428);
+  }
   const origin = appOrigin(c);
   const session = await s.checkout.sessions.create({
     mode: "payment",
@@ -746,7 +760,8 @@ app.post("/api/billing/boost", auth, async (c) => {
         product_data: { name: `Inserat-Boost (${BOOST_DAYS} Tage)`, description: listing.cardName.slice(0, 200) },
       },
     }],
-    metadata: { userId: user.id, kind: "boost", listingId: String(listingId) },
+    metadata: { userId: user.id, kind: "boost", listingId: String(listingId), ...consentMeta() },
+    custom_text: { submit: { message: `Einmalig ${euro(BOOST_PRICE_CENTS / 100)} für ${BOOST_DAYS} Tage. Mit dem Klick schließt du eine zahlungspflichtige Bestellung ab.` } },
     success_url: `${origin}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${origin}/?checkout=cancel`,
   });
@@ -815,24 +830,58 @@ app.post("/api/billing/cancel", auth, async (c) => {
   return c.json({ ok: true, cancelAtPeriodEnd: updated?.cancelAtPeriodEnd, planUntil: updated?.planUntil });
 });
 
-// Optionaler Stripe-Webhook (aktiv, sobald STRIPE_WEBHOOK_SECRET gesetzt ist)
-app.post("/api/billing/webhook", async (c) => {
-  const s = stripe(), secret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!s || !secret) return c.json({ error: "Webhook nicht konfiguriert" }, 503);
-  const sig = c.req.header("stripe-signature") || "";
-  let event;
-  try {
-    event = await s.webhooks.constructEventAsync(await c.req.text(), sig, secret);
-  } catch {
-    return c.json({ error: "Ungültige Signatur" }, 400);
+// Stripe-Webhook: aktiv, sobald STRIPE_WEBHOOK_SECRET gesetzt ist ODER der Webhook in der Admin-Zentrale
+// automatisch eingerichtet wurde (Geheimnis in Netlify Blobs). Kündigungen & Zahlungsausfälle greifen sofort.
+async function profileForSubscription(sub: any) {
+  const userId = sub?.metadata?.userId;
+  if (userId) {
+    const [p] = await db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1);
+    if (p) return p;
   }
-  if (event.type === "checkout.session.completed") {
-    await fulfillSession((event.data.object as any).id);
-  } else if (event.type.startsWith("customer.subscription.")) {
-    const sub = event.data.object as any;
-    const userId = sub.metadata?.userId;
-    const [p] = userId ? await db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1) : [];
-    if (p && (!p.stripeSubscriptionId || p.stripeSubscriptionId === sub.id)) await applySubscription(userId, sub);
+  const customer = typeof sub?.customer === "string" ? sub.customer : sub?.customer?.id;
+  if (!customer) return null;
+  const [p] = await db.select().from(profiles).where(eq(profiles.stripeCustomerId, customer)).limit(1);
+  return p ?? null;
+}
+
+app.post("/api/billing/webhook", async (c) => {
+  const s = stripe();
+  const secrets = await webhookSecrets();
+  if (!s || !secrets.length) return c.json({ error: "Webhook nicht konfiguriert" }, 503);
+  const sig = c.req.header("stripe-signature") || "";
+  const raw = await c.req.text();
+  let event: any = null;
+  for (const secret of secrets) {
+    try { event = await s.webhooks.constructEventAsync(raw, sig, secret); break; } catch {}
+  }
+  if (!event) { await recordWebhook("", "Ungültige Signatur"); return c.json({ error: "Ungültige Signatur" }, 400); }
+  try {
+    if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+      await fulfillSession((event.data.object as any).id);
+    } else if (event.type.startsWith("customer.subscription.")) {
+      const sub = event.data.object as any;
+      const p = await profileForSubscription(sub);
+      // Nur das aktuelle Abo darf den Status ändern (alte Abos nach Tarifwechsel werden ignoriert)
+      if (p && (!p.stripeSubscriptionId || p.stripeSubscriptionId === sub.id)) await applySubscription(p.userId, sub);
+    } else if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
+      const inv = event.data.object as any;
+      const subId = typeof inv.subscription === "string" ? inv.subscription : inv.subscription?.id || inv.parent?.subscription_details?.subscription;
+      if (subId) {
+        const sub = await s.subscriptions.retrieve(String(subId));
+        const p = await profileForSubscription(sub);
+        if (p && (!p.stripeSubscriptionId || p.stripeSubscriptionId === sub.id)) {
+          await applySubscription(p.userId, sub);
+          if (event.type === "invoice.payment_failed") {
+            await notify(p.userId, "⚠️ Zahlung fehlgeschlagen", "Die Abbuchung für dein Abo hat nicht geklappt. Bitte prüfe deine Zahlungsmethode – Stripe versucht es automatisch erneut.");
+          }
+        }
+      }
+    }
+    await recordWebhook(event.type);
+  } catch (e: any) {
+    console.error("Webhook-Verarbeitung fehlgeschlagen", event.type, e);
+    await recordWebhook(event.type, `${event.type}: ${String(e?.message || e)}`);
+    return c.json({ error: "Verarbeitung fehlgeschlagen" }, 500); // Stripe wiederholt die Zustellung automatisch
   }
   return c.json({ received: true });
 });
@@ -898,6 +947,9 @@ registerFeatures(app, { auth, adminOnly, body, safeImage, storeDataUrlImage, rat
 registerGrowth(app, { auth, adminOnly, body, ratingOf });
 registerCollector(app, { auth, body });
 registerDrops(app, { auth, adminOnly, body });
+registerLegal(app, { auth, adminOnly, body });
+registerCatalog(app, { auth, adminOnly, body });
+registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
 
 // Öffentliche (nicht geheime) Client-Konfiguration. Der Firebase-Web-API-Schlüssel ist laut Firebase kein
@@ -905,7 +957,8 @@ registerVoiceover(app, { auth, adminOnly, body });
 app.get("/api/public-config", (c) => {
   const key = (process.env.FIREBASE_WEB_API_KEY || "").trim();
   c.header("Cache-Control", "public, max-age=600");
-  return c.json({ firebaseApiKey: /^[A-Za-z0-9_-]{20,60}$/.test(key) ? key : null });
+  // Nur öffentliche Kennungen (keine Geheimnisse): Firebase-Web-Key und Cardmarket-Partnerkürzel
+  return c.json({ firebaseApiKey: /^[A-Za-z0-9_-]{20,60}$/.test(key) ? key : null, cardmarketPartnerId: cardmarketPartnerId() || null });
 });
 
 app.all("/api/*", (c) => c.json({ error: "Nicht gefunden" }, 404));

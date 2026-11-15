@@ -736,21 +736,107 @@ async function loadImpressum() {
   } catch { box.textContent = "Impressum konnte nicht geladen werden – bitte später erneut öffnen."; }
 }
 
+const OP_FIELDS = [
+  ["name", "Vor- und Nachname *", "Max Mustermann"], ["company", "Firma (optional)", "z. B. Mustermann Collectibles"],
+  ["representative", "Vertreten durch (bei Firma)", ""], ["street", "Straße und Hausnummer *", "Musterstraße 1"],
+  ["zip", "PLZ *", "12345"], ["city", "Ort *", "Musterstadt"], ["country", "Land", "Deutschland"],
+  ["email", "E-Mail *", "info@pokeswipe-radar.de"], ["phone", "Telefon (empfohlen)", ""],
+  ["vatId", "USt-IdNr. (falls vorhanden)", "DE…"], ["register", "Registereintrag (falls vorhanden)", "Amtsgericht …, HRB …"],
+  ["responsible", "Verantwortlich nach § 18 MStV (falls abweichend)", ""],
+];
+const flag = (ok, yes, no) => `<span class="${ok ? "text-emerald-300" : "text-amber-300"}">${ok ? "✔ " + yes : "⚠️ " + no}</span>`;
+
 export async function adminGrowthHtml() {
-  let legal = { impressum: "" };
-  try { legal = await api("/api/legal"); } catch {}
-  return `<h4 class="text-sm font-black text-white">⚖️ Impressum (Pflichtangaben § 5 DDG)</h4>
-    <p class="text-[11px] text-slate-400">Wird nur hier gespeichert (nicht im Code) und im Fenster „Impressum &amp; Datenschutz“ angezeigt. Tipp: Statt der Privatadresse kann eine ladungsfähige Geschäfts- oder Impressums-Service-Adresse eingetragen werden.</p>
-    <textarea id="ps-ad-legal" rows="6" maxlength="4000" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs" placeholder="Vor- und Nachname / Firma&#10;Straße Hausnummer&#10;PLZ Ort&#10;E-Mail: info@pokeswipe-radar.de&#10;(ggf. USt-IdNr., Verantwortlich nach § 18 MStV)">${esc(legal.impressum)}</textarea>
-    <div class="grid grid-cols-2 gap-2">
-      ${btn("Impressum speichern", "PS.adminSaveLegal()", "bg-emerald-500 text-slate-950")}
+  let legal = { operator: {}, legacy: "", complete: false, mail: false }, integ = null, canc = { cancellations: [], review: 0 };
+  try { legal = await api("/api/admin/legal"); } catch {}
+  try { integ = await api("/api/admin/integrations"); } catch {}
+  try { canc = await api("/api/admin/cancellations"); } catch {}
+  const o = legal.operator || {};
+  const st = integ?.stripe || {}, af = integ?.affiliate || {}, cat = integ?.catalog;
+  const when = (d) => (d ? new Date(d).toLocaleString("de-DE") : "noch nie");
+  return `<h4 class="text-sm font-black text-white">🔌 Zahlungen & Partner – Status</h4>
+    ${integ ? `<div class="bg-slate-950 border border-slate-800 rounded-2xl p-3 text-[11px] space-y-1">
+      <p>${flag(st.key, `Stripe-Schlüssel gesetzt (${esc(st.key)})`, "STRIPE_SECRET_KEY fehlt – Bezahl-Buttons sind inaktiv")}</p>
+      <p>${flag(st.webhook, `Stripe-Webhook aktiv (${st.webhook === "env" ? "Netlify-Variable" : "automatisch eingerichtet"}) • letztes Ereignis: ${esc(when(st.lastEventAt))}${st.lastEventType ? ` (${esc(st.lastEventType)})` : ""}`, "Stripe-Webhook fehlt – Kündigungen & Zahlungsausfälle greifen erst beim nächsten Abgleich")}</p>
+      ${st.lastError ? `<p class="text-rose-300">Letzter Webhook-Fehler (${esc(when(st.lastErrorAt))}): ${esc(st.lastError)}</p>` : ""}
+      <p>${flag(af.amazon === "ok", "Amazon-Partner-Tag aktiv", af.amazon === "format" ? "AMAZON_PARTNER_TAG hat ein ungewöhnliches Format (erwartet z. B. name-21)" : "AMAZON_PARTNER_TAG nicht gesetzt – Amazon-Klicks ohne Provision")}</p>
+      <p>${flag(af.cardmarket === "ok", "Cardmarket-Partner-ID aktiv (Server & App)", af.cardmarket === "format" ? "CARDMARKET_PARTNER_ID enthält ungültige Zeichen" : "CARDMARKET_PARTNER_ID nicht gesetzt")}</p>
+      <p>${flag(true, "eBay Partner Network aktiv (Campaign-ID im Code)", "")}</p>
+      <p>${flag(af.grading?.length, `Grading-Partner-Links: ${esc((af.grading || []).join(", "))}`, "Keine Grading-Partner-Links (AFF_PSA_URL …)")}</p>
+      <p>${flag(integ.mail, "E-Mail-Versand aktiv (Kündigungsbestätigung per E-Mail)", "E-Mail-Versand nicht eingerichtet (RESEND_API_KEY + MAIL_FROM) – Bestätigung nur auf der Seite, als Datei & im Konto")}</p>
+      <p>${flag(integ.legal?.complete, "Impressum vollständig", "Impressum unvollständig – bitte unten ausfüllen")}</p>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      ${btn(st.webhook ? "🔁 Stripe-Webhook prüfen/erneuern" : "⚡ Stripe-Webhook automatisch einrichten", "PS.adminWebhookSetup()", "bg-indigo-600 text-white")}
+      <p class="text-[10px] text-slate-400 self-center">Legt den Webhook auf <code>${esc(st.webhookUrl || "")}</code> in deinem Stripe-Konto an und speichert das Signatur-Geheimnis sicher – kein Kopieren nötig.</p>
+    </div>` : `<p class="text-xs text-slate-400">Status konnte nicht geladen werden.</p>`}
+
+    <h4 class="text-sm font-black text-white">⚖️ Impressum (Pflichtangaben § 5 DDG)</h4>
+    <p class="text-[11px] text-slate-400">Daraus entstehen automatisch Impressum, Anbieterangaben in AGB und Widerrufsbelehrung sowie das Muster-Widerrufsformular (<a href="/rechtliches" target="_blank" class="underline">/rechtliches</a>). Gespeichert in Netlify Blobs, nicht im Code. Tipp: Statt der Privatadresse kann eine ladungsfähige Geschäftsadresse eingetragen werden.</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">${OP_FIELDS.map(([k, label, ph]) => `<label class="block"><span class="text-slate-400 text-[10px] font-bold">${esc(label)}</span>
+      <input id="ps-op-${k}" value="${esc(o[k] || "")}" placeholder="${esc(ph)}" maxlength="200" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white" /></label>`).join("")}</div>
+    <label class="flex gap-2 items-center text-xs text-slate-300"><input type="checkbox" id="ps-op-smallBusiness" ${o.smallBusiness ? "checked" : ""}> Kleinunternehmer (§ 19 UStG – keine Umsatzsteuer)</label>
+    <details class="text-xs text-slate-400"><summary class="cursor-pointer">Alternativ: Impressum als Freitext (wird nur genutzt, solange die Felder oben unvollständig sind)</summary>
+      <textarea id="ps-ad-legal" rows="5" maxlength="4000" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs">${esc(legal.legacy || "")}</textarea></details>
+    ${btn("Impressum speichern", "PS.adminSaveLegal()", "w-full bg-emerald-500 text-slate-950")}
+
+    <h4 class="text-sm font-black text-white">📄 Kündigungen (Kündigungsbutton) ${canc.review ? `<span class="text-rose-300">• ${Number(canc.review)} zu prüfen</span>` : ""}</h4>
+    <div class="space-y-1.5 max-h-56 overflow-y-auto text-[11px]">${(canc.cancellations || []).slice(0, 50).map((k) => `<div class="bg-slate-900 rounded-xl p-2 border ${k.status === "review" ? "border-rose-500/50" : "border-slate-800"}">
+      <p class="text-white font-bold">${esc(k.reference)} • ${esc(k.name)} • ${esc(k.email)} <span class="text-slate-400">${new Date(k.created_at || k.createdAt).toLocaleString("de-DE")}</span></p>
+      <p class="text-slate-300">${esc(k.kind)} • Status: <b>${esc(k.status)}</b>${k.effective_at || k.effectiveAt ? ` • Ende ${new Date(k.effective_at || k.effectiveAt).toLocaleDateString("de-DE")}` : ""}${k.verified ? " • angemeldet" : ""}</p>
+      ${k.reason ? `<p class="text-slate-400">${esc(k.reason)}</p>` : ""}
+      ${k.status === "review" ? btn("Als erledigt markieren", `PS.adminCancelDone(${Number(k.id)})`, "mt-1 bg-emerald-500/30 text-emerald-200") : ""}</div>`).join("") || `<p class="text-slate-500">Noch keine Kündigungen.</p>`}</div>
+
+    <h4 class="text-sm font-black text-white">📚 Deutscher Kartenkatalog (SEO)</h4>
+    ${cat ? `<p class="text-[11px] text-slate-300">Sets: ${Number(cat.setsImported)}/${Number(cat.sets)} importiert • Karten im Katalog: ${Number(cat.catalogCards).toLocaleString("de-DE")} • mit Preis: ${Number(cat.cardsPriced).toLocaleString("de-DE")} • Sealed mit Preis: ${Number(cat.sealedPriced)}/${Number(cat.sealed)}</p>` : ""}
+    <p class="text-[11px] text-slate-400">Läuft automatisch alle 10 Minuten (neue Sets zuerst). Öffentliche Seiten: <a href="/sets" target="_blank" class="underline">/sets</a>, <code>/set/&lt;id&gt;/&lt;name&gt;</code>, <code>/karte/…</code>; Sitemap-Index unter <a href="/sitemap.xml" target="_blank" class="underline">/sitemap.xml</a>.</p>
+    <div class="flex gap-2 text-xs"><input id="ps-cat-set" placeholder="Set-ID (optional, z. B. sv08)" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white" />
+      ${btn("Import jetzt ausführen", "PS.adminCatalogRun()", "bg-slate-800 text-white")}</div>
+    <details class="text-xs text-slate-300"><summary class="cursor-pointer font-bold">📦 Sealed-Preise per CSV importieren</summary>
+      <p class="text-[11px] text-slate-400 mt-1">Erste Zeile = Spaltennamen (Semikolon oder Komma): <code>name;set;kind;ean;uvp;price;release;image;cardmarket</code>. Art (<code>kind</code>): display, etb, ttb, bundle, booster, tin, collection, other. Abgleich über EAN, Namen oder Slug – vorhandene Produkte werden aktualisiert, Preise landen im Verlauf und lösen Alarme aus.</p>
+      <textarea id="ps-sealed-csv" rows="5" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs" placeholder="name;set;kind;uvp;price&#10;Stürmische Funken Display (36 Booster);Stürmische Funken;display;161,64;139,90"></textarea>
+      ${btn("CSV importieren", "PS.adminSealedImport()", "w-full bg-purple-600 text-white")}</details>
+
+    <div class="grid grid-cols-1 gap-2">
       ${btn("📅 Erinnerungen & Wochen-Report jetzt", "PS.adminRunGrowth()", "bg-slate-800 text-white")}
     </div>
     <p class="text-[11px] text-slate-400">Set-Releases trägst du direkt im Kalender ein (Community → Kalender, Art „Set-Release“).</p>`;
 }
 
 async function adminSaveLegal() {
-  try { await api("/api/admin/legal", { method: "PUT", body: { impressum: $("ps-ad-legal").value } }); toast("✅ Impressum gespeichert", ""); } catch (e) { handleError(e); }
+  const operator = Object.fromEntries(OP_FIELDS.map(([k]) => [k, $(`ps-op-${k}`)?.value || ""]));
+  operator.smallBusiness = Boolean($("ps-op-smallBusiness")?.checked);
+  try {
+    const r = await api("/api/admin/legal", { method: "PUT", body: { operator, impressum: $("ps-ad-legal")?.value || "" } });
+    toast(r.complete ? "✅ Impressum gespeichert" : "Gespeichert – noch unvollständig", r.complete ? "Impressum, AGB und Widerrufsbelehrung sind jetzt vollständig." : "Pflicht: Name/Firma, Straße, PLZ, Ort und E-Mail.");
+  } catch (e) { handleError(e); }
+}
+async function adminWebhookSetup() {
+  try {
+    const r = await api("/api/admin/integrations/stripe-webhook", { method: "POST", body: {} });
+    toast("✅ Stripe-Webhook aktiv", r.created ? "Neu eingerichtet – Kündigungen und Zahlungsausfälle greifen ab sofort." : "Webhook ist eingerichtet und auf dem neuesten Stand.");
+    window.PS?.openAdmin?.();
+  } catch (e) { handleError(e); }
+}
+async function adminCatalogRun() {
+  const setId = ($("ps-cat-set")?.value || "").trim();
+  toast("⏳ Katalog-Import läuft …", "Das dauert bis zu 20 Sekunden.");
+  try {
+    const r = await api("/api/admin/catalog/run", { method: "POST", body: setId ? { setId } : {} });
+    const s = r.status || {};
+    toast("✅ Import-Schritt fertig", `${setId ? `${r.cards || 0} Karten aus ${setId}` : `${(r.setsImported || []).length} Sets, ${r.prices || 0} Preise`} • Gesamt: ${s.setsImported}/${s.sets} Sets, ${s.catalogCards} Karten`);
+  } catch (e) { handleError(e); }
+}
+async function adminSealedImport() {
+  const csv = $("ps-sealed-csv")?.value || "";
+  if (!csv.trim()) return toast("⚠️ Hinweis", "Bitte CSV einfügen.");
+  try {
+    const r = await api("/api/admin/catalog/sealed", { method: "POST", body: { csv } });
+    toast("✅ Sealed importiert", `${r.created} neu, ${r.updated} aktualisiert, ${r.priced} Preise${r.skipped?.length ? `, ${r.skipped.length} übersprungen` : ""}`);
+  } catch (e) { handleError(e); }
+}
+async function adminCancelDone(id) {
+  try { await api(`/api/admin/cancellations/${Number(id)}`, { method: "PATCH", body: { status: "applied" } }); toast("✅ Erledigt", ""); window.PS?.openAdmin?.(); } catch (e) { handleError(e); }
 }
 async function adminRunGrowth() {
   try { const r = await api("/api/admin/run-growth", { method: "POST", body: {} }); toast("✅ Erledigt", `${r.reminders} Erinnerungen, ${r.reports} Wochen-Reports verschickt.`); } catch (e) { handleError(e); }
@@ -796,6 +882,7 @@ export const growthApi = {
   addWish, removeWish, wishRequest, shareCardPage, shareCardImage, sharePortfolioImage, gradingFor, bulkPick,
   openImport, addEvent, toggleRemind, removeEvent, board, setPref, openShopStats, exportData, deleteAccount,
   confirmDelete, openLegal, adminSaveLegal, adminRunGrowth, loadWishlist,
+  adminWebhookSetup, adminCatalogRun, adminSealedImport, adminCancelDone,
 };
 
 /** Fügt die Bereiche ein, bevor die Unter-Reiter gebaut werden. */
@@ -844,6 +931,13 @@ export function injectGrowthPanels() {
     const el = document.createElement("p");
     el.innerHTML = `<strong>Impressum (Angaben gemäß § 5 DDG):</strong><br><span id="ps-impressum" class="whitespace-pre-line"></span>`;
     first?.after(el);
+    const links = document.createElement("p");
+    links.className = "flex flex-wrap gap-2";
+    links.innerHTML = `<a href="/rechtliches#agb" class="bg-slate-800 rounded-lg px-2 py-1 font-bold text-white">AGB</a>
+      <a href="/rechtliches#widerruf" class="bg-slate-800 rounded-lg px-2 py-1 font-bold text-white">Widerrufsbelehrung</a>
+      <a href="/rechtliches#formular" class="bg-slate-800 rounded-lg px-2 py-1 font-bold text-white">Muster-Widerrufsformular</a>
+      <a href="/kuendigen" class="bg-rose-600 rounded-lg px-2 py-1 font-black text-white">Verträge hier kündigen</a>`;
+    el.after(links);
     $("ps-impressum").textContent = "Wird geladen …";
     origOpenModal = window.openModal;
     window.openModal = (id) => { origOpenModal?.(id); if (id === "legal-modal") loadImpressum(); };
@@ -863,6 +957,12 @@ export function routeGrowth() {
   const cardId = params.get("card");
   if (cardId && /^[a-zA-Z0-9.\-_]{2,40}$/.test(cardId)) PS().openCard(cardId);
   if (params.get("legal") === "1") openLegal();
+  // Von einer öffentlichen Set-Seite (/set/…): Set-Fortschritt in der App öffnen
+  const setId = params.get("set");
+  if (setId && /^[a-zA-Z0-9.\-_]{1,40}$/.test(setId)) {
+    try { window.switchTab?.("portfolio"); } catch {}
+    setTimeout(() => PS().openSet?.(setId), 300);
+  }
   // Umzug aus einer anderen App (Link von /umzug): Sammlung öffnen und Import starten – nach dem Login automatisch
   if (params.get("umzug") === "1") {
     localStorage.setItem("ps_umzug", "1");

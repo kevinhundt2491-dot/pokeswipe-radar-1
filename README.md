@@ -34,6 +34,14 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
   mit Status und Push-Erinnerung bei Überfälligkeit
 - **KI-Fake-Check** – Vorder- und Rückseite, Prüfung auf typische Fälschungsmerkmale (Claude Sonnet über Netlify AI Gateway)
 - **Datenschutz** – Daten-Export (JSON), Konto selbst löschen, Impressum in der Admin-Zentrale pflegbar
+- **Rechtliches** – `/rechtliches` mit Impressum (§ 5 DDG), AGB, Widerrufsbelehrung inkl. digitaler Leistungen und
+  Muster-Widerrufsformular; Anbieterdaten pflegt der Admin (Netlify Blobs). Vor jeder Bestellung bestätigen Kunden
+  AGB und sofortigen Leistungsbeginn (Nachweis mit AGB-Version in den Stripe-Metadaten)
+- **Kündigungsbutton (§ 312k BGB)** – `/kuendigen` ohne Login, mit Bestätigungsseite, Eingangsnachweis (Tabelle
+  `cancellations`), Bestätigung zum Speichern/Drucken, Mitteilung im Konto und optional per E-Mail
+- **Deutscher Kartenkatalog** – alle Sets und Einzelkarten werden automatisch aus TCGdex importiert
+  (`netlify/functions/catalog-import.mts`, alle 10 Min.), öffentliche Set-Seiten `/sets` und `/set/<id>/<name>`,
+  Sitemap-Index `/sitemap.xml` mit Teil-Sitemaps, Sealed-Preis-Import per CSV in der Admin-Zentrale
 
 ## Echte Karten & Preise
 
@@ -60,6 +68,9 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | Restock-Radar (alle 2 Minuten) | `netlify/functions/restock-radar.mts` → `server/drops.ts` |
 | Erinnerungen & Wochen-Report (stündlich) | `netlify/functions/growth-jobs.mts` |
 | Konto löschen | `netlify/functions/delete-account.mts` |
+| Kartenkatalog-Import (alle 10 Minuten) | `netlify/functions/catalog-import.mts` → `server/catalog.ts` |
+| Rechtstexte & Kündigungsbutton | `server/legal.ts` (`/rechtliches`, `/kuendigen`, `/api/legal`) |
+| Integrations-Check & Stripe-Webhook-Einrichtung | `server/integrations.ts` (Admin-Zentrale) |
 | Styles (Tailwind, beim Deploy kompiliert) | `client/tailwind.css` + `tailwind.config.js` → `public/assets/tailwind.css` |
 | Tests | `npm test` (`tests/`) |
 | Login | Netlify Identity (E-Mail, optional Google) |
@@ -93,9 +104,13 @@ Werte ändern: `server/plans.ts`.
 ## Einrichtung
 
 1. **Stripe:** Umgebungsvariable `STRIPE_SECRET_KEY` in Netlify setzen. Ohne Schlüssel bleiben die Bezahl-Buttons inaktiv.
-   Optional einen Webhook auf `https://pokeswipe-radar.de/api/billing/webhook` anlegen
-   (Ereignisse `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`)
-   und `STRIPE_WEBHOOK_SECRET` setzen. Ohne Webhook gleicht der Server Abos selbst mit Stripe ab.
+   **Webhook:** In der Admin-Zentrale auf „Stripe-Webhook automatisch einrichten“ klicken – der Server legt den Webhook
+   auf `/api/billing/webhook` an und speichert das Signatur-Geheimnis selbst (Netlify Blobs). Alternativ manuell anlegen
+   (Ereignisse `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.*`,
+   `invoice.paid`, `invoice.payment_failed`) und `STRIPE_WEBHOOK_SECRET` setzen. Ohne Webhook gleicht der Server Abos
+   alle 6 Stunden selbst mit Stripe ab. Status und letztes Ereignis zeigt die Admin-Zentrale.
+   **Partner-IDs:** `AMAZON_PARTNER_TAG` (z. B. `name-21`) und `CARDMARKET_PARTNER_ID` setzen – beide greifen in Server
+   und App (die Cardmarket-ID kommt über `/api/public-config` in den Browser).
 2. **Admin-Zugang:** Im Netlify-Dashboard unter Identity beim eigenen Nutzer die Rolle `admin` vergeben
    (wirkt ab dem nächsten Login). Dann erscheint im Konto die „Admin-Zentrale“ mit Umsatz, Nutzern und Meldungen.
 3. **Google-Login (optional):** Im Netlify-Dashboard unter Identity → External providers aktivieren.
@@ -114,8 +129,11 @@ Werte ändern: `server/plans.ts`.
    setzen, neu deployen und danach den Block aus `firebase/database.rules.strict.json` verwenden. Dann darf nur noch
    schreiben, wer anonym angemeldet ist; jeder Eintrag ist an die eigene UID gebunden, Chat/Pull-Wall/Kommentare sind
    serverseitig auf einen Beitrag alle 3 Sekunden pro Person gebremst und jede Person kann einen Beitrag nur einmal liken.
-8. **Impressum:** Wird bewusst nicht im Code gespeichert. In der Admin-Zentrale eintragen (oder Umgebungsvariable
-   `IMPRESSUM_TEXT`); es erscheint dann im Fenster „Impressum & Datenschutz“.
+8. **Impressum:** Wird bewusst nicht im Code gespeichert. In der Admin-Zentrale die Felder (Name/Firma, Anschrift,
+   E-Mail, ggf. Telefon/USt-IdNr.) ausfüllen – daraus entstehen Impressum, Anbieterangaben in AGB/Widerrufsbelehrung und
+   das Muster-Widerrufsformular. Rückfall: Freitext oder Umgebungsvariable `IMPRESSUM_TEXT`.
+   **Kündigungsbestätigung per E-Mail (optional):** `RESEND_API_KEY` und `MAIL_FROM` (z. B. `PokeSwipe <kontakt@pokeswipe-radar.de>`)
+   setzen. Ohne diese Variablen wird die Bestätigung auf der Seite angezeigt, als Datei angeboten und im Konto hinterlegt.
 9. **Set-Releases:** Als Admin unter Community → Kalender eintragen (Art „Set-Release“). Nutzer können sich erinnern lassen.
 
 ## Auto-Reels & Make.com
