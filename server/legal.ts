@@ -1,0 +1,482 @@
+// PokeSwipe & Radar – Rechtliches: Impressum (§ 5 DDG), AGB, Widerrufsbelehrung inkl. digitaler Leistungen,
+// Muster-Widerrufsformular und Kündigungsbutton nach § 312k BGB (mit Bestätigungsseite und Eingangsnachweis).
+//
+// Keine personenbezogenen Daten im Code: Name und Anschrift des Anbieters pflegt der Admin in der Admin-Zentrale
+// (gespeichert in Netlify Blobs). Alternativ greift die bisherige Umgebungsvariable IMPRESSUM_TEXT (Freitext).
+import { randomBytes } from "node:crypto";
+import { desc, eq, sql } from "drizzle-orm";
+import { getStore } from "@netlify/blobs";
+import { db, profiles, cancellations } from "../db/index.ts";
+import { verifyIdentityToken } from "./auth.ts";
+import { stripe, applySubscription } from "./billing.ts";
+import { notify } from "./prices.ts";
+import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS } from "./plans.ts";
+import { SITE, h, pageShell } from "./growth.ts";
+import { str, rows, rateLimit, clientIp, euro } from "./util.ts";
+
+/** Stand der Rechtstexte – wird bei jeder Bestellung als Nachweis in Stripe gespeichert. */
+export const LEGAL_VERSION = "2026-11-15";
+const BRAND = "PokeSwipe & Radar";
+
+export type Operator = {
+  name: string; company: string; representative: string; street: string; zip: string; city: string; country: string;
+  email: string; phone: string; vatId: string; register: string; responsible: string; smallBusiness: boolean;
+};
+type Saved = { operator?: Partial<Operator>; impressum?: string; updatedAt?: string | null };
+type Section = { h?: string; p: string[] };
+export type LegalDoc = { id: string; title: string; sections: Section[] };
+
+const EMPTY: Operator = {
+  name: "", company: "", representative: "", street: "", zip: "", city: "", country: "Deutschland",
+  email: "", phone: "", vatId: "", register: "", responsible: "", smallBusiness: false,
+};
+const FIELD_MAX: Record<keyof Operator, number> = {
+  name: 120, company: 160, representative: 160, street: 160, zip: 12, city: 100, country: 60,
+  email: 160, phone: 60, vatId: 30, register: 200, responsible: 200, smallBusiness: 0,
+};
+
+export function cleanOperator(raw: any): Operator {
+  const o: any = { ...EMPTY };
+  for (const k of Object.keys(EMPTY) as (keyof Operator)[]) {
+    if (k === "smallBusiness") o.smallBusiness = raw?.smallBusiness === true;
+    else if (raw?.[k] !== undefined) o[k] = str(raw[k], FIELD_MAX[k]);
+  }
+  if (o.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(o.email)) o.email = "";
+  if (!o.country) o.country = "Deutschland";
+  return o as Operator;
+}
+
+/** Pflichtangaben vollständig? (Name/Firma, ladungsfähige Anschrift, E-Mail) */
+export const operatorComplete = (o: Operator) => Boolean((o.name || o.company) && o.street && o.zip && o.city && o.email);
+
+async function loadSaved(): Promise<Saved> {
+  try { return ((await getStore("app-config").get("legal", { type: "json" })) as Saved) || {}; } catch { return {}; }
+}
+
+export async function getOperator() {
+  const saved = await loadSaved();
+  return { operator: cleanOperator(saved.operator || {}), legacy: str(saved.impressum, 4000) || str(process.env.IMPRESSUM_TEXT, 4000), updatedAt: saved.updatedAt || null };
+}
+
+const STREIT = "Verbraucherstreitbeilegung: Wir sind nicht bereit und nicht verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.";
+
+/** Anbieter in einer Zeile (für AGB und Widerrufsbelehrung). */
+function providerLine(o: Operator) {
+  if (!operatorComplete(o)) return "den im Impressum genannten Anbieter";
+  return [o.company || o.name, o.company && o.representative ? `vertreten durch ${o.representative}` : "", o.street, `${o.zip} ${o.city}`, o.country !== "Deutschland" ? o.country : "", `E-Mail: ${o.email}`]
+    .filter(Boolean).join(", ");
+}
+
+export function impressumText(o: Operator, legacy = "") {
+  if (!operatorComplete(o)) return legacy ? (legacy.includes("Streitbeilegung") ? legacy : `${legacy}\n\n${STREIT}`) : "";
+  const lines = [
+    o.company || o.name,
+    o.company && o.representative ? `Vertreten durch: ${o.representative}` : o.company && o.name ? `Inhaber: ${o.name}` : "",
+    o.street, `${o.zip} ${o.city}`, o.country,
+    "",
+    "Kontakt:",
+    `E-Mail: ${o.email}`,
+    o.phone ? `Telefon: ${o.phone}` : "",
+    o.vatId ? `\nUmsatzsteuer-Identifikationsnummer gemäß § 27a UStG: ${o.vatId}` : o.smallBusiness ? "\nKleinunternehmer gemäß § 19 UStG – es wird keine Umsatzsteuer berechnet." : "",
+    o.register ? `\nRegistereintrag: ${o.register}` : "",
+    "",
+    `Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV: ${o.responsible || `${o.representative || o.name || o.company}, Anschrift wie oben`}`,
+    "",
+    STREIT,
+  ];
+  return lines.filter((l) => l !== null && l !== undefined).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function buildDocuments(o: Operator, legacy = ""): LegalDoc[] {
+  const prov = providerLine(o);
+  const mail = o.email || "der im Impressum genannten E-Mail-Adresse";
+  const vat = o.smallBusiness ? "Als Kleinunternehmer im Sinne von § 19 UStG berechnen wir keine Umsatzsteuer; alle Preise sind Endpreise." : "Alle Preise sind Endpreise in Euro inklusive der gesetzlichen Umsatzsteuer.";
+  const p = PLANS;
+  const impressum = impressumText(o, legacy);
+  return [
+    {
+      id: "impressum", title: "Impressum",
+      sections: [{ h: "Angaben gemäß § 5 DDG", p: impressum ? impressum.split(/\n{2,}/) : ["Die Anbieterangaben werden gerade eingerichtet."] },
+        { h: "Hinweis", p: [`${BRAND} ist ein unabhängiges, inoffizielles Fanprojekt und steht in keiner Verbindung zu Nintendo, Creatures Inc., GAME FREAK inc. oder The Pokémon Company. Pokémon und alle Kartennamen sind Marken ihrer jeweiligen Inhaber.`] }],
+    },
+    {
+      id: "agb", title: "Allgemeine Geschäftsbedingungen (AGB)",
+      sections: [
+        { h: "§ 1 Geltungsbereich und Anbieter", p: [
+          `(1) Diese AGB gelten für alle Verträge über die Nutzung der Web-App ${BRAND} unter pokeswipe-radar.de (im Folgenden „Dienst“) zwischen ${prov} (im Folgenden „wir“) und den Nutzerinnen und Nutzern (im Folgenden „du“).`,
+          "(2) Verbraucher ist jede natürliche Person, die ein Rechtsgeschäft zu Zwecken abschließt, die überwiegend weder ihrer gewerblichen noch ihrer selbständigen beruflichen Tätigkeit zugerechnet werden können (§ 13 BGB). Abweichende Bedingungen der Nutzer gelten nicht.",
+        ] },
+        { h: "§ 2 Leistungen", p: [
+          "(1) Der Dienst bietet u. a. Kartensuche, Preisinformationen (Cardmarket-Daten über TCGdex), Portfolio, Preis- und Restock-Alarme, KI-Kartenscan, Tausch-Hub, Community-Funktionen und Händler-Shops. Der kostenlose Tarif „Free“ ist dauerhaft ohne Zahlung nutzbar.",
+          `(2) Kostenpflichtig sind die Abos „Premium“ (${euro(p.premium.priceCents / 100)} pro Monat oder ${euro(p.premium.yearlyPriceCents / 100)} pro Jahr) und „Pro Trader“ (${euro(p.pro.priceCents / 100)} pro Monat oder ${euro(p.pro.yearlyPriceCents / 100)} pro Jahr) mit den bei der Bestellung beschriebenen Zusatzfunktionen und Kontingenten sowie der einmalige Inserat-Boost (${euro(BOOST_PRICE_CENTS / 100)} für ${BOOST_DAYS} Tage Platzierung oben im Tausch-Hub).`,
+          "(3) Preis-, Verfügbarkeits- und Restock-Angaben stammen aus Quellen Dritter oder von der Community und werden automatisiert verarbeitet. Wir übernehmen keine Gewähr für Richtigkeit, Vollständigkeit und Aktualität; maßgeblich ist stets das Angebot des jeweiligen Händlers. KI-Auswertungen (Kartenscan, Zustands- und Fake-Check) sind unverbindliche Einschätzungen und ersetzen keine professionelle Begutachtung.",
+          "(4) Tausch- und Kaufgeschäfte im Tausch-Hub kommen ausschließlich zwischen den beteiligten Nutzern zustande. Wir sind nicht Vertragspartei, prüfen Angebote nicht vorab und haften nicht für deren Erfüllung.",
+        ] },
+        { h: "§ 3 Konto", p: [
+          "(1) Für viele Funktionen ist ein kostenloses Konto nötig. Deine Angaben müssen wahr sein; Zugangsdaten sind geheim zu halten. Pro Person ist ein Konto erlaubt.",
+          "(2) Du kannst dein Konto jederzeit im Konto-Bereich unter „Datenschutz & Konto“ selbst löschen. Ein laufendes Abo wird dabei beendet.",
+        ] },
+        { h: "§ 4 Vertragsschluss", p: [
+          "(1) Die Darstellung der Tarife im Dienst ist kein bindendes Angebot. Durch Auswahl eines Tarifs, Bestätigung der Hinweise und Klick auf den Bestell-Button auf der Bezahlseite unseres Zahlungsdienstleisters Stripe gibst du ein verbindliches Angebot ab. Der Vertrag kommt zustande, sobald die Zahlung bzw. der Start der Testphase bestätigt und die Leistung freigeschaltet wird.",
+          "(2) Vertragssprache ist Deutsch. Der Vertragstext wird von uns nicht gesondert gespeichert; diese AGB sind jederzeit unter pokeswipe-radar.de/rechtliches abrufbar und können dort gespeichert oder ausgedruckt werden. Die Bestellbestätigung erhältst du per E-Mail von Stripe.",
+        ] },
+        { h: "§ 5 Preise und Zahlung", p: [
+          `(1) ${vat}`,
+          "(2) Die Zahlung erfolgt über Stripe (z. B. Kreditkarte, Apple Pay, Google Pay, Klarna, SEPA – je nach Angebot auf der Bezahlseite). Abo-Entgelte werden jeweils zu Beginn eines Abrechnungszeitraums im Voraus fällig, der Boost sofort.",
+          "(3) Gerät die Zahlung in Verzug oder wird sie zurückgebucht, können wir die kostenpflichtigen Funktionen bis zum Ausgleich sperren.",
+        ] },
+        { h: "§ 6 Kostenlose Testphase", p: [
+          "(1) Das erste Abo kann einmalig 7 Tage kostenlos getestet werden (mit Einladungscode bis zu 30 Tage). Die Dauer wird vor der Bestellung angezeigt.",
+          "(2) Kündigst du nicht vor Ablauf der Testphase, geht sie automatisch in das gewählte kostenpflichtige Abo über. Eine Kündigung während der Testphase ist jederzeit möglich; es entstehen dann keine Kosten.",
+        ] },
+        { h: "§ 7 Laufzeit und Kündigung", p: [
+          "(1) Monatsabos laufen einen Monat und verlängern sich jeweils um einen weiteren Monat, wenn sie nicht bis zum Ende des laufenden Monats gekündigt werden.",
+          "(2) Jahresabos laufen zunächst zwölf Monate. Werden sie nicht bis zum Ende dieser Laufzeit gekündigt, verlängern sie sich auf unbestimmte Zeit und können danach jederzeit mit einer Frist von einem Monat gekündigt werden; zu viel gezahlte Entgelte erstatten wir anteilig.",
+          "(3) Die Kündigung ist jederzeit ohne Angabe von Gründen möglich – im Konto über „Abo kündigen“, über den stets erreichbaren Button „Verträge hier kündigen“ (pokeswipe-radar.de/kuendigen) oder in Textform (z. B. E-Mail an " + mail + "). Du erhältst eine Bestätigung mit Datum und Uhrzeit des Eingangs.",
+          "(4) Das Recht zur außerordentlichen Kündigung aus wichtigem Grund bleibt für beide Seiten unberührt. Ein wichtiger Grund liegt für uns insbesondere bei schweren oder wiederholten Verstößen gegen § 8 vor.",
+          "(5) Nach Vertragsende wird dein Konto automatisch auf den kostenlosen Tarif „Free“ umgestellt; deine Daten bleiben erhalten (Inhalte über den Free-Kontingenten werden nur noch angezeigt).",
+        ] },
+        { h: "§ 8 Pflichten der Nutzer, Community-Regeln", p: [
+          "(1) Untersagt sind insbesondere: rechtswidrige, beleidigende, diskriminierende oder irreführende Inhalte; das Anbieten gefälschter Karten; Spam; Umgehung von Limits oder Sicherheitsmaßnahmen; automatisiertes Auslesen des Dienstes ohne unsere Zustimmung.",
+          "(2) Für Inhalte, die du einstellst (Inserate, Beiträge, Bilder, Bewertungen), bist du selbst verantwortlich. Du räumst uns das einfache, auf die Dauer der Veröffentlichung beschränkte Recht ein, sie im Dienst anzuzeigen.",
+          "(3) Bei Verstößen können wir Inhalte entfernen, Funktionen einschränken oder das Konto sperren. Wir berücksichtigen dabei deine berechtigten Interessen und informieren dich, soweit gesetzlich vorgesehen (Digital Services Act).",
+        ] },
+        { h: "§ 9 Verfügbarkeit und Änderungen", p: [
+          "(1) Wir bemühen uns um eine hohe Verfügbarkeit, können aber Unterbrechungen durch Wartung, Weiterentwicklung oder Störungen bei Dritten (z. B. Datenquellen, Hosting) nicht ausschließen.",
+          "(2) Wir dürfen den Dienst weiterentwickeln, sofern die vertraglich zugesagten Kernfunktionen deines Tarifs erhalten bleiben (§ 327r BGB). Über erhebliche Änderungen informieren wir dich rechtzeitig; Preiserhöhungen für laufende Abos werden nur mit deiner Zustimmung wirksam.",
+        ] },
+        { h: "§ 10 Haftung", p: [
+          "(1) Wir haften unbeschränkt bei Vorsatz und grober Fahrlässigkeit, bei Verletzung von Leben, Körper oder Gesundheit, nach dem Produkthaftungsgesetz sowie im Umfang einer übernommenen Garantie.",
+          "(2) Bei leicht fahrlässiger Verletzung wesentlicher Vertragspflichten (Pflichten, deren Erfüllung die ordnungsgemäße Durchführung des Vertrags überhaupt erst ermöglicht und auf deren Einhaltung du regelmäßig vertrauen darfst) ist die Haftung auf den vertragstypischen, vorhersehbaren Schaden begrenzt. Im Übrigen ist die Haftung für leichte Fahrlässigkeit ausgeschlossen.",
+          "(3) Insbesondere haften wir nicht für Entscheidungen, die du auf Grundlage von Preis-, Restock- oder KI-Angaben triffst, soweit nicht Absatz 1 greift.",
+        ] },
+        { h: "§ 11 Gewährleistung", p: ["Es gelten die gesetzlichen Vorschriften über digitale Produkte (§§ 327 ff. BGB)."] },
+        { h: "§ 12 Widerrufsrecht", p: ["Verbrauchern steht ein gesetzliches Widerrufsrecht zu. Einzelheiten findest du in der Widerrufsbelehrung unten."] },
+        { h: "§ 13 Datenschutz", p: ["Informationen zur Verarbeitung personenbezogener Daten findest du in der Datenschutzerklärung (in der App unter „Impressum & Datenschutz“)."] },
+        { h: "§ 14 Schlussbestimmungen", p: [
+          "(1) Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts. Bei Verbrauchern gilt diese Rechtswahl nur, soweit dadurch nicht der Schutz durch zwingende Bestimmungen des Rechts des Staates ihres gewöhnlichen Aufenthalts entzogen wird.",
+          "(2) " + STREIT,
+          "(3) Sollten einzelne Bestimmungen unwirksam sein, bleibt die Wirksamkeit der übrigen unberührt; es gelten dann die gesetzlichen Vorschriften.",
+          `Stand: ${new Date(LEGAL_VERSION).toLocaleDateString("de-DE")}`,
+        ] },
+      ],
+    },
+    {
+      id: "widerruf", title: "Widerrufsbelehrung",
+      sections: [
+        { h: "Widerrufsrecht", p: [
+          "Sie haben das Recht, binnen vierzehn Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen.",
+          "Die Widerrufsfrist beträgt vierzehn Tage ab dem Tag des Vertragsabschlusses.",
+          `Um Ihr Widerrufsrecht auszuüben, müssen Sie uns (${prov}) mittels einer eindeutigen Erklärung (z. B. ein mit der Post versandter Brief oder E-Mail) über Ihren Entschluss, diesen Vertrag zu widerrufen, informieren. Sie können dafür das beigefügte Muster-Widerrufsformular verwenden, das jedoch nicht vorgeschrieben ist.`,
+          "Zur Wahrung der Widerrufsfrist reicht es aus, dass Sie die Mitteilung über die Ausübung des Widerrufsrechts vor Ablauf der Widerrufsfrist absenden.",
+        ] },
+        { h: "Folgen des Widerrufs", p: [
+          "Wenn Sie diesen Vertrag widerrufen, haben wir Ihnen alle Zahlungen, die wir von Ihnen erhalten haben, einschließlich der Lieferkosten (mit Ausnahme der zusätzlichen Kosten, die sich daraus ergeben, dass Sie eine andere Art der Lieferung als die von uns angebotene, günstigste Standardlieferung gewählt haben), unverzüglich und spätestens binnen vierzehn Tagen ab dem Tag zurückzuzahlen, an dem die Mitteilung über Ihren Widerruf dieses Vertrags bei uns eingegangen ist. Für diese Rückzahlung verwenden wir dasselbe Zahlungsmittel, das Sie bei der ursprünglichen Transaktion eingesetzt haben, es sei denn, mit Ihnen wurde ausdrücklich etwas anderes vereinbart; in keinem Fall werden Ihnen wegen dieser Rückzahlung Entgelte berechnet.",
+          "Haben Sie verlangt, dass die Dienstleistungen während der Widerrufsfrist beginnen sollen, so haben Sie uns einen angemessenen Betrag zu zahlen, der dem Anteil der bis zu dem Zeitpunkt, zu dem Sie uns von der Ausübung des Widerrufsrechts hinsichtlich dieses Vertrags unterrichten, bereits erbrachten Dienstleistungen im Vergleich zum Gesamtumfang der im Vertrag vorgesehenen Dienstleistungen entspricht.",
+        ] },
+        { h: "Besondere Hinweise zu digitalen Leistungen (Abos, Boost, digitale Inhalte)", p: [
+          "Abos (Premium, Pro Trader) und der Inserat-Boost sind digitale Dienstleistungen. Sie starten auf Ihren ausdrücklichen Wunsch sofort nach der Bestellung – also vor Ablauf der Widerrufsfrist. Diesen Wunsch und Ihre Kenntnis der folgenden Hinweise bestätigen Sie vor der Bestellung.",
+          "Erlöschen bei Dienstleistungen: Das Widerrufsrecht erlischt bei einem Vertrag über die Erbringung von Dienstleistungen, die zur Zahlung eines Preises verpflichten, wenn wir die Dienstleistung vollständig erbracht haben und mit der Ausführung der Dienstleistung erst begonnen haben, nachdem Sie dazu Ihre ausdrückliche Zustimmung gegeben haben und gleichzeitig Ihre Kenntnis davon bestätigt haben, dass Sie Ihr Widerrufsrecht bei vollständiger Vertragserfüllung durch uns verlieren (§ 356 Abs. 4 BGB). Beispiel: ein Boost, dessen Laufzeit vollständig abgelaufen ist.",
+          "Erlöschen bei digitalen Inhalten: Bei einem Vertrag über die Bereitstellung von nicht auf einem körperlichen Datenträger befindlichen digitalen Inhalten erlischt das Widerrufsrecht, wenn wir mit der Vertragserfüllung begonnen haben, nachdem Sie ausdrücklich zugestimmt haben, dass wir mit der Vertragserfüllung vor Ablauf der Widerrufsfrist beginnen, Sie Ihre Kenntnis davon bestätigt haben, dass durch Ihre Zustimmung mit Beginn der Vertragserfüllung Ihr Widerrufsrecht erlischt, und wir Ihnen eine Bestätigung gemäß § 312f BGB zur Verfügung gestellt haben (§ 356 Abs. 5 BGB).",
+          "Wertersatz bei Abos: Widerrufen Sie ein bereits laufendes Abo innerhalb der Widerrufsfrist, erstatten wir den Betrag abzüglich des Anteils für die bereits genutzte Zeit. Während einer kostenlosen Testphase fallen keine Kosten an.",
+        ] },
+      ],
+    },
+    {
+      id: "formular", title: "Muster-Widerrufsformular",
+      sections: [{ p: [
+        "(Wenn Sie den Vertrag widerrufen wollen, dann füllen Sie bitte dieses Formular aus und senden Sie es zurück.)",
+        `An: ${prov}`,
+        "Hiermit widerrufe(n) ich/wir (*) den von mir/uns (*) abgeschlossenen Vertrag über den Kauf der folgenden Waren (*)/die Erbringung der folgenden Dienstleistung (*)",
+        "– Bestellt am (*)/erhalten am (*)",
+        "– Name des/der Verbraucher(s)",
+        "– Anschrift des/der Verbraucher(s)",
+        "– Unterschrift des/der Verbraucher(s) (nur bei Mitteilung auf Papier)",
+        "– Datum",
+        "(*) Unzutreffendes streichen.",
+      ] }],
+    },
+  ];
+}
+
+export async function getLegalPayload() {
+  const { operator, legacy, updatedAt } = await getOperator();
+  const documents = buildDocuments(operator, legacy);
+  return {
+    impressum: impressumText(operator, legacy),
+    operatorComplete: operatorComplete(operator) || Boolean(legacy),
+    version: LEGAL_VERSION,
+    updatedAt,
+    documents,
+    links: { all: "/rechtliches", cancel: "/kuendigen" },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// E-Mail-Bestätigung (optional): Resend-API, aktiv sobald RESEND_API_KEY und MAIL_FROM gesetzt sind
+// ---------------------------------------------------------------------------
+export function mailConfigured() {
+  return Boolean(process.env.RESEND_API_KEY && /@/.test(String(process.env.MAIL_FROM || "")));
+}
+export async function sendMail(to: string, subject: string, text: string) {
+  if (!mailConfigured() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return false;
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: process.env.MAIL_FROM, to: [to], subject: subject.slice(0, 200), text }),
+      signal: AbortSignal.timeout(8000),
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn("E-Mail nicht gesendet", e);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Kündigung (§ 312k BGB)
+// ---------------------------------------------------------------------------
+const fmtDateTime = (d: Date) => d.toLocaleString("de-DE", { timeZone: "Europe/Berlin", dateStyle: "long", timeStyle: "medium" });
+const fmtDay = (d: Date) => d.toLocaleDateString("de-DE", { timeZone: "Europe/Berlin", dateStyle: "long" });
+
+function confirmationText(r: { reference: string; createdAt: Date; name: string; email: string; contractRef: string; kind: string; reason: string; timing: string; requestedDate: string | null; effectiveAt: Date | null; statusText: string }) {
+  return [
+    `Kündigungsbestätigung – ${BRAND}`,
+    "",
+    `Kündigungsnummer: ${r.reference}`,
+    `Eingegangen am: ${fmtDateTime(r.createdAt)} Uhr (deutsche Zeit)`,
+    "",
+    `Name: ${r.name}`,
+    `E-Mail: ${r.email}`,
+    r.contractRef ? `Vertrag/Kundennummer: ${r.contractRef}` : "",
+    `Art der Kündigung: ${r.kind === "ausserordentlich" ? "außerordentlich (aus wichtigem Grund)" : "ordentlich"}`,
+    r.kind === "ausserordentlich" && r.reason ? `Kündigungsgrund: ${r.reason}` : "",
+    `Gewünschter Zeitpunkt: ${r.timing === "date" && r.requestedDate ? `zum ${fmtDay(new Date(r.requestedDate))} bzw. zum nächstmöglichen Zeitpunkt danach` : "zum nächstmöglichen Zeitpunkt"}`,
+    r.effectiveAt ? `Vertragsende: ${fmtDay(r.effectiveAt)}` : "",
+    "",
+    r.statusText,
+    "",
+    "Bitte bewahre diese Bestätigung auf.",
+    `${SITE()}/kuendigen`,
+  ].filter((l) => l !== null).join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/** Wendet die Kündigung auf das Stripe-Abo an; Jahresabos in der Verlängerung enden mit Monatsfrist. */
+async function applyCancellation(profile: typeof profiles.$inferSelect, kind: string) {
+  const s = stripe();
+  if (!s || !profile.stripeSubscriptionId) return { applied: false, effectiveAt: profile.planUntil, note: "" };
+  let sub = await s.subscriptions.retrieve(profile.stripeSubscriptionId);
+  if (!["active", "trialing", "past_due"].includes(sub.status)) return { applied: false, effectiveAt: null, note: "" };
+  const item: any = sub.items?.data?.[0];
+  const periodEndTs = Number((sub as any).current_period_end ?? item?.current_period_end ?? 0);
+  const periodStartTs = Number((sub as any).current_period_start ?? item?.current_period_start ?? 0);
+  const yearly = item?.price?.recurring?.interval === "year";
+  // Jahresabo nach der ersten Laufzeit (§ 309 Nr. 9 BGB): Ende spätestens einen Monat nach Zugang der Kündigung
+  const inRenewal = yearly && sub.start_date && periodStartTs - Number(sub.start_date) > 300 * 86400;
+  const monthFromNow = Math.floor(Date.now() / 1000) + 30 * 86400;
+  let note = "";
+  if (inRenewal && periodEndTs > monthFromNow) {
+    sub = await s.subscriptions.update(sub.id, { cancel_at: monthFromNow, proration_behavior: "none" } as any);
+    note = "Jahresabo in der Verlängerung: endet mit Monatsfrist – anteilige Erstattung des Restzeitraums erforderlich.";
+  } else {
+    sub = await s.subscriptions.update(sub.id, { cancel_at_period_end: true });
+  }
+  await applySubscription(profile.userId, sub);
+  const cancelAt = Number((sub as any).cancel_at || periodEndTs);
+  return { applied: true, effectiveAt: cancelAt ? new Date(cancelAt * 1000) : profile.planUntil, note: kind === "ausserordentlich" ? `${note} Außerordentliche Kündigung – Grund prüfen.`.trim() : note };
+}
+
+const newReference = () => `K-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomBytes(3).toString("hex").toUpperCase()}`;
+
+// ---------------------------------------------------------------------------
+// Öffentliche Seiten: /rechtliches und /kuendigen
+// ---------------------------------------------------------------------------
+const LEGAL_CSS = `<style>.doc h2{margin-top:28px}.doc h3{font-size:14px;margin:18px 0 6px;font-weight:900}.doc p{font-size:13px;color:#cbd5e1;margin:6px 0;white-space:pre-line}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.toc a{background:#1e293b;border-radius:12px;padding:6px 10px;font-size:12px;font-weight:800;text-decoration:none}
+.cancel-cta{display:inline-block;background:#f43f5e;color:#fff;font-weight:900;border-radius:14px;padding:12px 18px;text-decoration:none;font-size:14px}
+label{display:block;font-size:12px;font-weight:800;margin:12px 0 4px;color:#e2e8f0}input,select,textarea{width:100%;background:#0b1220;border:1px solid #334155;border-radius:12px;padding:10px 12px;color:#fff;font:inherit;font-size:14px}
+.radio{display:flex;gap:8px;align-items:flex-start;font-weight:600;font-size:13px;margin:6px 0}.radio input{width:auto;margin-top:3px}
+button.go{margin-top:18px;width:100%;background:#f43f5e;color:#fff;border:0;border-radius:14px;padding:14px;font-weight:900;font-size:15px;cursor:pointer}
+button.go:disabled{opacity:.6}.err{color:#fda4af;font-size:13px;min-height:18px;margin-top:8px}.ok{background:#052e1a;border:2px solid #10b981;border-radius:18px;padding:16px;white-space:pre-line;font-size:13px}</style>`;
+
+export function legalPage(docs: LegalDoc[]) {
+  return `${LEGAL_CSS}<div class="card doc"><h1>Rechtliches</h1>
+    <div class="toc">${docs.map((d) => `<a href="#${d.id}">${h(d.title)}</a>`).join("")}<a href="/?legal=1">Datenschutz</a><a href="/kuendigen" style="background:#f43f5e;color:#fff">Verträge hier kündigen</a></div>
+    ${docs.map((d) => `<section id="${d.id}"><h2>${h(d.title)}</h2>${d.sections.map((s) => `${s.h ? `<h3>${h(s.h)}</h3>` : ""}${s.p.map((x) => `<p>${h(x)}</p>`).join("")}`).join("")}</section>`).join("")}
+    <p style="margin-top:24px"><a class="cancel-cta" href="/kuendigen">Verträge hier kündigen</a></p></div>`;
+}
+
+function cancelPage() {
+  return `${LEGAL_CSS}<div class="card"><h1>Verträge hier kündigen</h1>
+  <p class="muted">Kündige dein Abo (Premium oder Pro Trader) – ohne Anmeldung, ohne Angabe von Gründen. Du erhältst sofort eine Bestätigung mit Datum und Uhrzeit des Eingangs.</p>
+  <form id="kf" novalidate>
+    <label>Art der Kündigung</label>
+    <div class="radio"><input type="radio" name="kind" value="ordentlich" id="k1" checked><label for="k1" style="margin:0;font-weight:600">Ordentliche Kündigung</label></div>
+    <div class="radio"><input type="radio" name="kind" value="ausserordentlich" id="k2"><label for="k2" style="margin:0;font-weight:600">Außerordentliche Kündigung (aus wichtigem Grund)</label></div>
+    <div id="reasonBox" hidden><label for="reason">Kündigungsgrund</label><textarea id="reason" rows="3" maxlength="1000"></textarea></div>
+    <label for="name">Vor- und Nachname</label><input id="name" autocomplete="name" maxlength="120" required>
+    <label for="email">E-Mail-Adresse deines Kontos</label><input id="email" type="email" autocomplete="email" maxlength="160" required>
+    <label for="contract">Vertrag / Kundennummer (optional)</label><input id="contract" maxlength="120" placeholder="z. B. „Premium Monatsabo“ oder Rechnungsnummer">
+    <label>Kündigungszeitpunkt</label>
+    <div class="radio"><input type="radio" name="timing" value="next" id="t1" checked><label for="t1" style="margin:0;font-weight:600">Zum nächstmöglichen Zeitpunkt</label></div>
+    <div class="radio"><input type="radio" name="timing" value="date" id="t2"><label for="t2" style="margin:0;font-weight:600">Zu einem bestimmten Datum</label></div>
+    <div id="dateBox" hidden><input id="date" type="date"></div>
+    <label for="confirmEmail">E-Mail für die Bestätigung (falls abweichend, optional)</label><input id="confirmEmail" type="email" maxlength="160">
+    <button class="go" type="submit" id="go">Jetzt kündigen</button>
+    <p class="err" id="err" role="alert"></p>
+  </form>
+  <div id="done" hidden></div>
+  <p class="muted" style="margin-top:16px">Alternativ: im Konto unter „Abo kündigen“ oder per E-Mail an die im <a href="/rechtliches#impressum">Impressum</a> genannte Adresse. <a href="/rechtliches#agb">AGB</a> · <a href="/rechtliches#widerruf">Widerrufsbelehrung</a></p>
+  </div>
+<script>
+(function(){
+  var f=document.getElementById('kf'),$=function(i){return document.getElementById(i)};
+  function sync(){ $('reasonBox').hidden=!$('k2').checked; $('dateBox').hidden=!$('t2').checked; }
+  f.addEventListener('change',sync); sync();
+  var tok=''; try{ var u=JSON.parse(localStorage.getItem('gotrue.user')||'null'); tok=(u&&u.token&&u.token.access_token)||''; if(u&&u.email&&!$('email').value) $('email').value=u.email; }catch(e){}
+  f.addEventListener('submit',function(ev){
+    ev.preventDefault(); $('err').textContent='';
+    var body={kind:$('k2').checked?'ausserordentlich':'ordentlich',reason:$('reason').value,name:$('name').value,email:$('email').value,contractRef:$('contract').value,timing:$('t2').checked?'date':'next',requestedDate:$('date').value,confirmEmail:$('confirmEmail').value};
+    if(!body.name.trim()||!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(body.email)){ $('err').textContent='Bitte Name und eine gültige E-Mail-Adresse angeben.'; return; }
+    if(body.kind==='ausserordentlich'&&!body.reason.trim()){ $('err').textContent='Bitte gib für die außerordentliche Kündigung den Grund an.'; return; }
+    if(body.timing==='date'&&!body.requestedDate){ $('err').textContent='Bitte das gewünschte Datum wählen.'; return; }
+    $('go').disabled=true; $('go').textContent='Wird übermittelt …';
+    var headers={'Content-Type':'application/json',Accept:'application/json'}; if(tok) headers.Authorization='Bearer '+tok;
+    fetch('/api/legal/cancel',{method:'POST',headers:headers,body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d}})}).then(function(x){
+      if(!x.ok) throw new Error(x.d.error||'Fehler');
+      f.hidden=true; var box=$('done'); box.hidden=false;
+      var ok=document.createElement('div'); ok.className='ok'; ok.textContent=x.d.confirmation; box.appendChild(ok);
+      var a=document.createElement('a'); a.className='btn y'; a.style.marginTop='12px'; a.textContent='📄 Bestätigung speichern';
+      a.href=URL.createObjectURL(new Blob([x.d.confirmation],{type:'text/plain;charset=utf-8'})); a.download='kuendigung-'+x.d.reference+'.txt'; box.appendChild(a);
+      var p=document.createElement('button'); p.className='btn s'; p.style.marginLeft='8px'; p.style.border='0'; p.textContent='🖨️ Drucken'; p.onclick=function(){window.print()}; box.appendChild(p);
+      window.scrollTo(0,0);
+    }).catch(function(e){ $('err').textContent=e.message||'Übermittlung fehlgeschlagen – bitte erneut versuchen oder per E-Mail kündigen.'; $('go').disabled=false; $('go').textContent='Jetzt kündigen'; });
+  });
+})();
+</script>`;
+}
+
+export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> }) {
+  const { auth, adminOnly, body } = hlp;
+
+  app.get("/api/legal", async (c: any) => {
+    c.header("Cache-Control", "public, max-age=300");
+    return c.json(await getLegalPayload());
+  });
+
+  app.get("/api/admin/legal", auth, adminOnly, async (c: any) => {
+    const { operator, legacy, updatedAt } = await getOperator();
+    return c.json({ operator, legacy, updatedAt, complete: operatorComplete(operator), mail: mailConfigured() });
+  });
+
+  app.put("/api/admin/legal", auth, adminOnly, async (c: any) => {
+    const b = await body(c);
+    const prev = await loadSaved();
+    const operator = b.operator ? cleanOperator(b.operator) : cleanOperator(prev.operator || {});
+    const impressum = b.impressum !== undefined ? str(b.impressum, 4000) : str(prev.impressum, 4000);
+    const saved = { operator, impressum, updatedAt: new Date().toISOString() };
+    await getStore("app-config").setJSON("legal", saved);
+    return c.json({ ...saved, complete: operatorComplete(operator) });
+  });
+
+  app.get("/rechtliches", async (c: any) => {
+    const p = await getLegalPayload();
+    c.header("Cache-Control", "public, max-age=300");
+    return c.html(pageShell({
+      title: `Impressum, AGB & Widerrufsbelehrung | ${BRAND}`,
+      description: `Impressum, Allgemeine Geschäftsbedingungen, Widerrufsbelehrung und Muster-Widerrufsformular von ${BRAND}.`,
+      canonical: `${SITE()}/rechtliches`, body: legalPage(p.documents),
+    }));
+  });
+  for (const [path, anchor] of [["/impressum", "impressum"], ["/agb", "agb"], ["/widerruf", "widerruf"]]) {
+    app.get(path, (c: any) => c.redirect(`/rechtliches#${anchor}`, 301));
+  }
+
+  app.get("/kuendigen", (c: any) => {
+    c.header("Cache-Control", "public, max-age=600");
+    return c.html(pageShell({
+      title: `Verträge hier kündigen | ${BRAND}`,
+      description: `Abo von ${BRAND} online kündigen – ohne Anmeldung, mit sofortiger Eingangsbestätigung.`,
+      canonical: `${SITE()}/kuendigen`, body: cancelPage(),
+    }));
+  });
+
+  // Kündigungserklärung: wird immer angenommen und bestätigt; Zuordnung zum Konto über Login oder E-Mail-Adresse
+  app.post("/api/legal/cancel", async (c: any) => {
+    if (!rateLimit(`cancel:${clientIp(c)}`, 6, 3600_000)) return c.json({ error: "Zu viele Versuche – bitte in einer Stunde erneut oder per E-Mail kündigen." }, 429);
+    const b = await body(c);
+    const name = str(b.name, 120), email = str(b.email, 160).toLowerCase();
+    if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "Bitte Name und eine gültige E-Mail-Adresse angeben." }, 400);
+    const kind = b.kind === "ausserordentlich" ? "ausserordentlich" : "ordentlich";
+    const reason = str(b.reason, 1000);
+    if (kind === "ausserordentlich" && !reason) return c.json({ error: "Bitte gib für die außerordentliche Kündigung den Grund an." }, 400);
+    const timing = b.timing === "date" ? "date" : "next";
+    const requestedDate = timing === "date" && /^\d{4}-\d{2}-\d{2}$/.test(String(b.requestedDate || "")) ? String(b.requestedDate) : null;
+    const contractRef = str(b.contractRef, 120);
+    const confirmEmail = str(b.confirmEmail, 160).toLowerCase();
+
+    const viewer = await verifyIdentityToken(c).catch(() => null);
+    let [profile] = viewer ? await db.select().from(profiles).where(eq(profiles.userId, viewer.id)).limit(1) : [];
+    const verified = Boolean(profile);
+    if (!profile) [profile] = await db.select().from(profiles).where(sql`lower(${profiles.email}) = ${email}`).limit(1);
+
+    let status = "no_contract", effectiveAt: Date | null = null, adminNote = "";
+    if (profile) {
+      try {
+        const r = await applyCancellation(profile, kind);
+        if (r.applied) { status = kind === "ausserordentlich" || r.note ? "review" : "applied"; effectiveAt = r.effectiveAt ? new Date(r.effectiveAt) : null; adminNote = r.note; }
+        else if (profile.planUntil && profile.planUntil.getTime() > Date.now() && profile.plan !== "free") { status = "review"; effectiveAt = profile.planUntil; }
+      } catch (e) {
+        console.error("Kündigung konnte nicht automatisch angewendet werden", e);
+        status = "review"; adminNote = "Automatische Kündigung bei Stripe fehlgeschlagen – bitte manuell prüfen.";
+      }
+    }
+    if (requestedDate && effectiveAt && new Date(requestedDate).getTime() > effectiveAt.getTime()) {
+      // Wunschtermin nach dem nächstmöglichen Ende: Abo endet trotzdem zum Laufzeitende (früher ist für dich günstiger)
+      adminNote = `${adminNote} Wunschtermin ${requestedDate} liegt nach dem Laufzeitende.`.trim();
+    }
+
+    const reference = newReference();
+    const [row] = await db.insert(cancellations).values({
+      reference, userId: profile?.userId ?? null, name, email, contractRef, kind, reason: [reason, adminNote].filter(Boolean).join(" | ").slice(0, 1500),
+      timing, requestedDate, status, effectiveAt, verified,
+    }).returning();
+
+    const statusText = status === "applied"
+      ? `Deine Kündigung ist wirksam. Dein Abo endet am ${effectiveAt ? fmtDay(effectiveAt) : "Ende des bezahlten Zeitraums"}; bis dahin bleiben alle Vorteile aktiv. Danach wird nichts mehr abgebucht.`
+      : status === "review"
+        ? `Deine Kündigung ist eingegangen und wurde vorgemerkt${effectiveAt ? ` (Vertragsende spätestens ${fmtDay(effectiveAt)})` : ""}. Wir prüfen sie und melden uns, falls etwas fehlt.`
+        : "Deine Kündigung ist eingegangen. Zu dieser E-Mail-Adresse haben wir kein laufendes Abo gefunden. Falls du ein Abo mit einer anderen Adresse abgeschlossen hast, wiederhole die Kündigung bitte mit dieser Adresse oder antworte uns per E-Mail – wir ordnen sie dann manuell zu.";
+    const confirmation = confirmationText({ reference, createdAt: row.createdAt, name, email, contractRef, kind, reason, timing, requestedDate, effectiveAt, statusText });
+
+    // Bestätigung in Textform: E-Mail (falls eingerichtet) + Mitteilung im Konto
+    const mailed = await sendMail(confirmEmail || email, `Kündigungsbestätigung ${reference} – ${BRAND}`, confirmation);
+    if (confirmEmail && confirmEmail !== email) await sendMail(email, `Kündigungsbestätigung ${reference} – ${BRAND}`, confirmation);
+    if (profile) {
+      await notify(profile.userId, "📄 Kündigung eingegangen", verified
+        ? `Nr. ${reference}. ${statusText}`.slice(0, 400)
+        : `Nr. ${reference}: Über „Verträge hier kündigen“ wurde dein Abo gekündigt. Warst du das nicht? Im Konto kannst du es mit „Abo fortsetzen“ wieder aktivieren.`, "/").catch(() => {});
+    }
+    const { operator } = await getOperator();
+    if (operator.email && (status !== "applied" || kind === "ausserordentlich")) {
+      await sendMail(operator.email, `Kündigung ${reference} prüfen (${status})`, `${confirmation}\n\nHinweis: ${adminNote || "-"}`);
+    }
+    return c.json({ ok: true, reference, status, effectiveAt, confirmation, mailed });
+  });
+
+  app.get("/api/admin/cancellations", auth, adminOnly, async (c: any) => {
+    const list = await db.select().from(cancellations).orderBy(desc(cancellations.createdAt)).limit(200);
+    const [r] = rows(await db.execute(sql`SELECT count(*) FILTER (WHERE status = 'review')::int AS review FROM cancellations`));
+    return c.json({ cancellations: list, review: Number(r?.review ?? 0) });
+  });
+
+  app.patch("/api/admin/cancellations/:id", auth, adminOnly, async (c: any) => {
+    const id = Number(c.req.param("id"));
+    const b = await body(c);
+    const status = ["received", "applied", "no_contract", "review"].includes(b.status) ? b.status : null;
+    if (!Number.isInteger(id) || !status) return c.json({ error: "Ungültig" }, 400);
+    const [row] = await db.update(cancellations).set({ status }).where(eq(cancellations.id, id)).returning();
+    return row ? c.json(row) : c.json({ error: "Nicht gefunden" }, 404);
+  });
+}

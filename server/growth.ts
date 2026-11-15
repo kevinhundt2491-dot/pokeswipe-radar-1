@@ -9,7 +9,7 @@ import {
   wishlistItems, userBadges, calendarEvents, calendarReminders, cardScans, sealedAlerts, trackedSets,
 } from "../db/index.ts";
 import { PLANS, SWITCH_BONUS_DAYS, SWITCH_MIN_CARDS, type PlanId } from "./plans.ts";
-import { CARD_ID_RE, getCard, cardPrice, notify } from "./prices.ts";
+import { CARD_ID_RE, getCard, cardPrice, notify, cardmarketPartnerId } from "./prices.ts";
 import { verifyIdentityToken, isAdmin } from "./auth.ts";
 import { searchTcgdex, fetchSet, normNum, pool, reserveScan } from "./features.ts";
 import { BADGES, earnedBadges, berlinDay, nextStreak, weeklySummary, type BadgeStats } from "./logic.ts";
@@ -17,16 +17,26 @@ import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
 
 type Profile = typeof profiles.$inferSelect;
 
-const SITE = () => process.env.URL || "https://pokeswipe-radar.de";
+export const SITE = () => process.env.URL || "https://pokeswipe-radar.de";
 const EPN_CAMPAIGN_ID = "5339244109";
 /** eBay-Suche mit Partner-Kennung (eBay Partner Network). */
-const ebayUrl = (q: string, src = "web") =>
+export const ebayUrl = (q: string, src = "web") =>
   `https://www.ebay.de/sch/i.html?_nkw=${encodeURIComponent(q)}&LH_BIN=1&_sop=15&mkcid=1&mkrid=707-53477-19255-0&siteid=77&campid=${EPN_CAMPAIGN_ID}&customid=${encodeURIComponent(`pokeswipe-${src}`)}&toolid=10001&mkevt=1`;
-const h = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+/** Cardmarket-Suche mit UTM und (falls gesetzt) Partnerkennung CARDMARKET_PARTNER_ID. */
+export const cardmarketSearch = (q: string) => {
+  const u = new URL("https://www.cardmarket.com/de/Pokemon/Products/Search");
+  u.searchParams.set("searchString", q.slice(0, 120));
+  u.searchParams.set("utm_source", "pokeswipe_radar");
+  u.searchParams.set("utm_medium", "seo");
+  const ref = cardmarketPartnerId();
+  if (ref) u.searchParams.set("referrer", ref);
+  return u.toString();
+};
+export const h = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 export const slugify = (s: string) => s.toLowerCase()
   .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/é/g, "e")
   .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "karte";
-const cdnImage = (url: string, w: number, fm = "") =>
+export const cdnImage = (url: string, w: number, fm = "") =>
   url ? `/.netlify/images?url=${encodeURIComponent(url)}&w=${w}${fm ? `&fm=${fm}` : ""}` : "";
 
 // ---------------------------------------------------------------------------
@@ -110,7 +120,7 @@ async function refreshBadges(profile: Profile) {
 // ---------------------------------------------------------------------------
 // Öffentliche Kartenseite (für Google, WhatsApp-Vorschau & Teilen)
 // ---------------------------------------------------------------------------
-function chartSvg(points: number[], w = 640, hgt = 160) {
+export function chartSvg(points: number[], w = 640, hgt = 160) {
   const v = points.filter((x) => Number.isFinite(x) && x > 0);
   if (v.length < 2) return `<p class="muted">Der Preisverlauf baut sich täglich auf.</p>`;
   const min = Math.min(...v) * 0.97, max = Math.max(...v) * 1.03, span = max - min || 1;
@@ -133,7 +143,7 @@ a{color:inherit}.wrap{max-width:960px;margin:0 auto;padding:16px}.top{display:fl
 .pill{font-size:11px;font-weight:900;border-radius:999px;padding:2px 8px}.deal{background:#10b981;color:#0f172a}.fair{background:#334155}.high{background:rgba(244,63,94,.3);color:#fecdd3}
 footer{margin:32px 0 16px;font-size:12px;color:#64748b;text-align:center}`;
 
-function pageShell(o: { title: string; description: string; canonical: string; image?: string; body: string; jsonLd?: object }) {
+export function pageShell(o: { title: string; description: string; canonical: string; image?: string; body: string; jsonLd?: object }) {
   return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${h(o.title)}</title><meta name="description" content="${h(o.description)}"><link rel="canonical" href="${h(o.canonical)}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="PokeSwipe & Radar"><meta property="og:locale" content="de_DE">
@@ -144,7 +154,7 @@ ${o.jsonLd ? `<script type="application/ld+json">${JSON.stringify(o.jsonLd).repl
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
 <div class="top"><a class="logo" href="/">Poke<span>Swipe</span> &amp; Radar</a><a class="btn y" href="/">App öffnen</a></div>
 ${o.body}
-<footer>Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link (eBay Partner Network): Wir erhalten ggf. eine Provision, für dich ohne Mehrkosten. Pokémon und alle Namen sind Marken ihrer Inhaber; PokeSwipe &amp; Radar ist ein unabhängiges Fanprojekt.<br><a href="/?legal=1">Impressum &amp; Datenschutz</a></footer>
+<footer>Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link (eBay Partner Network): Wir erhalten ggf. eine Provision, für dich ohne Mehrkosten. Pokémon und alle Namen sind Marken ihrer Inhaber; PokeSwipe &amp; Radar ist ein unabhängiges Fanprojekt.<br><a href="/rechtliches#impressum">Impressum</a> · <a href="/?legal=1">Datenschutz</a> · <a href="/rechtliches#agb">AGB</a> · <a href="/rechtliches#widerruf">Widerruf</a> · <a href="/sets">Alle Sets</a> · <a href="/kuendigen"><b>Verträge hier kündigen</b></a></footer>
 </div></body></html>`;
 }
 
@@ -186,7 +196,7 @@ async function cardPage(c: any) {
     <div>${card.image ? `<img class="img" src="${h(cdnImage(card.image, 520))}" alt="${h(card.name)} Pokémon-Karte" width="260" height="362">` : ""}</div>
     <div>
       <h1>${h(card.name)}</h1>
-      <p class="muted">${h(card.setName)} • ${h(card.id)}</p>
+      <p class="muted">${card.setId ? `<a href="/set/${encodeURIComponent(card.setId)}/${slugify(card.setName || card.setId)}">${h(card.setName)}</a>` : h(card.setName)}${card.localId ? ` • Nr. ${h(card.localId)}` : ""}${card.rarity ? ` • ${h(card.rarity)}` : ""}${card.illustrator ? ` • Illustration: ${h(card.illustrator)}` : ""}</p>
       <p class="price">${h(priceText)}</p>
       <p class="muted">Cardmarket-Trend${ch30 !== null ? ` • <span class="${ch30 >= 0 ? "up" : "down"}">${ch30 >= 0 ? "+" : ""}${ch30.toFixed(1).replace(".", ",")} % (30 Tage)</span>` : ""}</p>
       <div class="stats">
@@ -200,6 +210,7 @@ async function cardPage(c: any) {
         <a class="btn g" href="${h(appLink("&wish=1"))}">❤️ Auf die Wunschliste</a>
         <a class="btn s" href="${h(appLink("&list=1"))}">🤝 Selbst inserieren</a>
         <a class="btn" style="background:#2563eb;color:#fff" href="${h(ebayUrl(`${card.name.replace(/-ex\b/, " ex")} ${card.id.split("-").pop()}`, "karte"))}" target="_blank" rel="noopener sponsored">🛒 Bei eBay kaufen*</a>
+        <a class="btn" style="background:#4f46e5;color:#fff" href="${h(cardmarketSearch(card.name))}" target="_blank" rel="noopener sponsored">Bei Cardmarket ansehen</a>
       </div>
       ${Number(wishers?.n) ? `<p class="muted" style="margin-top:10px">❤️ ${Number(wishers.n)} Sammler suchen diese Karte.</p>` : ""}
     </div></div></div>
@@ -209,6 +220,7 @@ async function cardPage(c: any) {
     : `<p class="muted">Gerade keine Angebote. Setz die Karte auf deine Wunschliste – wir melden uns, sobald sie jemand anbietet.</p>`}`;
   const jsonLd: any = {
     "@context": "https://schema.org", "@type": "Product", name: card.name, sku: card.id,
+    ...(card.rarity ? { additionalProperty: [{ "@type": "PropertyValue", name: "Seltenheit", value: card.rarity }] } : {}),
     category: "Pokémon-Sammelkarte", brand: { "@type": "Brand", name: "Pokémon TCG" },
     ...(card.image ? { image: card.image } : {}),
     ...(offers.length ? { offers: { "@type": "AggregateOffer", priceCurrency: "EUR", offerCount: offers.length,
@@ -217,22 +229,6 @@ async function cardPage(c: any) {
   c.header("Cache-Control", "public, max-age=300");
   c.header("Netlify-CDN-Cache-Control", "public, s-maxage=1800, stale-while-revalidate=86400");
   return c.html(pageShell({ title, description, canonical, image: ogImage, body, jsonLd }));
-}
-
-// ---------------------------------------------------------------------------
-// Rechtliches (Impressum-Text pflegt der Admin; gespeichert in Netlify Blobs)
-// ---------------------------------------------------------------------------
-type Legal = { impressum: string; updatedAt: string | null };
-// Keine personenbezogenen Daten im Code: Das Impressum pflegt der Admin in der Admin-Zentrale
-// (gespeichert in Netlify Blobs) oder optional über die Umgebungsvariable IMPRESSUM_TEXT.
-export const DEFAULT_IMPRESSUM = "";
-const ODR_NOTE = "EU-Streitschlichtung: Die Europäische Kommission stellt eine Plattform zur Online-Streitbeilegung bereit: https://ec.europa.eu/consumers/odr/. Wir sind nicht bereit und nicht verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.";
-
-async function getLegal(): Promise<Legal> {
-  let saved: Legal | null = null;
-  try { saved = (await getStore("app-config").get("legal", { type: "json" })) as Legal | null; } catch {}
-  const text = saved?.impressum || String(process.env.IMPRESSUM_TEXT || "").trim() || DEFAULT_IMPRESSUM;
-  return { impressum: text ? (text.includes("Streitbeilegung") ? text : `${text}\n\n${ODR_NOTE}`) : "", updatedAt: saved?.updatedAt || null };
 }
 
 // ---------------------------------------------------------------------------
@@ -661,19 +657,6 @@ export function registerGrowth(app: any, hlp: {
     });
   });
 
-  // ------------------------------ Rechtliches ------------------------------
-  app.get("/api/legal", async (c: any) => {
-    c.header("Cache-Control", "public, max-age=300");
-    return c.json(await getLegal());
-  });
-
-  app.put("/api/admin/legal", auth, adminOnly, async (c: any) => {
-    const impressum = str((await body(c)).impressum, 4000);
-    const legal = { impressum, updatedAt: new Date().toISOString() };
-    await getStore("app-config").setJSON("legal", legal);
-    return c.json(legal);
-  });
-
   /** DSGVO-Auskunft: alle eigenen Daten als JSON-Datei. */
   app.get("/api/me/export", auth, async (c: any) => {
     const userId = c.get("user").id, profile: Profile = c.get("profile");
@@ -725,24 +708,6 @@ export function registerGrowth(app: any, hlp: {
 
   // ------------------------- Öffentliche Seiten (SEO) ----------------------
   app.get("/karte/:id/:slug?", cardPage);
-
-  app.get("/sitemap.xml", async (c: any) => {
-    const list = rows(await db.execute(sql`
-      SELECT id, name, COALESCE(price_updated_at, checked_at) AS updated FROM cards
-      WHERE COALESCE(trend, avg, low) IS NOT NULL ORDER BY checked_at DESC NULLS LAST LIMIT 5000
-    `));
-    const shops = rows(await db.execute(sql`
-      SELECT shop_slug FROM profiles WHERE shop_slug IS NOT NULL AND plan = 'pro' AND plan_until > now() AND NOT banned LIMIT 500
-    `));
-    const base = SITE();
-    const pages = ["/umzug", "/ratgeber/pokemon-karten-wert", "/ratgeber/pokemon-karten-fake-erkennen", "/ratgeber/pokemon-displays-zum-uvp"];
-    const urls = [`<url><loc>${base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`]
-      .concat(pages.map((p) => `<url><loc>${base}${p}</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>`))
-      .concat(list.map((r: any) => `<url><loc>${h(`${base}/karte/${encodeURIComponent(r.id)}/${slugify(r.name)}`)}</loc>${r.updated ? `<lastmod>${new Date(r.updated).toISOString().slice(0, 10)}</lastmod>` : ""}<changefreq>daily</changefreq></url>`))
-      .concat(shops.map((s: any) => `<url><loc>${h(`${base}/shop/${s.shop_slug}`)}</loc><changefreq>daily</changefreq></url>`));
-    c.header("Cache-Control", "public, max-age=3600");
-    return c.body(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`, 200, { "Content-Type": "application/xml; charset=utf-8" });
-  });
 
   // Manueller Start der Hintergrund-Aufgaben für Admins (Test)
   app.post("/api/admin/run-growth", auth, adminOnly, async (c: any) => c.json(await runGrowthJobs({ deadlineMs: 15_000 })));

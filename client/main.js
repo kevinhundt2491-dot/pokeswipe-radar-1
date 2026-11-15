@@ -83,6 +83,8 @@ function openAccount(hint = "") {
       ${m && m.plan !== "free" ? `<p class="text-slate-400">${m.planInterval === "year" ? "Jahresabo • " : ""}${m.cancelAtPeriodEnd ? `Gekündigt – läuft bis ${until}` : `Verlängert sich am ${until}`}</p>
         ${m.cancelAtPeriodEnd ? btn("Abo fortsetzen", "PS.cancelPlan(true)", "w-full bg-emerald-500 text-slate-950") : btn("Abo kündigen", "PS.cancelPlan(false)", "w-full bg-slate-800 text-slate-200")}`
         : btn("👑 Premium oder Pro freischalten", "PS.openPro()", "w-full bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950")}
+      <a href="/kuendigen" class="block w-full text-center bg-rose-600 hover:bg-rose-500 text-white font-black py-2.5 px-3 rounded-xl text-xs">Verträge hier kündigen</a>
+      <p class="text-[10px] text-slate-500 text-center"><a href="/rechtliches#agb" class="underline">AGB</a> · <a href="/rechtliches#widerruf" class="underline">Widerrufsbelehrung</a> · <a href="/rechtliches#impressum" class="underline">Impressum</a></p>
       ${m ? `<p class="text-slate-500">Portfolio ${m.usage.portfolio}/${m.planInfo.portfolio} • Alarme ${m.usage.alerts}/${m.planInfo.alerts} • Inserate ${m.usage.listings}/${m.planInfo.listings}${m.planInfo.freeBoostsPerMonth ? ` • Gratis-Boosts ${m.freeBoostsLeft}/${m.planInfo.freeBoostsPerMonth}` : ""}</p>` : ""}
     </div>
     <div class="grid grid-cols-2 gap-2">
@@ -274,10 +276,53 @@ function openPro(interval) {
     ${m && !m.paymentsEnabled ? `<p class="text-xs text-amber-300">⏳ Zahlungen werden gerade eingerichtet – bitte versuche es in Kürze erneut.</p>` : ""}`, { wide: true });
 }
 
+/**
+ * Bestellübersicht vor dem Bezahlen (§ 312j BGB): Preis, Laufzeit, Verlängerung, Kündigung,
+ * AGB/Widerrufsbelehrung und ausdrückliches Verlangen des sofortigen Leistungsbeginns (§ 356 Abs. 4/5 BGB).
+ */
+function orderConsent({ title, lines, button }) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; closeModalEl("ps-consent"); resolve(v); };
+    const el = modal("ps-consent", `
+      <h3 class="text-base font-black text-white">🧾 ${esc(title)}</h3>
+      <ul class="text-xs text-slate-200 space-y-1 bg-slate-950 border border-slate-800 rounded-2xl p-3">${lines.map((l) => `<li>• ${esc(l)}</li>`).join("")}</ul>
+      <label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-c-terms" class="mt-0.5 accent-yellow-400">
+        <span>Ich akzeptiere die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> und habe die <a href="/rechtliches#widerruf" target="_blank" rel="noopener" class="underline font-bold">Widerrufsbelehrung</a> zur Kenntnis genommen.</span></label>
+      <label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-c-early" class="mt-0.5 accent-yellow-400">
+        <span>Ich verlange ausdrücklich, dass PokeSwipe &amp; Radar vor Ablauf der Widerrufsfrist mit der Leistung beginnt. Mir ist bekannt, dass ich bei einem Widerruf anteiligen Wertersatz für die bereits erbrachte Leistung zahle und mein Widerrufsrecht erlischt, sobald die Leistung vollständig erbracht ist.</span></label>
+      <p id="ps-c-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
+      <button id="ps-c-go" class="w-full bg-yellow-400 text-slate-950 font-black py-3 px-3 rounded-xl text-sm">${esc(button)}</button>
+      <p class="text-[11px] text-slate-400">Du wirst zur sicheren Bezahlseite von Stripe weitergeleitet und schließt die Bestellung dort ab. <a href="/kuendigen" target="_blank" rel="noopener" class="underline">Verträge hier kündigen</a></p>`,
+      { onClose: () => finish(null) });
+    el.querySelector("#ps-c-go").onclick = () => {
+      const acceptTerms = el.querySelector("#ps-c-terms").checked, earlyStart = el.querySelector("#ps-c-early").checked;
+      if (!acceptTerms || !earlyStart) { el.querySelector("#ps-c-msg").textContent = "Bitte bestätige beide Punkte, um fortzufahren."; return; }
+      finish({ acceptTerms: true, earlyStart: true });
+    };
+  });
+}
+
 async function checkout(plan, interval = "month") {
   if (!requireLogin()) return;
+  const m = state.me, plans = m?.plans;
+  const yearly = interval === "year";
+  const cents = yearly ? (plans?.[plan]?.yearlyPriceCents || (plan === "pro" ? 9900 : 4900)) : (plans?.[plan]?.priceCents || (plan === "pro" ? 999 : 499));
+  const label = plan === "pro" ? "Pro Trader" : "Premium";
+  const price = `${eur(cents / 100)} pro ${yearly ? "Jahr" : "Monat"}`;
+  const consent = await orderConsent({
+    title: `${label} ${yearly ? "Jahresabo" : "Monatsabo"} bestellen`,
+    lines: [
+      m?.trialDays ? `${m.trialDays} Tage kostenlos testen, danach ${price}` : `Preis: ${price} (Endpreis)`,
+      yearly ? "Laufzeit 12 Monate, verlängert sich danach auf unbestimmte Zeit (monatlich kündbar)" : "Laufzeit 1 Monat, verlängert sich automatisch um je 1 Monat",
+      m?.trialDays ? "Kündigung während der Testphase: es entstehen keine Kosten" : "Jederzeit kündbar zum Ende des bezahlten Zeitraums",
+      "Zahlung sicher über Stripe (Karte, Apple Pay, Google Pay, Klarna u. a.)",
+    ],
+    button: m?.trialDays ? "Weiter zur Bestellung – Testphase starten" : "Weiter zur zahlungspflichtigen Bestellung",
+  });
+  if (!consent) return;
   try {
-    const { url } = await api("/api/billing/checkout", { method: "POST", body: { plan, interval } });
+    const { url } = await api("/api/billing/checkout", { method: "POST", body: { plan, interval, ...consent } });
     location.href = url;
   } catch (e) { handleError(e); }
 }
@@ -291,14 +336,27 @@ async function cancelPlan(resume) {
   } catch (e) { handleError(e); }
 }
 
-async function boost(listingId) {
+async function boost(listingId, consent = null) {
   if (!requireLogin()) return;
   try {
-    const r = await api("/api/billing/boost", { method: "POST", body: { listingId } });
+    const r = await api("/api/billing/boost", { method: "POST", body: { listingId, ...(consent || {}) } });
     if (r.url) { location.href = r.url; return; }
     toast("🚀 Boost aktiv", "Inklusive-Boost aus deinem Pro-Tarif genutzt.");
     await loadMe(); loadListings();
-  } catch (e) { handleError(e); }
+  } catch (e) {
+    // Kostenpflichtiger Boost: erst Bestellübersicht bestätigen, dann erneut anfragen
+    if (e.status === 428 && e.data?.needsConsent && !consent) {
+      const m = state.me;
+      const c = await orderConsent({
+        title: "Inserat-Boost bestellen",
+        lines: [`Einmalig ${eur((m?.boost?.priceCents || 199) / 100)} (Endpreis)`, `${m?.boost?.days || 7} Tage ganz oben im Tausch-Hub`, "Kein Abo – endet automatisch"],
+        button: "Weiter zur zahlungspflichtigen Bestellung",
+      });
+      if (c) return boost(listingId, c);
+      return;
+    }
+    handleError(e);
+  }
 }
 
 async function confirmCheckoutFromUrl() {

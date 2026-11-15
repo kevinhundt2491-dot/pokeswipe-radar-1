@@ -6,6 +6,12 @@ const TCGDEX = "https://api.tcgdex.net/v2/de";
 export const CARD_ID_RE = /^[a-zA-Z0-9.\-_]{2,40}$/;
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v.toFixed(2) : null);
+/** Cardmarket-Partnerkennung aus der Netlify-Variable CARDMARKET_PARTNER_ID (leer, wenn nicht gesetzt). */
+export const cardmarketPartnerId = () => {
+  const id = String(process.env.CARDMARKET_PARTNER_ID || "").trim();
+  return /^[A-Za-z0-9_.-]{1,40}$/.test(id) ? id : "";
+};
+const cardmarketRef = () => (cardmarketPartnerId() ? `&referrer=${encodeURIComponent(cardmarketPartnerId())}` : "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 export async function notify(userId: string, title: string, body = "", link = "") {
@@ -39,6 +45,12 @@ export async function refreshCard(cardId: string) {
     avg30: num(cm.avg30) ?? num(cm["avg30-holo"]),
     priceUpdatedAt: cm.updated ? new Date(cm.updated) : null,
     checkedAt: new Date(),
+    // Katalog-Felder für Set-Seiten & SEO
+    setId: data.set?.id ? String(data.set.id).slice(0, 40) : null,
+    localId: data.localId != null ? String(data.localId).slice(0, 20) : null,
+    rarity: data.rarity ? String(data.rarity).slice(0, 80) : null,
+    category: data.category ? String(data.category).slice(0, 30) : null,
+    illustrator: data.illustrator ? String(data.illustrator).slice(0, 80) : null,
   };
   const { id: _id, ...updates } = row;
   const [saved] = await db
@@ -97,7 +109,7 @@ export async function evaluateAlerts(cardId: string) {
       a.userId,
       `🎯 Preisalarm: ${card.name}`,
       `Cardmarket-Trend liegt bei ${price.toFixed(2).replace(".", ",")} € – ${dir} deinem Ziel von ${Number(a.targetPrice).toFixed(2).replace(".", ",")} €.`,
-      `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(card.name)}&utm_source=pokeswipe_radar&utm_medium=push`,
+      `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(card.name)}&utm_source=pokeswipe_radar&utm_medium=push${cardmarketRef()}`,
     );
     await db.update(priceAlerts).set({ lastTriggeredAt: new Date() }).where(eq(priceAlerts.id, a.id));
   }
