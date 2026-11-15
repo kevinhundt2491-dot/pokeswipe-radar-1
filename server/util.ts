@@ -71,7 +71,7 @@ export function siteOrigin(c: Context): string {
  */
 export const sameOriginWrites: MiddlewareHandler = async (c, next) => {
   if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
-  if (c.req.path === "/api/billing/webhook") return next();
+  if (c.req.path === "/api/billing/webhook" || c.req.path === "/api/stripe/webhook") return next();
   if (!trustedOrigin(c)) {
     return c.json({ error: "Anfrage von fremder Herkunft blockiert." }, 403);
   }
