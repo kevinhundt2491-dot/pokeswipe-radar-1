@@ -20,6 +20,7 @@ import { registerViral } from "./viral.ts";
 import { registerIntlCatalog, printForPortfolio } from "./intl-catalog.ts";
 import { registerIntegrations, webhookSecrets, recordWebhook } from "./integrations.ts";
 import { registerFlip } from "./flip.ts";
+import { registerScanIndex } from "./scan-index.ts";
 import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker, cardmarketPartnerId } from "./prices.ts";
 import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan } from "./billing.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
@@ -968,6 +969,7 @@ registerCatalog(app, { auth, adminOnly, body });
 registerViral(app, { auth, body, ensureCode: ensureReferralCode });
 registerIntlCatalog(app, { auth, adminOnly });
 registerFlip(app, { auth, adminOnly, body });
+registerScanIndex(app, { auth, adminOnly });
 registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
 

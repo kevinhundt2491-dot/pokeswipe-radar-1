@@ -727,3 +727,21 @@ export const flipSyncRuns = pgTable("flip_sync_runs", {
   updated: integer().notNull().default(0),
   error: text(),
 }, (t) => [index("flip_sync_runs_job").on(t.job, t.startedAt)]);
+
+// ---------------------------------------------------------------------------
+// Phase 3: On-Device-Scanner – Bild-Fingerabdrücke je Karte/Druck (Referenz für die Erkennung im Browser)
+// ---------------------------------------------------------------------------
+export const cardHashes = pgTable("card_hashes", {
+  id: text().primaryKey(), // "card:<id>" (deutsch) oder "print:<lang>:<id>" (en/ja)
+  targetKind: text("target_kind").notNull(), // card | print
+  targetId: text("target_id").notNull(),
+  lang: text().notNull(), // de | en | ja
+  // je 64 Bit als 16 Hex-Zeichen: pHash Artwork, dHash Artwork, pHash ganze Karte
+  artP: text("art_p"),
+  artD: text("art_d"),
+  fullP: text("full_p"),
+  sourceImage: text("source_image").notNull().default(""),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  attempts: integer().notNull().default(0),
+  error: text(),
+}, (t) => [index("card_hashes_lang").on(t.lang), index("card_hashes_target").on(t.targetKind, t.targetId)]);

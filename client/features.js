@@ -4,6 +4,7 @@ import {
   $, esc, jsArg, safeUrl, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart,
 } from "./core.js";
+import { liveScanPanelHtml, liveScanApi, onLiveScanShown, initLiveScanner } from "./scanner/live-scanner.js";
 import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml, collectorApi } from "./collector.js";
 import {
   injectGrowthPanels, afterAuthGrowth, routeGrowth, growthApi, loadWishlist, loadCalendar, loadRanks, adminGrowthHtml,
@@ -176,9 +177,15 @@ async function handleScan(file) {
   }
 }
 
-export function openScanner() {
+/** KI-Foto-Scan (Server, Tageslimit je Tarif) – Rückfall, wenn der Live-Scanner eine Karte nicht kennt. */
+export function openPhotoScanner() {
   showSub("scan", "camera");
   setTimeout(() => $("ps-scan-input")?.click(), 150);
+}
+
+/** „Karte scannen“: öffnet den Live-Scanner auf dem Gerät und startet die Kamera. */
+export function openScanner() {
+  liveScanApi.openLiveScanner();
 }
 
 // ===========================================================================
@@ -612,7 +619,8 @@ const SUBTABS = {
     { key: "deals", label: "Flip-Deals", fallback: true, match: () => false },
   ],
   scan: [
-    { key: "camera", label: "📷 Kamera-Scan", fallback: true, match: () => false },
+    { key: "live", label: "⚡ Live-Scan", match: (el) => el.id === "ps-live-scan" },
+    { key: "camera", label: "📷 Foto-Scan & Suche", fallback: true, match: () => false },
     { key: "fake", label: "🛡️ Fake-Check", match: (el) => el.id === "ps-fakecheck" },
   ],
   map: [
@@ -640,6 +648,7 @@ const subLoaders = {
   "portfolio:sets": () => { loadTrackedSets(); loadSetList(); },
   "portfolio:grading": () => loadPartners(),
   "scan:camera": () => renderScanLeft(),
+  "scan:live": () => onLiveScanShown(),
   "scan:fake": () => loadFakeLeft(),
   "portfolio:graded": () => loadGraded(),
   "flip:drops": () => loadDrops(),
@@ -712,6 +721,7 @@ function injectPanels() {
     tmp.innerHTML = html;
     section[where](tmp.firstElementChild);
   };
+  if (!$("ps-live-scan")) add("scan", liveScanPanelHtml(), "prepend");
   if (!$("ps-sealed")) add("flip", sealedPanelHtml());
   if (!$("ps-shops")) add("map", shopsPanelHtml());
   if (!$("ps-dupes") && $("portfolio-list")) {
@@ -768,7 +778,8 @@ function tidyLayout() {
 // Start
 // ===========================================================================
 export const featureApi = {
-  enablePush, disablePush, openScanner, openSet, trackSet, untrackSet,
+  enablePush, disablePush, openScanner, openPhotoScanner, scanFile: (file) => handleScan(file), openSet, trackSet, untrackSet,
+  ...liveScanApi,
   ...collectorApi,
   sealedKind: (k) => { sealedKind = k; renderSealed(); },
   openSealed, createSealedAlert, deleteSealedAlert, listSealed, openShop, openShopSettings, saveShop, shareLink,
@@ -785,6 +796,7 @@ export function initFeatures() {
   injectGrowthPanels();
   injectDropsPanels();
   buildSubtabs();
+  initLiveScanner();
   injectInviteButton();
   window.enableBrowserPush = () => (state.user ? enablePush() : requireLogin());
 }

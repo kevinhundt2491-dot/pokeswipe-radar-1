@@ -109,6 +109,19 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | Zahlungen | Stripe Checkout (Abos & Boosts) |
 | Firebase-Regeln | `firebase/database.rules.json` |
 
+## Live-Scanner (auf dem Gerät)
+
+Der Bereich **Live-Scanner → ⚡ Live-Scan** erkennt Karten direkt im Browser, ohne Foto-Upload und ohne Server-KI pro Bild:
+
+- `client/scanner/live-scanner.js`: Rückkamera (`getUserMedia`), Rahmenführung, Taschenlampe, Live-HUD mit Name, Sprache, Marktpreis,
+  PSA-10-Wert und den Knöpfen *Zur Sammlung*, *Auf Wishlist*, *Flip-Check*, außerdem eine Liste der in der Sitzung gescannten Karten.
+- `client/scanner/scan-worker.js` (wird zu `public/assets/scan-worker.js` gebündelt): Kantenerkennung, Perspektivkorrektur,
+  pHash/dHash, Suche im lokalen Index, Kartennummer per Texterkennung bzw. Ziffern-Vorlagen – ca. 5–20 ms pro Bild.
+- `server/scan-logic.ts`: gemeinsame Bildverarbeitung für Browser, Server und Tests.
+- Job `scan-hash-index` (alle 10 Minuten): berechnet die Referenz-Fingerabdrücke aus den TCGdex-Bildern (wertvolle Karten zuerst).
+  `/api/scan/index?lang=de|en|ja` liefert den Index (CDN-gecacht, offline über den Service Worker), `/api/scan/lookup` die Details.
+- Kennt der Index eine Karte noch nicht, bleibt der bisherige KI-Foto-Scan als Rückfall erhalten.
+
 ## Tarife
 
 | | Free | Premium 4,99 €/Monat oder 49 €/Jahr | Pro Trader 9,99 €/Monat oder 99 €/Jahr |
