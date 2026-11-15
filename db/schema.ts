@@ -120,6 +120,86 @@ export const cardSets = pgTable("card_sets", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("card_sets_release").on(t.releaseDate)]);
 
+// ---------------------------------------------------------------------------
+// Mehrsprachiger Katalog: englische und japanische Drucke mit eigenen Set-Codes, Nummern, Bildern
+// und getrennten Preis-Feeds. Der deutsche Katalog bleibt in `cards`/`card_sets` (unverändert).
+// ---------------------------------------------------------------------------
+export const printSets = pgTable("print_sets", {
+  lang: text().notNull(), // en | ja
+  id: text().notNull(), // TCGdex-Set-ID der Sprache, z. B. sv03.5 (en) oder SV2a (ja)
+  name: text().notNull(),
+  serieId: text("serie_id").notNull().default(""),
+  serieName: text("serie_name").notNull().default(""),
+  code: text().notNull().default(""), // offizielles Kürzel (z. B. MEW) oder Set-ID
+  logo: text().notNull().default(""),
+  symbol: text().notNull().default(""),
+  releaseDate: date("release_date"),
+  cardCountOfficial: integer("card_count_official").notNull().default(0),
+  cardCountTotal: integer("card_count_total").notNull().default(0),
+  priority: integer().notNull().default(0),
+  active: boolean().notNull().default(true),
+  cardsImportedAt: timestamp("cards_imported_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("print_sets_lang_id").on(t.lang, t.id), index("print_sets_release").on(t.lang, t.releaseDate)]);
+
+export const cardPrints = pgTable("card_prints", {
+  id: text().primaryKey(), // "<lang>:<TCGdex-ID>", z. B. en:sv03.5-199 oder ja:SV2a-201
+  lang: text().notNull(),
+  tcgdexId: text("tcgdex_id").notNull(),
+  // Deutsche Karte mit demselben Cardmarket-Produkt (nur en; gleiche TCGdex-ID) – für Portfolio & Wunschliste
+  baseCardId: text("base_card_id"),
+  name: text().notNull(),
+  setId: text("set_id").notNull(),
+  setName: text("set_name").notNull().default(""),
+  setCode: text("set_code").notNull().default(""),
+  localId: text("local_id").notNull().default(""),
+  number: text().notNull().default(""), // Anzeige-Nummer, z. B. 199/165
+  image: text().notNull().default(""),
+  rarity: text(),
+  category: text(),
+  dexId: integer("dex_id"),
+  // Preis-Feed 1: Cardmarket (EUR) – Produkt der jeweiligen Sprache (ja hat eigene Cardmarket-Produkte)
+  cmTrend: numeric("cm_trend", { precision: 10, scale: 2 }),
+  cmLow: numeric("cm_low", { precision: 10, scale: 2 }),
+  cmAvg7: numeric("cm_avg7", { precision: 10, scale: 2 }),
+  cmAvg30: numeric("cm_avg30", { precision: 10, scale: 2 }),
+  cmUpdatedAt: timestamp("cm_updated_at", { withTimezone: true }),
+  // Preis-Feed 2: TCGplayer (USD) – Marktpreis/Tiefstpreis der teuersten Variante
+  tcgMarketUsd: numeric("tcg_market_usd", { precision: 10, scale: 2 }),
+  tcgLowUsd: numeric("tcg_low_usd", { precision: 10, scale: 2 }),
+  tcgVariant: text("tcg_variant"),
+  tcgUpdatedAt: timestamp("tcg_updated_at", { withTimezone: true }),
+  // Abgeleiteter Referenzpreis in EUR (Feed-Wahl je Sprache, USD über EZB-Kurs umgerechnet)
+  priceEur: numeric("price_eur", { precision: 10, scale: 2 }),
+  lowEur: numeric("low_eur", { precision: 10, scale: 2 }),
+  priceSource: text("price_source"), // cardmarket | tcgplayer
+  importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+  checkedAt: timestamp("checked_at", { withTimezone: true }),
+}, (t) => [
+  index("card_prints_lang_set").on(t.lang, t.setId, t.localId),
+  index("card_prints_checked").on(t.lang, t.checkedAt),
+  index("card_prints_base").on(t.baseCardId),
+  index("card_prints_dex").on(t.dexId),
+  index("card_prints_price").on(t.lang, t.priceEur),
+]);
+
+export const cardPrintPrices = pgTable("card_print_prices", {
+  id: serial().primaryKey(),
+  printId: text("print_id").notNull().references(() => cardPrints.id, { onDelete: "cascade" }),
+  day: date().notNull(),
+  priceEur: numeric("price_eur", { precision: 10, scale: 2 }),
+  cmTrend: numeric("cm_trend", { precision: 10, scale: 2 }),
+  tcgMarketUsd: numeric("tcg_market_usd", { precision: 10, scale: 2 }),
+}, (t) => [uniqueIndex("card_print_prices_day").on(t.printId, t.day)]);
+
+// Wechselkurse (EZB-Referenzkurse, täglich): Einheiten der Währung je 1 EUR
+export const fxRates = pgTable("fx_rates", {
+  currency: text().primaryKey(), // USD | JPY
+  perEur: numeric("per_eur", { precision: 12, scale: 4 }).notNull(),
+  rateDay: date("rate_day").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const priceHistory = pgTable("price_history", {
   id: serial().primaryKey(),
   cardId: text("card_id").notNull().references(() => cards.id, { onDelete: "cascade" }),
@@ -140,7 +220,10 @@ export const portfolioItems = pgTable("portfolio_items", {
   manualValue: numeric("manual_value", { precision: 10, scale: 2 }),
   condition: text().notNull().default("NM"),
   addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("portfolio_user").on(t.userId)]);
+  // Sprachvariante (Mehrsprachiger Katalog): de | en | ja; print_id verweist auf card_prints (en/ja)
+  lang: text().notNull().default("de"),
+  printId: text("print_id"),
+}, (t) => [index("portfolio_user").on(t.userId), index("portfolio_print").on(t.printId)]);
 
 // Täglicher Schnappschuss des Portfolio-Werts pro Nutzer
 export const portfolioSnapshots = pgTable("portfolio_snapshots", {

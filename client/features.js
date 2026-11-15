@@ -177,7 +177,7 @@ async function handleScan(file) {
 }
 
 export function openScanner() {
-  showSub("portfolio", "scan");
+  showSub("scan", "camera");
   setTimeout(() => $("ps-scan-input")?.click(), 150);
 }
 
@@ -610,10 +610,14 @@ const SUBTABS = {
     { key: "sealed", label: "Sealed", match: (el) => el.id === "ps-sealed" },
     { key: "deals", label: "Flip-Deals", fallback: true, match: () => false },
   ],
+  scan: [
+    { key: "camera", label: "📷 Kamera-Scan", fallback: true, match: () => false },
+    { key: "fake", label: "🛡️ Fake-Check", match: (el) => el.id === "ps-fakecheck" },
+  ],
   map: [
     { key: "market", label: "Inserate", fallback: true, match: () => false },
     { key: "shops", label: "Händler-Shops", match: (el) => el.id === "ps-shops" },
-    { key: "calc", label: "Tausch-Rechner", match: (el) => el.querySelector("#trade-sum-a") },
+    { key: "calc", label: "Tausch-Rechner", pro: true, match: (el) => el.querySelector("#trade-sum-a") },
     { key: "radar", label: "Sammler-Radar", match: (el) => el.querySelector("#radarMap") },
   ],
   community: [
@@ -624,10 +628,9 @@ const SUBTABS = {
   portfolio: [
     { key: "overview", label: "Portfolio", fallback: true, match: () => false },
     { key: "wishlist", label: "Wunschliste", match: (el) => el.id === "ps-wishlist" },
-    { key: "scan", label: "Scan & Fake-Check", match: (el) => el.id === "ps-scan" || el.id === "ps-fakecheck" },
     { key: "graded", label: "🏅 Graded", match: (el) => el.id === "ps-graded" },
     { key: "sets", label: "Sets", match: (el) => el.id === "ps-sets" },
-    { key: "grading", label: "Grading & Tools", match: (el) => el.id === "ps-grading" || el.id === "ps-gradecalc" || el.querySelector("#centering-img, #masterset-list") },
+    { key: "grading", label: "Grading & Tools", pro: true, match: (el) => el.id === "ps-grading" || el.id === "ps-gradecalc" || el.querySelector("#centering-img, #masterset-list") },
   ],
 };
 const subLoaders = {
@@ -635,7 +638,8 @@ const subLoaders = {
   "map:shops": () => loadShops(),
   "portfolio:sets": () => { loadTrackedSets(); loadSetList(); },
   "portfolio:grading": () => loadPartners(),
-  "portfolio:scan": () => { renderScanLeft(); loadFakeLeft(); },
+  "scan:camera": () => renderScanLeft(),
+  "scan:fake": () => loadFakeLeft(),
   "portfolio:graded": () => loadGraded(),
   "flip:drops": () => loadDrops(),
   "portfolio:wishlist": () => loadWishlist(),
@@ -663,7 +667,7 @@ function buildSubtabs() {
     const bar = document.createElement("div");
     bar.className = "flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 sticky top-0 z-20";
     bar.setAttribute("role", "tablist");
-    bar.innerHTML = tabs.map((t) => `<button role="tab" data-subbtn="${t.key}" onclick="PS.showSub('${view}', '${t.key}')" class="shrink-0 px-3.5 py-2 rounded-xl text-xs font-black transition"></button>`).join("");
+    bar.innerHTML = tabs.map((t) => `<button role="tab" data-subbtn="${t.key}" ${t.pro ? 'data-pro="1"' : ""} onclick="PS.showSub('${view}', '${t.key}')" class="shrink-0 px-3.5 py-2 rounded-xl text-xs font-black transition"></button>`).join("");
     tabs.forEach((t) => { bar.querySelector(`[data-subbtn="${t.key}"]`).textContent = t.label; });
     section.appendChild(bar);
     tabs.forEach((t) => section.appendChild(panels[t.key]));
@@ -672,6 +676,8 @@ function buildSubtabs() {
 }
 
 export function showSub(view, key, { silent = false } = {}) {
+  // Der Scanner war früher ein Unter-Reiter der Sammlung – alte Links (?tab=portfolio&sub=scan) führen zum neuen Bereich
+  if (view === "portfolio" && key === "scan") { view = "scan"; key = "camera"; }
   // view/key können aus der URL (?tab=…&sub=…) kommen – nur bekannte Bereiche, sonst wirft querySelector
   if (!Object.prototype.hasOwnProperty.call(SUBTABS, view)) return;
   if (!/^\w{1,32}$/.test(String(key || ""))) key = SUBTABS[view][0].key;
@@ -682,7 +688,7 @@ export function showSub(view, key, { silent = false } = {}) {
   section.querySelectorAll("[data-sub]").forEach((p) => p.classList.toggle("hidden", p.dataset.sub !== key));
   section.querySelectorAll("[data-subbtn]").forEach((b) => {
     const on = b.dataset.subbtn === key;
-    b.className = `shrink-0 px-3.5 py-2 rounded-xl text-xs font-black transition ${on ? "bg-yellow-400 text-slate-950 shadow" : "bg-slate-900/90 text-slate-300 border border-slate-700 hover:text-white"}`;
+    b.className = `shrink-0 px-3.5 py-2 rounded-xl text-xs font-black transition ${b.dataset.pro ? "ps-pro-only " : ""}${on ? "bg-yellow-400 text-slate-950 shadow" : "bg-slate-900/90 text-slate-300 border border-slate-700 hover:text-white"}`;
     b.setAttribute("aria-selected", on ? "true" : "false");
   });
   localStorage.setItem(`ps_sub_${view}`, key);
@@ -712,7 +718,7 @@ function injectPanels() {
     tmp.innerHTML = dupesPanelHtml();
     $("portfolio-list").after(tmp.firstElementChild);
   }
-  if (!$("ps-scan")) add("portfolio", scanPanelHtml());
+  if (!$("ps-scan")) add("scan", scanPanelHtml());
   if (!$("ps-sets")) add("portfolio", setsPanelHtml());
   if (!$("ps-grading")) add("portfolio", gradingPanelHtml());
 
@@ -736,16 +742,18 @@ function tidyLayout() {
   const icons = {
     swipe: svg('<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M13 7l-3 5h4l-3 5"/>'),
     flip: svg('<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>'),
-    community: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.9.6 3.1 2.5 3.5 5.5"/>'),
-    map: svg('<path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>'),
+    scan: svg('<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><rect x="8.5" y="7" width="7" height="10" rx="1.2"/>'),
+    map: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.9.6 3.1 2.5 3.5 5.5"/>'),
     portfolio: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h6M15 12h6"/><circle cx="12" cy="12" r="3"/>'),
   };
-  const names = { swipe: ["electric", "Arena"], flip: ["fire", "Preise"], community: ["psychic", "Community"], map: ["water", "Tausch"], portfolio: ["grass", "Sammlung"] };
+  // 5 Kernbereiche: Entdecken, Live-Scanner, Flip-Radar, Meine Sammlung, Community & Markt
+  const names = { swipe: ["electric", "Entdecken"], scan: ["water", "Live-Scanner"], flip: ["fire", "Flip-Radar"], portfolio: ["grass", "Meine Sammlung"], map: ["psychic", "Community & Markt"] };
+  const short = { portfolio: "Sammlung", map: "Markt", scan: "Scanner" };
   for (const [k, [type, label]] of Object.entries(names)) {
     const d = $(`tab-${k}`);
     if (d) { d.dataset.type = type; d.innerHTML = `<span class="ico">${icons[k]}</span><span>${label}</span>`; }
     const m = $(`mob-${k}`);
-    if (m) { m.dataset.type = type; m.innerHTML = `<span class="ico">${icons[k]}</span><span class="text-[10px] mt-0.5">${label}</span>`; }
+    if (m) { m.dataset.type = type; m.innerHTML = `<span class="ico">${icons[k]}</span><span class="text-[10px] mt-0.5">${short[k] || label}</span>`; }
   }
   const origSwitch = window.switchTab;
   window.switchTab = (tab) => {

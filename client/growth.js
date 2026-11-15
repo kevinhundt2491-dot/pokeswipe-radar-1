@@ -752,6 +752,8 @@ export async function adminGrowthHtml() {
   try { legal = await api("/api/admin/legal"); } catch {}
   try { integ = await api("/api/admin/integrations"); } catch {}
   try { canc = await api("/api/admin/cancellations"); } catch {}
+  let intl = null;
+  try { intl = await api("/api/admin/catalog-intl"); } catch {}
   const o = legal.operator || {};
   const st = integ?.stripe || {}, af = integ?.affiliate || {}, cat = integ?.catalog;
   const when = (d) => (d ? new Date(d).toLocaleString("de-DE") : "noch nie");
@@ -795,6 +797,12 @@ export async function adminGrowthHtml() {
     <p class="text-[11px] text-slate-400">Läuft automatisch alle 10 Minuten (neue Sets zuerst). Öffentliche Seiten: <a href="/sets" target="_blank" class="underline">/sets</a>, <code>/set/&lt;id&gt;/&lt;name&gt;</code>, <code>/karte/…</code>, <a href="/pokemon" target="_blank" class="underline">/pokemon</a>, <a href="/sealed" target="_blank" class="underline">/sealed</a>, <a href="/trends" target="_blank" class="underline">/trends</a>; Sitemap-Index unter <a href="/sitemap.xml" target="_blank" class="underline">/sitemap.xml</a>.</p>
     <div class="flex gap-2 text-xs"><input id="ps-cat-set" placeholder="Set-ID (optional, z. B. sv08)" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white" />
       ${btn("Import jetzt ausführen", "PS.adminCatalogRun()", "bg-slate-800 text-white")}</div>
+
+    <h4 class="text-sm font-black text-white">🌍 Englischer & japanischer Katalog</h4>
+    ${intl ? `${(intl.langs || []).map((l) => `<p class="text-[11px] text-slate-300">${l.lang === "ja" ? "🇯🇵 Japanisch" : "🇬🇧 Englisch"}: Sets ${Number(l.sets_imported)}/${Number(l.sets)} • Karten ${Number(l.prints).toLocaleString("de-DE")} • geprüft ${Number(l.checked).toLocaleString("de-DE")} • mit Preis ${Number(l.priced).toLocaleString("de-DE")} (TCGplayer: ${Number(l.tcgplayer).toLocaleString("de-DE")})</p>`).join("") || `<p class="text-[11px] text-slate-400">Noch kein Import gelaufen.</p>`}
+      <p class="text-[11px] text-slate-400">Wechselkurs: ${intl.fx?.USD ? `1 € = ${Number(intl.fx.USD).toLocaleString("de-DE")} $ / ${Number(intl.fx.JPY).toLocaleString("de-DE")} ¥` : "–"}${intl.fx?.day ? ` (EZB, ${new Date(intl.fx.day).toLocaleDateString("de-DE")})` : ""}${intl.fx?.estimated ? " • geschätzt, EZB-Kurs folgt" : ""}</p>` : `<p class="text-[11px] text-slate-400">Status nicht verfügbar.</p>`}
+    <p class="text-[11px] text-slate-400">Läuft automatisch alle 10 Minuten (neue Sets zuerst, Karten mit Bild zuerst). Cardmarket (EUR) und TCGplayer (USD) werden getrennt gespeichert.</p>
+    ${btn("EN/JA-Import jetzt ausführen", "PS.adminCatalogIntlRun()", "w-full bg-slate-800 text-white")}
     <details class="text-xs text-slate-300"><summary class="cursor-pointer font-bold">📦 Sealed-Preise per CSV importieren</summary>
       <p class="text-[11px] text-slate-400 mt-1">Erste Zeile = Spaltennamen (Semikolon oder Komma): <code>name;set;kind;ean;uvp;price;release;image;cardmarket</code>, optional <code>inhalt;boosters;beschreibung</code> (für „Preis pro Booster“ und die Produktseite <code>/sealed/…</code>). Art (<code>kind</code>): display, etb, ttb, bundle, booster, tin, collection, other. Abgleich über EAN, Namen oder Slug – vorhandene Produkte werden aktualisiert, Preise landen im Verlauf und lösen Alarme aus.</p>
       <textarea id="ps-sealed-csv" rows="5" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs" placeholder="name;set;kind;uvp;price&#10;Stürmische Funken Display (36 Booster);Stürmische Funken;display;161,64;139,90"></textarea>
@@ -828,6 +836,13 @@ async function adminCatalogRun() {
     const r = await api("/api/admin/catalog/run", { method: "POST", body: setId ? { setId } : {} });
     const s = r.status || {};
     toast("✅ Import-Schritt fertig", `${setId ? `${r.cards || 0} Karten aus ${setId}` : `${(r.setsImported || []).length} Sets, ${r.prices || 0} Preise`} • Gesamt: ${s.setsImported}/${s.sets} Sets, ${s.catalogCards} Karten`);
+  } catch (e) { handleError(e); }
+}
+async function adminCatalogIntlRun() {
+  toast("⏳ EN/JA-Import läuft …", "Das dauert bis zu 20 Sekunden.");
+  try {
+    const r = await api("/api/admin/catalog-intl/run", { method: "POST", body: {} });
+    toast("✅ Import-Schritt fertig", `${(r.setsImported || []).length} Sets, ${Number(r.prices) || 0} Preise${r.errors ? `, ${Number(r.errors)} Fehler` : ""}`);
   } catch (e) { handleError(e); }
 }
 async function adminSealedImport() {
@@ -885,7 +900,7 @@ export const growthApi = {
   addWish, removeWish, wishRequest, shareCardPage, shareCardImage, sharePortfolioImage, gradingFor, bulkPick,
   openImport, addEvent, toggleRemind, removeEvent, board, setPref, openShopStats, exportData, deleteAccount,
   confirmDelete, openLegal, adminSaveLegal, adminRunGrowth, loadWishlist,
-  adminWebhookSetup, adminCatalogRun, adminSealedImport, adminCancelDone,
+  adminWebhookSetup, adminCatalogRun, adminCatalogIntlRun, adminSealedImport, adminCancelDone,
 };
 
 /** Fügt die Bereiche ein, bevor die Unter-Reiter gebaut werden. */
