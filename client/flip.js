@@ -384,6 +384,7 @@ function renderAdmin() {
     ${!d ? `<p class="text-slate-400 py-2">Lade Status …</p>` : `
     <div class="space-y-2 pt-2">
       <p class="${d.configured ? "text-emerald-300" : "text-amber-300"} font-bold">${d.configured ? `🟢 eBay-API verbunden${d.insights ? " • Verkaufsdaten-API (Marketplace Insights) freigeschaltet" : " • Verkaufsdaten-API nicht freigeschaltet: beendete Auktionen dienen als Verkaufsdaten"}` : "🟡 EBAY_CLIENT_ID / EBAY_CLIENT_SECRET fehlen – Demo-Modus"}</p>
+      ${d.deletionWebhook ? `<p class="${d.deletionWebhook.tokenSet ? "text-emerald-300" : "text-amber-300"} font-bold">${d.deletionWebhook.tokenSet ? "🟢 Kontolöschungs-Webhook bereit" : "🟡 Kontolöschungs-Webhook: EBAY_VERIFICATION_TOKEN fehlt oder ist ungültig (32–80 Zeichen: A–Z, a–z, 0–9, _ und -)"} • <span class="font-mono text-[10px] text-slate-300 break-all">${esc(d.deletionWebhook.endpoint)}</span></p>` : ""}
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
         ${[["Ziele (24 h)", `${d.counts.targets24}/${d.counts.targets}`], ["Aktive Angebote", d.counts.offers], ["Deals", d.counts.deals], ["Verkäufe", `${d.counts.comps} (${d.counts.comps_sold} API)`]].map(([l, v]) => `<div class="bg-slate-900 rounded-xl p-2"><p class="text-[10px] text-slate-400 uppercase font-bold">${l}</p><p class="font-black text-white">${esc(String(v))}</p></div>`).join("")}
       </div>

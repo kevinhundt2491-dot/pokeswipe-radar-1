@@ -159,6 +159,10 @@ Werte ändern: `server/plans.ts`.
    Echte Verkaufsdaten (Marketplace Insights API) nutzt der Server automatisch, sobald eBay die App dafür freischaltet;
    bis dahin zählen beendete Auktionen mit Geboten als Verkäufe. Ohne Schlüssel läuft der Radar im gekennzeichneten
    Demo-Modus mit echten Cardmarket-Tiefstpreisen.
+5b. **eBay-Kontolöschungs-Webhook (Pflicht für Production-Keys):** Einen eigenen Token (32–80 Zeichen: A–Z, a–z, 0–9, `_`, `-`)
+   als `EBAY_VERIFICATION_TOKEN` in Netlify setzen und neu deployen. Im eBay-Developer-Portal unter „Alerts & Notifications →
+   Marketplace account deletion“ denselben Token und die URL `https://pokeswipe-radar.de/.netlify/functions/ebay-account-deletion`
+   eintragen (bei anderer URL zusätzlich `EBAY_ENDPOINT_URL` setzen). Ohne Token antwortet der Endpoint mit 503.
 6. **Web-Push:** Funktioniert ohne Einrichtung – die Schlüssel erzeugt der Server beim ersten Aufruf selbst.
    Auf dem iPhone muss die App dafür zum Home-Bildschirm hinzugefügt werden (iOS 16.4+).
 7. **Firebase-Regeln:** Den Inhalt von `firebase/database.rules.json` in der Firebase-Konsole

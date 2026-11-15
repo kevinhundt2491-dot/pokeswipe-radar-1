@@ -626,7 +626,13 @@ export async function flipAdminStatus() {
   const sealed = rows(await db.execute(sql`
     SELECT id, name, kind, ref_price::float AS ref_price, price_source, price_locked, auto_price::float AS auto_price, auto_price_source, auto_sample, auto_price_at, ebay_query
     FROM sealed_products WHERE active ORDER BY name LIMIT 300`));
-  return { configured: ebayConfigured(), insights: insightsAvailable(), counts, runs, sealed };
+  // Kontolöschungs-Webhook (Pflicht für eBay-Production-Keys): nur ob der Token gesetzt ist, nie der Wert
+  const deletionToken = String(process.env.EBAY_VERIFICATION_TOKEN || "").trim();
+  const deletionWebhook = {
+    tokenSet: /^[A-Za-z0-9_-]{32,80}$/.test(deletionToken),
+    endpoint: String(process.env.EBAY_ENDPOINT_URL || "").trim() || "https://pokeswipe-radar.de/.netlify/functions/ebay-account-deletion",
+  };
+  return { configured: ebayConfigured(), insights: insightsAvailable(), counts, runs, sealed, deletionWebhook };
 }
 
 // ---------------------------------------------------------------------------
