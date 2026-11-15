@@ -14,6 +14,7 @@ import { verifyIdentityToken, isAdmin } from "./auth.ts";
 import { searchTcgdex, fetchSet, normNum, pool, reserveScan } from "./features.ts";
 import { BADGES, earnedBadges, berlinDay, nextStreak, weeklySummary, type BadgeStats } from "./logic.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
+import { scanLimit } from "./viral.ts";
 
 type Profile = typeof profiles.$inferSelect;
 
@@ -143,18 +144,18 @@ a{color:inherit}.wrap{max-width:960px;margin:0 auto;padding:16px}.top{display:fl
 .pill{font-size:11px;font-weight:900;border-radius:999px;padding:2px 8px}.deal{background:#10b981;color:#0f172a}.fair{background:#334155}.high{background:rgba(244,63,94,.3);color:#fecdd3}
 footer{margin:32px 0 16px;font-size:12px;color:#64748b;text-align:center}`;
 
-export function pageShell(o: { title: string; description: string; canonical: string; image?: string; body: string; jsonLd?: object }) {
+export function pageShell(o: { title: string; description: string; canonical: string; image?: string; body: string; jsonLd?: object | object[]; robots?: string }) {
   return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${h(o.title)}</title><meta name="description" content="${h(o.description)}"><link rel="canonical" href="${h(o.canonical)}">
+<title>${h(o.title)}</title><meta name="description" content="${h(o.description)}"><link rel="canonical" href="${h(o.canonical)}">${o.robots ? `<meta name="robots" content="${h(o.robots)}">` : ""}
 <meta property="og:type" content="website"><meta property="og:site_name" content="PokeSwipe & Radar"><meta property="og:locale" content="de_DE">
 <meta property="og:title" content="${h(o.title)}"><meta property="og:description" content="${h(o.description)}"><meta property="og:url" content="${h(o.canonical)}">
 ${o.image ? `<meta property="og:image" content="${h(o.image)}"><meta name="twitter:image" content="${h(o.image)}">` : ""}
 <meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#0b0f19"><link rel="icon" href="/icon.svg" type="image/svg+xml">
-${o.jsonLd ? `<script type="application/ld+json">${JSON.stringify(o.jsonLd).replace(/</g, "\\u003c")}</script>` : ""}
+${(Array.isArray(o.jsonLd) ? o.jsonLd : o.jsonLd ? [o.jsonLd] : []).map((j) => `<script type="application/ld+json">${JSON.stringify(j).replace(/</g, "\\u003c")}</script>`).join("")}
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
 <div class="top"><a class="logo" href="/">Poke<span>Swipe</span> &amp; Radar</a><a class="btn y" href="/">App öffnen</a></div>
 ${o.body}
-<footer>Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link (eBay Partner Network): Wir erhalten ggf. eine Provision, für dich ohne Mehrkosten. Pokémon und alle Namen sind Marken ihrer Inhaber; PokeSwipe &amp; Radar ist ein unabhängiges Fanprojekt.<br><a href="/rechtliches#impressum">Impressum</a> · <a href="/?legal=1">Datenschutz</a> · <a href="/rechtliches#agb">AGB</a> · <a href="/rechtliches#widerruf">Widerruf</a> · <a href="/sets">Alle Sets</a> · <a href="/kuendigen"><b>Verträge hier kündigen</b></a></footer>
+<footer>Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link (eBay Partner Network): Wir erhalten ggf. eine Provision, für dich ohne Mehrkosten. Pokémon und alle Namen sind Marken ihrer Inhaber; PokeSwipe &amp; Radar ist ein unabhängiges Fanprojekt.<br><a href="/rechtliches#impressum">Impressum</a> · <a href="/?legal=1">Datenschutz</a> · <a href="/rechtliches#agb">AGB</a> · <a href="/rechtliches#widerruf">Widerruf</a> · <a href="/sets">Alle Sets</a> · <a href="/pokemon">Pokémon A–Z</a> · <a href="/sealed">Displays &amp; ETBs</a> · <a href="/trends">Preis-Trends</a> · <a href="/kuendigen"><b>Verträge hier kündigen</b></a></footer>
 </div></body></html>`;
 }
 
@@ -168,6 +169,9 @@ async function cardPage(c: any) {
       body: `<div class="card"><h1>Karte nicht gefunden</h1><p class="muted">Diese Karte gibt es nicht (mehr).</p><a class="btn y" href="/">Zur Kartensuche</a></div>` }), 404);
   }
   const price = cardPrice(card);
+  const facts = [card.types ? `Typ: ${h(card.types.split(",").join(", "))}` : "", card.hp ? `${Number(card.hp)} KP` : "", card.stage ? h(card.stage) : "",
+    card.regulationMark ? `Regulation ${h(card.regulationMark)}` : ""].filter(Boolean);
+  const species = card.dexId ? rows(await db.execute(sql`SELECT name_de, slug, card_count FROM pokemon_species WHERE dex_id = ${card.dexId} LIMIT 1`))[0] : null;
   const hist = await db.select({ day: priceHistory.day, trend: priceHistory.trend }).from(priceHistory)
     .where(eq(priceHistory.cardId, id)).orderBy(desc(priceHistory.day)).limit(90);
   const series = hist.reverse().map((x) => Number(x.trend));
@@ -213,6 +217,8 @@ async function cardPage(c: any) {
         <a class="btn" style="background:#4f46e5;color:#fff" href="${h(cardmarketSearch(card.name))}" target="_blank" rel="noopener sponsored">Bei Cardmarket ansehen</a>
       </div>
       ${Number(wishers?.n) ? `<p class="muted" style="margin-top:10px">❤️ ${Number(wishers.n)} Sammler suchen diese Karte.</p>` : ""}
+      ${facts.length ? `<p class="muted">${facts.join(" • ")}</p>` : ""}
+      ${species ? `<p style="margin-top:10px"><a class="btn s" href="/pokemon/${h(species.slug)}">📚 Alle ${Number(species.card_count)} ${h(species.name_de)}-Karten mit Preisen</a></p>` : ""}
     </div></div></div>
   <h2>🤝 Angebote aus der Community</h2>
   ${offers.length ? `<div class="list">${offers.map((o: any) => `<a class="row" href="${h(appLink("&tab=map"))}" style="text-decoration:none">
@@ -617,14 +623,16 @@ export function registerGrowth(app: any, hlp: {
   app.post("/api/scan/condition", auth, async (c: any) => {
     const user = c.get("user"), plan: PlanId = c.get("plan");
     if (!rateLimit(`scan:${user.id}`, 6, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
-    if ((await scansToday(user.id)) >= PLANS[plan].scansPerDay) {
-      return c.json({ error: `Tageslimit erreicht: ${PLANS[plan].scansPerDay} Scans im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+    const limit = await scanLimit(user.id, plan);
+    const limitMsg = `Tageslimit erreicht: ${limit} Scans heute (Tarif ${PLANS[plan].label}${limit > PLANS[plan].scansPerDay ? " + Teilen-Bonus" : ""}). Tipp: Teile eine Karte – jeder neue Besucher bringt dir heute +1 Scan.`;
+    if ((await scansToday(user.id)) >= limit) {
+      return c.json({ error: limitMsg, upgrade: true, shareBonus: true }, 402);
     }
     const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String((await body(c)).image || ""));
     if (!m || m[2].length > 2_000_000) return c.json({ error: "Bitte ein Foto (JPG/PNG, max. ca. 1,5 MB) aufnehmen." }, 400);
-    const reservation = await reserveScan(user.id, PLANS[plan].scansPerDay);
+    const reservation = await reserveScan(user.id, limit);
     if (!reservation) {
-      return c.json({ error: `Tageslimit erreicht: ${PLANS[plan].scansPerDay} Scans im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+      return c.json({ error: limitMsg, upgrade: true, shareBonus: true }, 402);
     }
     const ai = new Anthropic();
     const msg = await ai.messages.create({

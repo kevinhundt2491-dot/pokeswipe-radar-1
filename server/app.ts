@@ -8,13 +8,15 @@ import {
 } from "../db/index.ts";
 import { verifyIdentityToken, ensureProfile, isAdmin, type AuthUser } from "./auth.ts";
 import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, effectivePlan, type PlanId } from "./plans.ts";
-import { registerFeatures, extraMe, applyShopUpdates, activeAlertCount, findSealed, notifySealedListing, trialDays } from "./features.ts";
+import { registerFeatures, ensureReferralCode, extraMe, applyShopUpdates, activeAlertCount, findSealed, notifySealedListing, trialDays } from "./features.ts";
 import { registerGrowth, notifyWishlistListing } from "./growth.ts";
 import { registerCollector } from "./collector.ts";
 import { registerDrops } from "./drops.ts";
 import { registerVoiceover } from "./voiceover.ts";
 import { registerLegal, LEGAL_VERSION } from "./legal.ts";
 import { registerCatalog } from "./catalog.ts";
+import { registerSeo } from "./seo.ts";
+import { registerViral } from "./viral.ts";
 import { registerIntegrations, webhookSecrets, recordWebhook } from "./integrations.ts";
 import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker, cardmarketPartnerId } from "./prices.ts";
 import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan } from "./billing.ts";
@@ -948,7 +950,9 @@ registerGrowth(app, { auth, adminOnly, body, ratingOf });
 registerCollector(app, { auth, body });
 registerDrops(app, { auth, adminOnly, body });
 registerLegal(app, { auth, adminOnly, body });
+registerSeo(app); // vor registerCatalog: eigene Teil-Sitemaps vor dem Muster /sitemaps/:file
 registerCatalog(app, { auth, adminOnly, body });
+registerViral(app, { auth, body, ensureCode: ensureReferralCode });
 registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
 

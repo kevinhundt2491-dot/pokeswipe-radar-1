@@ -9,9 +9,9 @@
   NETLIFY_NEXT_PLUGIN_SKIP = "true"
 
 # Der API-Server beantwortet /api/*, die öffentlichen Karten- & Set-Seiten, die Rechtsseiten (inkl. Kündigungsbutton)
-# und die Sitemaps – alles andere ist die statische App
+# die Sitemaps, Pokémon-/Sealed-/Trend-Seiten sowie Teilen-Kurzlinks (/s/…) und Einladungsseiten – alles andere ist die statische App
 [server]
-  path = ["/api/*", "/karte/*", "/sitemap.xml", "/sitemaps/*", "/sets", "/set/*", "/rechtliches", "/impressum", "/agb", "/widerruf", "/kuendigen"]
+  path = ["/api/*", "/karte/*", "/sitemap.xml", "/sitemaps/*", "/sets", "/set/*", "/rechtliches", "/impressum", "/agb", "/widerruf", "/kuendigen", "/pokemon", "/pokemon/*", "/sealed", "/sealed/*", "/trends", "/s/*", "/einladung/*"]
 
 # Kartenbilder über das Netlify Image CDN (verkleinert, WebP/AVIF)
 [images]

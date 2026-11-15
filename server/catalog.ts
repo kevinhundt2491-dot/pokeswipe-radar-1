@@ -1,7 +1,8 @@
 // PokeSwipe & Radar – deutscher Kartenkatalog: automatischer Import aller Sets & Einzelkarten (TCGdex),
 // Sealed-Preis-Import, öffentliche Set-Seiten (/sets, /set/<id>/<name>) und eine aufgeteilte Sitemap für Google.
 import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
-import { db, cards, cardSets, sealedProducts, sealedPriceHistory } from "../db/index.ts";
+import { db, cards, cardSets, sealedProducts, sealedPriceHistory, catalogImportRuns } from "../db/index.ts";
+import { rebuildSpecies, fillEnglishNames, backfillSealedSlugs, SEO_SITEMAPS, SEO_STATIC_PAGES } from "./seo.ts";
 import { refreshCard, cardPrice, evaluateSealedAlerts } from "./prices.ts";
 import { SITE, h, slugify, cdnImage, pageShell, ebayUrl, cardmarketSearch } from "./growth.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
@@ -113,7 +114,8 @@ export async function importSet(setId: string) {
  */
 export async function runCatalogImport({ deadlineMs = 24_000, maxSets = 3, maxPrices = 60 } = {}) {
   const deadline = Date.now() + deadlineMs;
-  const result = { setList: null as null | { sets: number; pending: number }, setsImported: [] as string[], prices: 0, errors: 0 };
+  const result = { setList: null as null | { sets: number; pending: number }, setsImported: [] as string[], prices: 0, species: 0, englishNames: 0, errors: 0 };
+  const [run] = await db.insert(catalogImportRuns).values({}).returning({ id: catalogImportRuns.id }).catch(() => [null as any]);
 
   const [state] = rows(await db.execute(sql`SELECT count(*)::int AS n, max(updated_at) AS last FROM card_sets`));
   if (!Number(state?.n) || !state?.last || Date.now() - new Date(state.last).getTime() > 86400_000) {
@@ -132,8 +134,8 @@ export async function runCatalogImport({ deadlineMs = 24_000, maxSets = 3, maxPr
   // Preise: zuerst Karten ganz ohne Preisabruf, dann die ältesten – neue Sets zuerst
   const stale = rows(await db.execute(sql`
     SELECT c.id FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id
-    WHERE c.imported_at IS NOT NULL AND (c.checked_at IS NULL OR c.checked_at < ${new Date(Date.now() - CATALOG_PRICE_MAX_AGE_MS)})
-    ORDER BY (c.checked_at IS NOT NULL), s.priority DESC NULLS LAST, s.release_date DESC NULLS LAST, c.checked_at ASC NULLS FIRST
+    WHERE c.imported_at IS NOT NULL AND (c.checked_at IS NULL OR c.details_at IS NULL OR c.checked_at < ${new Date(Date.now() - CATALOG_PRICE_MAX_AGE_MS)})
+    ORDER BY (c.checked_at IS NOT NULL), (c.details_at IS NOT NULL), s.priority DESC NULLS LAST, s.release_date DESC NULLS LAST, c.checked_at ASC NULLS FIRST
     LIMIT ${maxPrices}
   `));
   let i = 0;
@@ -143,6 +145,22 @@ export async function runCatalogImport({ deadlineMs = 24_000, maxSets = 3, maxPr
       try { await refreshCard(id); result.prices++; } catch { result.errors++; }
     }
   }));
+
+  // Pokémon-Arten (für /pokemon/<name>) aus den Kartendetails ableiten, englische Namen & Sealed-Slugs ergänzen
+  try {
+    if (Date.now() < deadline - 4000) result.species = await rebuildSpecies();
+    if (Date.now() < deadline - 3000) result.englishNames = await fillEnglishNames(12, deadline - 1000);
+    await backfillSealedSlugs();
+  } catch (e) { result.errors++; console.warn("Katalog: Pokémon-Arten nicht aktualisiert", e); }
+
+  if (run?.id) {
+    await db.update(catalogImportRuns).set({
+      finishedAt: new Date(), setsImported: result.setsImported.length, prices: result.prices, species: result.species, errors: result.errors,
+      note: [result.setList ? `Set-Liste: ${result.setList.sets}` : "", result.setsImported.join(", "), result.englishNames ? `${result.englishNames} engl. Namen` : ""].filter(Boolean).join(" • ").slice(0, 500),
+    }).where(eq(catalogImportRuns.id, run.id)).catch(() => {});
+    // Protokoll schlank halten (30 Tage)
+    await db.execute(sql`DELETE FROM catalog_import_runs WHERE started_at < now() - interval '30 days'`).catch(() => {});
+  }
   return result;
 }
 
@@ -156,12 +174,18 @@ export async function catalogStatus() {
       (SELECT count(*)::int FROM cards WHERE imported_at IS NOT NULL AND checked_at IS NOT NULL) AS cards_checked,
       (SELECT count(*)::int FROM cards WHERE COALESCE(trend, avg, low) IS NOT NULL) AS cards_priced,
       (SELECT count(*)::int FROM sealed_products WHERE active) AS sealed,
-      (SELECT count(*)::int FROM sealed_products WHERE active AND ref_price IS NOT NULL) AS sealed_priced
+      (SELECT count(*)::int FROM sealed_products WHERE active AND ref_price IS NOT NULL) AS sealed_priced,
+      (SELECT count(*)::int FROM cards WHERE details_at IS NOT NULL) AS cards_detailed,
+      (SELECT count(*)::int FROM pokemon_species) AS species,
+      (SELECT count(*)::int FROM pokemon_species WHERE name_en NOT IN ('', '-')) AS species_en
   `));
+  const runs = await db.select().from(catalogImportRuns).orderBy(desc(catalogImportRuns.startedAt)).limit(8);
   return {
     sets: Number(r?.sets ?? 0), setsImported: Number(r?.sets_imported ?? 0), catalogCards: Number(r?.catalog_cards ?? 0),
     cardsChecked: Number(r?.cards_checked ?? 0), cardsPriced: Number(r?.cards_priced ?? 0),
     sealed: Number(r?.sealed ?? 0), sealedPriced: Number(r?.sealed_priced ?? 0),
+    cardsDetailed: Number(r?.cards_detailed ?? 0), species: Number(r?.species ?? 0), speciesEn: Number(r?.species_en ?? 0),
+    runs,
   };
 }
 
@@ -174,6 +198,7 @@ const IMAGE_HOSTS = ["assets.tcgdex.net", "images.pokemontcg.io", "raw.githubuse
 export type SealedImportRow = {
   name?: string; setName?: string; setId?: string; kind?: string; ean?: string; uvp?: unknown; refPrice?: unknown;
   releaseDate?: string; image?: string; cardmarketUrl?: string; slug?: string;
+  contents?: string; boosterCount?: unknown; description?: string;
 };
 
 export async function importSealed(items: SealedImportRow[], source: "admin" | "import" = "import") {
@@ -190,6 +215,8 @@ export async function importSealed(items: SealedImportRow[], source: "admin" | "
       slug, ean: eanOk, setId: SET_ID_RE.test(String(raw.setId ?? "")) ? String(raw.setId) : null,
       uvp: money(raw.uvp), releaseDate: validDate(raw.releaseDate),
       cardmarketUrl: https(raw.cardmarketUrl, ["cardmarket.com"]),
+      contents: str(raw.contents, 200), boosterCount: int(raw.boosterCount, 0, 1000, 0) || null,
+      description: str(raw.description, 2000),
     };
     const img = https(raw.image, IMAGE_HOSTS);
     if (img) values.image = img;
@@ -219,7 +246,7 @@ export async function importSealed(items: SealedImportRow[], source: "admin" | "
   return { created, updated, priced, skipped };
 }
 
-/** CSV (Semikolon oder Komma) → Import-Zeilen. Erwartete Spalten: name;set;kind;ean;uvp;price;release;image;cardmarket */
+/** CSV (Semikolon oder Komma) → Import-Zeilen. Erwartete Spalten: name;set;kind;ean;uvp;price;release;image;cardmarket – optional: inhalt;boosters;beschreibung */
 export function parseSealedCsv(text: string): SealedImportRow[] {
   const lines = String(text || "").replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
   if (!lines.length) return [];
@@ -242,6 +269,8 @@ export function parseSealedCsv(text: string): SealedImportRow[] {
     kind: col("kind", "art", "typ", "type"), ean: col("ean", "gtin"), uvp: col("uvp", "msrp"),
     refPrice: col("price", "preis", "refprice", "trend", "referenzpreis"), releaseDate: col("release", "releasedate", "erscheinung", "datum"),
     image: col("image", "bild"), cardmarketUrl: col("cardmarket", "cardmarketurl", "url"),
+    contents: col("contents", "inhalt"), boosterCount: col("boosters", "booster", "boostercount", "booster_count", "anzahl_booster"),
+    description: col("description", "beschreibung"),
   };
   if (idx.name < 0) return [];
   const num = (v: string | undefined) => (v ? Number(v.replace(/[^\d,.-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", ".")) : null);
@@ -251,6 +280,7 @@ export function parseSealedCsv(text: string): SealedImportRow[] {
     return {
       name: get("name"), setName: get("setName"), setId: get("setId"), kind: get("kind")?.toLowerCase(), ean: get("ean"),
       uvp: num(get("uvp")), refPrice: num(get("refPrice")), releaseDate: get("releaseDate"), image: get("image"), cardmarketUrl: get("cardmarketUrl"),
+      contents: get("contents"), boosterCount: get("boosterCount"), description: get("description"),
     };
   });
 }
@@ -353,7 +383,7 @@ export async function setPage(c: any) {
 // ---------------------------------------------------------------------------
 // Sitemaps (Index + Teil-Sitemaps, je max. 10.000 Karten)
 // ---------------------------------------------------------------------------
-const STATIC_PAGES = ["/umzug", "/sets", "/ratgeber/pokemon-karten-wert", "/ratgeber/pokemon-karten-fake-erkennen", "/ratgeber/pokemon-displays-zum-uvp", "/rechtliches"];
+const STATIC_PAGES = [...SEO_STATIC_PAGES, "/umzug", "/sets", "/ratgeber/pokemon-karten-wert", "/ratgeber/pokemon-karten-fake-erkennen", "/ratgeber/pokemon-displays-zum-uvp", "/rechtliches"];
 const xml = (c: any, body: string) => {
   c.header("Cache-Control", "public, max-age=3600");
   c.header("Netlify-CDN-Cache-Control", "public, s-maxage=21600, stale-while-revalidate=86400");
@@ -372,7 +402,7 @@ export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body
     const [r] = rows(await db.execute(sql`SELECT count(*)::int AS n ${sitemapCards}`));
     const parts = Math.max(1, Math.ceil(Number(r?.n ?? 0) / CARDS_PER_SITEMAP));
     const now = today();
-    const maps = ["/sitemaps/pages.xml", "/sitemaps/sets.xml", ...Array.from({ length: parts }, (_, i) => `/sitemaps/cards-${i + 1}.xml`)];
+    const maps = ["/sitemaps/pages.xml", "/sitemaps/sets.xml", ...SEO_SITEMAPS, ...Array.from({ length: parts }, (_, i) => `/sitemaps/cards-${i + 1}.xml`)];
     return xml(c, `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${maps.map((m) => `<sitemap><loc>${h(`${SITE()}${m}`)}</loc><lastmod>${now}</lastmod></sitemap>`).join("")}</sitemapindex>`);
   });
 

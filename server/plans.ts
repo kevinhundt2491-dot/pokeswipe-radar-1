@@ -39,16 +39,34 @@ export const SWITCH_BONUS_DAYS = 30;
 export const SWITCH_MIN_CARDS = 20;
 
 /**
+ * Empfehlungs-Stufen: Belohnung, sobald so viele geworbene Nutzer ein Abo bezahlt haben.
+ * Kommt zusätzlich zum Gratismonat pro zahlender Empfehlung (REFERRAL_BONUS_DAYS).
+ */
+export const REFERRAL_MILESTONES: { count: number; kind: string; plan: "premium" | "pro"; days: number; label: string; icon: string }[] = [
+  { count: 3, kind: "milestone_3", plan: "pro", days: 30, label: "1 Monat Pro Trader", icon: "🥉" },
+  { count: 5, kind: "milestone_5", plan: "pro", days: 60, label: "2 Monate Pro Trader + Botschafter-Abzeichen", icon: "🥈" },
+  { count: 10, kind: "milestone_10", plan: "pro", days: 180, label: "6 Monate Pro Trader", icon: "🥇" },
+  { count: 25, kind: "milestone_25", plan: "pro", days: 365, label: "1 Jahr Pro Trader + Legenden-Status", icon: "👑" },
+];
+/** Teilen-Bonus: +1 KI-Scan heute pro neuem Besucher über die eigenen Teilen-Links (max. pro Tag). */
+export const SHARE_SCAN_BONUS_MAX = 10;
+
+/** Rangfolge der Tarife (für Bonus-Upgrades). */
+export const PLAN_RANK: Record<PlanId, number> = { free: 0, premium: 1, pro: 2 };
+
+/**
  * Bezahlter Tarif gilt, solange das Abo-Ende in der Zukunft liegt (+1 Tag Kulanz).
- * Danach greift ein ggf. vorhandener Gratismonat aus dem Empfehlungsprogramm (Premium).
+ * Ein Bonus (Empfehlung, Stufen-Belohnung, Wechsel-Bonus) gilt bis bonusUntil mit bonusPlan (Standard Premium) –
+ * liegt der Bonus-Tarif über dem bezahlten (z. B. Pro-Bonus für Premium-Abonnenten), gilt der höhere.
  */
 export function effectivePlan(
-  profile: { plan: string; planUntil: Date | null; bonusUntil?: Date | null } | undefined | null,
+  profile: { plan: string; planUntil: Date | null; bonusUntil?: Date | null; bonusPlan?: string | null } | undefined | null,
 ): PlanId {
   if (!profile) return "free";
   const plan = (profile.plan in PLANS ? profile.plan : "free") as PlanId;
   const graceMs = 24 * 60 * 60 * 1000;
-  if (plan !== "free" && profile.planUntil && new Date(profile.planUntil).getTime() + graceMs > Date.now()) return plan;
-  if (profile.bonusUntil && new Date(profile.bonusUntil).getTime() > Date.now()) return "premium";
-  return "free";
+  const paid: PlanId = plan !== "free" && profile.planUntil && new Date(profile.planUntil).getTime() + graceMs > Date.now() ? plan : "free";
+  const bonus: PlanId = profile.bonusUntil && new Date(profile.bonusUntil).getTime() > Date.now()
+    ? (profile.bonusPlan === "pro" ? "pro" : "premium") : "free";
+  return PLAN_RANK[bonus] > PLAN_RANK[paid] ? bonus : paid;
 }

@@ -13,7 +13,14 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
 - **Sealed-Tracker** – Displays, ETBs, Top-Trainer-Boxen mit Admin-Referenzpreis + Community-Durchschnitt
 - **Grading-Partner** – PSA, CGC, Beckett, TAG mit Klick-Zählung (Affiliate)
 - **Händler-Shops** – eigene Shop-Seite `/shop/<name>` für Pro-Trader
-- **Empfehlungsprogramm** – geworbene Nutzer: 1. Monat gratis; Werber: Gratismonat, sobald der Geworbene zahlt
+- **Empfehlungsprogramm mit Stufen** – geworbene Nutzer: 1. Monat gratis; Werber: Gratismonat pro zahlendem Freund,
+  zusätzlich Stufen-Belohnungen (3 → 1 Monat Pro, 5 → 2 Monate Pro + Abzeichen, 10 → 6 Monate Pro, 25 → 1 Jahr Pro).
+  Zahlende Werber bekommen eine Stripe-Gutschrift, alle anderen Bonus-Tage (`bonus_until`/`bonus_plan`); jede Belohnung
+  steht genau einmal in `referral_rewards`. Persönliche Einladungsseite `/einladung/<code>` mit WhatsApp-Vorschau,
+  Werber-Bestenliste (nur mit Zustimmung) und Dashboard im Konto (🎁 im Kopfbereich)
+- **Verfolgte Teilen-Links** – `/s/<code>` zählt Besucher (gehashte IP + Browser, ohne Bots) und leitet mit Empfehlungscode
+  weiter; jeder neue Besucher bringt dem Teilenden +1 KI-Scan am selben Tag (max. 10). Share-Sheet mit WhatsApp,
+  Telegram, X, Facebook und nativem Teilen
 - **Wunschliste & Tausch-Matches** – Push, sobald eine gesuchte Karte inseriert wird; Vorschläge für passende Tausch-Partner
 - **Öffentliche Kartenseiten** – `/karte/<id>/<name>` mit Preis, Verlauf, Angeboten und Vorschaubild für Google & WhatsApp; `/sitemap.xml`
 - **Teilen-Bilder** – Portfolio- und Pull-Bild (Instagram-Format) inkl. Empfehlungscode
@@ -42,6 +49,12 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
 - **Deutscher Kartenkatalog** – alle Sets und Einzelkarten werden automatisch aus TCGdex importiert
   (`netlify/functions/catalog-import.mts`, alle 10 Min.), öffentliche Set-Seiten `/sets` und `/set/<id>/<name>`,
   Sitemap-Index `/sitemap.xml` mit Teil-Sitemaps, Sealed-Preis-Import per CSV in der Admin-Zentrale
+  (optional mit Inhalt, Booster-Anzahl und Beschreibung). Beim Preisabruf werden Pokédex-Nr., KP, Typ, Phase, Varianten
+  und Regulation-Mark gespeichert; daraus entstehen die Pokémon-Arten (`pokemon_species`, inkl. englischem Namen).
+  Jeder Import-Lauf wird in `catalog_import_runs` protokolliert (30 Tage, sichtbar in der Admin-Zentrale)
+- **SEO-Seiten** – `/pokemon` (A–Z) und `/pokemon/<name>` („Glurak Karten Wert“ mit FAQ), `/sealed` und `/sealed/<name>`
+  (Marktpreis vs. UVP, Preis pro Booster, Verlauf), `/trends` (Gewinner/Verlierer 30 Tage, meistgesuchte Karten);
+  alle mit strukturierten Daten und eigenen Teil-Sitemaps
 
 ## Echte Karten & Preise
 
@@ -68,7 +81,9 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | Restock-Radar (alle 2 Minuten) | `netlify/functions/restock-radar.mts` → `server/drops.ts` |
 | Erinnerungen & Wochen-Report (stündlich) | `netlify/functions/growth-jobs.mts` |
 | Konto löschen | `netlify/functions/delete-account.mts` |
-| Kartenkatalog-Import (alle 10 Minuten) | `netlify/functions/catalog-import.mts` → `server/catalog.ts` |
+| Kartenkatalog-Import (alle 10 Minuten) | `netlify/functions/catalog-import.mts` → `server/catalog.ts` + `server/seo.ts` |
+| Pokémon-, Sealed- & Trend-Seiten | `server/seo.ts` |
+| Teilen-Links, Einladungsseite, Empfehlungs-Stufen | `server/viral.ts` + `client/viral.js`, Stufen in `server/plans.ts` |
 | Rechtstexte & Kündigungsbutton | `server/legal.ts` (`/rechtliches`, `/kuendigen`, `/api/legal`) |
 | Integrations-Check & Stripe-Webhook-Einrichtung | `server/integrations.ts` (Admin-Zentrale) |
 | Styles (Tailwind, beim Deploy kompiliert) | `client/tailwind.css` + `tailwind.config.js` → `public/assets/tailwind.css` |

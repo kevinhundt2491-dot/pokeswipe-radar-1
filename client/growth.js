@@ -130,9 +130,9 @@ export function cardExtrasHtml(c) {
 }
 
 function shareCardPage(id, name) {
-  const slug = String(name).toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const ref = state.me?.referral?.code ? `?ref=${state.me.referral.code}` : "";
-  PS().shareLink(`${location.origin}/karte/${encodeURIComponent(id)}/${slug}${ref}`, `${name} – Preis & Angebote`);
+  const slug = String(name).toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "karte";
+  // Verfolgter Kurzlink: jeder neue Besucher bringt +1 KI-Scan, Anmeldungen zählen fürs Empfehlungsprogramm
+  PS().shareTarget(`/karte/${encodeURIComponent(id)}/${slug}`, "card", `${name} – Preis & Angebote`, `Schau mal, was ${name} gerade wert ist 👀`);
 }
 
 // ===========================================================================
@@ -192,8 +192,9 @@ async function showShare(cv, title, text) {
     <div class="grid grid-cols-2 gap-2">
       ${canShare ? `<button id="ps-share-go" class="bg-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">Teilen</button>` : ""}
       <a href="${url}" download="pokeswipe.png" class="${canShare ? "" : "col-span-2"} text-center bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">⬇️ Speichern</a>
-    </div><p class="text-[11px] text-slate-400">Perfekt für Instagram-Story, TikTok, WhatsApp-Status oder Discord.</p>`, { onClose: () => URL.revokeObjectURL(url) });
-  $("ps-share-go")?.addEventListener("click", () => navigator.share({ files: [file], title, text }).catch(() => {}));
+    </div>${state.me?.referral?.code ? `<button onclick="PS.shareInvite()" class="w-full bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">🎁 Einladungslink dazu teilen (Gratismonat für dich)</button>` : ""}
+    <p class="text-[11px] text-slate-400">Perfekt für Instagram-Story, TikTok, WhatsApp-Status oder Discord.</p>`, { onClose: () => URL.revokeObjectURL(url) });
+  $("ps-share-go")?.addEventListener("click", () => navigator.share({ files: [file], title, text: state.me?.referral?.link ? `${text || title} 🎁 1 Monat gratis: ${state.me.referral.link}` : text }).catch(() => {}));
 }
 
 async function sharePortfolioImage() {
@@ -788,12 +789,14 @@ export async function adminGrowthHtml() {
       ${k.status === "review" ? btn("Als erledigt markieren", `PS.adminCancelDone(${Number(k.id)})`, "mt-1 bg-emerald-500/30 text-emerald-200") : ""}</div>`).join("") || `<p class="text-slate-500">Noch keine Kündigungen.</p>`}</div>
 
     <h4 class="text-sm font-black text-white">📚 Deutscher Kartenkatalog (SEO)</h4>
-    ${cat ? `<p class="text-[11px] text-slate-300">Sets: ${Number(cat.setsImported)}/${Number(cat.sets)} importiert • Karten im Katalog: ${Number(cat.catalogCards).toLocaleString("de-DE")} • mit Preis: ${Number(cat.cardsPriced).toLocaleString("de-DE")} • Sealed mit Preis: ${Number(cat.sealedPriced)}/${Number(cat.sealed)}</p>` : ""}
-    <p class="text-[11px] text-slate-400">Läuft automatisch alle 10 Minuten (neue Sets zuerst). Öffentliche Seiten: <a href="/sets" target="_blank" class="underline">/sets</a>, <code>/set/&lt;id&gt;/&lt;name&gt;</code>, <code>/karte/…</code>; Sitemap-Index unter <a href="/sitemap.xml" target="_blank" class="underline">/sitemap.xml</a>.</p>
+    ${cat ? `<p class="text-[11px] text-slate-300">Sets: ${Number(cat.setsImported)}/${Number(cat.sets)} importiert • Karten im Katalog: ${Number(cat.catalogCards).toLocaleString("de-DE")} • mit Preis: ${Number(cat.cardsPriced).toLocaleString("de-DE")} • Sealed mit Preis: ${Number(cat.sealedPriced)}/${Number(cat.sealed)}</p>
+      <p class="text-[11px] text-slate-300">Kartendetails (Pokédex, KP, Typ): ${Number(cat.cardsDetailed || 0).toLocaleString("de-DE")} • Pokémon-Seiten: ${Number(cat.species || 0)} (davon ${Number(cat.speciesEn || 0)} mit engl. Namen)</p>
+      ${(cat.runs || []).length ? `<details class="text-[11px] text-slate-400"><summary class="cursor-pointer">Letzte Import-Läufe</summary>${cat.runs.map((r) => `<p>${new Date(r.startedAt).toLocaleString("de-DE")} • ${Number(r.setsImported)} Sets • ${Number(r.prices)} Preise • ${Number(r.species)} Arten${r.errors ? ` • <span class="text-rose-300">${Number(r.errors)} Fehler</span>` : ""}${r.finishedAt ? "" : " • läuft/abgebrochen"}${r.note ? ` • ${esc(r.note)}` : ""}</p>`).join("")}</details>` : ""}` : ""}
+    <p class="text-[11px] text-slate-400">Läuft automatisch alle 10 Minuten (neue Sets zuerst). Öffentliche Seiten: <a href="/sets" target="_blank" class="underline">/sets</a>, <code>/set/&lt;id&gt;/&lt;name&gt;</code>, <code>/karte/…</code>, <a href="/pokemon" target="_blank" class="underline">/pokemon</a>, <a href="/sealed" target="_blank" class="underline">/sealed</a>, <a href="/trends" target="_blank" class="underline">/trends</a>; Sitemap-Index unter <a href="/sitemap.xml" target="_blank" class="underline">/sitemap.xml</a>.</p>
     <div class="flex gap-2 text-xs"><input id="ps-cat-set" placeholder="Set-ID (optional, z. B. sv08)" class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white" />
       ${btn("Import jetzt ausführen", "PS.adminCatalogRun()", "bg-slate-800 text-white")}</div>
     <details class="text-xs text-slate-300"><summary class="cursor-pointer font-bold">📦 Sealed-Preise per CSV importieren</summary>
-      <p class="text-[11px] text-slate-400 mt-1">Erste Zeile = Spaltennamen (Semikolon oder Komma): <code>name;set;kind;ean;uvp;price;release;image;cardmarket</code>. Art (<code>kind</code>): display, etb, ttb, bundle, booster, tin, collection, other. Abgleich über EAN, Namen oder Slug – vorhandene Produkte werden aktualisiert, Preise landen im Verlauf und lösen Alarme aus.</p>
+      <p class="text-[11px] text-slate-400 mt-1">Erste Zeile = Spaltennamen (Semikolon oder Komma): <code>name;set;kind;ean;uvp;price;release;image;cardmarket</code>, optional <code>inhalt;boosters;beschreibung</code> (für „Preis pro Booster“ und die Produktseite <code>/sealed/…</code>). Art (<code>kind</code>): display, etb, ttb, bundle, booster, tin, collection, other. Abgleich über EAN, Namen oder Slug – vorhandene Produkte werden aktualisiert, Preise landen im Verlauf und lösen Alarme aus.</p>
       <textarea id="ps-sealed-csv" rows="5" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs" placeholder="name;set;kind;uvp;price&#10;Stürmische Funken Display (36 Booster);Stürmische Funken;display;161,64;139,90"></textarea>
       ${btn("CSV importieren", "PS.adminSealedImport()", "w-full bg-purple-600 text-white")}</details>
 
@@ -957,6 +960,17 @@ export function routeGrowth() {
   const cardId = params.get("card");
   if (cardId && /^[a-zA-Z0-9.\-_]{2,40}$/.test(cardId)) PS().openCard(cardId);
   if (params.get("legal") === "1") openLegal();
+  // Von einer Pokémon-Seite (/pokemon/…): Kartensuche mit Suchbegriff öffnen
+  const q = (params.get("search") || "").trim().slice(0, 60);
+  if (q) {
+    setTimeout(() => {
+      const inp = document.getElementById("tcgdex-search-inp");
+      if (!inp) return;
+      inp.value = q;
+      window.searchTCGdexLive?.();
+      inp.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 400);
+  }
   // Von einer öffentlichen Set-Seite (/set/…): Set-Fortschritt in der App öffnen
   const setId = params.get("set");
   if (setId && /^[a-zA-Z0-9.\-_]{1,40}$/.test(setId)) {
