@@ -665,6 +665,10 @@ export function registerGrowth(app: any, hlp: {
       reviewsReceived: await db.select().from(reviews).where(eq(reviews.revieweeId, userId)),
       badges: await db.select().from(userBadges).where(eq(userBadges.userId, userId)),
       calendar: await db.select().from(calendarEvents).where(eq(calendarEvents.createdBy, userId)),
+      gradedCards: rows(await db.execute(sql`SELECT * FROM graded_cards WHERE user_id = ${userId}`)),
+      gradingSubmissions: rows(await db.execute(sql`SELECT * FROM grading_submissions WHERE user_id = ${userId}`)),
+      restockAlerts: rows(await db.execute(sql`SELECT * FROM restock_subscriptions WHERE user_id = ${userId}`)),
+      restockReports: rows(await db.execute(sql`SELECT id, title, shop, url, city, price, status, created_at FROM restock_drops WHERE reported_by = ${userId}`)),
       notifications: await db.select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt)).limit(500),
     };
     return c.body(JSON.stringify(data, null, 2), 200, {

@@ -8,6 +8,7 @@ import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml,
 import {
   injectGrowthPanels, afterAuthGrowth, routeGrowth, growthApi, loadWishlist, loadCalendar, loadRanks, adminGrowthHtml,
 } from "./growth.js";
+import { injectDropsPanels, afterAuthDrops, routeDrops, dropsApi, loadDrops, loadGraded, loadFakeLeft } from "./drops.js";
 
 const PS = () => window.PS;
 const KIND_LABEL = { display: "Display", etb: "Elite-Trainer-Box", ttb: "Top-Trainer-Box", bundle: "Booster-Bundle", booster: "Booster", tin: "Tin", collection: "Kollektion", other: "Sonstiges" };
@@ -610,6 +611,7 @@ const SUBTABS = {
     { key: "search", label: "Kartensuche & Rip or Keep", match: (el) => el.querySelector("#tcgdex-search-inp, #ripkeep-select") },
   ],
   flip: [
+    { key: "drops", label: "🚨 Restock & Vorbestellung", match: (el) => el.id === "ps-drops" },
     { key: "alerts", label: "Preisalarme", match: (el) => el.id === "ps-tracker" },
     { key: "sealed", label: "Sealed", match: (el) => el.id === "ps-sealed" },
     { key: "deals", label: "Flip-Deals", fallback: true, match: () => false },
@@ -628,7 +630,8 @@ const SUBTABS = {
   portfolio: [
     { key: "overview", label: "Portfolio", fallback: true, match: () => false },
     { key: "wishlist", label: "Wunschliste", match: (el) => el.id === "ps-wishlist" },
-    { key: "scan", label: "Scan", match: (el) => el.id === "ps-scan" },
+    { key: "scan", label: "Scan & Fake-Check", match: (el) => el.id === "ps-scan" || el.id === "ps-fakecheck" },
+    { key: "graded", label: "🏅 Graded", match: (el) => el.id === "ps-graded" },
     { key: "sets", label: "Sets", match: (el) => el.id === "ps-sets" },
     { key: "grading", label: "Grading & Tools", match: (el) => el.id === "ps-grading" || el.id === "ps-gradecalc" || el.querySelector("#centering-img, #masterset-list") },
   ],
@@ -638,7 +641,9 @@ const subLoaders = {
   "map:shops": () => loadShops(),
   "portfolio:sets": () => { loadTrackedSets(); loadSetList(); },
   "portfolio:grading": () => loadPartners(),
-  "portfolio:scan": () => renderScanLeft(),
+  "portfolio:scan": () => { renderScanLeft(); loadFakeLeft(); },
+  "portfolio:graded": () => loadGraded(),
+  "flip:drops": () => loadDrops(),
   "portfolio:wishlist": () => loadWishlist(),
   "community:calendar": () => loadCalendar(),
   "community:ranks": () => loadRanks(),
@@ -763,6 +768,7 @@ export const featureApi = {
   openSealed, createSealedAlert, deleteSealedAlert, listSealed, openShop, openShopSettings, saveShop, shareLink,
   adminSealedPrice, adminSealedHide, adminSealedAdd, showSub,
   ...growthApi,
+  ...dropsApi,
 };
 
 export function initFeatures() {
@@ -770,6 +776,7 @@ export function initFeatures() {
   tidyLayout();
   injectPanels();
   injectGrowthPanels();
+  injectDropsPanels();
   buildSubtabs();
   window.enableBrowserPush = () => (state.user ? enablePush() : requireLogin());
 }
@@ -782,6 +789,7 @@ export function afterAuthFeatures() {
   loadTrackedSets();
   loadSealedAlerts();
   afterAuthGrowth();
+  afterAuthDrops();
 }
 
 export function routeFeatures() {
@@ -793,4 +801,5 @@ export function routeFeatures() {
   if (tab && sub && SUBTABS[tab]) showSub(tab, sub);
   if (params.get("scan") === "1") openScanner();
   routeGrowth();
+  routeDrops();
 }
