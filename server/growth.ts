@@ -11,7 +11,7 @@ import {
 import { PLANS, SWITCH_BONUS_DAYS, SWITCH_MIN_CARDS, type PlanId } from "./plans.ts";
 import { CARD_ID_RE, getCard, cardPrice, notify } from "./prices.ts";
 import { verifyIdentityToken, isAdmin } from "./auth.ts";
-import { searchTcgdex, fetchSet, normNum, pool } from "./features.ts";
+import { searchTcgdex, fetchSet, normNum, pool, reserveScan } from "./features.ts";
 import { BADGES, earnedBadges, berlinDay, nextStreak, weeklySummary, type BadgeStats } from "./logic.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
 
@@ -626,6 +626,10 @@ export function registerGrowth(app: any, hlp: {
     }
     const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String((await body(c)).image || ""));
     if (!m || m[2].length > 2_000_000) return c.json({ error: "Bitte ein Foto (JPG/PNG, max. ca. 1,5 MB) aufnehmen." }, 400);
+    const reservation = await reserveScan(user.id, PLANS[plan].scansPerDay);
+    if (!reservation) {
+      return c.json({ error: `Tageslimit erreicht: ${PLANS[plan].scansPerDay} Scans im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+    }
     const ai = new Anthropic();
     const msg = await ai.messages.create({
       model: "claude-haiku-5-5",
@@ -637,11 +641,15 @@ export function registerGrowth(app: any, hlp: {
           { type: "text", text: 'Du prüfst den Zustand einer Pokémon-Sammelkarte auf einem Foto (Vorderseite) für eine Grading-Einschätzung. Antworte NUR mit JSON: {"isCard": true|false, "centeringLR": "z. B. 55/45", "centeringTB": "z. B. 50/50", "corners": 1-10, "edges": 1-10, "surface": 1-10, "gradeLow": 1-10, "gradeHigh": 1-10, "issues": ["kurze deutsche Stichpunkte"], "photoQuality": "gut|mittel|schlecht"}. Sei eher streng. Wenn das Foto unscharf ist, sag es in issues.' },
         ],
       }],
+    }).catch(async (e: unknown) => {
+      // Fehlgeschlagener KI-Aufruf verbraucht keinen Scan
+      await db.delete(cardScans).where(eq(cardScans.id, reservation)).catch(() => {});
+      throw e;
     });
     const text = msg.content.map((p: any) => (p.type === "text" ? p.text : "")).join("");
     let r: any = {};
     try { r = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch {}
-    await db.insert(cardScans).values({ userId: user.id, result: `Zustand ${r.gradeLow ?? "?"}-${r.gradeHigh ?? "?"}` });
+    await db.update(cardScans).set({ result: `Zustand ${str(r.gradeLow, 4) || "?"}-${str(r.gradeHigh, 4) || "?"}` }).where(eq(cardScans.id, reservation));
     if (!r.isCard) return c.json({ ok: false, message: "Keine Karte erkannt. Bitte die Vorderseite gerade, hell und formatfüllend fotografieren." });
     const n = (v: unknown) => int(v, 1, 10, 0) || null;
     return c.json({

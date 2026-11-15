@@ -45,24 +45,66 @@ async function viewerPlan(c: any): Promise<{ userId: string | null; plan: PlanId
   return { userId: user.id, plan: effectivePlan(p), admin: isAdmin(user) };
 }
 
+/** Ist ein beobachtetes Produkt gerade frisch verfügbar und für diesen Tarif noch in der Verzögerung? */
+function watchLocked(w: typeof restockWatches.$inferSelect, delayMin: number, admin: boolean) {
+  if (admin || delayMin <= 0 || !w.lastChangeAt) return false;
+  if (w.status !== "in_stock" && w.status !== "preorder") return false;
+  return new Date(w.lastChangeAt).getTime() + delayMin * 60_000 > Date.now();
+}
+
 // ---------------------------------------------------------------------------
 // Automatische Prüfung der Produktseiten
 // ---------------------------------------------------------------------------
+const MAX_PAGE_BYTES = 1_500_000;
+const MAX_REDIRECTS = 3;
+
+/** Liest höchstens maxBytes einer Antwort (Schutz gegen riesige Seiten). */
+async function readLimited(res: Response, maxBytes: number) {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (total < maxBytes) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  try { await reader.cancel(); } catch {}
+  return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, maxBytes));
+}
+
 async function fetchProductPage(url: string) {
   if (!shopForUrl(url)) throw new Error("Shop nicht erlaubt");
-  const res = await fetch(url, {
-    redirect: "follow",
-    signal: AbortSignal.timeout(8000),
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; PokeSwipeRadar/2.0; Restock-Check)",
-      "Accept": "text/html,application/xhtml+xml",
-      "Accept-Language": "de-DE,de;q=0.9",
-    },
-  });
-  // Weiterleitungen auf fremde Domains werden nicht ausgewertet
-  if (res.url && !shopForUrl(res.url)) throw new Error("Weiterleitung auf fremde Domain");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return parseAvailability(await res.text());
+  const signal = AbortSignal.timeout(8000);
+  let current = url;
+  // Weiterleitungen manuell folgen: jedes Ziel muss wieder ein erlaubter Shop sein (kein SSRF über offene Redirects)
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const res = await fetch(current, {
+      redirect: "manual",
+      signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; PokeSwipeRadar/2.0; Restock-Check)",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "de-DE,de;q=0.9",
+      },
+    });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      try { await res.body?.cancel(); } catch {}
+      if (!loc) throw new Error(`HTTP ${res.status}`);
+      const next = new URL(loc, current).href;
+      if (!shopForUrl(next)) throw new Error("Weiterleitung auf fremde Domain");
+      current = next;
+      continue;
+    }
+    if (!res.ok) {
+      try { await res.body?.cancel(); } catch {}
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return parseAvailability(await readLimited(res, MAX_PAGE_BYTES));
+  }
+  throw new Error("Zu viele Weiterleitungen");
 }
 
 async function makeDrop(values: typeof restockDrops.$inferInsert) {
@@ -196,6 +238,22 @@ async function fakeChecksUsed(userId: string) {
   return Number(r?.n ?? 0);
 }
 
+/**
+ * Reserviert atomar einen Fake-Check: erst eintragen, dann zählen. Nur die ersten `limit` Einträge
+ * (nach ID) gelten – parallele Anfragen können das Monatslimit so nicht überschreiten.
+ */
+async function reserveFakeCheck(userId: string, limit: number): Promise<number | null> {
+  const [row] = await db.insert(cardScans).values({ userId, result: "Fake-Check pending" }).returning({ id: cardScans.id });
+  const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(cardScans)
+    .where(and(eq(cardScans.userId, userId), sql`${cardScans.result} LIKE 'Fake-Check%'`,
+      sql`${cardScans.createdAt} > now() - interval '30 days'`, sql`${cardScans.id} <= ${row.id}`));
+  if (Number(r?.n ?? 0) > limit) {
+    await db.delete(cardScans).where(eq(cardScans.id, row.id));
+    return null;
+  }
+  return row.id;
+}
+
 const IMG_RE = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/;
 
 // ---------------------------------------------------------------------------
@@ -228,7 +286,7 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
         title: locked ? "" : d.title, city: locked ? "" : d.city, price: locked ? null : num(d.price), uvp: num(d.uvp),
         verdict: locked ? null : uvpVerdict(num(d.price), num(d.uvp)), hasLink: Boolean(d.url), locked,
         unlockInMin: locked && unlockAt ? Math.ceil((unlockAt - now) / 60_000) : 0,
-        confirmations: d.confirmations, confirmed: confirmed.has(d.id), mine: d.reportedBy === viewer.userId,
+        confirmations: d.confirmations, confirmed: confirmed.has(d.id), mine: Boolean(viewer.userId) && d.reportedBy === viewer.userId,
         createdAt: d.createdAt, liveAt: d.liveAt,
       };
     });
@@ -241,9 +299,12 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
       if (!products.has(key)) products.set(key, { name: w.name, setName: w.setName, kind: w.kind, releaseDay: w.releaseDay, uvp: num(w.uvp), offers: [] });
       const p = products.get(key);
       if (!p.uvp && w.uvp) p.uvp = num(w.uvp);
+      // Frisch verfügbare Produkte erst nach der Tarif-Verzögerung zeigen (sonst wäre der Free-Delay umgehbar)
+      const fresh = watchLocked(w, delay, viewer.admin);
       p.offers.push({
-        id: w.id, shop: w.shop, shopLabel: SHOPS[w.shop]?.label || w.shop, status: w.status, price: num(w.lastPrice),
-        verdict: uvpVerdict(num(w.lastPrice), num(w.uvp)), checkedAt: w.lastCheckedAt, autoCheck: w.autoCheck,
+        id: w.id, shop: w.shop, shopLabel: SHOPS[w.shop]?.label || w.shop, status: fresh ? "unknown" : w.status,
+        price: fresh ? null : num(w.lastPrice), verdict: fresh ? null : uvpVerdict(num(w.lastPrice), num(w.uvp)),
+        checkedAt: w.lastCheckedAt, autoCheck: w.autoCheck, locked: fresh,
       });
     }
     let subscription = null;
@@ -345,10 +406,11 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
     const [w] = await db.select().from(restockWatches).where(eq(restockWatches.id, idParam(c))).limit(1);
     c.header("Cache-Control", "no-store");
     if (!w || !w.active) return c.redirect("/?tab=flip&sub=drops", 302);
+    const viewer = await viewerPlan(c);
+    if (watchLocked(w, PLANS[viewer.plan].restockDelayMin, viewer.admin)) return c.redirect("/?tab=flip&sub=drops", 302);
     if (rateLimit(`go:${clientIp(c)}`, 30, 60_000)) {
       try {
-        const u = await verifyIdentityToken(c).catch(() => null);
-        await db.insert(affiliateClicks).values({ partner: `preorder-${w.shop}`, userId: u?.id ?? null });
+        await db.insert(affiliateClicks).values({ partner: `preorder-${w.shop}`, userId: viewer.userId });
       } catch {}
     }
     const target = affiliateUrl(w.url, TAGS());
@@ -444,10 +506,17 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
     }
     if (name.length < 2) return c.json({ error: "Bitte die Karte auswählen oder einen Namen eingeben." }, 400);
     const value = money(b.value);
+    // Nur eigene Einsendungen verknüpfen
+    let submissionId: number | null = int(b.submissionId, 1, 2 ** 31 - 1, 0) || null;
+    if (submissionId) {
+      const [own] = await db.select({ id: gradingSubmissions.id }).from(gradingSubmissions)
+        .where(and(eq(gradingSubmissions.id, submissionId), eq(gradingSubmissions.userId, userId))).limit(1);
+      if (!own) submissionId = null;
+    }
     const [row] = await db.insert(gradedCards).values({
       userId, cardId, name, image, company, grade, certNumber: str(b.certNumber, 30).replace(/[^A-Za-z0-9-]/g, ""),
       purchasePrice: money(b.purchasePrice), value, valueUpdatedAt: value ? new Date() : null,
-      submissionId: int(b.submissionId, 1, 2 ** 31 - 1, 0) || null,
+      submissionId,
     }).returning();
     return c.json(row);
   });
@@ -540,6 +609,10 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
 {"isCard": true|false, "cardName": "erkannter Kartenname", "verdict": "likely_real"|"suspicious"|"likely_fake"|"unclear", "confidence": 0-100, "checks": [{"name": "kurzer deutscher Prüfpunkt", "ok": true|false|null, "note": "kurze deutsche Begründung"}], "tips": ["kurze deutsche Tipps für weitere Prüfung"], "photoQuality": "gut"|"mittel"|"schlecht"}
 Sei vorsichtig: Ein Foto ersetzt keine Prüfung in der Hand. Bei schlechter Fotoqualität wähle "unclear".`,
     });
+    const reservation = await reserveFakeCheck(user.id, limit);
+    if (!reservation) {
+      return c.json({ error: `Du hast deine ${limit} Fake-Check${limit > 1 ? "s" : ""} für diesen Monat genutzt (Tarif ${PLANS[plan].label}).`, upgrade: true }, 402);
+    }
     let r: any = {};
     try {
       const ai = new Anthropic({ timeout: 45_000 });
@@ -548,10 +621,11 @@ Sei vorsichtig: Ein Foto ersetzt keine Prüfung in der Hand. Bei schlechter Foto
       r = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
     } catch (e) {
       console.warn("Fake-Check fehlgeschlagen", e);
+      await db.delete(cardScans).where(eq(cardScans.id, reservation)).catch(() => {});
       return c.json({ error: "Die KI-Prüfung ist gerade nicht erreichbar. Es wurde kein Check verbraucht." }, 503);
     }
     const verdict = ["likely_real", "suspicious", "likely_fake", "unclear"].includes(r.verdict) ? r.verdict : "unclear";
-    await db.insert(cardScans).values({ userId: user.id, result: `Fake-Check ${verdict}` });
+    await db.update(cardScans).set({ result: `Fake-Check ${verdict}` }).where(eq(cardScans.id, reservation));
     if (!r.isCard) return c.json({ ok: false, message: "Keine Karte erkannt. Bitte die Karte gerade, hell und formatfüllend fotografieren.", left: Math.max(0, limit - (await fakeChecksUsed(user.id))) });
     return c.json({
       ok: true, verdict, confidence: int(r.confidence, 0, 100, 0), cardName: str(r.cardName, 80),

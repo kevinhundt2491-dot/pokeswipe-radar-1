@@ -1,7 +1,7 @@
 // PokeSwipe & Radar – Erweiterungen: Web-Push, Kamera-Scan, Set-Fortschritt, Sealed-Tracker,
 // Grading-Partner, Händler-Shops, Empfehlungsprogramm und die übersichtliche Unter-Navigation.
 import {
-  $, esc, jsArg, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
+  $, esc, jsArg, safeUrl, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart,
 } from "./core.js";
 import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml, collectorApi } from "./collector.js";
@@ -164,7 +164,7 @@ async function handleScan(file) {
     }
     box.innerHTML = `<p class="text-xs text-slate-300">Erkannt: <strong class="text-white">${esc(r.detected.name)}</strong>${r.detected.number ? ` • Nr. ${esc(r.detected.number)}${r.detected.total ? "/" + esc(r.detected.total) : ""}` : ""} – tippe auf die passende Karte:</p>
       <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">${r.candidates.map((c) => `
-        <button onclick="PS.openCard('${esc(c.id)}')" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-2 text-center">
+        <button onclick="PS.openCard(${jsArg(c.id)})" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-2 text-center">
           <img src="${esc(cdn(c.image || FALLBACK_IMG, 200))}" onerror="this.src='${FALLBACK_IMG}'" class="h-28 mx-auto object-contain" loading="lazy" />
           <p class="text-[11px] font-bold text-white truncate">${esc(c.name)}</p><p class="text-[10px] text-slate-400">${esc(c.id)}</p>
         </button>`).join("")}</div>`;
@@ -211,9 +211,9 @@ async function loadTrackedSets() {
   }
   try {
     const { sets, limit } = await api("/api/sets/tracked");
-    box.innerHTML = sets.length ? sets.map((s) => `<button onclick="PS.openSet('${esc(s.setId)}')" class="text-left bg-slate-950 border border-slate-800 hover:border-emerald-400 rounded-2xl p-3 text-xs">
-        <p class="font-black text-white truncate">${esc(s.setName)}</p><p class="text-emerald-400 font-bold">${s.owned} Karten gesammelt</p></button>`).join("")
-        + `<p class="text-[10px] text-slate-500 self-center">${sets.length}/${limit} Sets</p>`
+    box.innerHTML = sets.length ? sets.map((s) => `<button onclick="PS.openSet(${jsArg(s.setId)})" class="text-left bg-slate-950 border border-slate-800 hover:border-emerald-400 rounded-2xl p-3 text-xs">
+        <p class="font-black text-white truncate">${esc(s.setName)}</p><p class="text-emerald-400 font-bold">${Number(s.owned) || 0} Karten gesammelt</p></button>`).join("")
+        + `<p class="text-[10px] text-slate-500 self-center">${sets.length}/${Number(limit) || 0} Sets</p>`
       : `<p class="sm:col-span-3 text-xs text-slate-500">Noch kein Set verfolgt – such unten dein Lieblings-Set.</p>`;
   } catch {}
 }
@@ -230,11 +230,11 @@ async function loadSetList() {
 
 function renderSetList() {
   const q = ($("ps-set-q")?.value || "").toLowerCase().trim();
-  const list = (allSets || []).filter((s) => !q || s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)).slice(0, q ? 40 : 12);
+  const list = (allSets || []).filter((s) => !q || String(s.name || "").toLowerCase().includes(q) || String(s.id || "").toLowerCase().includes(q)).slice(0, q ? 40 : 12);
   const box = $("ps-set-list");
   if (!box) return;
   box.innerHTML = list.length ? list.map((s) => `<button onclick="PS.openSet(${jsArg(s.id)})" class="bg-slate-900 border border-slate-800 hover:border-emerald-400 rounded-xl p-2 text-left">
-      <p class="font-bold text-white truncate">${esc(s.name)}</p><p class="text-slate-500">${s.cardCount.total} Karten</p></button>`).join("")
+      <p class="font-bold text-white truncate">${esc(s.name)}</p><p class="text-slate-500">${Number(s.cardCount?.total) || 0} Karten</p></button>`).join("")
     : `<p class="col-span-full text-slate-500 text-center py-2">Kein Set gefunden.</p>`;
 }
 
@@ -285,18 +285,18 @@ async function loadSealed() {
 
 function renderSealed() {
   const kinds = ["all", ...new Set(sealed.map((p) => p.kind))];
-  if ($("ps-sealed-kinds")) $("ps-sealed-kinds").innerHTML = kinds.map((k) => `<button onclick="PS.sealedKind('${k}')" class="px-3 py-1.5 rounded-xl font-bold ${sealedKind === k ? "bg-purple-500 text-white" : "bg-slate-800 text-slate-300"}">${k === "all" ? "Alle" : KIND_LABEL[k] || k}</button>`).join("");
+  if ($("ps-sealed-kinds")) $("ps-sealed-kinds").innerHTML = kinds.map((k) => `<button onclick="PS.sealedKind(${jsArg(k)})" class="px-3 py-1.5 rounded-xl font-bold ${sealedKind === k ? "bg-purple-500 text-white" : "bg-slate-800 text-slate-300"}">${k === "all" ? "Alle" : esc(KIND_LABEL[k] || k)}</button>`).join("");
   const box = $("ps-sealed-list");
   if (!box) return;
   const list = sealed.filter((p) => sealedKind === "all" || p.kind === sealedKind);
-  box.innerHTML = list.length ? list.map((p) => `<button onclick="PS.openSealed(${p.id})" class="text-left bg-slate-950 border border-slate-800 hover:border-purple-400 rounded-2xl p-3 text-xs flex gap-3">
+  box.innerHTML = list.length ? list.map((p) => `<button onclick="PS.openSealed(${Number(p.id)})" class="text-left bg-slate-950 border border-slate-800 hover:border-purple-400 rounded-2xl p-3 text-xs flex gap-3">
       ${p.image ? `<img src="${esc(cdn(p.image, 120))}" class="w-14 h-14 object-contain rounded shrink-0" onerror="this.remove()" />` : `<div class="w-14 h-14 rounded-xl bg-slate-900 flex items-center justify-center text-2xl shrink-0">📦</div>`}
       <div class="min-w-0 flex-1">
         <p class="text-[10px] font-black text-purple-300 uppercase">${esc(KIND_LABEL[p.kind] || p.kind)}</p>
         <p class="font-black text-white truncate">${esc(p.name)}</p>
         <p><strong class="text-emerald-400 text-sm">${p.price ? eur(p.price) : "Preis folgt"}</strong>
           ${p.change30 !== null ? `<span class="${p.change30 >= 0 ? "text-emerald-400" : "text-rose-400"} font-bold">${pct(p.change30)}</span>` : ""}</p>
-        <p class="text-slate-500">${p.listing_count ? `${p.listing_count} Angebote ab ${eur(p.community_min)}` : "Noch keine Community-Angebote"}</p>
+        <p class="text-slate-500">${p.listing_count ? `${Number(p.listing_count) || 0} Angebote ab ${eur(p.community_min)}` : "Noch keine Community-Angebote"}</p>
       </div>
       <div class="self-center hidden sm:block">${sparkline(p.history, 70, 28, "#a78bfa")}</div>
     </button>`).join("") : `<p class="text-xs text-slate-500">Noch keine Produkte.</p>`;
@@ -310,14 +310,14 @@ async function loadSealedAlerts() {
     const { alerts } = await api("/api/sealed-alerts");
     box.innerHTML = alerts.map((a) => `<div class="flex items-center justify-between gap-2 bg-slate-900 border border-purple-500/40 rounded-xl px-3 py-2 text-xs">
       <span class="truncate"><strong class="text-white">${esc(a.name)}</strong> • jetzt ${a.price ? eur(a.price) : "–"} • Ziel ${a.direction === "below" ? "≤" : "≥"} <strong class="text-yellow-300">${eur(a.target_price)}</strong></span>
-      <button onclick="PS.deleteSealedAlert(${a.id})" class="text-slate-400 hover:text-rose-400" aria-label="Alarm löschen">✕</button></div>`).join("");
+      <button onclick="PS.deleteSealedAlert(${Number(a.id)})" class="text-slate-400 hover:text-rose-400" aria-label="Alarm löschen">✕</button></div>`).join("");
   } catch {}
 }
 
 async function openSealed(id) {
   modal("ps-sealed-m", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Produkt …</p>`, { wide: true });
   try {
-    const { product: p, history, offers } = await api(`/api/sealed/${id}`);
+    const { product: p, history, offers } = await api(`/api/sealed/${Number(id)}`);
     const points = history.map((h) => ({ day: h.day, value: Number(h.refPrice ?? h.communityAvg) })).filter((x) => x.value > 0);
     modal("ps-sealed-m", `
       <p class="text-[10px] font-black text-purple-300 uppercase">${esc(KIND_LABEL[p.kind] || p.kind)} • ${esc(p.set_name)}</p>
@@ -325,7 +325,7 @@ async function openSealed(id) {
       <div class="grid grid-cols-3 gap-2 text-xs text-center">
         <div class="bg-slate-950 rounded-xl p-2"><p class="text-[10px] text-slate-400 uppercase font-bold">Referenzpreis</p><p class="text-base font-black text-emerald-400">${p.ref_price ? eur(p.ref_price) : "–"}</p>
           <p class="text-[10px] text-slate-500">${p.ref_updated_at ? "Stand " + new Date(p.ref_updated_at).toLocaleDateString("de-DE") : "folgt"}</p></div>
-        <div class="bg-slate-950 rounded-xl p-2"><p class="text-[10px] text-slate-400 uppercase font-bold">Community Ø</p><p class="text-base font-black text-white">${p.community_avg ? eur(p.community_avg) : "–"}</p><p class="text-[10px] text-slate-500">${p.listing_count} Angebote</p></div>
+        <div class="bg-slate-950 rounded-xl p-2"><p class="text-[10px] text-slate-400 uppercase font-bold">Community Ø</p><p class="text-base font-black text-white">${p.community_avg ? eur(p.community_avg) : "–"}</p><p class="text-[10px] text-slate-500">${Number(p.listing_count) || 0} Angebote</p></div>
         <div class="bg-slate-950 rounded-xl p-2"><p class="text-[10px] text-slate-400 uppercase font-bold">30 Tage</p><p class="text-base font-black ${p.change30 >= 0 ? "text-emerald-400" : "text-rose-400"}">${p.change30 !== null ? pct(p.change30) : "–"}</p></div>
       </div>
       <div class="bg-slate-950 rounded-2xl p-3 border border-slate-800">${areaChart(points)}</div>
@@ -333,19 +333,19 @@ async function openSealed(id) {
         <div class="bg-slate-950 rounded-2xl p-3 border border-yellow-400/40 space-y-2">
           <p class="font-black text-yellow-300">🎯 Preisalarm</p>
           <div class="flex gap-2"><select id="ps-sa-dir" class="bg-slate-900 border border-slate-700 rounded-xl px-2 text-white"><option value="below">unter</option><option value="above">über</option></select>
-          ${input("ps-sa-price", `type="number" step="0.01" min="0.01" value="${p.price ? (p.price * 0.9).toFixed(2) : ""}" placeholder="Zielpreis €"`)}</div>
-          ${btn("Alarm aktivieren", `PS.createSealedAlert(${p.id})`, "w-full bg-yellow-400 text-slate-950")}
+          ${input("ps-sa-price", `type="number" step="0.01" min="0.01" value="${p.price ? ((Number(p.price) || 0) * 0.9).toFixed(2) : ""}" placeholder="Zielpreis €"`)}</div>
+          ${btn("Alarm aktivieren", `PS.createSealedAlert(${Number(p.id)})`, "w-full bg-yellow-400 text-slate-950")}
         </div>
         <div class="bg-slate-950 rounded-2xl p-3 border border-emerald-500/40 space-y-2">
           <p class="font-black text-emerald-300">🤝 Selbst anbieten</p>
-          ${input("ps-sl-price", `type="number" step="0.01" min="0" value="${p.price ? p.price.toFixed(2) : ""}" placeholder="Dein Preis €"`)}
-          ${btn("Im Tausch-Hub inserieren", `PS.listSealed(${p.id})`, "w-full bg-emerald-500 text-slate-950")}
+          ${input("ps-sl-price", `type="number" step="0.01" min="0" value="${p.price ? (Number(p.price) || 0).toFixed(2) : ""}" placeholder="Dein Preis €"`)}
+          ${btn("Im Tausch-Hub inserieren", `PS.listSealed(${Number(p.id)})`, "w-full bg-emerald-500 text-slate-950")}
         </div>
       </div>
       <div class="space-y-1.5 text-xs">
         <p class="font-black text-white">Aktuelle Angebote</p>
         ${offers.length ? offers.map((o) => `<div class="flex items-center justify-between bg-slate-900 rounded-xl px-3 py-2"><span><strong class="text-emerald-400">${eur(o.price)}</strong> • 📍 ${esc(o.city)} • ${esc(o.seller)}</span>
-          ${state.user?.id === o.user_id ? `<span class="text-slate-500">dein Angebot</span>` : btn("🤝 Anfragen", `PS.requestTrade(${o.id})`, "bg-emerald-500 text-slate-950")}</div>`).join("")
+          ${state.user?.id === o.user_id ? `<span class="text-slate-500">dein Angebot</span>` : btn("🤝 Anfragen", `PS.requestTrade(${Number(o.id)})`, "bg-emerald-500 text-slate-950")}</div>`).join("")
           : `<p class="text-slate-500">Noch keine Angebote – sei der Erste!</p>`}
       </div>
       <div class="flex gap-2 text-xs">
@@ -412,8 +412,8 @@ async function loadPartners() {
     box.innerHTML = partners.map((p) => `<div class="bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs space-y-1.5 flex flex-col">
       <p class="text-sm font-black text-white">${esc(p.name)}</p>
       <p class="text-slate-300 flex-1">${esc(p.tagline)}</p>
-      <div class="flex flex-wrap gap-1">${p.features.map((f) => `<span class="bg-slate-800 text-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold">${esc(f)}</span>`).join("")}</div>
-      <a href="${esc(p.link)}" target="_blank" rel="noopener sponsored" class="block text-center bg-yellow-400 text-slate-950 font-black py-2 rounded-xl mt-1">Zu ${esc(p.name)}${p.affiliate ? "*" : ""} ↗</a>
+      <div class="flex flex-wrap gap-1">${(Array.isArray(p.features) ? p.features : []).map((f) => `<span class="bg-slate-800 text-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold">${esc(f)}</span>`).join("")}</div>
+      ${safeUrl(p.link) ? `<a href="${esc(safeUrl(p.link))}" target="_blank" rel="noopener sponsored" class="block text-center bg-yellow-400 text-slate-950 font-black py-2 rounded-xl mt-1">Zu ${esc(p.name)}${p.affiliate ? "*" : ""} ↗</a>` : ""}
     </div>`).join("");
   } catch {}
 }
@@ -440,11 +440,11 @@ async function loadShops() {
   if (!box) return;
   try {
     const { shops } = await api("/api/shops");
-    box.innerHTML = shops.length ? shops.map((s) => `<button onclick="PS.openShop('${esc(s.shop_slug)}')" class="text-left bg-slate-950 border border-slate-800 hover:border-cyan-400 rounded-2xl p-3 text-xs space-y-1">
+    box.innerHTML = shops.length ? shops.map((s) => `<button onclick="PS.openShop(${jsArg(s.shop_slug)})" class="text-left bg-slate-950 border border-slate-800 hover:border-cyan-400 rounded-2xl p-3 text-xs space-y-1">
         <p class="text-sm font-black text-white truncate">🏪 ${esc(s.title)} <span class="text-cyan-300 text-[10px]">✔</span></p>
         <p class="text-slate-400 truncate">${esc(s.display_name)}${s.city ? " • 📍 " + esc(s.city) : ""}</p>
         <p class="text-slate-300 line-clamp-2">${esc(s.shop_bio || "")}</p>
-        <p><span class="text-emerald-400 font-bold">${s.listing_count} Angebote</span> ${s.rating_count ? `<span class="text-amber-300">⭐ ${s.rating} (${s.rating_count})</span>` : ""}</p>
+        <p><span class="text-emerald-400 font-bold">${Number(s.listing_count) || 0} Angebote</span> ${s.rating_count ? `<span class="text-amber-300">⭐ ${Number(s.rating) || 0} (${Number(s.rating_count) || 0})</span>` : ""}</p>
       </button>`).join("") : `<p class="sm:col-span-3 text-xs text-slate-500">Noch keine Händler-Shops. Pro-Trader können ihren Shop im Konto einrichten.</p>`;
   } catch {}
 }
@@ -453,18 +453,18 @@ async function openShop(slug) {
   modal("ps-shop", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Shop …</p>`, { wide: true });
   try {
     const { shop, listings } = await api(`/api/shops/${encodeURIComponent(slug)}`);
-    const url = `${location.origin}/shop/${shop.slug}`;
+    const url = `${location.origin}/shop/${encodeURIComponent(shop.slug || "")}`;
     modal("ps-shop", `
       <div class="rounded-2xl p-4 bg-gradient-to-r from-cyan-600/80 via-indigo-700/80 to-purple-800/80 border border-cyan-300/50">
         <p class="text-[10px] font-black uppercase text-cyan-200">✔ Verifizierter Händler</p>
         <h3 class="text-lg font-black text-white">🏪 ${esc(shop.title)}</h3>
         <p class="text-xs text-slate-100">${esc(shop.displayName)}${shop.city ? " • 📍 " + esc(shop.city) : ""} • dabei seit ${new Date(shop.memberSince).toLocaleDateString("de-DE", { month: "short", year: "numeric" })}</p>
-        <p class="text-xs text-white mt-1">${shop.rating.count ? `⭐ ${shop.rating.avg} (${shop.rating.count} Bewertungen)` : "Noch keine Bewertungen"} • ${shop.completedTrades} Tausche</p>
+        <p class="text-xs text-white mt-1">${shop.rating?.count ? `⭐ ${Number(shop.rating.avg) || 0} (${Number(shop.rating.count) || 0} Bewertungen)` : "Noch keine Bewertungen"} • ${Number(shop.completedTrades) || 0} Tausche</p>
         ${shop.bio ? `<p class="text-xs text-slate-100 mt-2 whitespace-pre-line">${esc(shop.bio)}</p>` : ""}
       </div>
       <div class="flex gap-2 text-xs">
         ${btn("🔗 Shop-Link teilen", `PS.shareLink(${jsArg(url)}, ${jsArg(shop.title)})`, "bg-slate-800 text-white")}
-        ${btn("⭐ Bewertungen", `PS.openUser('${esc(shop.userId)}')`, "bg-slate-800 text-white")}
+        ${btn("⭐ Bewertungen", `PS.openUser(${jsArg(shop.userId)})`, "bg-slate-800 text-white")}
       </div>
       <div class="space-y-2 max-h-[55vh] overflow-y-auto">${listings.length ? listings.map((l) => PS().listingCard(l)).join("") : `<p class="text-xs text-slate-500 text-center py-4">Gerade keine Angebote.</p>`}</div>`, {
       wide: true,
@@ -491,7 +491,7 @@ function openShopSettings() {
       <label class="text-slate-300 font-bold">Beschreibung</label>
       <textarea id="ps-shop-bio" maxlength="600" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Was bietest du an? Versand, Zahlungsarten, Abholung …">${esc(m.shop.bio || "")}</textarea>
       ${btn("Speichern", "PS.saveShop()", "w-full bg-emerald-500 text-slate-950")}
-      ${m.shop.slug ? btn("Meinen Shop ansehen", `PS.openShop('${esc(m.shop.slug)}')`, "w-full bg-slate-800 text-white") : ""}
+      ${m.shop.slug ? btn("Meinen Shop ansehen", `PS.openShop(${jsArg(m.shop.slug)})`, "w-full bg-slate-800 text-white") : ""}
       ${btn("📊 Shop-Statistik", "PS.openShopStats()", "w-full bg-slate-800 text-cyan-300")}
     </div>`);
 }
@@ -542,8 +542,8 @@ export function referralHtml() {
     <p class="font-black text-emerald-300">🎁 Freunde einladen – Gratismonat sichern</p>
     <p class="text-slate-300">Deine Freunde bekommen den ersten Monat Premium/Pro gratis. Sobald jemand danach zahlt, bekommst du einen Monat geschenkt.</p>
     <div class="flex gap-2"><input readonly value="${esc(r.link)}" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-[11px]" onclick="this.select()" />
-      ${btn("Teilen", `PS.shareLink('${esc(r.link)}', 'PokeSwipe & Radar – 1 Monat Premium gratis')`, "bg-emerald-500 text-slate-950")}</div>
-    <p class="text-slate-500">${r.invited} eingeladen • ${r.rewarded} Gratismonate verdient${state.me.bonusUntil && new Date(state.me.bonusUntil) > new Date() ? ` • Premium geschenkt bis ${new Date(state.me.bonusUntil).toLocaleDateString("de-DE")}` : ""}</p>
+      ${btn("Teilen", `PS.shareLink(${jsArg(r.link)}, 'PokeSwipe & Radar – 1 Monat Premium gratis')`, "bg-emerald-500 text-slate-950")}</div>
+    <p class="text-slate-500">${Number(r.invited) || 0} eingeladen • ${Number(r.rewarded) || 0} Gratismonate verdient${state.me.bonusUntil && new Date(state.me.bonusUntil) > new Date() ? ` • Premium geschenkt bis ${new Date(state.me.bonusUntil).toLocaleDateString("de-DE")}` : ""}</p>
   </div>`;
 }
 
@@ -565,9 +565,9 @@ export async function adminExtrasHtml() {
     <h4 class="text-sm font-black text-white">📦 Sealed-Referenzpreise</h4>
     <div class="space-y-1.5 max-h-72 overflow-y-auto text-xs">${products.map((p) => `<div class="flex items-center gap-2 bg-slate-900 rounded-xl px-2.5 py-1.5">
       <span class="flex-1 truncate text-white">${esc(p.name)} <span class="text-slate-500">(${esc(KIND_LABEL[p.kind] || p.kind)})</span></span>
-      <input id="ps-ad-sp-${p.id}" type="number" step="0.01" min="0" value="${p.ref_price ?? ""}" placeholder="€" class="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-white" />
-      <button onclick="PS.adminSealedPrice(${p.id})" class="bg-emerald-500 text-slate-950 font-black px-2.5 py-1 rounded-lg">✓</button>
-      <button onclick="PS.adminSealedHide(${p.id})" class="text-slate-400 hover:text-rose-400 px-1" title="Ausblenden">✕</button></div>`).join("")}</div>
+      <input id="ps-ad-sp-${Number(p.id)}" type="number" step="0.01" min="0" value="${esc(p.ref_price ?? "")}" placeholder="€" class="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-white" />
+      <button onclick="PS.adminSealedPrice(${Number(p.id)})" class="bg-emerald-500 text-slate-950 font-black px-2.5 py-1 rounded-lg">✓</button>
+      <button onclick="PS.adminSealedHide(${Number(p.id)})" class="text-slate-400 hover:text-rose-400 px-1" title="Ausblenden">✕</button></div>`).join("")}</div>
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
       <input id="ps-ad-sn" placeholder="Neues Produkt" class="col-span-2 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white" />
       <select id="ps-ad-sk" class="bg-slate-900 border border-slate-700 rounded-lg px-2 text-white">${Object.entries(KIND_LABEL).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
@@ -580,10 +580,10 @@ export async function adminExtrasHtml() {
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">${aff.partners.map((p) => {
         const c = aff.clicks.find((x) => x.partner === p.id);
         return `<div class="bg-slate-950 rounded-xl p-2 border ${p.configured ? "border-emerald-500/40" : "border-amber-500/40"}"><p class="font-black text-white">${esc(p.name)}</p>
-          <p class="text-slate-300">${c ? c.this_month : 0} Klicks (Monat) • ${c ? c.total : 0} gesamt</p>
+          <p class="text-slate-300">${c ? Number(c.this_month) || 0 : 0} Klicks (Monat) • ${c ? Number(c.total) || 0 : 0} gesamt</p>
           <p class="text-[10px] ${p.configured ? "text-emerald-400" : "text-amber-300"}">${p.configured ? "Partner-Link aktiv" : `Partner-Link fehlt: ${esc(p.env)}`}</p></div>`;
       }).join("")}</div>
-      <p class="text-xs text-slate-300">🎁 Empfehlungen: ${aff.referrals.referred} geworbene Nutzer, ${aff.referrals.converted} davon zahlend.</p>` : ""}
+      <p class="text-xs text-slate-300">🎁 Empfehlungen: ${Number(aff.referrals?.referred) || 0} geworbene Nutzer, ${Number(aff.referrals?.converted) || 0} davon zahlend.</p>` : ""}
     ${await adminGrowthHtml()}`;
 }
 
@@ -678,6 +678,9 @@ function buildSubtabs() {
 }
 
 export function showSub(view, key, { silent = false } = {}) {
+  // view/key können aus der URL (?tab=…&sub=…) kommen – nur bekannte Bereiche, sonst wirft querySelector
+  if (!Object.prototype.hasOwnProperty.call(SUBTABS, view)) return;
+  if (!/^\w{1,32}$/.test(String(key || ""))) key = SUBTABS[view][0].key;
   const section = $(`view-${view}`);
   if (!section) return;
   if (!silent && section.classList.contains("hidden")) { try { window.switchTab(view); } catch {} }
@@ -798,7 +801,7 @@ export function routeFeatures() {
   const slug = m?.[1] || (/^[a-z0-9-]{3,30}$/.test(params.get("shop") || "") ? params.get("shop") : null);
   if (slug) { showSub("map", "shops"); openShop(slug); }
   const tab = params.get("tab"), sub = params.get("sub");
-  if (tab && sub && SUBTABS[tab]) showSub(tab, sub);
+  if (tab && sub && Object.prototype.hasOwnProperty.call(SUBTABS, tab)) showSub(tab, sub);
   if (params.get("scan") === "1") openScanner();
   routeGrowth();
   routeDrops();

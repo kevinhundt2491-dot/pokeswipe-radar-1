@@ -10,7 +10,7 @@ import { getCard, cardPrice, notify, evaluateSealedAlerts, CARD_ID_RE } from "./
 import { getVapid, isValidPushEndpoint, sendPush } from "./push.ts";
 import { verifyIdentityToken } from "./auth.ts";
 import { recordShopView } from "./growth.ts";
-import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
+import { str, money, int, rows, rateLimit, clientIp, euro, trustedOrigin } from "./util.ts";
 
 type Profile = typeof profiles.$inferSelect;
 
@@ -56,6 +56,22 @@ async function scansToday(userId: string) {
   return Number(r?.n ?? 0);
 }
 
+/**
+ * Reserviert atomar einen KI-Scan (Tageslimit): erst eintragen, dann zählen. Nur die ersten `limit`
+ * Einträge der letzten 24 h (nach ID) gelten – parallele Anfragen können das Limit nicht überschreiten.
+ * Liefert die ID der Reservierung oder null, wenn das Limit erreicht ist.
+ */
+export async function reserveScan(userId: string, limit: number): Promise<number | null> {
+  const [row] = await db.insert(cardScans).values({ userId, result: "" }).returning({ id: cardScans.id });
+  const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(cardScans)
+    .where(and(eq(cardScans.userId, userId), sql`${cardScans.createdAt} > now() - interval '1 day'`, sql`${cardScans.id} <= ${row.id}`));
+  if (Number(r?.n ?? 0) > limit) {
+    await db.delete(cardScans).where(eq(cardScans.id, row.id));
+    return null;
+  }
+  return row.id;
+}
+
 export async function extraMe(c: any, profile: Profile, plan: PlanId) {
   const code = await ensureReferralCode(profile);
   const [ref] = rows(await db.execute(sql`
@@ -63,7 +79,7 @@ export async function extraMe(c: any, profile: Profile, plan: PlanId) {
     FROM profiles WHERE referred_by = ${profile.userId}
   `));
   const [sets] = await db.select({ n: sql<number>`count(*)::int` }).from(trackedSets).where(eq(trackedSets.userId, profile.userId));
-  const origin = c.req.header("origin") || process.env.URL || "https://pokeswipe-radar.de";
+  const origin = trustedOrigin(c) || process.env.URL || "https://pokeswipe-radar.de";
   return {
     referral: {
       code,
@@ -270,6 +286,10 @@ export function registerFeatures(app: any, h: {
     }
     const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String((await body(c)).image || ""));
     if (!m || m[2].length > 2_000_000) return c.json({ error: "Bitte ein Foto (JPG/PNG, max. ca. 1,5 MB) aufnehmen." }, 400);
+    const reservation = await reserveScan(user.id, PLANS[plan].scansPerDay);
+    if (!reservation) {
+      return c.json({ error: `Tageslimit erreicht: ${PLANS[plan].scansPerDay} Scans im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+    }
 
     const ai = new Anthropic();
     const msg = await ai.messages.create({
@@ -282,13 +302,17 @@ export function registerFeatures(app: any, h: {
           { type: "text", text: 'Das Foto zeigt eine Pokémon-Sammelkarte. Antworte NUR mit JSON: {"name": "Kartenname wie aufgedruckt (ohne HP)", "number": "Kartennummer vor dem Schrägstrich, z. B. 199", "total": "Zahl nach dem Schrägstrich", "language": "de|en|ja|other", "isPokemonCard": true|false}. Unbekannte Werte als leeren String.' },
         ],
       }],
+    }).catch(async (e: unknown) => {
+      // Fehlgeschlagener KI-Aufruf verbraucht keinen Scan
+      await db.delete(cardScans).where(eq(cardScans.id, reservation)).catch(() => {});
+      throw e;
     });
     const text = msg.content.map((p: any) => (p.type === "text" ? p.text : "")).join("");
     let parsed: any = {};
     try { parsed = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch {}
     const name = str(parsed.name, 80).replace(/\s*-?\s*ex$/i, (x) => x).trim();
     const number = normNum(str(parsed.number, 12));
-    await db.insert(cardScans).values({ userId: user.id, result: `${name} ${number}`.trim().slice(0, 120) });
+    await db.update(cardScans).set({ result: `${name} ${number}`.trim().slice(0, 120) }).where(eq(cardScans.id, reservation));
     if (!parsed.isPokemonCard || !name) return c.json({ found: false, message: "Keine Pokémon-Karte erkannt. Bitte Karte gerade, hell und formatfüllend fotografieren." });
 
     const baseName = name.replace(/\s+(ex|EX|GX|V|VMAX|VSTAR)$/u, "").trim();

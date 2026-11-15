@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { and, desc, eq, gt, sql, inArray, or } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
 import {
@@ -22,6 +23,11 @@ type Vars = { user: AuthUser; profile: Profile; plan: PlanId };
 const app = new Hono<{ Variables: Vars }>();
 app.use("/api/*", securityHeaders);
 app.use("/api/*", sameOriginWrites);
+// Schutz vor übergroßen Anfragen (Speicher-/DoS-Schutz); Bilder werden im Browser vorher verkleinert
+app.use("/api/*", bodyLimit({
+  maxSize: 6 * 1024 * 1024,
+  onError: (c) => c.json({ error: "Die Anfrage ist zu groß. Bitte weniger oder kleinere Bilder senden." }, 413),
+}));
 
 app.onError((err, c) => {
   console.error("API-Fehler", c.req.method, c.req.path, err);
@@ -359,8 +365,14 @@ function safeImage(v: unknown): string {
 async function storeDataUrlImage(dataUrl: unknown, userId: string): Promise<string> {
   const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ""));
   if (!m) return "";
+  if (m[2].length > 820_000) return "";
   const bytes = Buffer.from(m[2], "base64");
   if (bytes.length > 600_000) return "";
+  // Inhalt muss zum angegebenen Bildtyp passen (Magic Bytes), sonst nicht speichern
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isPng = bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isWebp = bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP";
+  if (!((m[1] === "image/jpeg" && isJpeg) || (m[1] === "image/png" && isPng) || (m[1] === "image/webp" && isWebp))) return "";
   const key = crypto.randomUUID();
   await getStore("listing-images").set(key, new Uint8Array(bytes).buffer, { metadata: { type: m[1], userId } });
   return `/api/images/${key}`;
@@ -371,8 +383,10 @@ app.get("/api/images/:key", async (c) => {
   if (!/^[a-f0-9-]{36}$/.test(key)) return c.notFound();
   const res = await getStore("listing-images").getWithMetadata(key, { type: "arrayBuffer" });
   if (!res) return c.notFound();
+  const type = String(res.metadata?.type || "");
   return c.body(res.data as ArrayBuffer, 200, {
-    "Content-Type": String(res.metadata?.type || "image/jpeg"),
+    "Content-Type": ["image/jpeg", "image/png", "image/webp"].includes(type) ? type : "application/octet-stream",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
     "Cache-Control": "public, max-age=31536000, immutable",
   });
 });
@@ -560,7 +574,10 @@ app.post("/api/trades/:id/action", auth, async (c) => {
   }
   if (!updates) return c.json({ error: "Diese Aktion ist gerade nicht möglich." }, 409);
 
-  const [updated] = await db.update(trades).set({ ...updates, updatedAt: new Date() }).where(eq(trades.id, id)).returning();
+  // Nur anwenden, wenn sich der Status seit dem Laden nicht geändert hat (keine Doppel-/Gegenaktionen)
+  const [updated] = await db.update(trades).set({ ...updates, updatedAt: new Date() })
+    .where(and(eq(trades.id, id), eq(trades.status, t.status))).returning();
+  if (!updated) return c.json({ error: "Diese Aktion ist gerade nicht möglich." }, 409);
   if (updated.status === "completed" && t.listingId) {
     await db.update(listings).set({ status: "sold" }).where(eq(listings.id, t.listingId));
   }
@@ -699,10 +716,18 @@ app.post("/api/billing/boost", auth, async (c) => {
     .where(and(eq(listings.id, listingId), eq(listings.userId, user.id), eq(listings.status, "active"))).limit(1);
   if (!listing) return c.json({ error: "Inserat nicht gefunden" }, 404);
 
+  const allowance = PLANS[plan].freeBoostsPerMonth;
   if ((await freeBoostsLeft(user.id, plan)) > 0) {
-    await db.insert(freeBoostUsage).values({ userId: user.id, listingId, month: monthKey() });
-    const until = await extendBoost(listingId);
-    return c.json({ boosted: true, boostedUntil: until, included: true });
+    // Erst reservieren, dann zählen: parallele Anfragen können das Monatskontingent nicht überschreiten
+    const month = monthKey();
+    const [usage] = await db.insert(freeBoostUsage).values({ userId: user.id, listingId, month }).returning({ id: freeBoostUsage.id });
+    const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(freeBoostUsage)
+      .where(and(eq(freeBoostUsage.userId, user.id), eq(freeBoostUsage.month, month), sql`${freeBoostUsage.id} <= ${usage.id}`));
+    if (Number(r?.n ?? 0) <= allowance) {
+      const until = await extendBoost(listingId);
+      return c.json({ boosted: true, boostedUntil: until, included: true });
+    }
+    await db.delete(freeBoostUsage).where(eq(freeBoostUsage.id, usage.id));
   }
 
   const s = stripe();
@@ -874,6 +899,14 @@ registerGrowth(app, { auth, adminOnly, body, ratingOf });
 registerCollector(app, { auth, body });
 registerDrops(app, { auth, adminOnly, body });
 registerVoiceover(app, { auth, adminOnly, body });
+
+// Öffentliche (nicht geheime) Client-Konfiguration. Der Firebase-Web-API-Schlüssel ist laut Firebase kein
+// Geheimnis, sondern nur eine Projekt-Kennung – die Sicherheit kommt aus den Datenbank-Regeln.
+app.get("/api/public-config", (c) => {
+  const key = (process.env.FIREBASE_WEB_API_KEY || "").trim();
+  c.header("Cache-Control", "public, max-age=600");
+  return c.json({ firebaseApiKey: /^[A-Za-z0-9_-]{20,60}$/.test(key) ? key : null });
+});
 
 app.all("/api/*", (c) => c.json({ error: "Nicht gefunden" }, 404));
 

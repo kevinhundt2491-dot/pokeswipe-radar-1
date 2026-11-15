@@ -1,6 +1,6 @@
 // Master-Set-Tracker mit Stückzahlen, „Set vervollständigen“-Modus, Cardmarket-Wants-Liste
 // und Duplikat-Radar mit Verkaufs-Automatik (P2P-Inserat, Cardmarket-Assistent, CSV-Export).
-import { $, esc, eur, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn } from "./core.js";
+import { $, esc, jsArg, safeImg, eur, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn } from "./core.js";
 import { setStats, wantsText, groupDuplicates, surplusBadge, sellText, cardmarketCsv, ebayQuery, cmName } from "./collector-logic.js";
 
 const PS = () => window.PS;
@@ -8,7 +8,7 @@ const CM_BASE = "https://www.cardmarket.com/de/Pokemon";
 const track = (url) => (window.withCardmarketTracking ? window.withCardmarketTracking(url) : url);
 const cmSearch = (name) => track(`${CM_BASE}/Products/Search?searchString=${encodeURIComponent(cmName(name).slice(0, 120))}`);
 const ebayBuy = (q, src) => (window.buildEbayUrl ? window.buildEbayUrl(q, "bin", src) : "#");
-const attr = (v) => esc(JSON.stringify(String(v ?? "")));
+const attr = jsArg;
 
 /** Offizielle Sets als Schnellauswahl (TCGdex-IDs). */
 export const QUICK_SETS = [
@@ -16,7 +16,7 @@ export const QUICK_SETS = [
   ["swsh12.5", "Zenit der Könige"], ["sv03", "Obsidianflammen"], ["me01", "Mega-Entwicklung"],
 ];
 export const quickSetsHtml = () => `<div class="flex gap-1.5 overflow-x-auto pb-1 text-[11px]" aria-label="Beliebte Sets">${QUICK_SETS.map(([id, n]) =>
-  `<button onclick="PS.openSet('${id}')" class="shrink-0 bg-slate-900 border border-emerald-500/40 hover:border-emerald-300 text-emerald-200 font-bold rounded-full px-3 py-1.5">${esc(n)}</button>`).join("")}</div>`;
+  `<button onclick="PS.openSet(${attr(id)})" class="shrink-0 bg-slate-900 border border-emerald-500/40 hover:border-emerald-300 text-emerald-200 font-bold rounded-full px-3 py-1.5">${esc(n)}</button>`).join("")}</div>`;
 
 // ---------------------------------------------------------------------------
 // Zwischenablage
@@ -48,24 +48,24 @@ export function getCurrentSet() { return currentSet; }
 
 function qtyControl(c) {
   return `<div class="flex items-center justify-center gap-1 mt-1">
-      <button onclick="PS.qtyStep('${esc(c.id)}',-1)" class="w-8 h-8 rounded-lg bg-slate-800 text-white font-black text-sm active:scale-95 disabled:opacity-30" ${c.qty ? "" : "disabled"} aria-label="Eine weniger">−</button>
-      <span class="min-w-[2rem] text-center text-xs font-black ${c.qty ? "text-emerald-300" : "text-slate-500"}">${c.qty}x</span>
-      <button onclick="PS.qtyStep('${esc(c.id)}',1)" class="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 font-black text-sm active:scale-95" aria-label="Eine mehr">+</button>
+      <button onclick="PS.qtyStep(${attr(c.id)},-1)" class="w-8 h-8 rounded-lg bg-slate-800 text-white font-black text-sm active:scale-95 disabled:opacity-30" ${c.qty ? "" : "disabled"} aria-label="Eine weniger">−</button>
+      <span class="min-w-[2rem] text-center text-xs font-black ${c.qty ? "text-emerald-300" : "text-slate-500"}">${Number(c.qty) || 0}x</span>
+      <button onclick="PS.qtyStep(${attr(c.id)},1)" class="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 font-black text-sm active:scale-95" aria-label="Eine mehr">+</button>
     </div>`;
 }
 
 function tileHtml(c) {
   const dup = c.qty >= 2;
   return `<div class="relative rounded-xl border ${dup ? "border-amber-400 bg-amber-500/10" : c.qty ? "border-emerald-400 bg-emerald-500/10" : "border-slate-800 bg-slate-900"} p-1.5 text-center min-w-0">
-      <button onclick="PS.toggleOwned('${esc(c.id)}')" class="block w-full" aria-label="${c.qty ? "Als fehlend markieren" : "Als vorhanden markieren"}">
+      <button onclick="PS.toggleOwned(${attr(c.id)})" class="block w-full" aria-label="${c.qty ? "Als fehlend markieren" : "Als vorhanden markieren"}">
         <img src="${esc(cdn(c.image || FALLBACK_IMG, 180))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-24 mx-auto object-contain ${c.qty ? "" : "opacity-40 grayscale"}" alt="" />
         <p class="text-[10px] font-bold text-white truncate">${esc(c.localId)} ${esc(c.name)}</p>
         <p class="text-[10px] ${c.qty ? "text-emerald-400" : "text-slate-400"} font-bold">${c.price ? eur(c.price) : "–"}</p>
       </button>
       ${qtyControl(c)}
-      ${dup ? `<button onclick="PS.sellSurplus('${esc(c.id)}')" class="mt-1 w-full bg-amber-400 text-slate-950 text-[9px] leading-tight font-black rounded-md px-1 py-1" aria-label="Überschuss verkaufen">+${c.qty - 1}x Überschuss<br>${c.price ? `${eur(c.price * (c.qty - 1))} · ` : ""}verkaufen</button>` : ""}
-      ${c.qty ? `<span class="absolute top-1 left-1 bg-emerald-400 text-slate-950 text-[9px] font-black rounded px-1">✓${c.qty > 1 ? c.qty : ""}</span>` : ""}
-      <button onclick="PS.openCard('${esc(c.id)}')" class="absolute top-1 right-1 bg-slate-950/80 text-white text-[10px] rounded px-1.5 py-0.5" aria-label="Details">ℹ</button>
+      ${dup ? `<button onclick="PS.sellSurplus(${attr(c.id)})" class="mt-1 w-full bg-amber-400 text-slate-950 text-[9px] leading-tight font-black rounded-md px-1 py-1" aria-label="Überschuss verkaufen">+${(Number(c.qty) || 0) - 1}x Überschuss<br>${c.price ? `${eur(c.price * (c.qty - 1))} · ` : ""}verkaufen</button>` : ""}
+      ${c.qty ? `<span class="absolute top-1 left-1 bg-emerald-400 text-slate-950 text-[9px] font-black rounded px-1">✓${c.qty > 1 ? Number(c.qty) || 0 : ""}</span>` : ""}
+      <button onclick="PS.openCard(${attr(c.id)})" class="absolute top-1 right-1 bg-slate-950/80 text-white text-[10px] rounded px-1.5 py-0.5" aria-label="Details">ℹ</button>
     </div>`;
 }
 
@@ -77,7 +77,7 @@ function missingRowHtml(c, s) {
           <p class="font-bold text-white truncate">${esc(c.name)}</p>
           <p class="text-[10px] text-slate-400">${esc(s.abbr || s.name)} ${esc(c.localId)} • <span class="text-yellow-300 font-black">${c.price ? eur(c.price) : "Preis folgt"}</span></p>
         </div>
-        <button onclick="PS.qtyStep('${esc(c.id)}',1)" class="shrink-0 h-9 px-2.5 rounded-lg bg-emerald-500 text-slate-950 font-black text-[11px]" aria-label="Habe ich jetzt">✓ Habe ich</button>
+        <button onclick="PS.qtyStep(${attr(c.id)},1)" class="shrink-0 h-9 px-2.5 rounded-lg bg-emerald-500 text-slate-950 font-black text-[11px]" aria-label="Habe ich jetzt">✓ Habe ich</button>
       </div>
       <div class="grid grid-cols-2 gap-1.5">
         <a href="${esc(cmSearch(c.en || c.name))}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2 py-2 rounded-lg text-[11px] text-center">Auf Cardmarket holen</a>
@@ -96,9 +96,9 @@ export function renderSetDetail() {
     : "🏆 100 % komplett – Master-Set geschafft!";
   box.innerHTML = `<div class="bg-slate-950 rounded-2xl p-3 sm:p-4 border border-emerald-500/30 space-y-3">
     <div class="flex flex-wrap items-center justify-between gap-2">
-      <div class="flex items-center gap-3 min-w-0">${s.logo ? `<img src="${esc(s.logo)}" class="h-10 max-w-[96px] object-contain" onerror="this.remove()" alt="" />` : ""}
-        <div class="min-w-0"><h3 class="text-sm font-black text-white truncate">${esc(s.name)}${s.abbr ? ` <span class="text-slate-500">(${esc(s.abbr)})</span>` : ""}</h3><p class="text-[11px] text-slate-400">${st.owned} / ${st.total} Karten (${s.official} im Grundset)</p></div></div>
-      ${s.tracked ? btn("✓ Wird verfolgt", `PS.untrackSet('${esc(s.id)}')`, "bg-slate-800 text-emerald-300") : btn("📌 Set verfolgen", `PS.trackSet('${esc(s.id)}')`, "bg-emerald-500 text-slate-950")}
+      <div class="flex items-center gap-3 min-w-0">${safeImg(s.logo) ? `<img src="${esc(safeImg(s.logo))}" class="h-10 max-w-[96px] object-contain" onerror="this.remove()" alt="" />` : ""}
+        <div class="min-w-0"><h3 class="text-sm font-black text-white truncate">${esc(s.name)}${s.abbr ? ` <span class="text-slate-500">(${esc(s.abbr)})</span>` : ""}</h3><p class="text-[11px] text-slate-400">${st.owned} / ${st.total} Karten (${Number(s.official) || 0} im Grundset)</p></div></div>
+      ${s.tracked ? btn("✓ Wird verfolgt", `PS.untrackSet(${attr(s.id)})`, "bg-slate-800 text-emerald-300") : btn("📌 Set verfolgen", `PS.trackSet(${attr(s.id)})`, "bg-emerald-500 text-slate-950")}
     </div>
     <p id="ps-set-summary" class="text-xs font-black ${st.missingCount ? "text-yellow-300" : "text-emerald-300"}" aria-live="polite">${summary}</p>
     <div class="h-3 bg-slate-800 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all" style="width:${st.percent}%"></div></div>
@@ -108,7 +108,7 @@ export function renderSetDetail() {
       <div class="bg-slate-900 rounded-xl p-2"><p class="text-slate-400 text-[10px] uppercase font-bold">Kosten bis komplett</p><p class="text-base sm:text-lg font-black text-yellow-300 whitespace-nowrap">${eur(st.missingCost)}</p></div>
       <button onclick="PS.setFilter('dupes')" class="bg-slate-900 rounded-xl p-2"><p class="text-slate-400 text-[10px] uppercase font-bold">Überschuss (${st.surplus}x)</p><p class="text-base sm:text-lg font-black text-amber-300 whitespace-nowrap">${eur(st.surplusValue)}</p></button>
     </div>
-    ${s.priced < s.total ? `<p class="text-[11px] text-amber-300">⏳ Preise für ${s.total - s.priced} Karten werden noch geladen – öffne das Set später erneut für den vollständigen Wert.</p>` : ""}
+    ${Number(s.priced) < Number(s.total) ? `<p class="text-[11px] text-amber-300">⏳ Preise für ${(Number(s.total) || 0) - (Number(s.priced) || 0)} Karten werden noch geladen – öffne das Set später erneut für den vollständigen Wert.</p>` : ""}
     <div class="flex flex-wrap gap-1.5 text-xs">
       <button onclick="PS.completeSet()" class="px-3 py-1.5 rounded-xl font-black ${completeMode ? "bg-yellow-400 text-slate-950" : "bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950"}">🎯 Set vervollständigen</button>
       ${[["all", "Alle"], ["missing", "Fehlend"], ["owned", "Vorhanden"], ["dupes", "Doppelt"]].map(([k, l]) =>
@@ -236,17 +236,17 @@ export async function refreshDupes() {
 function renderDupes() {
   const list = $("ps-dupes-list"), sum = $("ps-dupes-sum");
   if (!list) return;
-  const total = dupes.reduce((s, d) => s + d.surplusValue, 0), count = dupes.reduce((s, d) => s + d.surplus, 0);
+  const total = dupes.reduce((s, d) => s + (Number(d.surplusValue) || 0), 0), count = dupes.reduce((s, d) => s + (Number(d.surplus) || 0), 0);
   if (sum) sum.textContent = `${count} überzählige Karten bei ${dupes.length} Motiven – Verkaufswert gesamt: ${eur(total)} (Cardmarket-Trend).`;
   list.innerHTML = dupes.map((d) => `
     <div class="flex items-center gap-2.5 bg-slate-900 border border-amber-400/40 rounded-xl p-2 text-xs">
       <img src="${esc(cdn(d.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" class="w-9 h-12 object-contain rounded shrink-0" alt="" />
       <div class="min-w-0 flex-1">
-        <p class="font-bold text-white truncate">${d.qty}× ${esc(d.name)}</p>
+        <p class="font-bold text-white truncate">${Number(d.qty) || 0}× ${esc(d.name)}</p>
         <p class="text-[10px] text-slate-400 truncate">${esc(d.setName || "")} ${esc(d.localId || "")}</p>
         <span class="inline-block mt-0.5 bg-amber-400 text-slate-950 text-[10px] font-black rounded-md px-1.5 py-0.5">${esc(surplusBadge(d, eur))}</span>
       </div>
-      <button onclick="PS.sellSurplus('${esc(d.cardId)}')" class="shrink-0 bg-emerald-500 text-slate-950 font-black px-2.5 py-2 rounded-lg text-[11px] leading-tight">Überschuss<br>verkaufen</button>
+      <button onclick="PS.sellSurplus(${attr(d.cardId)})" class="shrink-0 bg-emerald-500 text-slate-950 font-black px-2.5 py-2 rounded-lg text-[11px] leading-tight">Überschuss<br>verkaufen</button>
     </div>`).join("");
 }
 
@@ -267,11 +267,11 @@ export function sellSurplus(cardId) {
   modal("ps-sell", `<h3 class="text-base font-black text-white">💸 Überschuss verkaufen</h3>
     <div class="flex items-center gap-3 bg-slate-950 rounded-2xl p-3 border border-amber-400/40">
       <img src="${esc(cdn(d.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" class="w-14 h-20 object-contain rounded" alt="" />
-      <div class="min-w-0 text-xs"><p class="font-black text-white">${esc(d.name)}</p><p class="text-slate-400">${esc(d.setName || "")} ${esc(d.localId || "")} • ${d.qty}x vorhanden</p>
+      <div class="min-w-0 text-xs"><p class="font-black text-white">${esc(d.name)}</p><p class="text-slate-400">${esc(d.setName || "")} ${esc(d.localId || "")} • ${Number(d.qty) || 0}x vorhanden</p>
         <p class="mt-1 inline-block bg-amber-400 text-slate-950 font-black rounded px-1.5 py-0.5 text-[11px]">${esc(surplusBadge(d, eur))}</p></div>
     </div>
     <div class="space-y-2 text-xs">
-      <button onclick="PS.dupePublish(${attr(d.cardId)})" class="w-full text-left bg-emerald-500 text-slate-950 rounded-2xl p-3 font-black">🚀 a) 1-Klick-Inserat im Tausch-Hub<br><span class="font-semibold text-[11px]">${d.surplus}x mit Bild, Set-Name und ${d.unit ? `${eur(d.unit)} pro Stück` : "Marktpreis"} einstellen</span></button>
+      <button onclick="PS.dupePublish(${attr(d.cardId)})" class="w-full text-left bg-emerald-500 text-slate-950 rounded-2xl p-3 font-black">🚀 a) 1-Klick-Inserat im Tausch-Hub<br><span class="font-semibold text-[11px]">${Number(d.surplus) || 0}x mit Bild, Set-Name und ${d.unit ? `${eur(d.unit)} pro Stück` : "Marktpreis"} einstellen</span></button>
       <button onclick="PS.dupeCardmarket(${attr(d.cardId)})" class="w-full text-left bg-indigo-600 text-white rounded-2xl p-3 font-black">🧭 b) Cardmarket-Verkaufs-Assistent<br><span class="font-semibold text-[11px]">Kopiert Preis ${d.unit ? eur(d.unit) : ""} + Zustand „Near Mint“ und öffnet die Karte auf Cardmarket</span></button>
       <button onclick="PS.dupeCsv(${attr(d.cardId)})" class="w-full text-left bg-slate-800 text-white rounded-2xl p-3 font-black">📄 c) CSV für Cardmarket-Bestands-Import<br><span class="font-semibold text-[11px] text-slate-300">Nur diese Karte – für alle Duplikate „Alle Duplikate verkaufen“ nutzen</span></button>
     </div>`);
@@ -335,7 +335,7 @@ export async function sellAllDupes() {
   if (!requireLogin()) return;
   await ensureDupeMeta();
   if (!dupes.length) return toast("Keine Duplikate", "Sobald du eine Karte 2x oder öfter hast, erscheint sie hier.");
-  const total = dupes.reduce((s, d) => s + d.surplusValue, 0), count = dupes.reduce((s, d) => s + d.surplus, 0);
+  const total = dupes.reduce((s, d) => s + (Number(d.surplusValue) || 0), 0), count = dupes.reduce((s, d) => s + (Number(d.surplus) || 0), 0);
   modal("ps-sell", `<h3 class="text-base font-black text-white">💸 Alle Duplikate verkaufen</h3>
     <p class="text-xs text-slate-300">${count} überzählige Karten • Verkaufswert ca. <strong class="text-amber-300">${eur(total)}</strong></p>
     <div class="space-y-2 text-xs">

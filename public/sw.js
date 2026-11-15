@@ -1,13 +1,13 @@
 // PokeSwipe & Radar – Service Worker: echte Web-Push-Nachrichten (auch bei geschlossener App)
 // und Offline-Modus (App, Sammlung und Bilder bleiben auf Messen & Börsen ohne Netz verfügbar).
-const VERSION = "v4";
+const VERSION = "v5";
 const STATIC = `ps-static-${VERSION}`;
 const API = "ps-api";
 const IMG = "ps-img";
-const SHELL = ["/", "/assets/app.js", "/assets/tailwind.css", "/theme.css", "/icon.svg", "/manifest.json"];
+const SHELL = ["/", "/assets/app.js", "/assets/tailwind.css", "/theme.css", "/fonts/fonts.css", "/icon.svg", "/manifest.json"];
 // Nur diese Daten werden für den Offline-Modus zwischengespeichert (beim Abmelden gelöscht)
 const OFFLINE_API = /^\/api\/(me|portfolio|wishlist|alerts|calendar|badges|listings|sets\/tracked|sealed)(\?|$)/;
-const CDN_HOSTS = ["unpkg.com", "www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];
+const CDN_HOSTS = ["www.gstatic.com"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(STATIC).then((c) => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));
@@ -67,6 +67,9 @@ self.addEventListener("fetch", (event) => {
       event.respondWith(cacheFirstImage(req));
     } else if (OFFLINE_API.test(url.pathname + url.search)) {
       event.respondWith(networkFirst(req, API));
+    } else if (url.pathname.startsWith("/fonts/") || url.pathname.startsWith("/vendor/")) {
+      // Lokal gehostete Schriften & Leaflet: ändern sich praktisch nie
+      event.respondWith(staleWhileRevalidate(event, req, STATIC));
     } else if (url.pathname.startsWith("/assets/") || SHELL.includes(url.pathname)) {
       // Immer zuerst frisch laden (passt nach einem Update sofort zur Seite), offline aus dem Speicher
       event.respondWith(networkFirst(req, STATIC));

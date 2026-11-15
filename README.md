@@ -109,6 +109,11 @@ Werte ändern: `server/plans.ts`.
 7. **Firebase-Regeln:** Den Inhalt von `firebase/database.rules.json` in der Firebase-Konsole
    (Realtime Database → Regeln) **in die bestehenden Regeln einfügen** – nur den Block `pokeswipe_radar`.
    Die Datenbank wird mit einem anderen Projekt geteilt, dessen Regeln erhalten bleiben müssen.
+   **Strenge Stufe (empfohlen):** In der Firebase-Konsole unter Authentication → Anmeldemethode „Anonym“ aktivieren,
+   den Web-API-Schlüssel (Projekteinstellungen → Allgemein, kein Geheimnis) als Netlify-Variable `FIREBASE_WEB_API_KEY`
+   setzen, neu deployen und danach den Block aus `firebase/database.rules.strict.json` verwenden. Dann darf nur noch
+   schreiben, wer anonym angemeldet ist; jeder Eintrag ist an die eigene UID gebunden, Chat/Pull-Wall/Kommentare sind
+   serverseitig auf einen Beitrag alle 3 Sekunden pro Person gebremst und jede Person kann einen Beitrag nur einmal liken.
 8. **Impressum:** Wird bewusst nicht im Code gespeichert. In der Admin-Zentrale eintragen (oder Umgebungsvariable
    `IMPRESSUM_TEXT`); es erscheint dann im Fenster „Impressum & Datenschutz“.
 9. **Set-Releases:** Als Admin unter Community → Kalender eintragen (Art „Set-Release“). Nutzer können sich erinnern lassen.
@@ -122,6 +127,7 @@ Netlify-Umgebungsvariablen und werden nur an Admins ausgeliefert:
 | --- | --- |
 | `MAKE_WEBHOOK_URL` | Make.com-Webhook (https). Ohne Variable greift das bisherige Szenario als Rückfall. |
 | `MAKE_WEBHOOK_TOKEN` | Optional: gemeinsamer Token für den Filter `token = …` im Make-Szenario (gilt für alle Admin-Browser). |
+| `FIREBASE_WEB_API_KEY` | Optional: Firebase-Web-API-Schlüssel für die anonyme Anmeldung (strenge Firebase-Regeln). |
 | `ELEVENLABS_API_KEY` | Sprecherstimme für die Auto-Reels (fest: ElevenLabs „Matilda“). Ohne Schlüssel startet der Generator mit Voiceover nicht. |
 
 Jedes Reel ist fest 30 Sekunden lang. Das Skript einer Episode wird in einem durchgehenden Take gesprochen

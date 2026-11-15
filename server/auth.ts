@@ -2,13 +2,28 @@ import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { eq, sql } from "drizzle-orm";
 import { db, profiles } from "../db/index.ts";
-import { siteOrigin } from "./util.ts";
+
+/**
+ * Fester Origin der Identity-API. Bewusst NICHT aus Request-Headern (Origin, Host, X-Forwarded-Host)
+ * abgeleitet: sonst könnte ein Angreifer die Token-Prüfung auf einen eigenen Server umleiten, der
+ * beliebige Nutzer (auch Admins) "bestätigt". Netlify setzt URL auf die Produktions-Adresse; die
+ * Identity-Instanz ist für alle Deploys (auch Previews) dieselbe.
+ */
+function identityOrigin(c: Context): string {
+  const env = process.env.URL || "";
+  try {
+    if (env) return new URL(env).origin;
+  } catch {}
+  return new URL(c.req.url).origin;
+}
 
 export type AuthUser = {
   id: string;
   email: string;
   name: string;
   roles: string[];
+  /** E-Mail-Adresse wurde in Netlify Identity bestätigt */
+  confirmed: boolean;
 };
 
 type CacheEntry = { user: AuthUser | null; expires: number };
@@ -21,14 +36,14 @@ const tokenCache = new Map<string, CacheEntry>();
 export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> {
   const header = c.req.header("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : getCookie(c, "nf_jwt");
-  if (!token || token.length > 4096) return null;
+  if (!token || token.length > 4096 || !/^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$/.test(token)) return null;
 
   const cached = tokenCache.get(token);
   if (cached && cached.expires > Date.now()) return cached.user;
 
   let user: AuthUser | null = null;
   try {
-    const origin = siteOrigin(c);
+    const origin = identityOrigin(c);
     const res = await fetch(`${origin}/.netlify/identity/user`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(8_000),
@@ -41,6 +56,7 @@ export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> 
           email: String(data.email).toLowerCase(),
           name: String(data.user_metadata?.full_name || data.user_metadata?.name || "").slice(0, 30),
           roles: Array.isArray(data.app_metadata?.roles) ? data.app_metadata.roles.map(String) : [],
+          confirmed: Boolean(data.confirmed_at || data.email_confirmed_at),
         };
       }
     }
@@ -93,7 +109,8 @@ export async function ensureProfile(user: AuthUser) {
 /**
  * Admin = Rolle "admin" in Netlify Identity ODER die (von Identity verifizierte) E-Mail steht
  * in der Umgebungsvariable ADMIN_EMAILS (kommagetrennt). So bleibt der Admin-Zugang erhalten,
- * auch wenn die Identity-Rolle verloren geht.
+ * auch wenn die Identity-Rolle verloren geht. Per E-Mail nur, wenn die Adresse bestätigt ist – sonst
+ * könnte sich jemand mit einer noch nicht registrierten Admin-Adresse anmelden und Admin werden.
  */
 function adminEmails(): Set<string> {
   const raw = process.env.ADMIN_EMAILS || "";
@@ -101,4 +118,4 @@ function adminEmails(): Set<string> {
 }
 
 export const isAdmin = (user: AuthUser | null | undefined) =>
-  !!user && (user.roles.includes("admin") || adminEmails().has(user.email.toLowerCase()));
+  !!user && (user.roles.includes("admin") || (user.confirmed && adminEmails().has(user.email.toLowerCase())));

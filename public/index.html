@@ -9,9 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="PokeSwipe" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;700;800;900&family=Lilita+One&display=swap" />
+  <link rel="stylesheet" href="/fonts/fonts.css" />
   <title>PokeSwipe & Radar | Die Pokémon TCG Community & Preis-Arena</title>
   <meta name="description" content="Pokémon-Karten: echte Cardmarket-Preise, Preisalarme, Portfolio mit Live-Wert, KI-Kartenscan, Wunschliste und sicherer Tausch mit Sammlern in deiner Nähe." />
   <link rel="canonical" href="https://pokeswipe-radar.de/" />
@@ -25,8 +23,8 @@
   <meta name="twitter:card" content="summary_large_image" />
 
   <link rel="stylesheet" href="/assets/tailwind.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+  <script defer src="/vendor/leaflet/leaflet.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 
@@ -828,7 +826,7 @@
       <p><strong>Affiliate-Hinweis (*):</strong> Als Partner des eBay Partner Networks (CampID: 5339244109) verdienen wir an qualifizierten Käufen über gekennzeichnete eBay-Links eine kleine Provision, ohne Mehrkosten für dich.</p>
       <div class="max-h-[55vh] overflow-y-auto space-y-3 pr-1">
       <p><strong>Datenschutz – Überblick:</strong> Ohne Konto bleiben Portfolio-, Merklisten- und Push-Einstellungen lokal im Browser (LocalStorage). Mit Konto werden Login (Netlify Identity), Portfolio, Wunschliste, Preisalarme, Inserate, Tausche, private Tausch-Nachrichten, Bewertungen, Abzeichen und Kalendereinträge verschlüsselt übertragen und bei unserem Hosting-Anbieter Netlify gespeichert (Rechtsgrundlage: Vertragserfüllung, Art. 6 Abs. 1 lit. b DSGVO).</p>
-      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Beim Laden der Seite werden Schriftarten und Skripte von Google Fonts und unpkg.com (Kartenansicht) abgerufen; dabei wird technisch bedingt deine IP-Adresse übermittelt.</p>
+      <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (öffentlicher Live-Chat, Pull-Wall, Radar-Pins), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Schriftarten und die Kartenansicht (Leaflet) liefern wir selbst aus – es gibt keine Verbindung zu Google Fonts. Für den Live-Bereich wird das Firebase-Skript von Google (gstatic.com) geladen; die Kartenkacheln kommen von OpenStreetMap, beim Setzen eines Radar-Pins ohne GPS wird der eingegebene Ort an OpenStreetMap Nominatim gesendet. Dabei wird technisch bedingt deine IP-Adresse übermittelt. Radar-Pins speichern nur einen ungefähren Standort (ca. 1 km Raster), nie deine genaue GPS-Position.</p>
       <p><strong>Öffentlich sichtbar:</strong> dein Sammlername, Stadt, Inserate, Bewertungen, Shop-Seite, eingetragene Events sowie – für Tausch-Vorschläge – welche Karten du auf der Wunschliste hast. In der Bestenliste erscheinst du nur, wenn du es selbst einschaltest.</p>
       <p><strong>Speicher im Browser:</strong> Wir verwenden keine Werbe- oder Tracking-Cookies. Gespeichert werden nur technisch notwendige Daten: Login-Token, Einstellungen und eine Offline-Kopie deiner Sammlung (wird beim Abmelden gelöscht).</p>
       <p><strong>Deine Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Im Konto unter „Datenschutz & Konto“ kannst du alle Daten als Datei herunterladen und dein Konto selbst löschen. Verantwortlich für die Datenverarbeitung ist der im Impressum genannte Betreiber.</p>
@@ -885,6 +883,8 @@
     const EPN_CAMPAIGN_ID = CONFIG.EPN_CAMPAIGN_ID;
     const firebaseConfig = {
       databaseURL: "https://pyro-planer-web-app-default-rtdb.europe-west1.firebasedatabase.app"
+      // apiKey/authDomain kommen (optional) aus der Netlify-Umgebungsvariable FIREBASE_WEB_API_KEY
+      // über /api/public-config – damit ist die anonyme Firebase-Anmeldung aktiv (strenge Regeln).
     };
 
     function sanitizeHTML(str) {
@@ -976,6 +976,8 @@
     window.addEventListener("error", (e) => { if (e.message) console.warn("Skriptfehler:", e.message); });
     function safeRun(label, fn) { try { return fn(); } catch (err) { console.warn(label, err); } }
     const fmtEur = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? `${Number(n).toFixed(2).replace(".", ",")} €` : "–");
+    /** localStorage-JSON robust lesen: kaputte/fremde Werte brechen das Skript nicht mehr ab. */
+    const lsJSON = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v && typeof v === typeof d && Array.isArray(v) === Array.isArray(d) ? v : d; } catch (e) { return d; } };
     const safeKey = (k) => (/^[A-Za-z0-9_-]{1,64}$/.test(String(k || "")) ? String(k) : "");
 
     // ===================================================================
@@ -1002,9 +1004,9 @@
      */
     function cleanupOwnDummies(ref, entries, textFields, maxAgeDays = 90) {
       if (!ref) return;
-      const me = getOwnerId();
+      const mine = new Set([getOwnerId(), typeof fbUid === "string" && fbUid ? fbUid : ""].filter(Boolean));
       entries.forEach(([key, v]) => {
-        if (key === me && isDummyEntry(v, { textFields, maxAgeDays })) ref.child(key).remove().catch(() => {});
+        if (mine.has(key) && isDummyEntry(v, { textFields, maxAgeDays })) ref.child(key).remove().catch(() => {});
       });
     }
 
@@ -1086,7 +1088,7 @@
     const setKeyOf = (c) => c.id.slice(0, c.id.lastIndexOf("-"));
     const cardLabel = (c) => `${c.name} (${c.num})`;
     // Abwärtskompatibel: Katalog nach Kartennummer (z. B. "238/191")
-    const cardCatalog = {};
+    const cardCatalog = Object.create(null);
     REAL_CARDS.forEach((c) => {
       cardCatalog[c.num] = { name: cardLabel(c), set: c.setTag, value: c.trend, img: c.img, id: c.id };
     });
@@ -1105,12 +1107,12 @@
     // ===================================================================
     // ERWEITERTES PUSH-BENACHRICHTIGUNGS-SYSTEM 2.0 (TOAST + SOUND + BROWSER)
     // ===================================================================
-    let pushSettings = JSON.parse(localStorage.getItem("pokeswipe_push_cfg") || JSON.stringify({
+    let pushSettings = lsJSON("pokeswipe_push_cfg", {
       market: true,
       wall: true,
       sound: true,
       keywords: ""
-    }));
+    });
     let swRegistration = null;
     let toastTimeout = null;
 
@@ -1164,7 +1166,7 @@
       document.getElementById("toast-title").textContent = title;
       document.getElementById("toast-body").textContent = body;
       const linkEl = document.getElementById("toast-link");
-      if (linkUrl) {
+      if (linkUrl && /^https:\/\//i.test(String(linkUrl))) {
         linkEl.href = linkUrl;
         linkEl.classList.remove("hidden");
       } else {
@@ -1223,7 +1225,7 @@
 
     let activeDeck = [...swipeCatalog];
     let swipeIdx = 0;
-    let savedMatches = JSON.parse(localStorage.getItem("pokeswipe_matches_clean") || "[]");
+    let savedMatches = lsJSON("pokeswipe_matches_clean", []);
     let packsOpenedCount = parseInt(localStorage.getItem("pokeswipe_packs_count") || "0", 10);
 
     function renderSwipeCard() {
@@ -1334,7 +1336,7 @@
     // ===================================================================
     // 2. FLIP-RADAR & WISHLIST
     // ===================================================================
-    let wishlist = JSON.parse(localStorage.getItem("pokeswipe_wishlist_clean") || "[]");
+    let wishlist = lsJSON("pokeswipe_wishlist_clean", []);
     function renderWishlist() {
       const box = document.getElementById("wishlist-rules-box");
       if (!wishlist.length) {
@@ -1432,7 +1434,8 @@
         timestamp: Date.now()
       };
 
-      if (dbRefWall) dbRefWall.push(postObj).catch(err => alert("Fehler beim Senden: " + err.message));
+      if (!dbRefWall) return alert("Die Pull-Wall ist gerade nicht erreichbar. Bitte später erneut versuchen.");
+      fbPush("pullwall", "wall", postObj).catch(err => alert("Fehler beim Senden: " + fbErrorText(err)));
       pendingWallImg = "";
       document.getElementById("wall-caption").value = "";
       document.getElementById("wall-cardnum").value = "";
@@ -1442,12 +1445,12 @@
     function likeWallPost(key) {
       key = safeKey(key);
       if (!dbRefWall || !key) return;
-      const liked = JSON.parse(localStorage.getItem("pokeswipe_liked") || "[]");
+      const liked = lsJSON("pokeswipe_liked", []);
       if (liked.includes(key)) return triggerSmartPush("❤️ Schon geliked", "Pro Beitrag zählt ein Like.");
       if (!cooldownOk("like")) return;
       liked.push(key);
       localStorage.setItem("pokeswipe_liked", JSON.stringify(liked.slice(-500)));
-      dbRefWall.child(key).child("likes").transaction(c => (c === null ? 1 : Math.min(Number(c) + 1, 1e6)));
+      fbLike(key).catch((err) => console.warn("Like nicht gespeichert", err));
     }
 
     function addWallComment(key, idx) {
@@ -1459,7 +1462,7 @@
       if (DUMMY_RE.test(text)) return alert("Bitte einen echten Kommentar schreiben.");
       if (!cooldownOk("comment")) return;
       const author = (getCurrentUser() || "Sammler").slice(0, 35);
-      dbRefWall.child(key).child("comments").push({ author, text, timestamp: Date.now() }).catch(() => alert("Kommentar konnte nicht gesendet werden."));
+      fbPush(`pullwall/${key}/comments`, "comment", { author, text, timestamp: Date.now() }).catch((err) => alert("Kommentar konnte nicht gesendet werden: " + fbErrorText(err)));
       inp.value = "";
     }
 
@@ -1480,7 +1483,7 @@
             </div>
             <p class="text-xs sm:text-sm text-white">${sanitizeHTML(p.caption)}</p>
             <div class="bg-slate-950 rounded-xl p-2 flex justify-center">
-              <img src="${/^(data:image\/(jpeg|png|webp);base64,|https:\/\/|\/)/.test(String(p.img || "")) ? sanitizeHTML(p.img) : FALLBACK_CARD_IMG}" alt="Pull" loading="lazy" class="max-h-56 rounded-lg object-contain" />
+              <img src="${/^(data:image\/(jpeg|png|webp);base64,|https:\/\/|\/(?!\/))/.test(String(p.img || "")) ? sanitizeHTML(p.img) : FALLBACK_CARD_IMG}" alt="Pull" loading="lazy" class="max-h-56 rounded-lg object-contain" />
             </div>
             <div class="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
               <button onclick="likeWallPost('${key}')" class="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold px-3 py-1 rounded-lg">
@@ -1524,7 +1527,8 @@
       if (!cooldownOk("chat")) return;
       if (rawName) localStorage.setItem("pokeswipe_user", rawName);
 
-      if (dbRefChat) dbRefChat.push({ user: rawName, text, timestamp: Date.now() }).catch(err => alert("Chat-Fehler: " + err.message));
+      if (!dbRefChat) return alert("Der Live-Chat ist gerade nicht erreichbar. Bitte später erneut versuchen.");
+      fbPush("chat", "chat", { user: rawName, text, timestamp: Date.now() }).catch(err => alert("Chat-Fehler: " + fbErrorText(err)));
       textInp.value = "";
     }
 
@@ -1696,7 +1700,7 @@
       box.innerHTML = filtered.map(item => `
         <div class="poke-glass rounded-2xl p-3.5 flex items-center justify-between gap-3">
           <div class="flex items-center gap-3 truncate">
-            <img src="${sanitizeHTML(item.img || FALLBACK_CARD_IMG)}" alt="Karte" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
+            <img src="${/^(data:image\/(jpeg|png|webp);base64,|https:\/\/|\/(?!\/))/.test(String(item.img || "")) ? sanitizeHTML(item.img) : FALLBACK_CARD_IMG}" alt="Karte" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
             <div class="truncate text-xs">
               <span class="font-black text-emerald-400">${Number(item.price || 0)} €</span> • <span class="text-slate-400">📍 ${sanitizeHTML(item.city)} (${sanitizeHTML(item.seller)})</span>
               <h4 class="font-black text-white text-sm truncate">${sanitizeHTML(item.card)}</h4>
@@ -1724,7 +1728,7 @@
       mapInstance._psLayer.clearLayers();
       radarUsers.forEach(u => {
         if (Number.isFinite(Number(u.lat)) && Number.isFinite(Number(u.lng)) && u.lat && u.lng) {
-          L.marker([Number(u.lat), Number(u.lng)]).addTo(mapInstance._psLayer)
+          L.marker([coarseCoord(u.lat), coarseCoord(u.lng)]).addTo(mapInstance._psLayer)
             .bindPopup(`<b>${sanitizeHTML(u.name)}</b> (${sanitizeHTML(u.city)})<br>${sanitizeHTML(u.cards)}`);
         }
       });
@@ -1735,10 +1739,14 @@
       if (!navigator.geolocation) return alert("GPS nicht unterstützt.");
       navigator.geolocation.getCurrentPosition(pos => {
         if (mapInstance) {
-          mapInstance.setView([pos.coords.latitude, pos.coords.longitude], 12);
-          L.marker([pos.coords.latitude, pos.coords.longitude]).addTo(mapInstance).bindPopup("📍 Dein Standort").openPopup();
+          const ll = [pos.coords.latitude, pos.coords.longitude];
+          mapInstance.setView(ll, 12);
+          // Nur EIN Standort-Marker (vorher stapelte jeder Klick einen weiteren)
+          if (mapInstance._psMe) mapInstance._psMe.setLatLng(ll);
+          else mapInstance._psMe = L.marker(ll).addTo(mapInstance).bindPopup("📍 Dein Standort (nur für dich sichtbar)");
+          mapInstance._psMe.openPopup();
         }
-      });
+      }, () => alert("Standort nicht verfügbar – bitte Standortfreigabe im Browser erlauben."), { timeout: 8000 });
     }
 
     function registerMyRadarPin() {
@@ -1750,15 +1758,19 @@
       if (!cooldownOk("radar")) return;
 
       const savePin = (lat, lng) => {
-        const pin = { name, city, lat: Number(lat), lng: Number(lng), cards, timestamp: Date.now() };
-        if (dbRefRadar) dbRefRadar.child(getOwnerId()).set(pin);
-        triggerSmartPush("📍 Radar-Pin gesetzt!", `${name} (${city}) ist jetzt auf der Sammler-Karte sichtbar.`);
+        // Datenschutz: nur ungefährer Standort (~1 km Raster) wird öffentlich gespeichert – nie die exakte GPS-Position
+        const pin = { name, city, lat: coarseCoord(lat), lng: coarseCoord(lng), cards, timestamp: Date.now() };
+        if (!dbRefRadar) return alert("Das Sammler-Radar ist gerade nicht erreichbar. Bitte später erneut versuchen.");
+        fbReady.then(() => dbRefRadar.child(fbOwnerKey()).set(pin))
+          .then(() => triggerSmartPush("📍 Radar-Pin gesetzt!", `${name} (${city}) ist jetzt (ungefähr, ~1 km genau) auf der Sammler-Karte sichtbar.`))
+          .catch((err) => alert("Radar-Pin konnte nicht gespeichert werden: " + fbErrorText(err)));
       };
 
       // Ohne GPS: Stadt über OpenStreetMap suchen (keine erfundenen Koordinaten)
       const geocode = async () => {
         try {
-          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=de,at,ch&q=${encodeURIComponent(city)}`, { headers: { "Accept-Language": "de" } });
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=de,at,ch&q=${encodeURIComponent(city)}`, { headers: { "Accept-Language": "de" }, signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined });
+          if (!res.ok) throw new Error("Geocoding " + res.status);
           const hit = (await res.json())[0];
           if (hit) return savePin(Number(hit.lat), Number(hit.lon));
         } catch (e) {}
@@ -1791,7 +1803,7 @@
     // ===================================================================
     // 5. PORTFOLIO & RECHNER
     // ===================================================================
-    let portfolio = JSON.parse(localStorage.getItem("pokeswipe_portfolio_clean") || "[]");
+    let portfolio = lsJSON("pokeswipe_portfolio_clean", []);
 
     function renderPortfolio() {
       const total = portfolio.reduce((sum, item) => sum + Number(item.value || 0), 0);
@@ -1807,7 +1819,7 @@
       box.innerHTML = portfolio.map((item, idx) => `
         <div class="flex items-center justify-between bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs">
           <div class="flex items-center gap-2.5 truncate">
-            <img src="${sanitizeHTML(item.img || FALLBACK_CARD_IMG)}" alt="Card" loading="lazy" class="w-8 h-11 object-contain rounded shrink-0" />
+            <img src="${/^(data:image\/(jpeg|png|webp);base64,|https:\/\/|\/(?!\/))/.test(String(item.img || "")) ? sanitizeHTML(item.img) : FALLBACK_CARD_IMG}" alt="Card" loading="lazy" class="w-8 h-11 object-contain rounded shrink-0" />
             <div class="truncate">
               <p class="font-bold text-white truncate">${sanitizeHTML(item.name)}</p>
               <p class="text-emerald-400 font-bold">${Number(item.value) > 0 ? fmtEur(item.value) : "Wert eintragen"}</p>
@@ -1881,7 +1893,7 @@
       // Gewinnschwelle: Wie oft muss eine 10 kommen? (Rest wird etwa zum Rohpreis verkauft)
       const breakEven = net > raw ? Math.min(100, Math.max(0, (fee / (net - raw)) * 100)) : null;
       const maxBuy = Math.max(0, net * 0.45 + raw * 0.55 - fee);
-      const pro = typeof isProUser === "function" ? isProUser() : Boolean(localStorage.getItem("pokeswipe_pro"));
+      const pro = typeof window.isProUser === "function" ? window.isProUser() : false;
       box.innerHTML = pro
         ? `<p class="font-black text-yellow-300">👑 Pro-Analyse</p><p class="text-slate-200">Gewinnschwelle: <strong>${breakEven === null ? "nie (PSA 10 bringt weniger als raw)" : Math.ceil(breakEven) + " % PSA-10-Quote"}</strong> • Empfohlener Max-Einkauf (bei ~45 % PSA-10-Chance): <strong>${fmtEur(maxBuy)}</strong></p>`
         : `<p class="text-slate-300">🔒 <strong class="text-yellow-300">Pro-Analyse:</strong> Gewinnschwelle & empfohlener Max-Einkaufspreis.</p><button onclick="openModal('pro-modal')" class="mt-1.5 bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-lg">Mit Pro-Pass freischalten (4,99 €/Monat)</button>`;
@@ -1914,69 +1926,171 @@
       return keys.some(k => (textStr || "").toLowerCase().includes(k));
     }
 
-    function initFirebase() {
+    // ---------------------------------------------------------------
+    // Firebase-Helfer: optionale anonyme Anmeldung, Schreib-Bremse (rate/…),
+    // ein Like pro Person und verständliche Fehlermeldungen
+    // ---------------------------------------------------------------
+    let fbDb = null;
+    let fbUid = null;               // Firebase-Auth-UID (wenn anonyme Anmeldung aktiv)
+    let fbReadyResolve;
+    const fbReady = new Promise((r) => { fbReadyResolve = r; });
+    function fbOwnerKey() { return fbUid || getOwnerId(); }
+    function coarseCoord(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; }
+    function fbErrorText(err) {
+      const code = String((err && (err.code || err.message)) || "");
+      if (/permission|PERMISSION_DENIED/i.test(code)) return "Bitte kurz warten (max. 1 Beitrag alle paar Sekunden) und Eingaben prüfen.";
+      if (/network|offline|disconnect/i.test(code)) return "Keine Verbindung – bitte Internet prüfen.";
+      return code.slice(0, 120) || "Unbekannter Fehler";
+    }
+    /** Neuer Eintrag + (bei aktiver Anmeldung) Zeitstempel in rate/<uid>/<kind> in EINEM Schreibvorgang. */
+    async function fbPush(path, kind, obj) {
+      if (!fbDb) throw new Error("offline");
+      await fbReady;
+      const root = fbDb.ref("pokeswipe_radar");
+      const key = root.child(path).push().key;
+      if (!fbUid) return root.child(`${path}/${key}`).set(obj);
+      return root.update({
+        [`${path}/${key}`]: { ...obj, uid: fbUid },
+        [`rate/${fbUid}/${kind}`]: firebase.database.ServerValue.TIMESTAMP,
+      });
+    }
+    /** Like: mit Anmeldung genau einer pro Person (likers/<uid>), sonst wie bisher +1. */
+    async function fbLike(postKey) {
+      if (!fbDb) throw new Error("offline");
+      await fbReady;
+      const postRef = fbDb.ref("pokeswipe_radar/pullwall").child(postKey);
+      if (!fbUid) return postRef.child("likes").transaction(c => (c === null ? 1 : Math.min(Number(c) + 1, 1e6)));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const [likesSnap, mineSnap] = await Promise.all([postRef.child("likes").once("value"), postRef.child("likers").child(fbUid).once("value")]);
+        if (mineSnap.exists()) return;
+        const cur = Number(likesSnap.val() || 0);
+        try {
+          return await postRef.update({ likes: cur + 1, [`likers/${fbUid}`]: true });
+        } catch (e) {
+          if (attempt === 2) throw e; // gleichzeitiges Like eines anderen Nutzers → neu lesen und wiederholen
+        }
+      }
+    }
+    async function fbSignIn() {
       try {
-        if (typeof firebase === "undefined") return;
-        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
+        let apiKey = "";
+        try {
+          const res = await fetch("/api/public-config", { headers: { Accept: "application/json" }, signal: AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined });
+          if (res.ok) apiKey = String((await res.json()).firebaseApiKey || "");
+        } catch (e) {}
+        if (!apiKey || !/^[A-Za-z0-9_-]{20,60}$/.test(apiKey)) return null;
+        await new Promise((resolve, reject) => {
+          if (firebase.auth) return resolve();
+          const sc = document.createElement("script");
+          sc.src = "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js";
+          sc.onload = resolve; sc.onerror = reject;
+          document.head.appendChild(sc);
+        });
+        const projectId = new URL(firebaseConfig.databaseURL).hostname.split(".")[0].replace(/-default-rtdb$/, "");
+        return { apiKey, authDomain: `${projectId}.firebaseapp.com`, projectId };
+      } catch (e) {
+        console.warn("Firebase-Anmeldung nicht verfügbar – nutze Geräte-ID", e);
+        return null;
+      }
+    }
+
+    async function initFirebase() {
+      try {
+        if (typeof firebase === "undefined") { fbReadyResolve(); return; }
+        // Optionale anonyme Anmeldung VOR dem Start, damit Datenbank und Auth dieselbe App nutzen
+        const authCfg = firebase.apps.length ? null : await fbSignIn();
+        if (!firebase.apps.length) firebase.initializeApp(authCfg ? { ...firebaseConfig, ...authCfg } : firebaseConfig);
+        const db = fbDb = firebase.database();
+        if (authCfg && firebase.auth) {
+          try {
+            const cred = await Promise.race([
+              firebase.auth().signInAnonymously(),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("Auth-Timeout")), 6000)),
+            ]);
+            fbUid = cred && cred.user ? cred.user.uid : null;
+          } catch (e) {
+            console.warn("Anonyme Firebase-Anmeldung fehlgeschlagen – nutze Geräte-ID", e);
+          }
+        }
+        fbReadyResolve();
+        const listen = (ref, event, cb, errCb) => ref.on(event, cb, errCb || ((err) => console.warn("Firebase", ref.toString(), err)));
 
         // 1. Echter Besucherzähler
         const visitsRef = db.ref("pokeswipe_radar/stats/totalVisits");
         if (!sessionStorage.getItem("pokeswipe_counted")) {
-          visitsRef.transaction(current => (current === null ? 1 : current + 1), (err, committed) => {
+          visitsRef.transaction(current => (current === null ? 1 : Number(current) + 1), (err, committed) => {
             if (!err && committed) sessionStorage.setItem("pokeswipe_counted", "1");
           });
         }
-        visitsRef.on("value", snap => {
-          const val = snap.val();
-          document.getElementById("totalVisitsCount").textContent = val ? Number(val).toLocaleString("de-DE") : "1";
+        listen(visitsRef, "value", snap => {
+          const val = Number(snap.val());
+          document.getElementById("totalVisitsCount").textContent = val > 0 ? val.toLocaleString("de-DE") : "1";
         });
 
-        // 2. Echte Online-Präsenz
-        const myPresence = db.ref("pokeswipe_radar/presence/" + getOwnerId());
-        myPresence.set({ online: true, ts: Date.now() }).catch(() => {});
+        // 2. Echte Online-Präsenz (mit Herzschlag, damit verwaiste Einträge nicht mitgezählt werden)
+        const myPresence = db.ref("pokeswipe_radar/presence/" + fbOwnerKey());
+        const beat = () => myPresence.set({ online: true, ts: firebase.database.ServerValue.TIMESTAMP }).catch(() => {});
+        beat();
         myPresence.onDisconnect().remove();
-        db.ref("pokeswipe_radar/presence").on("value", snap => {
-          const count = snap.val() ? Object.keys(snap.val()).length : 1;
+        setInterval(() => { if (document.visibilityState === "visible") beat(); }, 4 * 60 * 1000);
+        listen(db.ref(".info/connected"), "value", (snap) => {
+          const dot = document.getElementById("liveVisitorCount");
+          if (dot) dot.title = snap.val() ? "Live verbunden" : "Verbindung unterbrochen – verbinde neu …";
+          if (snap.val()) { myPresence.onDisconnect().remove(); beat(); }
+        });
+        listen(db.ref("pokeswipe_radar/presence"), "value", snap => {
+          const all = snap.val() || {};
+          const cutoff = Date.now() - 10 * 60 * 1000;
+          const count = Object.values(all).filter((p) => p && Number(p.ts) > cutoff).length;
           document.getElementById("liveVisitorCount").textContent = Math.max(1, count);
         });
 
         // 3. Live-Chat
         dbRefChat = db.ref("pokeswipe_radar/chat");
-        dbRefChat.limitToLast(60).on("value", snap => {
+        listen(dbRefChat.limitToLast(60), "value", snap => {
           const entries = snap.val() ? Object.entries(snap.val()) : [];
           renderChatList(entries.map(([, v]) => v).filter((m) => !isDummyEntry(m, { maxAgeDays: 30, textFields: ["user", "text"] })).slice(-30));
-        }, (err) => console.warn("Chat nicht verfügbar", err));
+        }, (err) => {
+          console.warn("Chat nicht verfügbar", err);
+          const box = document.getElementById("chat-messages");
+          if (box) box.innerHTML = `<p class="text-rose-300 text-center py-6">Live-Chat gerade nicht erreichbar. Bitte Seite später neu laden.</p>`;
+        });
 
         // 4. Pull-Wall inkl. Echtzeit-Push bei neuen Hits
         dbRefWall = db.ref("pokeswipe_radar/pullwall");
-        dbRefWall.limitToLast(40).on("value", snap => {
-          const prevCount = wallPosts.length;
+        listen(dbRefWall.limitToLast(40), "value", snap => {
+          const prevNewest = wallPosts[0] && wallPosts[0].firebaseKey;
           const entries = snap.val() ? Object.entries(snap.val()) : [];
           wallPosts = entries.filter(([k, v]) => safeKey(k) && !isDummyEntry(v, { textFields: ["user", "caption"] }))
             .map(([k, v]) => ({ firebaseKey: k, ...v })).reverse();
           renderPullWall();
-          if (initialWallLoaded && wallPosts.length > prevCount && pushSettings.wall) {
-            const newest = wallPosts[0];
-            if (newest && matchesKeywordFilter(newest.caption)) {
-              triggerSmartPush("📸 Neuer Pull-Wall Hit!", `${newest.user}: ${newest.caption}`);
+          const newest = wallPosts[0];
+          if (initialWallLoaded && newest && newest.firebaseKey !== prevNewest && pushSettings.wall && newest.uid !== fbUid) {
+            if (matchesKeywordFilter(newest.caption)) {
+              triggerSmartPush("📸 Neuer Pull-Wall Hit!", `${String(newest.user || "").slice(0, 35)}: ${String(newest.caption || "").slice(0, 120)}`);
             }
           }
           initialWallLoaded = true;
+        }, (err) => {
+          console.warn("Pull-Wall nicht verfügbar", err);
+          const box = document.getElementById("pullwall-feed");
+          if (box) box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-rose-300">Pull-Wall gerade nicht erreichbar. Bitte später erneut versuchen.</div>`;
         });
 
         // 5. Tausch-Hub: läuft jetzt sicher über die eigene API (/api/listings), siehe /assets/app.js
 
         // 6. Radar-Pins
         dbRefRadar = db.ref("pokeswipe_radar/radar_users");
-        dbRefRadar.limitToLast(80).on("value", snap => {
+        listen(dbRefRadar.limitToLast(80), "value", snap => {
           const entries = snap.val() ? Object.entries(snap.val()) : [];
           cleanupOwnDummies(dbRefRadar, entries, ["name", "city", "cards"]);
           radarUsers = entries.map(([, v]) => v).filter((u) => !isDummyEntry(u, { maxAgeDays: 90, textFields: ["name", "city", "cards"] })).reverse();
           renderRadarUsers();
           if (mapInstance) initOrUpdateMap();
         });
+
       } catch (e) {
+        fbReadyResolve();
         console.warn("Firebase Info:", e);
       }
     }
@@ -2092,7 +2206,6 @@
     (function init() {
       const u = getCurrentUser();
       if (u) document.getElementById("authBtnText").textContent = u;
-      if (localStorage.getItem("pokeswipe_pro")) document.getElementById("pro-badge").classList.remove("hidden");
       document.getElementById("statPacksOpened").textContent = packsOpenedCount;
 
       // Booster-Links initial befüllen
@@ -2140,9 +2253,12 @@
   const FREE_PORTFOLIO_LIMIT = 15;
   const FREE_WISHLIST_LIMIT = 2;
 
+  // Pro-Status NUR aus der Server-Antwort (/api/me, geprüftes Login) – nicht aus localStorage,
+  // sonst ließe er sich per Browser-Konsole fälschen. Kostenpflichtige Daten prüft zusätzlich der Server.
   function isProUser() {
-    return Boolean(localStorage.getItem("pokeswipe_pro"));
+    try { return "psVerifiedPlan" in window && window.psVerifiedPlan !== "free"; } catch (e) { return false; }
   }
+  window.isProUser = isProUser;
 
   function getTodayKey() {
     return new Date().toISOString().slice(0, 10);
@@ -2348,18 +2464,18 @@
               <span class="text-[11px] font-black ${isSniperDeal ? 'bg-yellow-400 text-slate-950' : 'bg-emerald-500/20 text-emerald-300'} px-2.5 py-0.5 rounded-full">
                 ${known ? `${isSniperDeal ? '👑 PRO SNIPER-DEAL: ' : '🔥 '}-${pct}% unter CM-Trend (${fmtEur(diff)} Ersparnis)` : '📣 Community-Meldung (Marktwert unbekannt)'}
               </span>
-              <h3 class="font-bold text-white text-sm mt-2 ${lockedForFree ? 'sniper-blur' : ''}">${sanitizeHTML(d.name)}</h3>
+              <h3 class="font-bold text-white text-sm mt-2 ${lockedForFree ? 'sniper-blur' : ''}">${lockedForFree ? "Pokémon-Karte (Pro-Deal)" : sanitizeHTML(d.name)}</h3>
             </div>
             <span class="text-xs text-slate-400 shrink-0">${known ? `Trend: <del>${fmtEur(d.cmPrice)}</del>` : ""}</span>
           </div>
 
           <div class="flex items-center justify-between pt-3 border-t border-slate-800 ${lockedForFree ? 'sniper-blur' : ''}">
-            <div><p class="text-lg font-black text-emerald-400">${fmtEur(d.ebayPrice)}</p><p class="text-[10px] text-slate-500">${sanitizeHTML(d.source || "")}</p></div>
-            <div class="flex gap-1.5">
+            <div><p class="text-lg font-black text-emerald-400">${lockedForFree ? "?? €" : fmtEur(d.ebayPrice)}</p><p class="text-[10px] text-slate-500">${lockedForFree ? "" : sanitizeHTML(d.source || "")}</p></div>
+            ${lockedForFree ? `<div class="flex gap-1.5"><span class="bg-slate-800 text-slate-500 text-xs font-bold px-3 py-1.5 rounded-xl">🔒 Links mit Pro</span></div>` : `<div class="flex gap-1.5">
               <a href="${buildCardmarketUrl(d.query)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl">Cardmarket</a>
               <a href="${buildEbayUrl(d.query, 'auction', 'flip')}" target="_blank" rel="noopener sponsored" class="bg-amber-400 text-slate-950 text-xs font-bold px-2.5 py-1.5 rounded-xl">Auktion*</a>
               <a href="${buildEbayUrl(d.query, 'bin', 'flip')}" target="_blank" rel="noopener sponsored" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">🛒 eBay-Deal*</a>
-            </div>
+            </div>`}
           </div>
 
           ${lockedForFree ? `
@@ -2751,7 +2867,7 @@
     { id: "ms5", name: "Bisaflor ex (198/165) – K&P 151" },
     { id: "ms6", name: "Mew ex (205/165) – K&P 151" }
   ];
-  let masterChecked = JSON.parse(localStorage.getItem("pokeswipe_masterset") || "{}");
+  let masterChecked = (typeof lsJSON === "function" ? lsJSON("pokeswipe_masterset", {}) : {});
 
   window.toggleMasterSetCheck = function(id) {
     masterChecked[id] = !masterChecked[id];
@@ -2840,6 +2956,13 @@
   injectPortfolioUpgrades();
   window.filterFlipDeals("all");
   try { calcGradingProfit(); } catch (e) {}
+
+  // Sobald der Server den Tarif bestätigt (Login, Checkout, Abmelden): Pro-Ansichten neu zeichnen
+  window.addEventListener("ps:plan", () => {
+    safeRun("Plan-Update Swipe", updateSwipeCounterBadge);
+    safeRun("Plan-Update Flip", () => window.filterFlipDeals("all"));
+    safeRun("Plan-Update Grading", () => calcGradingProfit());
+  });
 })();
 </script>
 <script type="module" src="/assets/app.js"></script>
