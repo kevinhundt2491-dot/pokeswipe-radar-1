@@ -18,6 +18,8 @@ import { groupDuplicates, surplusBadge } from "./collector-logic.js";
 import { initReelStudio, syncReelStudio } from "./reel-studio.js";
 import { initAutoReels, syncAutoReels, openAutoReels, routeAutoReels } from "./auto-reels.js";
 import { initArena, arenaApi, addSwipeItemToPortfolio } from "./arena.js";
+import { initBooster, boosterApi } from "./booster.js";
+import { initDealsRadar, dealsRadarApi } from "./deals-radar.js";
 import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
 import { initFlip, flipApi, syncFlip } from "./flip.js";
 import { initCommunity, communityApi, syncCommunity, routeCommunity, communityAdminHtml } from "./community.js";
@@ -1202,6 +1204,8 @@ window.PS = {
   scanQuickSearch: () => searchCards(($("scan-quick-q")?.value || "").trim(), "scan-quick-results"),
   ...featureApi,
   ...arenaApi,
+  ...boosterApi,
+  ...dealsRadarApi,
   ...shellApi,
   ...flipApi,
   ...communityApi,
@@ -1226,8 +1230,10 @@ async function boot() {
   initAutoReels();
   initShell();
   initArena();
+  initBooster();
   initFlip();
   initCommunity();
+  initDealsRadar();
   initPwa();
 
   try {

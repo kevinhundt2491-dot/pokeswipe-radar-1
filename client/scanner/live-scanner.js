@@ -105,6 +105,7 @@ function renderAdmin() {
   box.innerHTML = `<div class="bg-slate-950 border border-slate-700 rounded-2xl p-3 text-[11px] text-slate-300 space-y-1.5">
     <p class="font-black text-white">🛠️ Admin: Scanner-Index</p>
     ${sc.status.langs.map((l) => `<p>${FLAG[l.lang]} ${l.hashed.toLocaleString("de-DE")} / ${l.total.toLocaleString("de-DE")} Karten${l.failed ? ` • ${l.failed} ohne Bild/Fehler` : ""}</p>`).join("")}
+    ${Array.isArray(sc.status.seed) ? `<p class="text-slate-500">Basis-Index: ${sc.status.seed.map((s) => `${FLAG[s.lang]} ${Number(s.count).toLocaleString("de-DE")}`).join(" · ")}</p>` : ""}
     ${sc.status.lastHashedAt ? `<p class="text-slate-500">Zuletzt erweitert: ${new Date(sc.status.lastHashedAt).toLocaleString("de-DE")}</p>` : ""}
     <button onclick="PS.liveScanAdminRun()" class="bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-lg">▶️ Index jetzt erweitern</button>
   </div>`;
@@ -477,9 +478,11 @@ export const liveScanApi = {
   liveScanAdminRun: async () => {
     toast("⏳ Läuft …", "Weitere Karten werden indexiert (bis zu 20 Sekunden).");
     try {
-      const r = await api("/api/admin/scan-index/run", { method: "POST" });
+      // Ausdrücklich als JSON (Content-Type + Body) mit Login-Token – der CSRF-Schutz des Servers lehnt alles andere ab
+      const r = await api("/api/admin/scan-index/run", { method: "POST", body: { langs: ["de", "en", "ja"] } });
       sc.status = r.status; renderIndexLine(); renderAdmin();
-      toast("✅ Fertig", `${r.result.hashed} Karten neu im Index${r.result.failed ? `, ${r.result.failed} ohne Bild` : ""}.`);
+      const added = (Number(r.result.seeded) || 0) + (Number(r.result.hashed) || 0);
+      toast("✅ Fertig", `${added.toLocaleString("de-DE")} Karten neu im Index${r.result.seeded ? ` (davon ${Number(r.result.seeded).toLocaleString("de-DE")} aus dem Basis-Index)` : ""}${r.result.failed ? `, ${r.result.failed} ohne Bild` : ""}.`);
     } catch (e) { handleError(e); }
   },
   /** Bereich öffnen und Kamera sofort starten (Schnellstart-Knöpfe, „Karte scannen“). */

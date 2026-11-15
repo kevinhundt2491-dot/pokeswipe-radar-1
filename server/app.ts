@@ -24,6 +24,9 @@ import { registerScanIndex } from "./scan-index.ts";
 import { registerCommunity, afterCommunityReport, applyModeration, isBlockedBetween, COMMUNITY_TARGETS } from "./community.ts";
 import { registerProfiles } from "./profiles.ts";
 import { registerMarket, fulfillOrderSession } from "./market.ts";
+import { registerArena } from "./arena.ts";
+import { registerDealsRadar } from "./deals-radar.ts";
+import { registerShops } from "./shops.ts";
 import { registerNative } from "./native.ts";
 import { profileSlug } from "./community-logic.ts";
 import { CONDITIONS, MARKET_MAX_SHIPPING_CENTS } from "./market-logic.ts";
@@ -497,8 +500,10 @@ app.post("/api/listings", auth, async (c) => {
     const buyNow = it.buyNow === true && profile.stripeAccountReady && Number(price) >= 1;
     const shippingCents = buyNow ? int(it.shippingCents, 0, MARKET_MAX_SHIPPING_CENTS, 0) : 0;
     const condition = CONDITIONS[String(it.condition || "")] ? String(it.condition) : "";
+    // Phase 5: Sprache des Drucks für den DE/EN/JP-Filter in Händler-Shops
+    const lang = ["de", "en", "ja"].includes(String(it.lang)) ? String(it.lang) : "de";
     const [row] = await db.insert(listings).values({
-      userId: user.id, cardId, sealedProductId, cardName, image, price, buyNow, shippingCents, condition,
+      userId: user.id, cardId, sealedProductId, cardName, image, price, buyNow, shippingCents, condition, lang,
       want: str(it.want, 120) || "Tausch / Gebot",
       city: str(it.city, 60) || profile.city || "Deutschland",
     }).returning();
@@ -996,6 +1001,7 @@ app.post("/api/admin/reports/:id", auth, adminOnly, async (c) => {
 // Wird vom geplanten Tracker aufgerufen (und manuell von Admins)
 app.post("/api/admin/run-tracker", auth, adminOnly, async (c) => c.json(await runTracker({ maxCards: 40 })));
 
+registerShops(app, { auth, body, storeDataUrlImage, ratingOf }); // Phase 5: Händler-Shops mit Branding & OG-Seite (vor registerFeatures)
 registerFeatures(app, { auth, adminOnly, body, safeImage, storeDataUrlImage, ratingOf });
 registerGrowth(app, { auth, adminOnly, body, ratingOf });
 registerCollector(app, { auth, body });
@@ -1003,6 +1009,8 @@ registerDrops(app, { auth, adminOnly, body });
 registerLegal(app, { auth, adminOnly, body });
 registerSeo(app); // vor registerCatalog: eigene Teil-Sitemaps vor dem Muster /sitemaps/:file
 registerCommunity(app, { auth, adminOnly, body, safeImage, storeDataUrlImage });
+registerArena(app, { auth, body }); // Phase 5: Preference-Learning & Booster-Simulator
+registerDealsRadar(app, { auth, body }); // Phase 5: geteilte Community-Deals & Sammler-Radar mit Login-Pflicht
 registerProfiles(app, { auth, body }); // ebenfalls vor registerCatalog (/sitemaps/profiles.xml)
 registerMarket(app, { auth, adminOnly, body });
 registerNative(app, { auth, body });
@@ -1025,8 +1033,7 @@ app.get("/api/public-config", (c) => {
 
 app.all("/api/*", (c) => c.json({ error: "Nicht gefunden" }, 404));
 
-// Falls Seitenaufrufe außerhalb von /api beim Server landen: zur App weiterleiten
-app.get("/shop/:slug", (c) => c.redirect(`/?shop=${encodeURIComponent(c.req.param("slug").toLowerCase().slice(0, 30))}`, 302));
+// Falls Seitenaufrufe außerhalb von /api beim Server landen: zur App weiterleiten (/shop/<name> rendert server/shops.ts)
 app.all("*", (c) => (c.req.method === "GET" ? c.redirect("/", 302) : c.json({ error: "Nicht gefunden" }, 404)));
 
 export default app;

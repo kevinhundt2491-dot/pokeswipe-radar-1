@@ -4,6 +4,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
   db, profiles, communityPosts, communityComments, communityLikes, chatMessages, userBlocks, follows, moderationLog, reports,
+  communityDeals, radarPins,
 } from "../db/index.ts";
 import { verifyIdentityToken, isAdmin, type AuthUser } from "./auth.ts";
 import { moderateText, trustScore, trustLevel, writeLimits, AUTO_HIDE_REPORTS, profileSlug, type TrustLevel } from "./community-logic.ts";
@@ -75,7 +76,7 @@ export async function isBlockedBetween(a: string, b: string) {
 const notIn = (col: any, ids: string[]) => (ids.length ? sql`AND ${col} NOT IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})` : sql``);
 
 /** Gemeinsame Schreib-Prüfung: bestätigte E-Mail, nicht stummgeschaltet, Limits je Vertrauensstufe, Wort-/Link-Filter. */
-async function guardWrite(c: any, kind: "chat" | "post" | "comment", text: string) {
+export async function guardWrite(c: any, kind: "chat" | "post" | "comment" | "deal" | "radar", text: string) {
   const user: AuthUser = c.get("user");
   const profile = c.get("profile");
   if (!user.confirmed) return { error: "Bitte bestätige zuerst deine E-Mail-Adresse (Link in deinem Postfach), dann kannst du in der Community schreiben.", status: 403 };
@@ -85,14 +86,20 @@ async function guardWrite(c: any, kind: "chat" | "post" | "comment", text: strin
   const trust = (await trustFor([user.id])).get(user.id)?.score ?? 0;
   const lim = writeLimits(trust, kind);
   if (!rateLimit(`cw:${kind}:${user.id}`, lim.perMinute, 60_000)) return { error: "Bitte nicht so schnell – kurz warten.", status: 429 };
-  const table = kind === "chat" ? sql`chat_messages` : kind === "post" ? sql`community_posts` : sql`community_comments`;
-  const [cnt] = rows(await db.execute(sql`
-    SELECT count(*) FILTER (WHERE created_at > now() - interval '1 minute')::int AS m, count(*)::int AS h
-    FROM ${table} WHERE user_id = ${user.id} AND created_at > now() - interval '1 hour'`));
-  if (Number(cnt?.m) >= lim.perMinute) return { error: "Bitte nicht so schnell – kurz warten.", status: 429 };
-  if (Number(cnt?.h) >= lim.perHour) return { error: `Stündliches Limit erreicht (${lim.perHour}). Mit wachsendem Vertrauen steigt es automatisch.`, status: 429 };
-  const textCol = kind === "post" ? sql`caption` : sql`body`;
-  const recent = rows(await db.execute(sql`SELECT ${textCol} AS t FROM ${table} WHERE user_id = ${user.id} ORDER BY id DESC LIMIT 5`)).map((r: any) => String(r.t || ""));
+  // Radar: ein Pin pro Konto (wird überschrieben) – dort zählt nur die Zeit-Bremse, keine Tabellen-Zählung
+  let recent: string[] = [];
+  if (kind === "radar") {
+    if (!rateLimit(`cw:radar-h:${user.id}`, lim.perHour, 3600_000)) return { error: `Stündliches Limit erreicht (${lim.perHour} Änderungen am Radar-Pin).`, status: 429 };
+  } else {
+    const table = kind === "chat" ? sql`chat_messages` : kind === "post" ? sql`community_posts` : kind === "deal" ? sql`community_deals` : sql`community_comments`;
+    const [cnt] = rows(await db.execute(sql`
+      SELECT count(*) FILTER (WHERE created_at > now() - interval '1 minute')::int AS m, count(*)::int AS h
+      FROM ${table} WHERE user_id = ${user.id} AND created_at > now() - interval '1 hour'`));
+    if (Number(cnt?.m) >= lim.perMinute) return { error: "Bitte nicht so schnell – kurz warten.", status: 429 };
+    if (Number(cnt?.h) >= lim.perHour) return { error: `Stündliches Limit erreicht (${lim.perHour}). Mit wachsendem Vertrauen steigt es automatisch.`, status: 429 };
+    const textCol = kind === "post" ? sql`caption` : kind === "deal" ? sql`title` : sql`body`;
+    recent = rows(await db.execute(sql`SELECT ${textCol} AS t FROM ${table} WHERE user_id = ${user.id} ORDER BY id DESC LIMIT 5`)).map((r: any) => String(r.t || ""));
+  }
   const verdict = moderateText(text, { trust, recent });
   if (verdict.action === "block") {
     await db.insert(moderationLog).values({ action: "auto_block", targetType: kind, targetId: "-", userId: user.id, reason: `${verdict.reason}: ${text.slice(0, 160)}` });
@@ -112,19 +119,29 @@ const authorOf = (r: any, trust: Map<string, TrustInfo>) => {
 // ---------------------------------------------------------------------------
 // Meldungen: automatisches Ausblenden ab mehreren Meldungen, Moderations-Aktionen
 // ---------------------------------------------------------------------------
-export const COMMUNITY_TARGETS = ["post", "comment", "chat"] as const;
-const contentTable = (type: string) => (type === "post" ? communityPosts : type === "comment" ? communityComments : type === "chat" ? chatMessages : null);
+export const COMMUNITY_TARGETS = ["post", "comment", "chat", "deal", "radar"] as const;
+const contentTable = (type: string) => (type === "post" ? communityPosts : type === "comment" ? communityComments : type === "chat" ? chatMessages
+  : type === "deal" ? communityDeals : type === "radar" ? radarPins : null);
 
-async function contentAuthor(type: string, id: number): Promise<string | null> {
+async function contentAuthor(type: string, id: number | string): Promise<string | null> {
   const t: any = contentTable(type);
   if (!t) return null;
+  // Radar-Pins: ein Pin je Konto, die Ziel-ID ist die Nutzer-ID
+  if (type === "radar") {
+    const [p] = await db.select({ userId: radarPins.userId }).from(radarPins).where(eq(radarPins.userId, String(id))).limit(1);
+    return p ? String(p.userId) : null;
+  }
   const [r] = await db.select({ userId: t.userId }).from(t).where(eq(t.id, id)).limit(1);
   return r ? String(r.userId) : null;
 }
 
-async function setContentStatus(type: string, id: number, status: "visible" | "hidden" | "removed", reason: string | null) {
+async function setContentStatus(type: string, id: number | string, status: "visible" | "hidden" | "removed", reason: string | null) {
   const t: any = contentTable(type);
   if (!t) return false;
+  if (type === "radar") {
+    const [p] = await db.update(radarPins).set({ status, flagReason: reason }).where(eq(radarPins.userId, String(id))).returning({ id: radarPins.userId });
+    return Boolean(p);
+  }
   const [r] = await db.update(t).set({ status, flagReason: reason }).where(eq(t.id, id)).returning({ id: t.id });
   if (r && type === "comment") {
     // Kommentarzähler am Beitrag aktuell halten
@@ -137,6 +154,16 @@ async function setContentStatus(type: string, id: number, status: "visible" | "h
 /** Nach einer neuen Meldung: ab AUTO_HIDE_REPORTS verschiedenen Meldenden wird der Inhalt bis zur Prüfung ausgeblendet. */
 export async function afterCommunityReport(targetType: string, targetId: string) {
   if (!(COMMUNITY_TARGETS as readonly string[]).includes(targetType)) return;
+  if (targetType === "radar") {
+    const [r] = rows(await db.execute(sql`
+      SELECT count(DISTINCT reporter_id)::int AS n FROM reports WHERE target_type = 'radar' AND target_id = ${String(targetId)} AND status = 'open'`));
+    if (Number(r?.n) >= AUTO_HIDE_REPORTS) {
+      const [row] = await db.update(radarPins).set({ status: "hidden", flagReason: `${AUTO_HIDE_REPORTS}+ Meldungen` })
+        .where(and(eq(radarPins.userId, String(targetId)), eq(radarPins.status, "visible"))).returning({ userId: radarPins.userId });
+      if (row) await db.insert(moderationLog).values({ action: "auto_hide", targetType: "radar", targetId: String(targetId), userId: String(row.userId), reason: `${Number(r.n)} Meldungen` });
+    }
+    return;
+  }
   const id = Number(targetId);
   if (!Number.isInteger(id) || id <= 0) return;
   const [r] = rows(await db.execute(sql`
@@ -155,7 +182,7 @@ export async function applyModeration(o: {
 }): Promise<{ ok: boolean; error?: string; userId?: string | null }> {
   const reason = str(o.reason, 300);
   let userId: string | null = null;
-  const contentId = Number(o.targetId);
+  const contentId: number | string = o.targetType === "radar" ? str(o.targetId, 80) : Number(o.targetId);
   if (o.targetType === "user") userId = str(o.targetId, 80);
   else if ((COMMUNITY_TARGETS as readonly string[]).includes(o.targetType)) userId = await contentAuthor(o.targetType, contentId);
   else return { ok: false, error: "Unbekanntes Ziel" };
@@ -185,7 +212,7 @@ export async function applyModeration(o: {
     case "ban":
       await db.update(profiles).set({ banned: true }).where(eq(profiles.userId, userId));
       // Inhalte ausblenden (beim Entsperren wiederherstellbar) und Inserate entfernen
-      for (const t of ["community_posts", "community_comments", "chat_messages"]) {
+      for (const t of ["community_posts", "community_comments", "chat_messages", "community_deals", "radar_pins"]) {
         await db.execute(sql`UPDATE ${sql.raw(t)} SET status = 'hidden', flag_reason = 'ban' WHERE user_id = ${userId} AND status = 'visible'`);
       }
       await db.execute(sql`UPDATE listings SET status = 'removed' WHERE user_id = ${userId} AND status = 'active'`);
@@ -193,7 +220,7 @@ export async function applyModeration(o: {
       break;
     case "unban":
       await db.update(profiles).set({ banned: false }).where(eq(profiles.userId, userId));
-      for (const t of ["community_posts", "community_comments", "chat_messages"]) {
+      for (const t of ["community_posts", "community_comments", "chat_messages", "community_deals", "radar_pins"]) {
         await db.execute(sql`UPDATE ${sql.raw(t)} SET status = 'visible', flag_reason = NULL WHERE user_id = ${userId} AND status = 'hidden' AND flag_reason = 'ban'`);
       }
       await log("unban");
@@ -482,25 +509,32 @@ export function registerCommunity(app: any, hlp: Hlp) {
         CASE r.target_type
           WHEN 'post' THEN (SELECT caption FROM community_posts WHERE id = r.target_id::int)
           WHEN 'comment' THEN (SELECT body FROM community_comments WHERE id = r.target_id::int)
-          WHEN 'chat' THEN (SELECT body FROM chat_messages WHERE id = r.target_id::int) END AS content,
+          WHEN 'chat' THEN (SELECT body FROM chat_messages WHERE id = r.target_id::int)
+          WHEN 'deal' THEN (SELECT title || ' – ' || price::text || ' €' FROM community_deals WHERE id = r.target_id::int)
+          WHEN 'radar' THEN (SELECT name || ' (' || city || '): ' || cards FROM radar_pins WHERE user_id = r.target_id) END AS content,
         CASE r.target_type
           WHEN 'post' THEN (SELECT image FROM community_posts WHERE id = r.target_id::int) END AS image,
         CASE r.target_type
           WHEN 'post' THEN (SELECT status FROM community_posts WHERE id = r.target_id::int)
           WHEN 'comment' THEN (SELECT status FROM community_comments WHERE id = r.target_id::int)
-          WHEN 'chat' THEN (SELECT status FROM chat_messages WHERE id = r.target_id::int) END AS content_status,
+          WHEN 'chat' THEN (SELECT status FROM chat_messages WHERE id = r.target_id::int)
+          WHEN 'deal' THEN (SELECT status FROM community_deals WHERE id = r.target_id::int)
+          WHEN 'radar' THEN (SELECT status FROM radar_pins WHERE user_id = r.target_id) END AS content_status,
         CASE r.target_type
           WHEN 'post' THEN (SELECT p.display_name FROM community_posts x JOIN profiles p ON p.user_id = x.user_id WHERE x.id = r.target_id::int)
           WHEN 'comment' THEN (SELECT p.display_name FROM community_comments x JOIN profiles p ON p.user_id = x.user_id WHERE x.id = r.target_id::int)
-          WHEN 'chat' THEN (SELECT p.display_name FROM chat_messages x JOIN profiles p ON p.user_id = x.user_id WHERE x.id = r.target_id::int) END AS author
+          WHEN 'chat' THEN (SELECT p.display_name FROM chat_messages x JOIN profiles p ON p.user_id = x.user_id WHERE x.id = r.target_id::int)
+          WHEN 'deal' THEN (SELECT p.display_name FROM community_deals x JOIN profiles p ON p.user_id = x.user_id WHERE x.id = r.target_id::int)
+          WHEN 'radar' THEN (SELECT p.display_name FROM profiles p WHERE p.user_id = r.target_id) END AS author
       FROM reports r JOIN profiles rp ON rp.user_id = r.reporter_id
-      WHERE r.status = 'open' AND r.target_type IN ('post', 'comment', 'chat') AND r.target_id ~ '^[0-9]{1,9}$'
+      WHERE r.status = 'open' AND ((r.target_type IN ('post', 'comment', 'chat', 'deal') AND r.target_id ~ '^[0-9]{1,9}$') OR r.target_type = 'radar')
       ORDER BY r.created_at DESC LIMIT 100`));
     const flagged = rows(await db.execute(sql`
       SELECT * FROM (
         SELECT 'post' AS type, x.id, x.caption AS content, x.image, x.flag_reason, x.created_at, p.display_name AS author, x.user_id FROM community_posts x JOIN profiles p ON p.user_id = x.user_id WHERE x.status = 'hidden' AND coalesce(x.flag_reason, '') <> 'ban'
         UNION ALL SELECT 'comment', x.id, x.body, '', x.flag_reason, x.created_at, p.display_name, x.user_id FROM community_comments x JOIN profiles p ON p.user_id = x.user_id WHERE x.status = 'hidden' AND coalesce(x.flag_reason, '') <> 'ban'
         UNION ALL SELECT 'chat', x.id, x.body, '', x.flag_reason, x.created_at, p.display_name, x.user_id FROM chat_messages x JOIN profiles p ON p.user_id = x.user_id WHERE x.status = 'hidden' AND coalesce(x.flag_reason, '') <> 'ban'
+        UNION ALL SELECT 'deal', x.id, x.title || ' – ' || x.price::text || ' €', '', x.flag_reason, x.created_at, p.display_name, x.user_id FROM community_deals x JOIN profiles p ON p.user_id = x.user_id WHERE x.status = 'hidden' AND coalesce(x.flag_reason, '') <> 'ban'
       ) q ORDER BY created_at DESC LIMIT 100`));
     const log = rows(await db.execute(sql`
       SELECT m.id, m.action, m.target_type, m.target_id, m.reason, m.created_at, a.display_name AS actor, u.display_name AS user_name

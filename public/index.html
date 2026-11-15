@@ -1369,6 +1369,8 @@
         }
         if (typeof window.psArenaMatch === "function") { try { window.psArenaMatch(item); } catch (e) {} }
       }
+      // Preference-Learning (client/arena.js): Rechts- und Links-Swipes gewichten den weiteren Stapel
+      if (typeof window.psArenaSwipe === "function") { try { window.psArenaSwipe(item, mode === "match" ? "right" : "left"); } catch (e) {} }
       swipeIdx = (swipeIdx + 1) % activeDeck.length;
       renderSwipeCard();
     }
@@ -1385,6 +1387,7 @@
     function psSwipeDetails() {
       const item = activeDeck[swipeIdx % activeDeck.length];
       if (!item || !window.PS) return;
+      if (typeof window.psArenaSwipe === "function") { try { window.psArenaSwipe(item, "detail"); } catch (e) {} }
       if (item.kind === "listing" && item.listingId && window.PS.requestTrade) return window.PS.requestTrade(item.listingId);
       if (item.printId && /^(en|ja):/.test(item.printId) && window.PS.openPrint) return window.PS.openPrint(item.printId);
       const id = item.cardId || item.id;
@@ -1659,6 +1662,12 @@
     let dbRefRadar = null;
     let dbRefMarket = null;
     let radarUsers = [];
+    // Phase 5: Radar-Pins kommen aus /api/radar (client/radar.js)
+    window.psSetRadarUsers = function (list) {
+      radarUsers = Array.isArray(list) ? list : [];
+      renderRadarUsers();
+      if (mapInstance) initOrUpdateMap();
+    };
     let marketListings = [];
     let initialMarketLoaded = false;
 
@@ -2205,15 +2214,9 @@
 
         // 5. Tausch-Hub: läuft jetzt sicher über die eigene API (/api/listings), siehe /assets/app.js
 
-        // 6. Radar-Pins
-        dbRefRadar = db.ref("pokeswipe_radar/radar_users");
-        listen(dbRefRadar.limitToLast(80), "value", snap => {
-          const entries = snap.val() ? Object.entries(snap.val()) : [];
-          cleanupOwnDummies(dbRefRadar, entries, ["name", "city", "cards"]);
-          radarUsers = entries.map(([, v]) => v).filter((u) => !isDummyEntry(u, { maxAgeDays: 90, textFields: ["name", "city", "cards"] })).reverse();
-          renderRadarUsers();
-          if (mapInstance) initOrUpdateMap();
-        });
+        // 6. Radar-Pins laufen seit Phase 5 über die eigene API mit Login-Pflicht, Filter, Melden/Blockieren und
+        //    serverseitiger Koordinaten-Rundung auf ~1 km (/api/radar, siehe client/radar.js). Der alte, anonym
+        //    beschreibbare Firebase-Knoten radar_users wird weder gelesen noch beschrieben.
 
       } catch (e) {
         fbReadyResolve();

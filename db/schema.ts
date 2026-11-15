@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, timestamp, integer, numeric, boolean, date, index, uniqueIndex,
+  pgTable, serial, text, timestamp, integer, numeric, boolean, date, index, uniqueIndex, jsonb, doublePrecision,
 } from "drizzle-orm/pg-core";
 
 // Nutzerprofil – user_id ist die Netlify-Identity-ID
@@ -19,6 +19,10 @@ export const profiles = pgTable("profiles", {
   shopSlug: text("shop_slug"),
   shopTitle: text("shop_title").notNull().default(""),
   shopBio: text("shop_bio").notNull().default(""),
+  // Phase 5: Shop-Branding (Banner, Logo, Akzentfarbe)
+  shopBanner: text("shop_banner").notNull().default(""),
+  shopLogo: text("shop_logo").notNull().default(""),
+  shopAccent: text("shop_accent").notNull().default(""),
   // Empfehlungsprogramm
   referralCode: text("referral_code"),
   referredBy: text("referred_by"),
@@ -280,6 +284,8 @@ export const listings = pgTable("listings", {
   buyNow: boolean("buy_now").notNull().default(false),
   shippingCents: integer("shipping_cents").notNull().default(0),
   condition: text().notNull().default(""),
+  // Phase 5: Sprache des Drucks (de | en | ja) – für den Sprachfilter in Händler-Shops
+  lang: text().notNull().default("de"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("listings_status").on(t.status, t.createdAt), index("listings_user").on(t.userId)]);
 
@@ -882,3 +888,56 @@ export const nativePushTokens = pgTable("native_push_tokens", {
   platform: text().notNull(), // ios | android
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("native_push_tokens_token").on(t.token), index("native_push_tokens_user").on(t.userId)]);
+
+// ---------------------------------------------------------------------------
+// Phase 5: Preference-Learning der Swipe-Arena, geteilte Community-Deals, Sammler-Radar über die eigene API
+// ---------------------------------------------------------------------------
+// Gelernte Vorlieben je Nutzer: Punktwerte je Merkmal (r:<Seltenheit>, l:<Sprache>, s:<Sprache>:<Set>, p:<Preisband>)
+export const swipePreferences = pgTable("swipe_preferences", {
+  userId: text("user_id").primaryKey().references(() => profiles.userId, { onDelete: "cascade" }),
+  scores: jsonb().notNull().default({}),
+  swipes: integer().notNull().default(0),
+  likes: integer().notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Von Nutzern gemeldete Schnäppchen (für alle sichtbar, mit Abstimmung „noch da / weg“)
+export const communityDeals = pgTable("community_deals", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  title: text().notNull(),
+  price: numeric({ precision: 10, scale: 2 }).notNull(),
+  url: text().notNull().default(""),
+  shop: text().notNull().default(""),
+  category: text().notNull().default("singles"), // singles | sealed
+  lang: text().notNull().default("de"),
+  cardId: text("card_id"),
+  marketPrice: numeric("market_price", { precision: 10, scale: 2 }),
+  status: text().notNull().default("visible"), // visible | hidden (Prüfung) | removed
+  flagReason: text("flag_reason"),
+  up: integer().notNull().default(0),
+  down: integer().notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (t) => [index("community_deals_feed").on(t.status, t.id), index("community_deals_user").on(t.userId, t.createdAt)]);
+
+export const communityDealVotes = pgTable("community_deal_votes", {
+  dealId: integer("deal_id").notNull().references(() => communityDeals.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  vote: integer().notNull(), // 1 = noch verfügbar, -1 = weg / kein Deal
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("community_deal_votes_pair").on(t.dealId, t.userId)]);
+
+// Sammler-Radar: ein Pin pro Konto, Koordinaten serverseitig auf ~1 km gerundet
+export const radarPins = pgTable("radar_pins", {
+  userId: text("user_id").primaryKey().references(() => profiles.userId, { onDelete: "cascade" }),
+  name: text().notNull(),
+  city: text().notNull(),
+  cards: text().notNull(),
+  lat: doublePrecision().notNull(),
+  lng: doublePrecision().notNull(),
+  status: text().notNull().default("visible"), // visible | hidden | removed
+  flagReason: text("flag_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("radar_pins_updated").on(t.status, t.updatedAt)]);

@@ -69,7 +69,9 @@ async function sellerDashboard() {
 export function listingFormExtras() {
   const ready = Boolean(state.me?.sellerReady);
   const conds = { mint: "Mint", nm: "Near Mint", ex: "Excellent", gd: "Good", lp: "Light Played", pl: "Played", po: "Poor", graded: "Gegradet (Slab)", sealed: "Sealed / OVP" };
-  return `<label class="text-slate-300 font-bold">Zustand</label>
+  return `<label class="text-slate-300 font-bold">Sprache der Karte</label>
+    <select id="ps-li-lang" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"><option value="de">🇩🇪 Deutsch</option><option value="en">🇬🇧 Englisch</option><option value="ja">🇯🇵 Japanisch</option></select>
+    <label class="text-slate-300 font-bold">Zustand</label>
     <select id="ps-li-cond" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"><option value="">– bitte wählen –</option>${Object.entries(conds).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
     <div class="bg-slate-950 border ${ready ? "border-cyan-500/40" : "border-slate-800"} rounded-2xl p-3 space-y-2">
       <label class="flex gap-2 items-start ${ready ? "" : "opacity-60"}"><input type="checkbox" id="ps-li-buynow" ${ready ? "checked" : "disabled"} class="mt-0.5 accent-cyan-400">
@@ -80,7 +82,8 @@ export function listingFormExtras() {
 }
 export function listingFormValues() {
   const buyNow = Boolean($("ps-li-buynow")?.checked && state.me?.sellerReady);
-  return { condition: $("ps-li-cond")?.value || "", buyNow, shippingCents: buyNow ? Math.round((parseFloat(String($("ps-li-ship")?.value || "0").replace(",", ".")) || 0) * 100) : 0 };
+  const lang = ["de", "en", "ja"].includes($("ps-li-lang")?.value) ? $("ps-li-lang").value : "de";
+  return { condition: $("ps-li-cond")?.value || "", lang, buyNow, shippingCents: buyNow ? Math.round((parseFloat(String($("ps-li-ship")?.value || "0").replace(",", ".")) || 0) * 100) : 0 };
 }
 
 /** Kauf-Buttons im Inserat (nur fremde Inserate mit verifiziertem Verkäufer) */

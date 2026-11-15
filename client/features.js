@@ -444,43 +444,100 @@ function shopsPanelHtml() {
   </div>`;
 }
 
+const SHOP_ACCENTS = ["#22d3ee", "#facc15", "#f472b6", "#a78bfa", "#34d399", "#fb923c", "#f87171", "#60a5fa"];
+const SHOP_FLAG = { de: "🇩🇪", en: "🇬🇧", ja: "🇯🇵" };
+const shopAccent = (v) => (SHOP_ACCENTS.includes(v) ? v : "#22d3ee");
+const shopView = { slug: "", lang: "", timer: null };
+
 async function loadShops() {
   const box = $("ps-shop-list");
   if (!box) return;
   try {
     const { shops } = await api("/api/shops");
-    box.innerHTML = shops.length ? shops.map((s) => `<button onclick="PS.openShop(${jsArg(s.shop_slug)})" class="text-left bg-slate-950 border border-slate-800 hover:border-cyan-400 rounded-2xl p-3 text-xs space-y-1">
-        <p class="text-sm font-black text-white truncate">🏪 ${esc(s.title)} <span class="text-cyan-300 text-[10px]">✔</span></p>
-        <p class="text-slate-400 truncate">${esc(s.display_name)}${s.city ? " • 📍 " + esc(s.city) : ""}</p>
-        <p class="text-slate-300 line-clamp-2">${esc(s.shop_bio || "")}</p>
-        <p><span class="text-emerald-400 font-bold">${Number(s.listing_count) || 0} Angebote</span> ${s.rating_count ? `<span class="text-amber-300">⭐ ${Number(s.rating) || 0} (${Number(s.rating_count) || 0})</span>` : ""}</p>
-      </button>`).join("") : `<p class="sm:col-span-3 text-xs text-slate-500">Noch keine Händler-Shops. Pro-Trader können ihren Shop im Konto einrichten.</p>`;
+    box.innerHTML = shops.length ? shops.map((s) => {
+      const accent = shopAccent(s.shop_accent);
+      return `<button onclick="PS.openShop(${jsArg(s.shop_slug)})" class="text-left bg-slate-950 border border-slate-800 hover:border-cyan-400 rounded-2xl overflow-hidden text-xs">
+        <div class="h-14 bg-cover bg-center" style="background-image:${s.shop_banner ? `url('${esc(cdn(s.shop_banner, 480))}')` : `linear-gradient(120deg, ${accent}, #312e81)`}"></div>
+        <div class="p-3 pt-0 space-y-1">
+          <div class="-mt-5 w-10 h-10 rounded-xl border-2 bg-slate-900 bg-cover bg-center flex items-center justify-center text-lg" style="border-color:${accent};${s.shop_logo ? `background-image:url('${esc(cdn(s.shop_logo, 120))}')` : ""}">${s.shop_logo ? "" : "🏪"}</div>
+          <p class="text-sm font-black text-white truncate">${esc(s.title)} <span class="text-[10px]" style="color:${accent}">✔</span></p>
+          <p class="text-slate-400 truncate">${esc(s.display_name)}${s.city ? " • 📍 " + esc(s.city) : ""}</p>
+          <p class="text-slate-300 line-clamp-2">${esc(s.shop_bio || "")}</p>
+          <p><span class="text-emerald-400 font-bold">${Number(s.listing_count) || 0} Angebote</span> ${s.rating_count ? `<span class="text-amber-300">⭐ ${Number(s.rating) || 0} (${Number(s.rating_count) || 0})</span>` : ""}</p>
+        </div>
+      </button>`;
+    }).join("") : `<p class="sm:col-span-3 text-xs text-slate-500">Noch keine Händler-Shops. Pro-Trader können ihren Shop im Konto einrichten.</p>`;
   } catch {}
 }
 
-async function openShop(slug) {
-  modal("ps-shop", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Shop …</p>`, { wide: true });
+function stopShopSync() { clearInterval(shopView.timer); shopView.timer = null; }
+
+function renderShopListings(listings) {
+  const box = $("ps-shop-inv");
+  if (!box) return;
+  box.innerHTML = listings.length ? listings.map((l) => PS().listingCard({ ...l, card_name: `${SHOP_FLAG[l.lang] || ""} ${l.card_name}`.trim() })).join("")
+    : `<p class="text-xs text-slate-500 text-center py-4">Gerade keine Angebote${shopView.lang ? " in dieser Sprache" : ""}.</p>`;
+  for (const l of listings) if (!state.listings.find((x) => x.id === l.id)) state.listings.push(l);
+}
+
+/** Inventar live halten: alle 30 Sekunden neu laden, solange der Shop offen und die Seite sichtbar ist. */
+async function refreshShopInventory() {
+  if (!shopView.slug || document.hidden || $("ps-shop")?.classList.contains("hidden")) return;
   try {
-    const { shop, listings } = await api(`/api/shops/${encodeURIComponent(slug)}`);
-    const url = `${location.origin}/shop/${encodeURIComponent(shop.slug || "")}`;
+    const { listings } = await api(`/api/shops/${encodeURIComponent(shopView.slug)}${shopView.lang ? `?lang=${shopView.lang}` : ""}`);
+    renderShopListings(listings);
+    const t = $("ps-shop-sync");
+    if (t) t.textContent = `🟢 Live • aktualisiert ${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`;
+  } catch {}
+}
+
+async function openShop(slug, lang = "") {
+  const keep = shopView.slug === slug && $("ps-shop") && !$("ps-shop").classList.contains("hidden");
+  shopView.slug = slug; shopView.lang = ["de", "en", "ja"].includes(lang) ? lang : "";
+  if (!keep) modal("ps-shop", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Shop …</p>`, { wide: true });
+  try {
+    const { shop, listings } = await api(`/api/shops/${encodeURIComponent(slug)}${shopView.lang ? `?lang=${shopView.lang}` : ""}`);
+    const url = shop.publicUrl || `${location.origin}/shop/${encodeURIComponent(shop.slug || "")}`;
+    const accent = shopAccent(shop.accent);
+    const st = shop.stats || { active: 0, sales: 0, followers: 0, inventoryValue: 0, langs: { de: 0, en: 0, ja: 0 } };
+    const tab = (l, label, n) => `<button onclick="PS.openShop(${jsArg(shop.slug)}, ${jsArg(l)})" class="shrink-0 text-[11px] font-black px-3 py-1.5 rounded-xl ${shopView.lang === l ? "text-slate-950" : "bg-slate-800 text-slate-200"}" ${shopView.lang === l ? `style="background:${accent}"` : ""}>${label}${l ? ` (${Number(n) || 0})` : ""}</button>`;
     modal("ps-shop", `
-      <div class="rounded-2xl p-4 bg-gradient-to-r from-cyan-600/80 via-indigo-700/80 to-purple-800/80 border border-cyan-300/50">
-        <p class="text-[10px] font-black uppercase text-cyan-200">✔ Verifizierter Händler</p>
-        <h3 class="text-lg font-black text-white">🏪 ${esc(shop.title)}</h3>
-        <p class="text-xs text-slate-100">${esc(shop.displayName)}${shop.city ? " • 📍 " + esc(shop.city) : ""} • dabei seit ${new Date(shop.memberSince).toLocaleDateString("de-DE", { month: "short", year: "numeric" })}</p>
-        <p class="text-xs text-white mt-1">${shop.rating?.count ? `⭐ ${Number(shop.rating.avg) || 0} (${Number(shop.rating.count) || 0} Bewertungen)` : "Noch keine Bewertungen"} • ${Number(shop.completedTrades) || 0} Tausche</p>
-        ${shop.bio ? `<p class="text-xs text-slate-100 mt-2 whitespace-pre-line">${esc(shop.bio)}</p>` : ""}
+      <div class="rounded-2xl overflow-hidden border" style="border-color:${accent}88">
+        <div class="h-28 sm:h-36 bg-cover bg-center" style="background-image:${shop.banner ? `url('${esc(cdn(shop.banner, 900))}')` : `linear-gradient(120deg, ${accent}, #312e81 60%, #0b1220)`}"></div>
+        <div class="px-4 pb-3 bg-slate-950">
+          <div class="flex items-end gap-3 -mt-10">
+            <div class="w-20 h-20 rounded-2xl border-4 bg-slate-900 bg-cover bg-center flex items-center justify-center text-4xl shrink-0" style="border-color:${accent};${shop.logo ? `background-image:url('${esc(cdn(shop.logo, 200))}')` : ""}">${shop.logo ? "" : "🏪"}</div>
+            <div class="min-w-0 pb-1">
+              <span class="text-[10px] font-black uppercase px-2 py-0.5 rounded-full text-slate-950" style="background:${accent}">✔ Verifizierter Händler</span>
+              <h3 class="text-lg font-black text-white truncate">${esc(shop.title)}</h3>
+            </div>
+          </div>
+          <p class="text-xs text-slate-300 mt-2">${esc(shop.displayName)}${shop.city ? " • 📍 " + esc(shop.city) : ""} • dabei seit ${new Date(shop.memberSince).toLocaleDateString("de-DE", { month: "short", year: "numeric" })}</p>
+          <p class="text-xs text-white">${shop.rating?.count ? `⭐ ${Number(shop.rating.avg) || 0} (${Number(shop.rating.count) || 0} Bewertungen)` : "Noch keine Bewertungen"} • ⏱️ ${esc(shop.responseLabel || "")}${shop.sellerVerified ? " • 🔒 Käuferschutz" : ""}</p>
+          ${shop.bio ? `<p class="text-xs text-slate-200 mt-2 whitespace-pre-line">${esc(shop.bio)}</p>` : ""}
+        </div>
       </div>
-      <div class="flex gap-2 text-xs">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2"><p class="text-base font-black text-white">${Number(st.active) || 0}</p><p class="text-slate-400">aktive Angebote</p></div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2"><p class="text-base font-black text-white">${(Number(shop.completedTrades) || 0) + (Number(st.sales) || 0)}</p><p class="text-slate-400">abgeschlossene Deals</p></div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2"><p class="text-base font-black text-white">${eur(st.inventoryValue)}</p><p class="text-slate-400">Inventar-Wert</p></div>
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-2"><p class="text-base font-black text-white">${Number(st.followers) || 0}</p><p class="text-slate-400">Follower</p></div>
+      </div>
+      <div class="flex flex-wrap gap-2 text-xs">
         ${btn("🔗 Shop-Link teilen", `PS.shareLink(${jsArg(url)}, ${jsArg(shop.title)})`, "bg-slate-800 text-white")}
         ${btn("⭐ Bewertungen", `PS.openUser(${jsArg(shop.userId)})`, "bg-slate-800 text-white")}
+        ${state.user?.id === shop.userId ? btn("🎨 Shop gestalten", "PS.openShopSettings()", "bg-slate-800 text-cyan-300") : ""}
       </div>
-      <div class="space-y-2 max-h-[55vh] overflow-y-auto">${listings.length ? listings.map((l) => PS().listingCard(l)).join("") : `<p class="text-xs text-slate-500 text-center py-4">Gerade keine Angebote.</p>`}</div>`, {
+      <div class="flex gap-1.5 overflow-x-auto no-scrollbar">${tab("", "Alle", st.active)}${tab("de", "🇩🇪 DE", st.langs?.de)}${tab("en", "🇬🇧 EN", st.langs?.en)}${tab("ja", "🇯🇵 JP", st.langs?.ja)}</div>
+      <p id="ps-shop-sync" class="text-[10px] text-emerald-400">🟢 Live-Inventar</p>
+      <div id="ps-shop-inv" class="space-y-2 max-h-[50vh] overflow-y-auto"></div>`, {
       wide: true,
-      onClose: () => { if (location.pathname.startsWith("/shop/") || location.search.includes("shop=")) history.replaceState(null, "", "/"); },
+      onClose: () => { stopShopSync(); shopView.slug = ""; if (location.pathname.startsWith("/shop/") || location.search.includes("shop=")) history.replaceState(null, "", "/"); },
     });
-    for (const l of listings) if (!state.listings.find((x) => x.id === l.id)) state.listings.push(l);
-  } catch (e) { closeModalEl("ps-shop"); handleError(e); }
+    renderShopListings(listings);
+    stopShopSync();
+    shopView.timer = setInterval(refreshShopInventory, 30_000);
+  } catch (e) { stopShopSync(); closeModalEl("ps-shop"); handleError(e); }
 }
 
 function openShopSettings() {
@@ -488,10 +545,11 @@ function openShopSettings() {
   const m = state.me;
   if (!m?.shop?.enabled) {
     modal("ps-shop-set", `<h3 class="text-base font-black text-white">🏪 Eigener Händler-Shop</h3>
-      <p class="text-xs text-slate-300">Mit <strong class="text-purple-300">Pro Trader</strong> bekommst du eine eigene Shop-Seite (z. B. <code>pokeswipe-radar.de/shop/dein-name</code>) mit allen deinen Angeboten, Bewertungen und ✔-Badge – perfekt zum Teilen auf Instagram, TikTok & Discord.</p>
+      <p class="text-xs text-slate-300">Mit <strong class="text-purple-300">Pro Trader</strong> bekommst du eine eigene Shop-Seite (z. B. <code>pokeswipe-radar.de/shop/dein-name</code>) mit Banner, Logo, allen deinen Angeboten, Bewertungen und ✔-Badge – inklusive Vorschaubild für WhatsApp, Instagram, TikTok & Discord.</p>
       ${btn("👑 Pro Trader ansehen", "PS.openPro()", "w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white")}`);
     return;
   }
+  const accent = shopAccent(m.shop.accent);
   modal("ps-shop-set", `<h3 class="text-base font-black text-white">🏪 Shop einrichten</h3>
     <div class="space-y-2 text-xs">
       <label class="text-slate-300 font-bold">Shop-Adresse</label>
@@ -500,9 +558,55 @@ function openShopSettings() {
       <label class="text-slate-300 font-bold">Beschreibung</label>
       <textarea id="ps-shop-bio" maxlength="600" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Was bietest du an? Versand, Zahlungsarten, Abholung …">${esc(m.shop.bio || "")}</textarea>
       ${btn("Speichern", "PS.saveShop()", "w-full bg-emerald-500 text-slate-950")}
+      <div class="bg-slate-950 border border-slate-800 rounded-2xl p-3 space-y-2">
+        <p class="font-black text-white">🎨 Branding</p>
+        <label class="text-slate-300 font-bold block">Banner (Querformat, max. 600 KB)<input id="ps-shop-banner" type="file" accept="image/jpeg,image/png,image/webp" class="block w-full text-[11px] text-slate-400 mt-1" /></label>
+        <label class="text-slate-300 font-bold block">Logo (quadratisch, max. 600 KB)<input id="ps-shop-logo" type="file" accept="image/jpeg,image/png,image/webp" class="block w-full text-[11px] text-slate-400 mt-1" /></label>
+        <p class="text-slate-300 font-bold">Akzentfarbe</p>
+        <div class="flex flex-wrap gap-2">${SHOP_ACCENTS.map((c) => `<button type="button" onclick="PS.shopAccentPick(${jsArg(c)})" data-accent="${c}" aria-label="Farbe ${c}" class="w-8 h-8 rounded-full border-4 ${c === accent ? "border-white" : "border-slate-800"}" style="background:${c}"></button>`).join("")}</div>
+        <div class="grid grid-cols-2 gap-2">
+          ${btn("Branding speichern", "PS.saveShopBranding()", "bg-cyan-400 text-slate-950")}
+          ${btn("Banner & Logo entfernen", "PS.saveShopBranding(true)", "bg-slate-800 text-slate-300")}
+        </div>
+      </div>
       ${m.shop.slug ? btn("Meinen Shop ansehen", `PS.openShop(${jsArg(m.shop.slug)})`, "w-full bg-slate-800 text-white") : ""}
+      ${m.shop.slug ? `<a href="/shop/${esc(encodeURIComponent(m.shop.slug))}" target="_blank" rel="noopener" class="block text-center w-full bg-slate-800 text-white font-black py-2.5 px-3 rounded-xl">🌐 Öffentliche Shop-Seite (mit Vorschaubild)</a>` : ""}
       ${btn("📊 Shop-Statistik", "PS.openShopStats()", "w-full bg-slate-800 text-cyan-300")}
     </div>`);
+  shopView.accent = accent;
+}
+
+const readImageFile = (file) => new Promise((resolve, reject) => {
+  if (!file) return resolve(undefined);
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return reject(new Error("Bitte JPEG, PNG oder WebP wählen."));
+  if (file.size > 600_000) return reject(new Error("Das Bild ist größer als 600 KB."));
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result));
+  r.onerror = () => reject(new Error("Bild konnte nicht gelesen werden."));
+  r.readAsDataURL(file);
+});
+
+async function saveShopBranding(remove = false) {
+  try {
+    const payload = remove ? { banner: "", logo: "" } : {
+      banner: await readImageFile($("ps-shop-banner")?.files?.[0]),
+      logo: await readImageFile($("ps-shop-logo")?.files?.[0]),
+      accent: shopView.accent || "#22d3ee",
+    };
+    await api("/api/shop/branding", { method: "PUT", body: payload });
+    await PS().refreshMe();
+    toast("🎨 Shop-Branding gespeichert", "Banner, Logo und Farbe erscheinen sofort im Shop und im Vorschaubild.");
+    loadShops();
+  } catch (e) { handleError(e); }
+}
+
+function shopAccentPick(c) {
+  if (!SHOP_ACCENTS.includes(c)) return;
+  shopView.accent = c;
+  document.querySelectorAll("[data-accent]").forEach((el) => {
+    el.classList.toggle("border-white", el.dataset.accent === c);
+    el.classList.toggle("border-slate-800", el.dataset.accent !== c);
+  });
 }
 
 async function saveShop() {
@@ -782,7 +886,7 @@ export const featureApi = {
   ...liveScanApi,
   ...collectorApi,
   sealedKind: (k) => { sealedKind = k; renderSealed(); },
-  openSealed, createSealedAlert, deleteSealedAlert, listSealed, openShop, openShopSettings, saveShop, shareLink,
+  openSealed, createSealedAlert, deleteSealedAlert, listSealed, openShop, openShopSettings, saveShop, saveShopBranding, shopAccentPick, shareLink,
   adminSealedPrice, adminSealedHide, adminSealedAdd, showSub,
   ...growthApi,
   ...dropsApi,

@@ -7,6 +7,8 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db, cardPrints, cardPrintPrices, printSets, fxRates } from "../db/index.ts";
 import { verifyIdentityToken } from "./auth.ts";
+import { deckPrefs, prefFactorSql } from "./arena.ts";
+import type { PrefProfile } from "./arena-logic.ts";
 import { str, int, rows, rateLimit, clientIp } from "./util.ts";
 import {
   PRINT_LANGS, PRINT_ID_RE, TCGDEX_ID_RE, SET_ID_RE, LANG_LABEL, LANG_FLAG, RARITY_SQL, RARITY_LABEL, RARITY_BUCKETS, DEAL_MIN_PCT, DEAL_MIN_PRICE, HIT_MIN_PRICE_WITHOUT_RARITY,
@@ -327,7 +329,7 @@ function rarityWhere(opts: DeckOpts, col = sql`x.rarity`, priceCol = sql`x.price
   return sql`${include ? sql` AND ${col} ~* ${include}` : sql``}${exclude ? sql` AND (${col} IS NULL OR ${col} !~* ${exclude})` : sql``}`;
 }
 
-export async function buildDeck(opts: DeckOpts, userId: string | null) {
+export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: PrefProfile | null = null) {
   const langs = opts.langs;
   const hasDe = langs.includes("de");
   const printLangs = langs.filter((l) => l !== "de");
@@ -363,7 +365,7 @@ export async function buildDeck(opts: DeckOpts, userId: string | null) {
   const cards = parts.length ? rows(await db.execute(sql`
     SELECT * FROM (${sql.join(parts, sql` UNION ALL `)}) x
     WHERE TRUE ${setWhere}${priceWhere}${dealWhere}${wishWhere}${excludeWhere}${rarityWhere(opts)}
-    ORDER BY -ln(1 - random()) / GREATEST(ln(COALESCE(x.price, 0) + 2), 0.6)
+    ORDER BY -ln(1 - random()) / (GREATEST(ln(COALESCE(x.price, 0) + 2), 0.6) * ${prefFactorSql(prefs)})
     LIMIT ${want}
   `)) : [];
 
@@ -505,9 +507,11 @@ export function registerIntlCatalog(app: any, { auth, adminOnly }: { auth: any; 
     const opts = parseDeckQuery(c.req.query());
     const user = await verifyIdentityToken(c).catch(() => null);
     if (opts.wishlist && !user) return c.json({ error: "Für den Wunschlisten-Filter bitte anmelden.", login: true }, 401);
-    const deck = await buildDeck(opts, user?.id ?? null);
+    // Preference-Learning: gelernte Vorlieben (Konto oder Gerät) gewichten die Zufallsauswahl
+    const prefs = await deckPrefs(user?.id ?? null, c.req.query("pw"));
+    const deck = await buildDeck(opts, user?.id ?? null, prefs);
     c.header("Cache-Control", "private, no-store");
-    return c.json({ ...deck, filters: { ...opts, exclude: undefined } });
+    return c.json({ ...deck, personalized: Boolean(prefs && prefs.swipes >= 5), filters: { ...opts, exclude: undefined } });
   });
 
   // Detail eines englischen/japanischen Drucks mit beiden Preis-Feeds, Verlauf und Partner-Drucken

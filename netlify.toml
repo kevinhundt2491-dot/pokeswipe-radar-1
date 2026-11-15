@@ -10,9 +10,9 @@
 
 # Der API-Server beantwortet /api/*, die öffentlichen Karten- & Set-Seiten, die Rechtsseiten (inkl. Kündigungsbutton)
 # die Sitemaps, Pokémon-/Sealed-/Trend-Seiten, Teilen-Kurzlinks (/s/…), Einladungsseiten, öffentliche Sammler-Profile (/u/…)
-# und teilbare Pull-Wall-Beiträge (/p/…) – alles andere ist die statische App
+# teilbare Pull-Wall-Beiträge (/p/…) und öffentliche Händler-Shops (/shop/…, mit Vorschaubild) – alles andere ist die statische App
 [server]
-  path = ["/api/*", "/karte/*", "/sitemap.xml", "/sitemaps/*", "/sets", "/set/*", "/rechtliches", "/impressum", "/agb", "/widerruf", "/kuendigen", "/pokemon", "/pokemon/*", "/sealed", "/sealed/*", "/trends", "/s/*", "/einladung/*", "/u/*", "/p/*", "/.well-known/apple-app-site-association", "/.well-known/assetlinks.json"]
+  path = ["/api/*", "/karte/*", "/sitemap.xml", "/sitemaps/*", "/sets", "/set/*", "/rechtliches", "/impressum", "/agb", "/widerruf", "/kuendigen", "/pokemon", "/pokemon/*", "/sealed", "/sealed/*", "/trends", "/s/*", "/einladung/*", "/u/*", "/p/*", "/shop/*", "/.well-known/apple-app-site-association", "/.well-known/assetlinks.json"]
 
 # Kartenbilder über das Netlify Image CDN (verkleinert, WebP/AVIF)
 [images]
@@ -48,11 +48,8 @@
   [headers.values]
     Cache-Control = "public, max-age=300, must-revalidate"
 
-# Händler-Shops: /shop/<name> öffnet die App, die den Shop anzeigt
-[[redirects]]
-  from = "/shop/*"
-  to = "/index.html"
-  status = 200
+# Händler-Shops: /shop/<name> rendert seit Phase 5 der API-Server (öffentliche Shop-Seite mit OpenGraph-Vorschau);
+# „In der App öffnen“ führt zu /?shop=<name>
 
 [[headers]]
   for = "/sw.js"

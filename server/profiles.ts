@@ -96,7 +96,7 @@ async function loadJpeg(image: string): Promise<Rgba | null> {
   } catch { return null; }
 }
 
-async function ogJpeg(key: string, images: string[], accent?: [number, number, number]) {
+export async function ogJpeg(key: string, images: string[], accent?: [number, number, number]) {
   const store = getStore("og-images");
   const hit = await store.get(key, { type: "arrayBuffer" }).catch(() => null);
   if (hit) return new Uint8Array(hit);
@@ -105,7 +105,7 @@ async function ogJpeg(key: string, images: string[], accent?: [number, number, n
   await store.set(key, jpg.buffer as ArrayBuffer).catch(() => {});
   return jpg;
 }
-const imgKey = (prefix: string, images: string[]) => {
+export const imgKey = (prefix: string, images: string[]) => {
   let x = 0;
   for (const ch of images.join("|")) x = (Math.imul(x, 31) + ch.charCodeAt(0)) | 0;
   return `${prefix}-${(x >>> 0).toString(36)}`;
