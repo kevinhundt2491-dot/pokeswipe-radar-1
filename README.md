@@ -122,6 +122,6 @@ Netlify-Umgebungsvariablen und werden nur an Admins ausgeliefert:
 | --- | --- |
 | `MAKE_WEBHOOK_URL` | Make.com-Webhook (https). Ohne Variable greift das bisherige Szenario als Rückfall. |
 | `MAKE_WEBHOOK_TOKEN` | Optional: gemeinsamer Token für den Filter `token = …` im Make-Szenario (gilt für alle Admin-Browser). |
-| `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | Sprecherstimme (alternativ `OPENAI_TTS_API_KEY`). Ohne Schlüssel: `voiceover_mode=placeholder`. |
+| `ELEVENLABS_API_KEY` | Sprecherstimme für die Auto-Reels (fest: ElevenLabs „Matilda“). Ohne Schlüssel startet der Generator mit Voiceover nicht. |
 
 Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorgabe nur in diesem Browser.

@@ -1,77 +1,71 @@
 // Deutsche Sprecherstimme (Voiceover) für die Auto-Reels.
-// Admin-only: erzeugt pro Szenen-Satz eine MP3 über ElevenLabs (bevorzugt, ELEVENLABS_API_KEY)
-// oder alternativ OpenAI TTS (OPENAI_TTS_API_KEY). Fertige Clips landen in Netlify Blobs,
+// Admin-only: erzeugt pro Szenen-Satz eine MP3 über ElevenLabs (ELEVENLABS_API_KEY) – ausschließlich
+// mit der Stimme "Matilda" (weiblich, freundlich & warm). Fertige Clips landen in Netlify Blobs,
 // damit jede Zeile nur einmal bezahlt wird – weitere Aufnahmen holen sie aus dem Cache.
 import { getStore } from "@netlify/blobs";
 import { rateLimit } from "./util.ts";
 
 const MAX_LINES = 12, MAX_CHARS = 320;
-// Auswählbare ElevenLabs-Stimmen (Premade, funktionieren mit eleven_multilingual_v2 auch auf Deutsch).
-// Standard ist "Brian"; per ELEVENLABS_VOICE_ID kann eine eigene Stimme als Standard gesetzt werden.
-export const EL_VOICES = [
-  { id: "nPczCjzI2devNBz1zQrb", name: "Brian", desc: "männlich, tief & ruhig – Erzähler" },
-  { id: "JBFqnCBsd6RMkjVDRZzb", name: "George", desc: "männlich, warm & sympathisch" },
-  { id: "onwK4e9ZLuTAKqWW03F9", name: "Daniel", desc: "männlich, klar – Nachrichtensprecher" },
-  { id: "cgSgspJ2msm6clMCkdW9", name: "Jessica", desc: "weiblich, jung & lebhaft" },
-  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", desc: "weiblich, freundlich & warm" },
-  { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily", desc: "weiblich, sanft & klar" },
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah", desc: "weiblich – bisherige Stimme" },
-];
-const DEFAULT_EL_VOICE = "nPczCjzI2devNBz1zQrb";
+// Feste Sprecherin für alle Reels: Matilda (ElevenLabs-Premade, über eleven_multilingual_v2 auf Hochdeutsch)
+export const MATILDA = { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", desc: "weiblich, freundlich & warm" };
+export const EL_VOICES = [MATILDA];
 const EL_MODEL = "eleven_multilingual_v2";
+// Ruhige, natürliche Sprechweise: hohe Stabilität gegen schwankende Betonung, style = 0 (keine
+// künstliche Übertreibung), normales Tempo (speed 1.0) – Tempo wird im Client NICHT verändert.
+const VOICE_SETTINGS = { stability: 0.62, similarity_boost: 0.8, style: 0, use_speaker_boost: true, speed: 1.0 };
+// Fester Seed = gleiche Zeile klingt bei jeder Neuerzeugung gleich
+const SEED = 20261115;
 // Bisheriges Make.com-Szenario als Rückfall, bis MAKE_WEBHOOK_URL in Netlify gesetzt ist.
 // Liegt nur auf dem Server und wird ausschließlich an Admins ausgeliefert.
 const DEFAULT_MAKE_WEBHOOK = "https://hook.eu1.make.com/pb4ym0nehyg8xdj8l6sobvyr0jwldhkt";
 
-type Provider = { id: string; voice: string; tts: (text: string) => Promise<ArrayBuffer> };
+type Ctx = { prev?: string; next?: string };
+type Provider = { id: string; voice: string; tts: (text: string, ctx?: Ctx) => Promise<ArrayBuffer> };
 
-function provider(requested?: string): Provider | null {
+/**
+ * Text für die Sprachausgabe glätten: Emojis, Symbole und Gedankenstriche erzeugen bei TTS
+ * merkwürdige Pausen oder Betonungen – sie werden in normale deutsche Satzzeichen/Wörter übersetzt.
+ */
+export function speakable(text: string) {
+  return String(text)
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, "")
+    .replace(/\s*&\s*/g, " und ")
+    .replace(/(\d)\s*%/g, "$1 Prozent")
+    .replace(/(\d)\s*€/g, "$1 Euro")
+    .replace(/\s+[–—]\s+/g, ", ")
+    .replace(/[„“”"«»]/g, "")
+    .replace(/!+/g, ".")
+    .replace(/\s+([,.?])/g, "$1")
+    .replace(/,\s*,/g, ",")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function provider(): Provider | null {
   const el = process.env.ELEVENLABS_API_KEY;
-  if (el) {
-    const custom = process.env.ELEVENLABS_VOICE_ID;
-    const allowed = requested && (EL_VOICES.some((v) => v.id === requested) || requested === custom);
-    const voice = allowed ? requested! : custom || DEFAULT_EL_VOICE;
-    return {
-      id: `elevenlabs:${EL_MODEL}:v2`, voice,
-      async tts(text) {
-        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
-          method: "POST",
-          headers: { "xi-api-key": el, "Content-Type": "application/json", Accept: "audio/mpeg" },
-          signal: AbortSignal.timeout(45_000),
-          body: JSON.stringify({
-            text, model_id: EL_MODEL,
-            voice_settings: { stability: 0.55, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true, speed: 1.05 },
-          }),
-        });
-        if (!res.ok) {
-          const hint = res.status === 401 ? " – API-Schlüssel ungültig" : res.status === 429 ? " – Kontingent/Rate-Limit erreicht" : res.status === 422 ? " – Text oder Stimme abgelehnt" : "";
-          throw new Error(`ElevenLabs antwortet mit ${res.status}${hint}`);
-        }
-        return res.arrayBuffer();
-      },
-    };
-  }
-  const oa = process.env.OPENAI_TTS_API_KEY;
-  if (oa) {
-    const voice = process.env.OPENAI_TTS_VOICE || "nova";
-    return {
-      id: "openai:gpt-4o-mini-tts", voice,
-      async tts(text) {
-        const res = await fetch("https://api.openai.com/v1/audio/speech", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${oa}`, "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(45_000),
-          body: JSON.stringify({
-            model: "gpt-4o-mini-tts", voice, input: text, response_format: "mp3",
-            instructions: "Sprich natürliches Hochdeutsch: freundlich, warm, motiviert und klar – wie ein sympathischer Erklär-Sprecher in einem Social-Media-Reel. Zügiges, aber gut verständliches Tempo.",
-          }),
-        });
-        if (!res.ok) throw new Error(`OpenAI TTS antwortet mit ${res.status}`);
-        return res.arrayBuffer();
-      },
-    };
-  }
-  return null;
+  if (!el) return null;
+  const voice = MATILDA.id;
+  return {
+    id: `elevenlabs:${EL_MODEL}:v3-natural`, voice,
+    async tts(text, ctx = {}) {
+      const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
+        method: "POST",
+        headers: { "xi-api-key": el, "Content-Type": "application/json", Accept: "audio/mpeg" },
+        signal: AbortSignal.timeout(45_000),
+        body: JSON.stringify({
+          text, model_id: EL_MODEL, voice_settings: VOICE_SETTINGS, seed: SEED,
+          // Nachbarsätze geben der Stimme den Satzzusammenhang → natürliche, durchgehende Intonation
+          ...(ctx.prev ? { previous_text: ctx.prev } : {}),
+          ...(ctx.next ? { next_text: ctx.next } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const hint = res.status === 401 ? " – API-Schlüssel ungültig" : res.status === 429 ? " – Kontingent/Rate-Limit erreicht" : res.status === 422 ? " – Text oder Stimme abgelehnt" : "";
+        throw new Error(`ElevenLabs antwortet mit ${res.status}${hint}`);
+      }
+      return res.arrayBuffer();
+    },
+  };
 }
 
 async function sha(s: string) {
@@ -84,11 +78,7 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
   app.get("/api/admin/voiceover/status", auth, adminOnly, (c: any) => {
     const p = provider();
     c.header("Cache-Control", "no-store");
-    const isEl = p?.id.startsWith("elevenlabs");
-    const custom = process.env.ELEVENLABS_VOICE_ID;
-    const voices = isEl
-      ? [...(custom && !EL_VOICES.some((v) => v.id === custom) ? [{ id: custom, name: "Eigene Stimme", desc: "aus ELEVENLABS_VOICE_ID" }] : []), ...EL_VOICES]
-      : [];
+    const voices = p ? EL_VOICES : [];
     // Make.com-Ziel kommt aus den Netlify-Umgebungsvariablen (nicht mehr fest im öffentlichen Browser-Code)
     const hook = String(process.env.MAKE_WEBHOOK_URL || DEFAULT_MAKE_WEBHOOK).trim();
     let makeUrl: string | null = null;
@@ -101,11 +91,16 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     const user = c.get("user");
     if (!rateLimit(`vo:${user.id}`, 40, 60_000)) return c.json({ error: "Zu viele Voiceover-Anfragen – bitte kurz warten." }, 429);
     const b = await body(c);
-    const p = provider(typeof b.voice === "string" ? b.voice : undefined);
+    const p = provider();
     if (!p) return c.json({ error: "Kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt)." }, 503);
     const lines = Array.isArray(b.lines) ? b.lines.slice(0, MAX_LINES) : [];
     const clean = lines
-      .map((l: any) => ({ id: String(l?.id ?? "").slice(0, 40), text: String(l?.text ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_CHARS) }))
+      .map((l: any) => ({
+        id: String(l?.id ?? "").slice(0, 40),
+        text: speakable(String(l?.text ?? "")).slice(0, MAX_CHARS),
+        prev: speakable(String(l?.prev ?? "")).slice(0, MAX_CHARS),
+        next: speakable(String(l?.next ?? "")).slice(0, MAX_CHARS),
+      }))
       .filter((l: any) => l.id && l.text);
     if (!clean.length) return c.json({ error: "Kein Sprechertext übergeben." }, 400);
 
@@ -115,13 +110,13 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     let next = 0;
     const worker = async () => {
       while (next < clean.length) {
-        const i = next++, { id, text } = clean[i];
-        const key = await sha(`${p.id}|${p.voice}|${text}`);
+        const i = next++, { id, text, prev, next: nextText } = clean[i];
+        const key = await sha(`${p.id}|${p.voice}|${JSON.stringify(VOICE_SETTINGS)}|${prev}|${text}|${nextText}`);
         let buf: ArrayBuffer | null = null;
         try { buf = (await store.get(key, { type: "arrayBuffer" })) as ArrayBuffer | null; } catch { buf = null; }
         const cached = !!buf;
         if (!buf) {
-          buf = await p.tts(text);
+          buf = await p.tts(text, { prev, next: nextText });
           if (!buf.byteLength) throw new Error("Leere Sprachdatei erhalten");
           try { await store.set(key, buf, { metadata: { provider: p.id, voice: p.voice, text } }); } catch { /* Cache optional */ }
         }

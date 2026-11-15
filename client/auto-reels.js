@@ -2,7 +2,7 @@
 // auf ein Canvas, nimmt sie per canvas.captureStream(60) + MediaRecorder (8 Mbit/s, MP4 bevorzugt) auf
 // und schickt jede fertige Datei per POST (multipart/form-data) an die eingetragene Make.com-Webhook-URL.
 // Ohne Webhook-URL (oder wenn der Versand scheitert) wird die Datei lokal heruntergeladen.
-// Der Dateiname ist "Episode N - <Werbespruch>", damit Make.com ihn als Caption übernehmen kann.
+// Jeder POST enthält file (MP4), title und caption (fertige, verkaufsstarke Caption inkl. Hashtags).
 // Nutzt die Zeichen-Engine, Farben, Schriften und echten Karten (REAL_CARDS) des Admin-Reel-Studios.
 import { reelEngine as E } from "./reel-studio.js";
 import { toast, hooks, state, api } from "./core.js";
@@ -23,58 +23,68 @@ const base = {
 };
 const EPISODES = [
   { ...base, n: 1,
-    vo: ["Folge eins: der Karten-Scanner!","Karte in die Kamera – der Scanner zeigt dir sofort den Cardmarket-Preis.","Und ab damit in deinen digitalen Binder.","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge eins: der Binder-Scanner.","Halte deine Karte einfach in die Kamera. PokeSwipe Radar erkennt sie sofort und zeigt dir den aktuellen Cardmarket-Preis.","Mit einem Tippen landet sie in deinem digitalen Binder, und du siehst jederzeit, was deine Sammlung wert ist.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Weißt du, was deine Pulls wirklich wert sind? 👀", tags: "#binderscanner #cardmarket",
     title: "Virtueller Binder-Scanner & Live Cardmarket-Preis-Check",
     slogan: "Frische Pulls direkt in den digitalen Binder scannen und Cardmarket-Preise live prüfen! ⚡️💎",
     scenes: [["scan", 3], ["binder", 2]], ctaTag: "Scannen, sammeln, Preise live checken" },
   { ...base, n: 2,
-    vo: ["Folge zwei: Swipen statt suchen!","Links weiter, rechts will ich. Wollt ihr beide tauschen: Match!","Sammler in deiner Nähe.","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge zwei: das Tausch-Match.","Wische nach links, wenn dich eine Karte nicht interessiert, und nach rechts, wenn du sie haben möchtest.","Wollt ihr beide tauschen, gibt es ein Match mit einem Sammler aus deiner Nähe.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Schluss mit endlosem Suchen in Tauschgruppen. 💚", tags: "#pokemontausch #tauschen",
     title: "Tinder-Swipe für Tauschkarten & lokales Match",
     slogan: "Swipe nach rechts für dein nächstes Tausch-Match mit Sammlern direkt in deiner Nähe! 💚🤝",
     scenes: [["swipe", 3], ["radar", 1.4]], swipeDirs: [-1, 1, -1, 1], radarMode: "trade",
     swipe: "Swipe rechts = Tausch-Match 📍", alert: "🤝 TAUSCH-MATCH: Ein Sammler in deiner Nähe will tauschen!",
     radarLabel: (n) => `📡 Tausch-Radar · ${n} Sammler im Umkreis von 10 km`, ctaTag: "Sicher tauschen mit Sammlern in deiner Nähe" },
   { ...base, n: 3,
-    vo: ["Folge drei: der Flip-Radar!","Er checkt eBay und Cardmarket und meldet Deals unter Trend.","Plus: Wer steigt, wer fällt.","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge drei: der Flip-Radar.","Der Radar prüft rund um die Uhr eBay und Cardmarket und schlägt Alarm, sobald eine Karte unter dem Trendpreis angeboten wird.","Dazu siehst du auf einen Blick, welche Preise gerade steigen und welche fallen.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Das nächste Schnäppchen wartet schon – du musst es nur rechtzeitig sehen. 🚨", tags: "#flipradar #schnäppchen",
     title: "Live Flip-Radar & Schnäppchen-Alarm für eBay/Cardmarket",
     slogan: "Der Flip-Radar schlägt Alarm – Schnäppchen unter Cardmarket-Trend auf eBay & Cardmarket! 🚨💸",
     scenes: [["radar", 3], ["movers", 1.3]], dealCount: 3,
     radarLabel: (n) => `📡 Flip-Radar · ${n} Deals unter Trend`, ctaTag: "Nie wieder ein Schnäppchen verpassen" },
   { ...base, n: 4,
-    vo: ["Folge vier: dein Portfolio!","Karte scannen, Wert wächst.","Hier siehst du den Wert deiner Sammlung live – mit Verlauf.","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge vier: dein Portfolio.","Jede gescannte Karte fließt direkt in deine Sammlung.","So siehst du den Gesamtwert live, mit dem Verlauf der letzten dreißig Tage.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Deine Sammlung ist mehr wert, als du denkst. 📈", tags: "#portfolio #sammlungswert",
     title: "Portfolio-Wert & Sammlungs-Tracker",
     slogan: "Dein Portfolio-Wert live im Blick – jede Karte, jeder Euro, jedes Set! 📈💼",
     scenes: [["scan", 1.4], ["portfolio", 3]], scan: "Karte scannen = Portfolio wächst 📈", ctaTag: "Deine Sammlung. Dein Wert. Live." },
   { ...base, n: 5,
-    vo: ["Folge fünf: Tauschen vor Ort!","Die Karte zeigt Tauschpartner im Umkreis – mit sicherem Treffpunkt.","Das Radar meldet sich.","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge fünf: Tauschen vor Ort.","Die Umkreiskarte zeigt dir Tauschpartner in deiner Nähe und schlägt einen sicheren Treffpunkt für die Übergabe vor.","Und der Radar meldet sich, sobald jemand tauschen möchte.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Tauschen wie früher auf dem Schulhof – nur sicherer. 📍", tags: "#pokemontausch #lokaltauschen",
     title: "Umkreis-Radar auf der Karte für sichere Übergabe vor Ort",
     slogan: "Tauschpartner im Umkreis finden und sicher vor Ort übergeben! 📍🛡️",
     scenes: [["map", 3], ["radar", 1.3]], radarMode: "trade",
     alert: "📍 IN DEINER NÄHE: Tauschpartner gefunden – sicher vor Ort übergeben!",
     radarLabel: (n) => `📡 Umkreis-Radar · ${n} Sammler bis 10 km`, ctaTag: "Lokal tauschen – sicher & persönlich" },
   { ...base, n: 6,
-    vo: ["Folge sechs: die Pull-Wall!","Die Community zeigt ihre krassesten Hits – mit Cardmarket-Wert.","Scannen und posten!","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge sechs: die Pull-Wall.","Hier zeigt die Community ihre besten Pulls, jeweils mit dem aktuellen Cardmarket-Wert.","Du hast selbst etwas Besonderes gezogen? Einfach scannen und posten.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Dieser Pull verdient ein Publikum. 🔥", tags: "#pullwall #packopening",
     title: "Pull-Wall & Community-Feed für die besten Hits",
     slogan: "Zeig deine krassesten Pulls auf der Pull-Wall und feier die Hits der Community! 📸🔥",
     scenes: [["pullwall", 3], ["scan", 1.2]], scan: "Pull gezogen? Ab auf die Wall! 📸", ctaTag: "Die Community für deutsche Sammler" },
   { ...base, n: 7,
-    vo: ["Folge sieben: Tausch-Chat!","Swipe – und schreib direkt an.","Im Chat Angebot schicken, Details klären, Tausch bestätigen – ohne Gebühren.","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge sieben: der Tausch-Chat.","Du hast die passende Karte gefunden? Dann schreib direkt an.","Im Chat schickst du dein Angebot, klärst die Details und bestätigst den Tausch, ganz ohne Gebühren.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Vom Match zum fertigen Tausch in wenigen Nachrichten. 💬", tags: "#pokemontausch #tauschchat",
     title: "P2P Tausch-Hub & Direkt-Chat",
     slogan: "Tausch-Hub mit Direkt-Chat – Angebot schicken, Deal klarmachen, fertig! 💬🤝",
     scenes: [["swipe", 1.2], ["chat", 3]], swipeDirs: [-1, 1], swipe: "Karte gefunden? Direkt anschreiben 💬",
     ctaTag: "Tauschen ohne Gebühren – direkt im Chat" },
   { ...base, n: 8,
-    vo: ["Folge acht: die Top-Mover!","Welche Karten steigen, welche stürzen ab? Hier siehst du es sofort.","Preissturz? Radar-Alarm!","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge acht: die Top-Mover.","Welche Karten steigen gerade, und welche verlieren an Wert? Hier siehst du es sofort.","Fällt ein Preis deutlich, meldet sich der Radar mit einem Alarm.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Diese Karten bewegen gerade den Markt. 📊", tags: "#cardmarket #preischeck",
     title: "Top-Mover & Preissturz-Analyse aktueller Sets",
     slogan: "Top-Mover & Preisstürze – diese Karten bewegen gerade den Markt! 📊📉",
     scenes: [["movers", 3], ["radar", 1.3]], dealCount: 2, ctaTag: "Markt verstehen. Clever kaufen." },
   { ...base, n: 9,
-    vo: ["Folge neun: die Wunschliste!","Wunschkarten eintragen – die App findet sie bei anderen Sammlern.","Treffer? Direkt in den Chat!","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge neun: die Wunschliste.","Trag deine Wunschkarten ein, und die App findet sie automatisch bei anderen Sammlern.","Gibt es einen Treffer, geht es direkt weiter in den Chat.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Deine Wunschkarte liegt vielleicht schon im Binder von jemandem in deiner Nähe. ⭐", tags: "#wunschliste #pokemontausch",
     title: "Automatischer Wunschlisten-Abgleich beim Tauschen",
     slogan: "Deine Wunschliste tauscht mit – der automatische Abgleich findet sofort passende Karten! ⭐🔄",
     scenes: [["wishlist", 3], ["chat", 1.6]], ctaTag: "Wunschkarten finden – automatisch" },
   { ...base, n: 10,
-    vo: ["Folge zehn: die App-Tour!","Scannen.","Swipen.","Deals finden.","Vor Ort tauschen.","Portfolio.","Pull-Wall.","Jetzt gratis – Link in der Bio!"],
+    vo: ["Folge zehn: die komplette App.","Karten scannen und Preise prüfen.","Wischen und Tauschpartner finden.","Deals unter dem Trendpreis entdecken.","Sicher vor Ort tauschen.","Den Wert deiner Sammlung verfolgen.","Und deine besten Pulls zeigen.","Jetzt kostenlos testen, der Link ist in der Bio."],
+    capHook: "Eine App für alles, was Sammler brauchen. 🚀", tags: "#pokemonapp #cardmarket",
     title: "All-in-One App-Tour",
     slogan: "Scannen, Swipen, Tauschen & Sparen – die komplette Pokémon-TCG-App für deutsche Sammler! 🚀🔥",
     scenes: [["scan", 1], ["swipe", 1], ["radar", 1], ["map", 0.9], ["portfolio", 0.9], ["pullwall", 0.8]],
@@ -82,8 +92,8 @@ const EPISODES = [
 ];
 
 const DURATIONS = [15, 20, 30, 45, 60];
-// 15 s = Standard für Instagram Reels, Facebook-Videos und YouTube Shorts (kleine Dateien für den Webhook)
-let duration = 15;
+// 30 s: genug Zeit, damit die Sprecherin jede Szene in natürlichem Tempo erklärt (≈ 31 MB bei 8 Mbit/s)
+let duration = 30;
 
 /** Szenen-Zeitplan: Hook + Feature-Szenen (nach Gewicht) + Call to Action, auf die Länge D skaliert. */
 function timeline(ep, D) {
@@ -94,6 +104,38 @@ function timeline(ep, D) {
   ep.scenes.forEach(([name, w]) => { const d = rest * (w / sum); out.push([name, at, at + d]); at += d; });
   out.push(["cta", at, D]);
   return out;
+}
+
+// Die vier Kernfunktionen – stehen in jeder Caption und auf dem Abschluss-Screen jedes Reels
+const CORE_FEATURES = [
+  ["💶", "Live-Cardmarket-Preis-Check", "Live-Cardmarket-Preis-Check für jede Karte in Sekunden"],
+  ["📒", "Digitaler Binder-Scanner", "Digitaler Binder-Scanner: Karte scannen, Wert sofort sehen"],
+  ["💚", "Tinder-Swipe Tausch-Match", "Tinder-Swipe Tausch-Match mit Sammlern in deiner Nähe"],
+  ["🚨", "Live Flip-Radar Alarm", "Live Flip-Radar Alarm, sobald ein Deal unter Cardmarket-Trend auftaucht"],
+];
+const BASE_TAGS = "#pokeswiperadar #tcgdeutschland #pokemonkarten #pokemontcg #pokemonsammler #pokemondeutschland #tcg";
+
+/** Titel für Make.com (z. B. YouTube-/Facebook-Titel) – vollständig, ohne Kürzungen. */
+function reelTitle(ep) {
+  return `PokeSwipe Radar | Folge ${ep.n}: ${ep.title}`;
+}
+
+/** Verkaufsstarke Caption: Hook → Nutzen → alle vier Kernfunktionen → Call to Action → Frage → Hashtags. */
+function reelCaption(ep) {
+  const tags = [...new Set(`${BASE_TAGS} ${ep.tags || ""}`.split(/\s+/).filter(Boolean))].join(" ");
+  return [
+    ep.capHook,
+    "",
+    ep.slogan,
+    "",
+    "Das steckt in PokeSwipe Radar:",
+    ...CORE_FEATURES.map(([, , long]) => `✅ ${long}`),
+    "",
+    "👉 Jetzt kostenlos starten: Link in der Bio oder auf pokeswipe-radar.de",
+    "💬 Welche Karte jagst du gerade? Schreib es in die Kommentare!",
+    "",
+    tags,
+  ].map((l) => l.replace(/[ \t]+/g, " ").trim()).join("\n");
 }
 
 /** Dateiname = Werbespruch (ohne in Windows/macOS/Drive verbotene Zeichen). */
@@ -506,7 +548,20 @@ function sceneWishlist(ctx, lt, d, ep, t) {
   } else watermark(ctx);
 }
 
-const SCENES = { ...E.SCENES, hook: sceneHook, binder: sceneBinder, portfolio: scenePortfolio, map: sceneMap, pullwall: scenePullwall, chat: sceneChat, movers: sceneMovers, wishlist: sceneWishlist };
+/** Abschluss: Studio-CTA plus die vier Kernfunktionen als Badges zwischen Slogan und Karten-Fächer */
+function sceneCtaFeatures(ctx, lt, d, ep, t) {
+  E.SCENES.cta(ctx, lt, d, ep, t);
+  CORE_FEATURES.forEach(([icon, label], k) => {
+    const fk = eBack(prog(lt, 0.35 + k * 0.1, 0.75 + k * 0.1));
+    if (fk <= 0) return;
+    const x = W / 2 + (k % 2 ? 1 : -1) * 245, y = 785 + Math.floor(k / 2) * 70;
+    ctx.save(); ctx.translate(x, y); ctx.scale(fk, fk);
+    pill(ctx, `${icon} ${label}`, 0, 0, { font: font(25, 900), h: 56, padX: 26, bg: rgba(C.night2, 0.95), color: "#fff7e6", stroke: rgba(C.pokeYellow, 0.6) });
+    ctx.restore();
+  });
+}
+
+const SCENES = { ...E.SCENES, cta: sceneCtaFeatures, hook: sceneHook, binder: sceneBinder, portfolio: scenePortfolio, map: sceneMap, pullwall: scenePullwall, chat: sceneChat, movers: sceneMovers, wishlist: sceneWishlist };
 
 /** Ein Bild der Episode zum Zeitpunkt t zeichnen */
 function renderEpisode(ctx, t, ep, D) {
@@ -601,8 +656,10 @@ const load = (k, d) => { try { const v = localStorage.getItem(k); return v === n
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch { /* privater Modus */ } };
 
 // Video-Bitrate (Mbit/s) – bestimmt die Dateigröße: MB ≈ Mbit/s × Sekunden ÷ 8
-const BITRATES = [8, 5, 3, 2];
-const BITRATE_KEY = "pokeswipe.autoReels.mbit";
+// Mindestens 8 Mbit/s für gestochen scharfe Karten, Holo-Effekte und UI-Texte; höhere Stufen nutzen
+// das Make.com-Core-Limit (100 MB) bei kurzen Reels weiter aus. Alte, niedrigere Einstellungen werden angehoben.
+const BITRATES = [8, 10, 12, 16];
+const BITRATE_KEY = "pokeswipe.autoReels.mbit.v2";
 let mbit = BITRATES.includes(Number(load(BITRATE_KEY, 8))) ? Number(load(BITRATE_KEY, 8)) : 8;
 // Maximale Dateigröße, die das Make.com-Szenario annimmt (je nach Make-Tarif). Größere Reels werden
 // gar nicht erst gesendet, sondern direkt lokal heruntergeladen.
@@ -613,10 +670,11 @@ const MB = 1024 * 1024;
 
 // Deutsche Sprecherstimme (Voiceover) – Text je Szene steht in EPISODES[].vo (Hook, Szenen…, CTA)
 const VOICE_KEY = "pokeswipe.autoReels.voice";
+// Feste Sprecherin aller Reels (ElevenLabs "Matilda – weiblich, freundlich & warm"); der Server erzwingt sie ebenfalls
+const MATILDA_ID = "XrExE9yKIg1WjnnlVkGX";
 let voiceOn = load(VOICE_KEY, "1") !== "0";
-const voiceModes = new Map(); // Episode -> "voice" | "placeholder" | "off" (geht als Feld voiceover_mode an Make)
-const VOICE_ID_KEY = "pokeswipe.autoReels.voiceId";
-let voiceId = load(VOICE_ID_KEY, "");
+const voiceModes = new Map(); // Episode -> "voice" | "off" (geht als Feld voiceover_mode an Make)
+const voiceId = MATILDA_ID;
 const voiceCache = new Map(); // Stimme|Text -> AudioBuffer (pro Sitzung; serverseitig zusätzlich in Blobs)
 const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
 
@@ -625,9 +683,11 @@ async function loadVoice(ep, D, ac) {
   const tl = timeline(ep, D);
   if (!Array.isArray(ep.vo) || ep.vo.length !== tl.length) throw new Error(`Sprechertext passt nicht zu den Szenen von Episode ${ep.n}`);
   const vk = (text) => `${voiceId}|${text}`;
-  const missing = ep.vo.map((text, i) => ({ id: String(i), text })).filter((l) => !voiceCache.has(vk(l.text)));
+  // Nachbarsätze als Kontext mitschicken → durchgehende, natürliche Satzmelodie über das ganze Reel
+  const missing = ep.vo.map((text, i) => ({ id: String(i), text, prev: ep.vo[i - 1] || "", next: ep.vo[i + 1] || "" }))
+    .filter((l) => !voiceCache.has(vk(l.text)));
   if (missing.length) {
-    const res = await api("/api/admin/voiceover", { method: "POST", body: { lines: missing, voice: voiceId || undefined } });
+    const res = await api("/api/admin/voiceover", { method: "POST", body: { lines: missing.map((l, i) => ({ ...l, id: String(i) })) } });
     for (const clip of res.clips || []) {
       const line = missing[Number(clip.id)];
       if (!line) continue;
@@ -672,7 +732,7 @@ function build() {
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Auto-Reels (10x)");
   el.innerHTML = `
     <div class="ar-panel">
-      <div class="ar-head"><div class="ar-lens"></div><div><b>🎬 Auto-Reels (10x)</b><small>10 Feature-Episoden · 9:16 · 1080×1920 · 60 FPS · Dateiname = Instagram-Caption</small></div>
+      <div class="ar-head"><div class="ar-lens"></div><div><b>🎬 Auto-Reels (10x)</b><small>10 Feature-Episoden · 9:16 · 1080×1920 · 60 FPS · ab 8 Mbit/s · Stimme: Matilda</small></div>
         <button type="button" class="ar-x" data-ar="close" aria-label="Schließen">✕</button></div>
       <div class="ar-body">
         <div class="ar-col">
@@ -698,8 +758,7 @@ function build() {
             <small id="ar-size-info"></small>
             <label class="ar-row" for="ar-voice" style="cursor:pointer;gap:8px"><input id="ar-voice" type="checkbox" style="width:18px;height:18px;accent-color:#ffcb05"> 🎙️ Deutsche Sprecherstimme (Voiceover) einbetten</label>
             <div class="ar-row" id="ar-voice-pick" hidden>
-              <label for="ar-voice-id">Stimme:</label>
-              <select id="ar-voice-id"></select>
+              <span>Stimme: <b>Matilda</b> – weiblich, freundlich &amp; warm (ElevenLabs, Hochdeutsch)</span>
               <button type="button" class="ar-btn" id="ar-voice-test">▶ Probe hören</button>
             </div>
             <small id="ar-voice-info"></small>
@@ -715,7 +774,7 @@ function build() {
           <div class="ar-status" id="ar-status"></div>
           <ol id="ar-list"></ol>
           <p class="ar-hint" id="ar-format"></p>
-          <p class="ar-hint">Während der Generierung diesen Tab sichtbar lassen (nicht minimieren oder wechseln) – jedes Reel wird in Echtzeit gezeichnet, alle 10 dauern zusammen etwa <span id="ar-total"></span>. Wird der Tab verdeckt, wartet der Generator und nimmt die Episode danach neu auf. Ist eine Webhook-URL eingetragen, geht jedes fertige MP4 direkt an Make.com (Felder: <code>file</code>, <code>filename</code>, <code>episode</code>, <code>slogan</code>, <code>title</code>, <code>token</code>, <code>voiceover</code> (gesprochener Text), <code>voiceover_mode</code> (<code>voice</code>/<code>placeholder</code>/<code>off</code>), <code>upload_id</code> – über <code>upload_id</code> kann das Szenario Doppel-Lieferungen erkennen). Ohne URL oder bei einem Fehler landet die Datei im Download-Ordner – beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“, bitte erlauben.</p>
+          <p class="ar-hint">Während der Generierung diesen Tab sichtbar lassen (nicht minimieren oder wechseln) – jedes Reel wird in Echtzeit gezeichnet, alle 10 dauern zusammen etwa <span id="ar-total"></span>. Wird der Tab verdeckt, wartet der Generator und nimmt die Episode danach neu auf. Ist eine Webhook-URL eingetragen, geht jedes fertige MP4 direkt an Make.com (Kernfelder: <code>file</code> (MP4), <code>title</code>, <code>caption</code> (fertige Caption inkl. Hashtags); zusätzlich <code>filename</code>, <code>episode</code>, <code>slogan</code>, <code>token</code>, <code>voiceover</code> (gesprochener Text), <code>voiceover_mode</code> (<code>voice</code>/<code>off</code>), <code>mime_type</code>, <code>size_bytes</code>, <code>upload_id</code> – über <code>upload_id</code> kann das Szenario Doppel-Lieferungen erkennen). Ohne URL oder bei einem Fehler landet die Datei im Download-Ordner – beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“, bitte erlauben.</p>
         </div>
         <div class="ar-stage"><canvas id="ar-canvas" width="${W}" height="${H}"></canvas><span class="ar-time" id="ar-time"></span></div>
       </div>
@@ -753,13 +812,11 @@ function build() {
   ui.voice.checked = voiceOn;
   ui.voice.addEventListener("change", () => { voiceOn = ui.voice.checked; save(VOICE_KEY, voiceOn ? "1" : "0"); updateVoiceInfo(); });
   ui.voicePick = el.querySelector("#ar-voice-pick");
-  ui.voiceId = el.querySelector("#ar-voice-id");
   ui.voiceTest = el.querySelector("#ar-voice-test");
-  ui.voiceId.addEventListener("change", () => { voiceId = ui.voiceId.value; save(VOICE_ID_KEY, voiceId); });
   ui.voiceTest.addEventListener("click", testVoice);
   ui.token.value = getToken();
   ui.token.addEventListener("input", () => { save(TOKEN_KEY, ui.token.value.trim()); save(TOKEN_MANUAL_KEY, "1"); });
-  ui.mbit.addEventListener("change", () => { mbit = Number(ui.mbit.value) || 8; save(BITRATE_KEY, String(mbit)); updateSizeInfo(); });
+  ui.mbit.addEventListener("change", () => { mbit = Math.max(8, Number(ui.mbit.value) || 8); save(BITRATE_KEY, String(mbit)); updateSizeInfo(); });
   ui.limit.addEventListener("change", () => { limitMb = Number(ui.limit.value) || 100; save(LIMIT_KEY, String(limitMb)); updateSizeInfo(); });
   ctx = ui.canvas.getContext("2d");
   renderList();
@@ -820,30 +877,22 @@ function updateSizeInfo() {
 let voiceReady = null; // null = unbekannt, sonst { ready, provider }
 function updateVoiceInfo() {
   if (!ui.voiceInfo) return;
-  if (ui.voicePick) ui.voicePick.hidden = !voiceOn || !(voiceReady?.voices || []).length;
+  if (ui.voicePick) ui.voicePick.hidden = !voiceOn || !voiceReady?.ready;
   ui.voiceInfo.classList.toggle("warn", voiceOn && voiceReady && !voiceReady.ready);
   ui.voiceInfo.textContent = !voiceOn
     ? "Aus – die Reels bekommen nur Musik und Soundeffekte."
     : !voiceReady
       ? "Sprachdienst wird geprüft …"
       : voiceReady.error
-        ? `⚠️ Sprachdienst-Status konnte nicht geprüft werden (${voiceReady.error}). Bitte als Admin anmelden und die Seite neu laden – sonst wird im Platzhalter-Modus aufgenommen.`
+        ? `⚠️ Sprachdienst-Status konnte nicht geprüft werden (${voiceReady.error}). Bitte als Admin anmelden und die Seite neu laden.`
       : voiceReady.ready
-        ? `✓ Ein freundlicher deutscher Sprecher (${voiceReady.provider === "openai" ? "OpenAI TTS" : "ElevenLabs"}) erklärt jede Szene – passend getimt, Musik wird darunter leiser. Das Video geht erst mit fertiger Tonspur an Make.com.`
-        : "⚠️ Platzhalter-Modus: Noch kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt). Die Reels werden vorerst nur mit Musik aufgenommen und an Make.com mit voiceover_mode=placeholder gemeldet. Sobald der Schlüssel gesetzt ist, spricht automatisch der Sprecher.";
+        ? "✓ Matilda (ElevenLabs) erklärt jede Szene in natürlichem Hochdeutsch und Originaltempo, dezente Hintergrundmusik läuft leise darunter. Das Video geht erst mit fertiger Tonspur an Make.com."
+        : "⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt). Mit eingeschaltetem Voiceover startet der Generator erst, wenn der Schlüssel gesetzt ist – es werden keine Reels ohne Sprecherin gesendet.";
 }
 async function checkVoice() {
   try { voiceReady = await api("/api/admin/voiceover/status"); }
   catch (e) { voiceReady = { ready: false, error: e?.message || "Netzwerkfehler" }; }
   applyMakeDefaults(voiceReady?.make);
-  const voices = voiceReady?.voices || [];
-  if (ui.voicePick) {
-    ui.voicePick.hidden = !voiceOn || !voices.length;
-    if (voices.length) {
-      if (!voices.some((v) => v.id === voiceId)) voiceId = voiceReady.defaultVoice || voices[0].id;
-      ui.voiceId.innerHTML = voices.map((v) => `<option value="${v.id}"${v.id === voiceId ? " selected" : ""}>${v.name} – ${v.desc}</option>`).join("");
-    }
-  }
   updateVoiceInfo();
 }
 /** Make.com-Vorgaben vom Server übernehmen, solange im Browser nichts Eigenes eingetragen wurde. */
@@ -857,7 +906,7 @@ async function testVoice() {
   const btn = ui.voiceTest;
   btn.disabled = true; const label = btn.textContent; btn.textContent = "⏳ lädt …";
   try {
-    const res = await api("/api/admin/voiceover", { method: "POST", body: { voice: voiceId || undefined, lines: [{ id: "t", text: "Hey! Willkommen bei PokeSwipe Radar – hier findest du die besten Pokémon-Karten-Deals in deiner Nähe." }] } });
+    const res = await api("/api/admin/voiceover", { method: "POST", body: { lines: [{ id: "t", text: "Hallo und willkommen bei PokeSwipe Radar. Hier prüfst du Cardmarket-Preise live, scannst deine Karten in den digitalen Binder und findest Tauschpartner in deiner Nähe." }] } });
     const clip = res.clips?.[0];
     if (!clip) throw new Error("Keine Probe erhalten");
     testAudio?.pause();
@@ -875,7 +924,7 @@ function setStatus(msg, kind = "") { ui.status.textContent = msg; ui.status.clas
 function setBusy(b) {
   ui.len.disabled = b; ui.go.disabled = b; ui.stop.hidden = !b;
   ui.batch.disabled = b; ui.hook.disabled = b;
-  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceId.disabled = b; ui.voiceTest.disabled = b;
+  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceTest.disabled = b;
   ui.root.querySelectorAll('[data-ar^="sel-"],[data-ar^="token-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll("button").forEach((x) => { x.disabled = b; });
 }
@@ -999,13 +1048,18 @@ const RETRY_STATUS = new Set([429, 502, 503, 504]);
 function postToWebhook(url, ep, blob, ext, uploadId, onProgress) {
   const name = `${fileBase(ep)}.${ext}`;
   const form = new FormData();
+  // Kernfelder für das Make-Szenario: file (MP4), title, caption – vollständig, ohne Kürzungen
   form.append("file", blob, name);
+  form.append("title", reelTitle(ep));
+  form.append("caption", reelCaption(ep));
+  // Zusatzfelder
   form.append("filename", name);
   form.append("episode", String(ep.n));
   form.append("slogan", ep.slogan);
-  form.append("title", ep.title);
-  if (Array.isArray(ep.vo)) form.append("voiceover", ep.vo.join(" "));
-  form.append("voiceover_mode", voiceModes.get(ep.n) || "off"); // "voice" = Sprecher eingebettet, "placeholder" = noch ohne Sprecher // gesprochener Text (z. B. für Beschreibung/Untertitel)
+  form.append("voiceover", ep.vo.join(" ")); // gesprochener Text (z. B. für Untertitel)
+  form.append("voiceover_mode", voiceModes.get(ep.n) || "off"); // "voice" = Matilda eingebettet, "off" = nur Musik
+  form.append("mime_type", blob.type || `video/${ext}`);
+  form.append("size_bytes", String(blob.size));
   form.append("upload_id", uploadId); // bleibt bei Wiederholungen gleich → Make kann Duplikate erkennen
   const token = ui.token.value.trim();
   if (token) form.append("token", token);
@@ -1053,10 +1107,13 @@ async function generateAll(list = EPISODES) {
   const ac = audio ? unlockAudio() : null; // noch im Klick-Handler entsperren, sonst bleibt der AudioContext stumm
   if (voiceOn && !ac) return setStatus("⚠️ Dieser Browser kann keinen Ton mit aufnehmen – für das Voiceover bitte aktuelles Chrome oder Edge verwenden.", "err");
   if (voiceOn && !voiceReady?.ready) await checkVoice(); // vor jedem Start neu prüfen – ein frisch gesetzter Schlüssel greift ohne Neuladen
-  // Platzhalter-Modus: Ohne TTS-Schlüssel (ELEVENLABS_API_KEY / OPENAI_TTS_API_KEY) wird ohne Sprecher
-  // aufgenommen und an Make.com mit voiceover_mode=placeholder gemeldet. Sobald ein Schlüssel gesetzt ist,
-  // greift automatisch die echte Sprecherstimme.
-  const useVoice = voiceOn && !!voiceReady?.ready;
+  // Kein Platzhalter-Modus mehr: Mit eingeschaltetem Voiceover wird nur mit Matilda aufgenommen.
+  if (voiceOn && !voiceReady?.ready) {
+    return setStatus(voiceReady?.error
+      ? `⚠️ Sprachdienst nicht erreichbar (${voiceReady.error}) – Start abgebrochen, damit kein Reel ohne Sprecherin entsteht.`
+      : "⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt) – Start abgebrochen. Alternativ das Voiceover ausschalten.", "err");
+  }
+  const useVoice = voiceOn;
   // Immer die URL verwenden, die gerade im Feld steht – eine ungültige Eingabe sperrt den Start.
   const hs = hookState();
   if (hs.error) { ui.hook.focus(); return setStatus(`⚠️ ${hs.error}`, "err"); }
@@ -1086,13 +1143,13 @@ async function generateAll(list = EPISODES) {
           throw new Error(`Voiceover fehlgeschlagen (${e.message}) – Episode wurde nicht gesendet`);
         }
       }
-      voiceModes.set(ep.n, voice ? "voice" : voiceOn ? "placeholder" : "off");
+      voiceModes.set(ep.n, voice ? "voice" : "off");
       let res = null;
       while (!res && !stopAll) {
         await waitVisible();
         // Displaysperre geht verloren, wenn der Tab verdeckt war – neu anfordern (Punkt D)
         if (!wake || wake.released) { try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; } }
-        setStatus(`⏺ Episode ${ep.n} (${i + 1}/${list.length}) wird aufgenommen (${mime.startsWith("video/mp4") ? "MP4" : "WebM"}, 60 FPS, ${mbit} Mbit/s${voice ? ", mit Sprecher + Musik" : useVoice === false && voiceOn && audio ? ", Platzhalter: nur Musik, noch kein Sprecher" : audio ? ", mit Ton" : ", ohne Ton"}) – Tab sichtbar lassen …`);
+        setStatus(`⏺ Episode ${ep.n} (${i + 1}/${list.length}) wird aufgenommen (${mime.startsWith("video/mp4") ? "MP4" : "WebM"}, 60 FPS, ${mbit} Mbit/s${voice ? ", mit Matilda + dezenter Musik" : audio ? ", mit Ton" : ", ohne Ton"}) – Tab sichtbar lassen …`);
         res = await recordEpisode(ep, D, mime, (t) => {
           ui.time.textContent = `⏺ Ep. ${ep.n} · ${fmt(t, D)}`;
           ui.bar.style.width = `${((i + t / D) / list.length) * 100}%`;
@@ -1139,7 +1196,7 @@ async function generateAll(list = EPISODES) {
   const where = sent && sent === ok ? "an Make.com gesendet" : sent ? `fertig (${sent} an Make.com, ${ok - sent} heruntergeladen)` : "heruntergeladen";
   if (stopAll) setStatus(`■ Abgebrochen – ${ok} von ${list.length} Reels ${where}.`, ok ? "ok" : "err");
   else if (failed) setStatus(`⚠️ ${ok} von ${list.length} Reels ${where}, ${failed} fehlgeschlagen – einzeln über ⏺ erneut aufnehmen.`, "err");
-  else setStatus(`🎉 Fertig! ${ok} Reel${ok === 1 ? "" : "s"} ${where} – Dateinamen sind die Captions.`, "ok");
+  else setStatus(`🎉 Fertig! ${ok} Reel${ok === 1 ? "" : "s"} ${where} – inklusive Titel und Caption.`, "ok");
   if (list[list.length - 1]) startPreview(list[list.length - 1]);
 }
 

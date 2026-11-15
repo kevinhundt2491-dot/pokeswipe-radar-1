@@ -73,10 +73,15 @@ const PROGRESSIONS = [
  */
 export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
   const dest = ac.createMediaStreamDestination();
+  // Schutz-Limiter am Ausgang: verhindert Übersteuern (Knistern), greift bei normalem Pegel nicht ein
+  const limiter = ac.createDynamicsCompressor();
+  limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.12;
+  limiter.connect(dest);
+  // Musik + Effekte laufen über einen eigenen Bus-Kompressor; die Stimme NICHT – so bleibt sie unverfälscht
   const comp = ac.createDynamicsCompressor();
   comp.threshold.value = -14; comp.knee.value = 8; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
   const master = ac.createGain();
-  master.connect(comp); comp.connect(dest);
+  master.connect(comp); comp.connect(limiter);
 
   const T0 = ac.currentTime + 0.05;
   // Ein-/Ausblenden
@@ -87,7 +92,8 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
 
   const music = ac.createGain(); music.gain.value = 0.55; music.connect(master);
   const sfx = ac.createGain(); sfx.gain.value = 0.85; sfx.connect(master);
-  if (voice.length) { music.gain.value = 0.42; sfx.gain.value = 0.6; }
+  // Mit Sprecherin: Musik dezent und leise im Hintergrund, Effekte zurückhaltend
+  if (voice.length) { music.gain.value = 0.2; sfx.gain.value = 0.32; }
   const nodes = [];
   const track = (n) => { nodes.push(n); return n; };
 
@@ -184,24 +190,26 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
     try { SFX[type](T0 + Math.max(0.01, t)); } catch { /* ein fehlerhafter Effekt soll die Aufnahme nicht stoppen */ }
   });
 
-  // ---- Sprecherstimme: eigener Pfad mit Präsenz-EQ; Musik + Effekte werden darunter abgesenkt (Ducking) ----
+  // ---- Sprecherstimme: eigener, nahezu unbearbeiteter Pfad (nur Trittschall-Filter + leichte Klarheit).
+  // Wiedergabe immer in Originaltempo (playbackRate 1) – Beschleunigen würde die Tonhöhe verfälschen.
+  // Musik + Effekte werden unter jedem Satz sanft abgesenkt (Ducking). ----
   if (voice.length) {
-    const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 90;
-    const presence = ac.createBiquadFilter(); presence.type = "peaking"; presence.frequency.value = 3000; presence.Q.value = 0.9; presence.gain.value = 3;
-    const vg = ac.createGain(); vg.gain.value = 1.15;
-    hp.connect(presence); presence.connect(vg); vg.connect(comp);
+    const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 75; hp.Q.value = 0.7;
+    const presence = ac.createBiquadFilter(); presence.type = "peaking"; presence.frequency.value = 3500; presence.Q.value = 0.8; presence.gain.value = 1.5;
+    const vg = ac.createGain(); vg.gain.value = 0.95;
+    hp.connect(presence); presence.connect(vg); vg.connect(limiter);
     const duck = (g, base, low) => {
-      voice.forEach(({ start, buffer, rate }) => {
-        const a = T0 + start, b = a + buffer.duration / rate;
-        g.gain.setTargetAtTime(low, a - 0.15, 0.06);
-        g.gain.setTargetAtTime(base, b + 0.05, 0.25);
+      voice.forEach(({ start, buffer }) => {
+        const a = T0 + start, b = a + buffer.duration;
+        g.gain.setTargetAtTime(low, a - 0.25, 0.08);
+        g.gain.setTargetAtTime(base, b + 0.1, 0.35);
       });
     };
-    duck(music, music.gain.value, 0.13);
-    duck(sfx, sfx.gain.value, 0.3);
-    voice.forEach(({ start, buffer, rate }) => {
+    duck(music, music.gain.value, 0.07);
+    duck(sfx, sfx.gain.value, 0.12);
+    voice.forEach(({ start, buffer }) => {
       const src = track(ac.createBufferSource());
-      src.buffer = buffer; src.playbackRate.value = rate;
+      src.buffer = buffer; src.playbackRate.value = 1;
       src.connect(hp);
       src.start(T0 + start);
     });
@@ -212,7 +220,7 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
     track: out,
     stop() {
       nodes.forEach((n) => { try { n.stop(); } catch { /* schon beendet */ } });
-      try { master.disconnect(); comp.disconnect(); } catch { /* egal */ }
+      try { master.disconnect(); comp.disconnect(); limiter.disconnect(); } catch { /* egal */ }
       out.stop();
     },
   };
@@ -247,21 +255,21 @@ export function cuesFromTimeline(tl, opts = {}) {
 
 /**
  * Sprecher-Clips auf die Szenen legen: jeder Satz startet kurz nach Beginn "seiner" Szene,
- * Sätze überlappen sich nie und alles endet vor dem Videoende. Ist es zu knapp, wird das Tempo
- * leicht erhöht (max. 12 %) und notfalls ein entbehrlicher Szenen-Satz weggelassen –
- * Hook und Call to Action bleiben immer erhalten.
+ * Sätze überlappen sich nie und alles endet vor dem Videoende. Das Tempo wird NIE verändert
+ * (natürliche Stimme, keine Tonhöhen-Verfälschung). Ist es zu knapp, wird ein entbehrlicher
+ * Szenen-Satz weggelassen – Hook und Call to Action bleiben immer erhalten.
  * @param {Array<{id:string, at:number, end:number, buffer:AudioBuffer, keep?:boolean}>} clips (zeitlich sortiert)
  * @param {number} D Videolänge in s
  */
 export function placeVoice(clips, D) {
-  const LEAD = 0.18, GAP = 0.15, TAIL = 0.35;
-  const layout = (list, rate) => {
+  const LEAD = 0.25, GAP = 0.3, TAIL = 0.4;
+  const layout = (list) => {
     let cursor = 0;
     const out = list.map((c) => {
       const start = Math.max(c.at + LEAD, cursor + GAP);
-      const end = start + c.buffer.duration / rate;
+      const end = start + c.buffer.duration;
       cursor = end;
-      return { ...c, start, stop: end, rate };
+      return { ...c, start, stop: end };
     });
     // CTA darf nicht über das Ende hinaus: notfalls etwas früher in die CTA-Szene hinein starten
     const last = out[out.length - 1];
@@ -272,20 +280,16 @@ export function placeVoice(clips, D) {
     }
     return out;
   };
-  // ein Satz darf höchstens 0,9 s in die nächste Szene hineinragen, der letzte muss vor dem Ende fertig sein
-  const fits = (out) => out.every((c, i) => c.stop <= (i === out.length - 1 ? D - TAIL : c.end + 0.9));
+  // ein Satz darf höchstens 1,2 s in die nächste Szene hineinragen, der letzte muss vor dem Ende fertig sein
+  const fits = (out) => out.every((c, i) => c.stop <= (i === out.length - 1 ? D - TAIL : c.end + 1.2));
+  const pack = (out) => out.map(({ id, start, stop, buffer }) => ({ id, start, stop, buffer, rate: 1 }));
   let list = clips.slice();
   for (;;) {
-    for (const rate of [1, 1.04, 1.08, 1.12]) {
-      const out = layout(list, rate);
-      if (fits(out)) return out.map(({ id, start, stop, buffer, rate: r }) => ({ id, start, stop, buffer, rate: r }));
-    }
+    const out = layout(list);
+    if (fits(out)) return pack(out);
     // entbehrlichsten (längsten) Szenen-Satz streichen und neu versuchen
     const drop = list.filter((c) => !c.keep).sort((a, b) => b.buffer.duration - a.buffer.duration)[0];
-    if (!drop) {
-      const out = layout(list, 1.12); // nur Hook + CTA übrig – so gut es geht
-      return out.map(({ id, start, stop, buffer, rate }) => ({ id, start, stop, buffer, rate }));
-    }
+    if (!drop) return pack(out); // nur Hook + CTA übrig – so gut es geht
     list = list.filter((c) => c !== drop);
   }
 }
