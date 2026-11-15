@@ -13,6 +13,8 @@ import { notify } from "./prices.ts";
 import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS } from "./plans.ts";
 import { SITE, h, pageShell } from "./growth.ts";
 import { str, rows, rateLimit, clientIp, euro } from "./util.ts";
+import { log } from "./log.ts";
+import { buildPrivacyPolicy, privacyPage } from "./privacy.ts";
 
 /** Stand der Rechtstexte – wird bei jeder Bestellung als Nachweis in Stripe gespeichert. */
 export const LEGAL_VERSION = "2026-11-15";
@@ -151,6 +153,17 @@ export function buildDocuments(o: Operator, legacy = ""): LegalDoc[] {
           "(5) Die Provision trägt der Verkäufer; sie beträgt im Tarif Free 6,5 %, Premium 5 % und Pro Trader (Pro-Pass) 3 % des Kaufpreises, mindestens 0,49 €, und fällt nur bei erfolgreichem Verkauf an. Für Käufer entstehen keine Gebühren. Ein verbindliches Preisangebot muss mindestens 50 % des Inseratspreises betragen; nimmt der Verkäufer es an, ist innerhalb von 48 Stunden zu zahlen.",
           "(6) Die Lieferadresse des Käufers wird dem Verkäufer erst nach erfolgreicher Zahlung und nur für die Abwicklung angezeigt. Zahlungen außerhalb des Käuferschutzes (z. B. PayPal Freunde & Familie, Vorkasse per Überweisung) sind auf eigenes Risiko und dürfen in der Community nicht beworben werden.",
         ] },
+        { h: "§ 8b Melde- und Abhilfeverfahren (Digital Services Act)", p: [
+          `(1) Zentrale Kontaktstelle für Nutzer und Behörden (Art. 11, 12 DSA) ist ${mail}; Kommunikation auf Deutsch oder Englisch. Wir antworten nicht automatisiert.`,
+          "(2) Meldung rechtswidriger Inhalte (Art. 16 DSA): Jeder – auch ohne Konto per E-Mail – kann Inhalte (Beiträge, Kommentare, Chat-Nachrichten, Inserate, Profile, Deals, Radar-Pins) melden. In der App geht das über „Melden“ direkt am Inhalt. Die Meldung soll begründen, warum der Inhalt rechtswidrig ist oder gegen diese AGB verstößt, die genaue Fundstelle (Link oder Bezeichnung) enthalten sowie – außer bei Meldungen zu Straftaten gegen die sexuelle Selbstbestimmung von Kindern – Name und E-Mail-Adresse und die Erklärung, dass die Angaben nach bestem Wissen richtig und vollständig sind. Wir bestätigen den Eingang und teilen dir unsere Entscheidung mit.",
+          "(3) Prüfung und Maßnahmen: Wir prüfen Meldungen zeitnah, sorgfältig und objektiv. Mögliche Maßnahmen sind Ausblenden, Entfernen, Einschränken der Sichtbarkeit, vorübergehendes Stummschalten, Entfernen von Inseraten, Sperre von Marktplatz-Funktionen oder des Kontos. Ab drei Meldungen verschiedener Nutzer wird ein Inhalt bis zur menschlichen Prüfung automatisch ausgeblendet; ein Wortfilter hält offensichtliche Verstöße bereits beim Absenden zurück. Endgültige Entscheidungen trifft ein Mensch.",
+          "(4) Begründung (Art. 17 DSA): Wer von einer Maßnahme betroffen ist, erhält eine Mitteilung in der App (und per Push) mit der Entscheidung, den Tatsachen und Gründen, der Angabe, ob automatisierte Mittel beteiligt waren, der vertraglichen oder gesetzlichen Grundlage sowie den Rechtsbehelfen. Ausgenommen sind Fälle, in denen eine Benachrichtigung Ermittlungen gefährden würde oder es sich um irreführende kommerzielle Massen-Inhalte handelt.",
+          `(5) Internes Beschwerdemanagement (Art. 20 DSA): Gegen eine Entscheidung – auch gegen die Ablehnung einer Meldung – kannst du innerhalb von sechs Monaten nach der Mitteilung kostenlos Widerspruch einlegen, formlos per E-Mail an ${mail} unter Angabe der Mitteilung. Der Fall wird von einer Person, die nicht an der ersten Entscheidung beteiligt war, erneut geprüft; ist der Widerspruch begründet, machen wir die Maßnahme unverzüglich rückgängig. Wir teilen dir das Ergebnis mit Begründung mit.`,
+          "(6) Außergerichtliche Streitbeilegung (Art. 21 DSA): Du kannst dich zusätzlich an eine von einem Koordinator für digitale Dienste zertifizierte außergerichtliche Streitbeilegungsstelle wenden (Verzeichnis bei der Bundesnetzagentur bzw. der EU-Kommission). Wir beteiligen uns nach Treu und Glauben an solchen Verfahren; die Entscheidungen der Stelle sind nicht bindend. Der Rechtsweg zu den ordentlichen Gerichten bleibt unberührt. Die Verbraucherschlichtung nach § 14 Abs. 2 bleibt davon getrennt.",
+          "(7) Missbrauch (Art. 23 DSA): Wer häufig offensichtlich rechtswidrige Inhalte einstellt oder häufig offensichtlich unbegründete Meldungen oder Beschwerden einreicht, kann nach vorheriger Warnung für einen angemessenen Zeitraum gesperrt bzw. von der Bearbeitung seiner Meldungen ausgeschlossen werden.",
+          "(8) Betrugsschutz im Marktplatz: Käufe und Sofort-Kauf-Inserate mit Käuferschutz sind abhängig von der Vertrauensstufe auf Höchstbeträge begrenzt (Neu: 150 € Kauf / 250 € Inserat, Bekannt: 500 € / 750 €, Vertrauenswürdig: 2.000 € / 2.500 €, Top-Sammler: 5.000 € / 5.000 €). Bucht ein Käufer eine Zahlung bei seiner Bank zurück (Chargeback), wird die Bestellung eingefroren, eine bereits erfolgte Auszahlung bis zur Entscheidung der Bank vom Verkäuferkonto zurückgeholt und das Käuferkonto bis zur Prüfung für Treuhand-Käufe und -Verkäufe gesperrt. Entscheidet die Bank zugunsten des Verkäufers, zahlen wir den Betrag erneut aus.",
+          `(9) Steuerliche Meldepflicht (DAC7): Nach dem Plattformen-Steuertransparenzgesetz melden wir Verkäufer, die in einem Kalenderjahr mindestens 30 Verkäufe abschließen oder mehr als 2.000 € erlösen, mit Name, Anschrift, Geburtsdatum, Steuer-Identifikationsnummer, ggf. USt-IdNr., IBAN sowie Umsätzen, Gebühren und Anzahl der Verkäufe je Quartal an das Bundeszentralamt für Steuern. Wir fordern diese Angaben an und erinnern bis zu zweimal; werden sie danach nicht innerhalb von 7 Tagen nachgereicht, sind neue Verkäufe mit Käuferschutz bis zur Nachreichung gesperrt (§ 25 PStTG).`,
+        ] },
         { h: "§ 9 Verfügbarkeit und Änderungen", p: [
           "(1) Wir bemühen uns um eine hohe Verfügbarkeit, können aber Unterbrechungen durch Wartung, Weiterentwicklung oder Störungen bei Dritten (z. B. Datenquellen, Hosting) nicht ausschließen.",
           "(2) Wir dürfen den Dienst weiterentwickeln, sofern die vertraglich zugesagten Kernfunktionen deines Tarifs erhalten bleiben (§ 327r BGB). Über erhebliche Änderungen informieren wir dich rechtzeitig; Preiserhöhungen für laufende Abos werden nur mit deiner Zustimmung wirksam.",
@@ -218,7 +231,7 @@ export async function getLegalPayload() {
     version: LEGAL_VERSION,
     updatedAt,
     documents,
-    links: { all: "/rechtliches", cancel: "/kuendigen" },
+    links: { all: "/rechtliches", cancel: "/kuendigen", privacy: "/datenschutz" },
   };
 }
 
@@ -312,7 +325,7 @@ button.go:disabled{opacity:.6}.err{color:#fda4af;font-size:13px;min-height:18px;
 
 export function legalPage(docs: LegalDoc[]) {
   return `${LEGAL_CSS}<div class="card doc"><h1>Rechtliches</h1>
-    <div class="toc">${docs.map((d) => `<a href="#${d.id}">${h(d.title)}</a>`).join("")}<a href="/?legal=1">Datenschutz</a><a href="/kuendigen" style="background:#f43f5e;color:#fff">Verträge hier kündigen</a></div>
+    <div class="toc">${docs.map((d) => `<a href="#${d.id}">${h(d.title)}</a>`).join("")}<a href="/datenschutz">Datenschutz</a><a href="/kuendigen" style="background:#f43f5e;color:#fff">Verträge hier kündigen</a></div>
     ${docs.map((d) => `<section id="${d.id}"><h2>${h(d.title)}</h2>${d.sections.map((s) => `${s.h ? `<h3>${h(s.h)}</h3>` : ""}${s.p.map((x) => `<p>${h(x)}</p>`).join("")}`).join("")}</section>`).join("")}
     <p style="margin-top:24px"><a class="cancel-cta" href="/kuendigen">Verträge hier kündigen</a></p></div>`;
 }
@@ -339,32 +352,7 @@ function cancelPage() {
   <div id="done" hidden></div>
   <p class="muted" style="margin-top:16px">Alternativ: im Konto unter „Abo kündigen“ oder per E-Mail an die im <a href="/rechtliches#impressum">Impressum</a> genannte Adresse. <a href="/rechtliches#agb">AGB</a> · <a href="/rechtliches#widerruf">Widerrufsbelehrung</a></p>
   </div>
-<script>
-(function(){
-  var f=document.getElementById('kf'),$=function(i){return document.getElementById(i)};
-  function sync(){ $('reasonBox').hidden=!$('k2').checked; $('dateBox').hidden=!$('t2').checked; }
-  f.addEventListener('change',sync); sync();
-  var tok=''; try{ var u=JSON.parse(localStorage.getItem('gotrue.user')||'null'); tok=(u&&u.token&&u.token.access_token)||''; if(u&&u.email&&!$('email').value) $('email').value=u.email; }catch(e){}
-  f.addEventListener('submit',function(ev){
-    ev.preventDefault(); $('err').textContent='';
-    var body={kind:$('k2').checked?'ausserordentlich':'ordentlich',reason:$('reason').value,name:$('name').value,email:$('email').value,contractRef:$('contract').value,timing:$('t2').checked?'date':'next',requestedDate:$('date').value,confirmEmail:$('confirmEmail').value};
-    if(!body.name.trim()||!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(body.email)){ $('err').textContent='Bitte Name und eine gültige E-Mail-Adresse angeben.'; return; }
-    if(body.kind==='ausserordentlich'&&!body.reason.trim()){ $('err').textContent='Bitte gib für die außerordentliche Kündigung den Grund an.'; return; }
-    if(body.timing==='date'&&!body.requestedDate){ $('err').textContent='Bitte das gewünschte Datum wählen.'; return; }
-    $('go').disabled=true; $('go').textContent='Wird übermittelt …';
-    var headers={'Content-Type':'application/json',Accept:'application/json'}; if(tok) headers.Authorization='Bearer '+tok;
-    fetch('/api/legal/cancel',{method:'POST',headers:headers,body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d}})}).then(function(x){
-      if(!x.ok) throw new Error(x.d.error||'Fehler');
-      f.hidden=true; var box=$('done'); box.hidden=false;
-      var ok=document.createElement('div'); ok.className='ok'; ok.textContent=x.d.confirmation; box.appendChild(ok);
-      var a=document.createElement('a'); a.className='btn y'; a.style.marginTop='12px'; a.textContent='📄 Bestätigung speichern';
-      a.href=URL.createObjectURL(new Blob([x.d.confirmation],{type:'text/plain;charset=utf-8'})); a.download='kuendigung-'+x.d.reference+'.txt'; box.appendChild(a);
-      var p=document.createElement('button'); p.className='btn s'; p.style.marginLeft='8px'; p.style.border='0'; p.textContent='🖨️ Drucken'; p.onclick=function(){window.print()}; box.appendChild(p);
-      window.scrollTo(0,0);
-    }).catch(function(e){ $('err').textContent=e.message||'Übermittlung fehlgeschlagen – bitte erneut versuchen oder per E-Mail kündigen.'; $('go').disabled=false; $('go').textContent='Jetzt kündigen'; });
-  });
-})();
-</script>`;
+<script src="/js/kuendigen.js" defer></script>`;
 }
 
 export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> }) {
@@ -403,6 +391,18 @@ export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: 
     app.get(path, (c: any) => c.redirect(`/rechtliches#${anchor}`, 301));
   }
 
+  // Datenschutzerklärung (Art. 13/14 DSGVO) – Verantwortlicher aus den Impressums-Daten des Admins
+  app.get("/datenschutz", async (c: any) => {
+    const { operator, legacy } = await getOperator();
+    const doc = buildPrivacyPolicy(operator, { complete: operatorComplete(operator), legacy });
+    c.header("Cache-Control", "public, max-age=300");
+    return c.html(pageShell({
+      title: `Datenschutzerklärung | ${BRAND}`,
+      description: `Datenschutzerklärung von ${BRAND}: welche Daten wir verarbeiten, Dienstleister, Speicherdauer und deine Rechte nach der DSGVO.`,
+      canonical: `${SITE()}/datenschutz`, body: `${LEGAL_CSS}${privacyPage(doc)}`,
+    }));
+  });
+
   app.get("/kuendigen", (c: any) => {
     c.header("Cache-Control", "public, max-age=600");
     return c.html(pageShell({
@@ -414,7 +414,7 @@ export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: 
 
   // Kündigungserklärung: wird immer angenommen und bestätigt; Zuordnung zum Konto über Login oder E-Mail-Adresse
   app.post("/api/legal/cancel", async (c: any) => {
-    if (!rateLimit(`cancel:${clientIp(c)}`, 6, 3600_000)) return c.json({ error: "Zu viele Versuche – bitte in einer Stunde erneut oder per E-Mail kündigen." }, 429);
+    if (!(await rateLimit(`cancel:${clientIp(c)}`, 6, 3600_000))) return c.json({ error: "Zu viele Versuche – bitte in einer Stunde erneut oder per E-Mail kündigen." }, 429);
     const b = await body(c);
     const name = str(b.name, 120), email = str(b.email, 160).toLowerCase();
     if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "Bitte Name und eine gültige E-Mail-Adresse angeben." }, 400);
@@ -438,7 +438,7 @@ export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: 
         if (r.applied) { status = kind === "ausserordentlich" || r.note ? "review" : "applied"; effectiveAt = r.effectiveAt ? new Date(r.effectiveAt) : null; adminNote = r.note; }
         else if (profile.planUntil && profile.planUntil.getTime() > Date.now() && profile.plan !== "free") { status = "review"; effectiveAt = profile.planUntil; }
       } catch (e) {
-        console.error("Kündigung konnte nicht automatisch angewendet werden", e);
+        log.error("legal", "Kündigung konnte nicht automatisch angewendet werden", { err: e });
         status = "review"; adminNote = "Automatische Kündigung bei Stripe fehlgeschlagen – bitte manuell prüfen.";
       }
     }

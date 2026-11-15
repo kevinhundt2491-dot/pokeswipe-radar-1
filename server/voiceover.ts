@@ -6,6 +6,7 @@
 // damit jedes Skript nur einmal bezahlt wird.
 import { getStore } from "@netlify/blobs";
 import { rateLimit } from "./util.ts";
+import { log } from "./log.ts";
 
 const MAX_LINES = 12, MAX_CHARS = 320;
 // Feste Sprecherin für alle Reels: Matilda (ElevenLabs-Premade, über eleven_multilingual_v2 auf Hochdeutsch)
@@ -147,7 +148,7 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
   // Ganzes Reel-Skript als ein durchgehender Take (Matilda) + Zeitstempel je Satz
   app.post("/api/admin/voiceover/narration", auth, adminOnly, async (c: any) => {
     const user = c.get("user");
-    if (!rateLimit(`vo:${user.id}`, 40, 60_000)) return c.json({ error: "Zu viele Voiceover-Anfragen – bitte kurz warten." }, 429);
+    if (!(await rateLimit(`vo:${user.id}`, 40, 60_000))) return c.json({ error: "Zu viele Voiceover-Anfragen – bitte kurz warten." }, 429);
     const key = process.env.ELEVENLABS_API_KEY;
     if (!key) return c.json({ error: "Kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt)." }, 503);
     const b = await body(c);
@@ -166,7 +167,7 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     let n: Narration;
     try { n = await narrate(key, lines, sp); }
     catch (e: any) {
-      console.error("Voiceover-Fehler", e);
+      log.error("voiceover", "Voiceover-Fehler", { err: e });
       const msg = e?.name === "TimeoutError" ? "Zeitüberschreitung beim Sprachdienst" : e?.message || "unbekannt";
       return c.json({ error: `Sprachausgabe fehlgeschlagen: ${msg}` }, 502);
     }
@@ -176,7 +177,7 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
 
   app.post("/api/admin/voiceover", auth, adminOnly, async (c: any) => {
     const user = c.get("user");
-    if (!rateLimit(`vo:${user.id}`, 40, 60_000)) return c.json({ error: "Zu viele Voiceover-Anfragen – bitte kurz warten." }, 429);
+    if (!(await rateLimit(`vo:${user.id}`, 40, 60_000))) return c.json({ error: "Zu viele Voiceover-Anfragen – bitte kurz warten." }, 429);
     const b = await body(c);
     const p = provider();
     if (!p) return c.json({ error: "Kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt)." }, 503);
@@ -213,7 +214,7 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     try {
       await Promise.all([worker(), worker()]);
     } catch (e: any) {
-      console.error("Voiceover-Fehler", e);
+      log.error("voiceover", "Voiceover-Fehler", { err: e });
       const msg = e?.name === "TimeoutError" ? "Zeitüberschreitung beim Sprachdienst" : e?.message || "unbekannt";
       return c.json({ error: `Sprachausgabe fehlgeschlagen: ${msg}` }, 502);
     }

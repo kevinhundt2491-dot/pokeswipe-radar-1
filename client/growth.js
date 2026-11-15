@@ -5,6 +5,7 @@ import {
   $, esc, jsArg, safeUrl, eur, pct, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, modal, closeModalEl, input, btn,
 } from "./core.js";
 import { csvToRows } from "./csv.js";
+import { searchCatalog, searchThumb, searchMeta, isAbort } from "./search.js";
 import { gradingEstimate } from "../server/logic.ts";
 
 const PS = () => window.PS;
@@ -36,13 +37,18 @@ async function searchWish() {
   if (!q || !box) return;
   box.innerHTML = `<p class="col-span-full text-yellow-400 text-xs text-center">⏳ Suche …</p>`;
   try {
-    const data = await (await fetch(`https://api.tcgdex.net/v2/de/cards?name=${encodeURIComponent(q)}`)).json();
-    const list = (Array.isArray(data) ? data : []).filter((c) => c.image).slice(0, 18);
-    box.innerHTML = list.length ? list.map((c) => `<button onclick="PS.openCard(${jsArg(c.id)})" class="bg-slate-900 border border-slate-800 hover:border-rose-400 rounded-xl p-1.5 text-center">
-        <img src="${esc(cdn(c.image + "/low.webp", 160))}" loading="lazy" class="h-24 mx-auto object-contain" />
-        <p class="text-[10px] font-bold text-white truncate">${esc(c.name)} <span class="text-slate-500">${esc(c.localId || "")}</span></p></button>`).join("")
+    // Wunschliste führt deutsche Karten-IDs (englische Drucke teilen sich das Cardmarket-Produkt → cardId)
+    const { items } = await searchCatalog(q, { lang: "de,en", limit: 18, channel: "wish" });
+    const seen = new Set();
+    const list = items.filter((c) => c.image && c.cardId && !seen.has(c.cardId) && seen.add(c.cardId));
+    box.innerHTML = list.length ? list.map((c) => `<button onclick="PS.openCard(${jsArg(c.cardId)})" class="bg-slate-900 border border-slate-800 hover:border-rose-400 rounded-xl p-1.5 text-center">
+        <img src="${esc(searchThumb(c, 160))}" loading="lazy" class="h-24 mx-auto object-contain" />
+        <p class="text-[10px] font-bold text-white truncate">${esc(c.name)}</p><p class="text-[9px] text-slate-500 truncate">${esc(searchMeta(c))}</p></button>`).join("")
       : `<p class="col-span-full text-slate-400 text-xs text-center">Nichts gefunden.</p>`;
-  } catch { box.innerHTML = `<p class="col-span-full text-rose-400 text-xs text-center">Kartendatenbank gerade nicht erreichbar.</p>`; }
+  } catch (e) {
+    if (isAbort(e)) return;
+    box.innerHTML = `<p class="col-span-full text-rose-400 text-xs text-center">${esc(e?.status === 429 ? e.message : "Kartensuche gerade nicht erreichbar.")}</p>`;
+  }
 }
 
 export async function loadWishlist() {
@@ -711,7 +717,13 @@ function deleteAccount() {
 
 async function confirmDelete() {
   try {
-    const r = await api("/api/account/delete", { method: "POST", body: { confirm: $("ps-del-confirm").value.trim().toUpperCase() } });
+    // Firebase-Online-Anzeige dieses Geräts entfernen (anonyme Firebase-UID), bevor das Konto gelöscht wird
+    let firebaseUid = "", firebaseCleared = false;
+    try {
+      const fb = await window.psFirebaseForget?.();
+      if (fb) { firebaseUid = fb.uid || ""; firebaseCleared = Boolean(fb.cleared); }
+    } catch {}
+    const r = await api("/api/account/delete", { method: "POST", body: { confirm: $("ps-del-confirm").value.trim().toUpperCase(), firebaseUid, firebaseCleared } });
     closeModalEl("ps-delete"); closeModalEl("ps-account");
     toast("Konto gelöscht", r.message || "Schade, dass du gehst. Alle Daten wurden entfernt.");
     try { await caches.delete("ps-api"); } catch {}

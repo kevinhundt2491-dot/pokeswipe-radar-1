@@ -15,6 +15,7 @@ export const config = {
     "/sets",
     "/set/*",
     "/rechtliches",
+    "/datenschutz",
     "/impressum",
     "/agb",
     "/widerruf",

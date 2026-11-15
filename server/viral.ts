@@ -166,7 +166,7 @@ export function registerViral(app: any, hlp: { auth: any; body: (c: any) => Prom
   /** Verfolgten Kurzlink für eine eigene Seite anlegen (oder vorhandenen zurückgeben). */
   app.post("/api/share", auth, async (c: any) => {
     const profile: Profile = c.get("profile");
-    if (!rateLimit(`share:${profile.userId}`, 30, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`share:${profile.userId}`, 30, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const b = await body(c);
     const target = str(b.target, 200).split("?")[0].split("#")[0];
     if (!validShareTarget(target)) return c.json({ error: "Dieses Ziel kann nicht geteilt werden." }, 400);
@@ -196,7 +196,7 @@ export function registerViral(app: any, hlp: { auth: any; body: (c: any) => Prom
       .from(shareLinks).innerJoin(profiles, eq(profiles.userId, shareLinks.userId)).where(eq(shareLinks.code, code)).limit(1);
     if (!link || !validShareTarget(link.target)) return c.redirect("/", 302);
     const ua = c.req.header("user-agent") || "";
-    if (!link.banned && !BOT_RE.test(ua) && rateLimit(`svisit:${clientIp(c)}`, 30, 60_000)) {
+    if (!link.banned && !BOT_RE.test(ua) && (await rateLimit(`svisit:${clientIp(c)}`, 30, 60_000))) {
       try {
         const [visit] = await db.insert(shareVisits).values({ shareId: link.id, ownerId: link.userId, visitorHash: visitorHash(c), day: berlinDay() })
           .onConflictDoNothing().returning({ id: shareVisits.id });
@@ -215,7 +215,7 @@ export function registerViral(app: any, hlp: { auth: any; body: (c: any) => Prom
   /** Persönliche Einladungsseite mit Vorschau für WhatsApp, Instagram & Co. */
   app.get("/einladung/:code", async (c: any) => {
     const code = String(c.req.param("code") || "").toUpperCase();
-    if (!rateLimit(`invite:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+    if (!(await rateLimit(`invite:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
     const [p] = /^[A-Z0-9]{6,10}$/.test(code)
       ? await db.select({ name: profiles.displayName, banned: profiles.banned, code: profiles.referralCode }).from(profiles).where(eq(profiles.referralCode, code)).limit(1)
       : [];

@@ -51,6 +51,10 @@ export const profiles = pgTable("profiles", {
   stripeAccountId: text("stripe_account_id"),
   stripeAccountReady: boolean("stripe_account_ready").notNull().default(false),
   sellerTermsAt: timestamp("seller_terms_at", { withTimezone: true }),
+  // Phase 6: Betrugsschutz – Markierung nach Rückbuchungen (Chargebacks) oder Admin-Prüfung
+  flaggedAt: timestamp("flagged_at", { withTimezone: true }),
+  flagReason: text("flag_reason").notNull().default(""),
+  chargebacks: integer().notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("profiles_display_name_lower").on(t.displayName),
@@ -86,6 +90,12 @@ export const cards = pgTable("cards", {
   variants: text(), // kommagetrennt: normal,reverse,holo,firstEdition
   regulationMark: text("regulation_mark"),
   detailsAt: timestamp("details_at", { withTimezone: true }),
+  // Phase 6: getrennter Cardmarket-Preis der Reverse-Holo-Variante (TCGdex-Felder *-holo)
+  reverseTrend: numeric("reverse_trend", { precision: 10, scale: 2 }),
+  reverseAvg: numeric("reverse_avg", { precision: 10, scale: 2 }),
+  reverseLow: numeric("reverse_low", { precision: 10, scale: 2 }),
+  reverseAvg7: numeric("reverse_avg7", { precision: 10, scale: 2 }),
+  reverseAvg30: numeric("reverse_avg30", { precision: 10, scale: 2 }),
 }, (t) => [index("cards_set_id").on(t.setId, t.localId), index("cards_checked_at").on(t.checkedAt), index("cards_dex_id").on(t.dexId)]);
 
 // Pokémon-Arten (aus dem Katalog abgeleitet) – öffentliche Seiten /pokemon/<name> für Suchanfragen wie „Glurak Karten Wert“
@@ -187,6 +197,8 @@ export const cardPrints = pgTable("card_prints", {
   priceEur: numeric("price_eur", { precision: 10, scale: 2 }),
   lowEur: numeric("low_eur", { precision: 10, scale: 2 }),
   priceSource: text("price_source"), // cardmarket | tcgplayer
+  // Phase 6: Preise je Variante in EUR, z. B. {"normal":{"price":1.2,"low":0.8},"reverse_holo":{…},"first_edition":{…}}
+  variantPrices: jsonb("variant_prices"),
   importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
   checkedAt: timestamp("checked_at", { withTimezone: true }),
 }, (t) => [
@@ -221,6 +233,10 @@ export const priceHistory = pgTable("price_history", {
   trend: numeric({ precision: 10, scale: 2 }),
   avg: numeric({ precision: 10, scale: 2 }),
   low: numeric({ precision: 10, scale: 2 }),
+  // Phase 6: Reverse-Holo-Verlauf getrennt
+  reverseTrend: numeric("reverse_trend", { precision: 10, scale: 2 }),
+  reverseAvg: numeric("reverse_avg", { precision: 10, scale: 2 }),
+  reverseLow: numeric("reverse_low", { precision: 10, scale: 2 }),
 }, (t) => [uniqueIndex("price_history_card_day").on(t.cardId, t.day)]);
 
 export const portfolioItems = pgTable("portfolio_items", {
@@ -237,6 +253,8 @@ export const portfolioItems = pgTable("portfolio_items", {
   // Sprachvariante (Mehrsprachiger Katalog): de | en | ja; print_id verweist auf card_prints (en/ja)
   lang: text().notNull().default("de"),
   printId: text("print_id"),
+  // Phase 6: Kartenvariante – normal | reverse_holo | holo | first_edition | shadowless | promo
+  variant: text().notNull().default("normal"),
 }, (t) => [index("portfolio_user").on(t.userId), index("portfolio_print").on(t.printId)]);
 
 // Täglicher Schnappschuss des Portfolio-Werts pro Nutzer
@@ -286,6 +304,9 @@ export const listings = pgTable("listings", {
   condition: text().notNull().default(""),
   // Phase 5: Sprache des Drucks (de | en | ja) – für den Sprachfilter in Händler-Shops
   lang: text().notNull().default("de"),
+  // Phase 6: Kartenvariante (siehe portfolio_items.variant) und Herkunft aus dem Portfolio
+  variant: text().notNull().default("normal"),
+  portfolioItemId: integer("portfolio_item_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("listings_status").on(t.status, t.createdAt), index("listings_user").on(t.userId)]);
 
@@ -299,6 +320,21 @@ export const trades = pgTable("trades", {
   status: text().notNull().default("pending"), // pending | accepted | declined | cancelled | completed
   fromConfirmed: boolean("from_confirmed").notNull().default(false),
   toConfirmed: boolean("to_confirmed").notNull().default(false),
+  // Phase 6: strukturierter Tausch (trade_items), Wertausgleich und Versand je Seite
+  // status zusätzlich: shipping (angenommen, Versand läuft)
+  matchId: integer("match_id"),
+  cashCents: integer("cash_cents").notNull().default(0), // Wertausgleich in Cent
+  cashPayer: text("cash_payer").notNull().default(""), // from | to | ""
+  fromValueCents: integer("from_value_cents").notNull().default(0),
+  toValueCents: integer("to_value_cents").notNull().default(0),
+  fromCarrier: text("from_carrier").notNull().default(""),
+  fromTracking: text("from_tracking").notNull().default(""),
+  fromShippedAt: timestamp("from_shipped_at", { withTimezone: true }),
+  toCarrier: text("to_carrier").notNull().default(""),
+  toTracking: text("to_tracking").notNull().default(""),
+  toShippedAt: timestamp("to_shipped_at", { withTimezone: true }),
+  fromReceivedAt: timestamp("from_received_at", { withTimezone: true }),
+  toReceivedAt: timestamp("to_received_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("trades_from").on(t.fromUser), index("trades_to").on(t.toUser)]);
@@ -450,6 +486,8 @@ export const wishlistItems = pgTable("wishlist_items", {
   userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
   cardId: text("card_id").notNull().references(() => cards.id),
   maxPrice: numeric("max_price", { precision: 10, scale: 2 }),
+  // Phase 6: gewünschte Variante ("" = egal)
+  variant: text().notNull().default(""),
   lastNotifiedAt: timestamp("last_notified_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("wishlist_user_card").on(t.userId, t.cardId), index("wishlist_card").on(t.cardId)]);
@@ -864,6 +902,12 @@ export const marketOrders = pgTable("market_orders", {
   carrier: text().notNull().default(""),
   trackingNumber: text("tracking_number").notNull().default(""),
   disputeReason: text("dispute_reason").notNull().default(""),
+  // Phase 6: Rückbuchung (Stripe-Dispute) – Bestellung eingefroren, Status vorher gemerkt
+  frozen: boolean().notNull().default(false),
+  stripeDisputeId: text("stripe_dispute_id"),
+  disputeStatus: text("dispute_status").notNull().default(""), // "" | open | won | lost
+  statusBeforeDispute: text("status_before_dispute").notNull().default(""),
+  transferReversalId: text("transfer_reversal_id"),
   payBy: timestamp("pay_by", { withTimezone: true }),
   paidAt: timestamp("paid_at", { withTimezone: true }),
   shippedAt: timestamp("shipped_at", { withTimezone: true }),
@@ -941,3 +985,132 @@ export const radarPins = pgTable("radar_pins", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("radar_pins_updated").on(t.status, t.updatedAt)]);
+
+// ---------------------------------------------------------------------------
+// Phase 6: echtes Swipe-Trading, strukturierte Tausche, DAC7, verteiltes Rate-Limiting, Job-Absicherung
+// ---------------------------------------------------------------------------
+// Rechts-Swipe auf ein Tausch-Inserat = verbindliches Interesse
+export const swipeLikes = pgTable("swipe_likes", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  listingId: integer("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  cardId: text("card_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("swipe_likes_user_listing").on(t.userId, t.listingId),
+  index("swipe_likes_owner").on(t.ownerId, t.userId),
+]);
+
+// Gegenseitiges Interesse zweier Sammler (user_a < user_b, alphabetisch sortiert)
+export const tradeMatches = pgTable("trade_matches", {
+  id: serial().primaryKey(),
+  userA: text("user_a").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  userB: text("user_b").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  // Was A von B möchte / was B von A möchte (Inserat oder doppelte Portfolio-Karte)
+  aWantsListingId: integer("a_wants_listing_id").references(() => listings.id, { onDelete: "set null" }),
+  bWantsListingId: integer("b_wants_listing_id").references(() => listings.id, { onDelete: "set null" }),
+  bWantsPortfolioItemId: integer("b_wants_portfolio_item_id").references(() => portfolioItems.id, { onDelete: "set null" }),
+  aWantsPortfolioItemId: integer("a_wants_portfolio_item_id").references(() => portfolioItems.id, { onDelete: "set null" }),
+  reason: text().notNull().default("like"), // like | wishlist
+  status: text().notNull().default("open"), // open | proposed | traded | dismissed
+  tradeId: integer("trade_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("trade_matches_pair_listing").on(t.userA, t.userB, t.aWantsListingId, t.bWantsListingId),
+  index("trade_matches_a").on(t.userA, t.status),
+  index("trade_matches_b").on(t.userB, t.status),
+]);
+
+// Karten eines Tauschs (beide Seiten), Wert beim Angebot eingefroren
+export const tradeItems = pgTable("trade_items", {
+  id: serial().primaryKey(),
+  tradeId: integer("trade_id").notNull().references(() => trades.id, { onDelete: "cascade" }),
+  side: text().notNull(), // from (bietet der Anfragende) | to (bietet der Inserent)
+  ownerId: text("owner_id").notNull(),
+  portfolioItemId: integer("portfolio_item_id").references(() => portfolioItems.id, { onDelete: "set null" }),
+  listingId: integer("listing_id").references(() => listings.id, { onDelete: "set null" }),
+  cardId: text("card_id"),
+  printId: text("print_id"),
+  name: text().notNull(),
+  image: text().notNull().default(""),
+  variant: text().notNull().default("normal"),
+  condition: text().notNull().default("NM"),
+  lang: text().notNull().default("de"),
+  quantity: integer().notNull().default(1),
+  valueCents: integer("value_cents").notNull().default(0),
+}, (t) => [index("trade_items_trade").on(t.tradeId, t.side)]);
+
+// DAC7 (Plattformen-Steuertransparenzgesetz): Pflichtangaben meldepflichtiger Verkäufer
+export const sellerTaxInfo = pgTable("seller_tax_info", {
+  userId: text("user_id").primaryKey().references(() => profiles.userId, { onDelete: "cascade" }),
+  sellerType: text("seller_type").notNull().default("individual"), // individual | entity
+  legalName: text("legal_name").notNull(),
+  street: text().notNull(),
+  postalCode: text("postal_code").notNull(),
+  city: text().notNull(),
+  country: text().notNull().default("DE"),
+  birthDate: date("birth_date"),
+  taxId: text("tax_id").notNull(), // Steuer-Identifikationsnummer (TIN)
+  vatId: text("vat_id").notNull().default(""),
+  businessRegNo: text("business_reg_no").notNull().default(""),
+  iban: text().notNull().default(""),
+  collectedAt: timestamp("collected_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// DAC7-Jahreszähler je Verkäufer (wird bei jeder Auszahlung/Erstattung fortgeschrieben)
+export const sellerDac7Stats = pgTable("seller_dac7_stats", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  year: integer().notNull(),
+  transactions: integer().notNull().default(0),
+  grossCents: integer("gross_cents").notNull().default(0),
+  feeCents: integer("fee_cents").notNull().default(0),
+  refundedCents: integer("refunded_cents").notNull().default(0),
+  q1Cents: integer("q1_cents").notNull().default(0),
+  q2Cents: integer("q2_cents").notNull().default(0),
+  q3Cents: integer("q3_cents").notNull().default(0),
+  q4Cents: integer("q4_cents").notNull().default(0),
+  remindersSent: integer("reminders_sent").notNull().default(0),
+  lastReminderAt: timestamp("last_reminder_at", { withTimezone: true }),
+  commercialFlag: boolean("commercial_flag").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("seller_dac7_user_year").on(t.userId, t.year), index("seller_dac7_year").on(t.year, t.grossCents)]);
+
+// Verteiltes Rate-Limiting (gilt instanzübergreifend)
+export const rateLimits = pgTable("rate_limits", {
+  key: text().primaryKey(),
+  count: integer().notNull().default(0),
+  resetAt: timestamp("reset_at", { withTimezone: true }).notNull(),
+}, (t) => [index("rate_limits_reset").on(t.resetAt)]);
+
+// Zustand der Circuit-Breaker je externer Quelle (TCGdex, eBay, Shops …)
+export const jobCircuits = pgTable("job_circuits", {
+  name: text().primaryKey(),
+  failures: integer().notNull().default(0),
+  openUntil: timestamp("open_until", { withTimezone: true }),
+  lastError: text("last_error").notNull().default(""),
+  lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Laufprotokoll aller geplanten Jobs (Dauer, Ergebnis, Fehler) – Grundlage für Alarme in der Admin-Zentrale
+export const jobRuns = pgTable("job_runs", {
+  id: serial().primaryKey(),
+  job: text().notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  durationMs: integer("duration_ms").notNull().default(0),
+  status: text().notNull().default("ok"), // ok | partial | error | skipped
+  detail: text().notNull().default(""),
+}, (t) => [index("job_runs_job").on(t.job, t.startedAt)]);
+
+// Strukturiertes Fehlerprotokoll des Backends
+export const errorLog = pgTable("error_log", {
+  id: serial().primaryKey(),
+  scope: text().notNull(),
+  message: text().notNull(),
+  context: jsonb(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("error_log_created").on(t.createdAt), index("error_log_scope").on(t.scope, t.createdAt)]);

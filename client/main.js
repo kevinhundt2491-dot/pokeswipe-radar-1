@@ -15,10 +15,7 @@ import {
 import { cardExtrasHtml, accountExtrasHtml } from "./growth.js";
 import { refreshDupes } from "./collector.js";
 import { groupDuplicates, surplusBadge } from "./collector-logic.js";
-import { initReelStudio, syncReelStudio } from "./reel-studio.js";
-import { initAutoReels, syncAutoReels, openAutoReels, routeAutoReels } from "./auto-reels.js";
 import { initArena, arenaApi, addSwipeItemToPortfolio } from "./arena.js";
-import { initBooster, boosterApi } from "./booster.js";
 import { initDealsRadar, dealsRadarApi } from "./deals-radar.js";
 import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
 import { initFlip, flipApi, syncFlip } from "./flip.js";
@@ -26,6 +23,11 @@ import { initCommunity, communityApi, syncCommunity, routeCommunity, communityAd
 import { profileApi, routeProfile, userSocialHtml } from "./profile.js";
 import { marketApi, routeMarket, listingFormExtras, listingFormValues, listingBuyHtml, listingMetaHtml } from "./market.js";
 import { initPwa, pwaApi, wrapEnablePush, afterLoginPwa } from "./pwa.js";
+import { searchCatalog, searchThumb, searchMeta, isAbort } from "./search.js";
+import { complianceApi, billingPortalButton } from "./compliance.js";
+import { tradingApi, tradeDetailHtml, routeTrading } from "./trading.js";
+import { syncAdminTools, openGenerator, initLazyAdminTools, lazyBoosterApi, initLazyBooster } from "./lazy.js";
+import { variantSelect, conditionSelect, variantsOf, variantBadge, VARIANT_LABEL, VARIANT_KEYS, CONDITION_LABEL } from "./variants.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -63,8 +65,7 @@ function renderHeader() {
   const tc = $("ps-trade-count");
   const open = state.me?.usage?.open_trades || 0;
   if (tc) { tc.textContent = String(open); tc.classList.toggle("hidden", !open); }
-  syncReelStudio();
-  syncAutoReels();
+  syncAdminTools();
 }
 
 function openAccount(hint = "") {
@@ -92,8 +93,9 @@ function openAccount(hint = "") {
       ${m && m.plan !== "free" ? `<p class="text-slate-400">${m.planInterval === "year" ? "Jahresabo • " : ""}${m.cancelAtPeriodEnd ? `Gekündigt – läuft bis ${until}` : `Verlängert sich am ${until}`}</p>
         ${m.cancelAtPeriodEnd ? btn("Abo fortsetzen", "PS.cancelPlan(true)", "w-full bg-emerald-500 text-slate-950") : btn("Abo kündigen", "PS.cancelPlan(false)", "w-full bg-slate-800 text-slate-200")}`
         : btn("👑 Premium oder Pro freischalten", "PS.openPro()", "w-full bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950")}
+      ${m?.hasBilling ? billingPortalButton() : ""}
       <a href="/kuendigen" class="block w-full text-center bg-rose-600 hover:bg-rose-500 text-white font-black py-2.5 px-3 rounded-xl text-xs">Verträge hier kündigen</a>
-      <p class="text-[10px] text-slate-500 text-center"><a href="/rechtliches#agb" class="underline">AGB</a> · <a href="/rechtliches#widerruf" class="underline">Widerrufsbelehrung</a> · <a href="/rechtliches#impressum" class="underline">Impressum</a></p>
+      <p class="text-[10px] text-slate-500 text-center"><a href="/rechtliches#agb" class="underline">AGB</a> · <a href="/rechtliches#widerruf" class="underline">Widerrufsbelehrung</a> · <a href="/rechtliches#impressum" class="underline">Impressum</a> · <a href="/datenschutz" class="underline">Datenschutz</a></p>
       ${m ? `<p class="text-slate-500">Portfolio ${m.usage.portfolio}/${m.planInfo.portfolio} • Alarme ${m.usage.alerts}/${m.planInfo.alerts} • Inserate ${m.usage.listings}/${m.planInfo.listings}${m.planInfo.freeBoostsPerMonth ? ` • Gratis-Boosts ${m.freeBoostsLeft}/${m.planInfo.freeBoostsPerMonth}` : ""}</p>` : ""}
     </div>
     <div class="grid grid-cols-2 gap-2">
@@ -112,6 +114,7 @@ function openAccount(hint = "") {
     </div>
     <div class="grid grid-cols-2 gap-2">
       ${btn("🤝 Meine Tausche", "PS.openTrades()", "bg-slate-800 text-white")}
+      ${btn("🔥 Meine Matches", "PS.openMatches()", "bg-slate-800 text-rose-200")}
       ${btn("🔔 Mitteilungen", "PS.openNotifications()", "bg-slate-800 text-white")}
       ${m?.isAdmin ? btn("🛡️ Admin-Zentrale", "PS.openAdmin()", "col-span-2 bg-purple-600 text-white") : ""}
       ${m?.isAdmin ? btn("🎬 Auto-Reels-Generator", "PS.closeAll(); PS.openGenerator()", "col-span-2 bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950") : ""}
@@ -136,6 +139,7 @@ function renderLogin(hint = "", mode = "login") {
         ? btn("Konto erstellen", "PS.doSignup()", "w-full bg-emerald-500 text-slate-950")
         : btn("Anmelden", "PS.doLogin()", "w-full bg-yellow-400 text-slate-950")}
     </div>
+    ${mode === "signup" ? `<p class="text-[11px] text-slate-400">Mit der Registrierung gelten unsere <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline">AGB</a>. Wie wir deine Daten verarbeiten, erklärt die <a href="/datenschutz" target="_blank" rel="noopener" class="underline">Datenschutzerklärung</a>.</p>` : ""}
     <p id="ps-auth-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
     <div class="flex justify-between text-xs">
       ${mode === "signup" ? `<button onclick="PS.renderLogin('', 'login')" class="text-slate-300 underline">Schon registriert? Anmelden</button>`
@@ -305,7 +309,7 @@ function orderConsent({ title, lines, button }) {
       <h3 class="text-base font-black text-white">🧾 ${esc(title)}</h3>
       <ul class="text-xs text-slate-200 space-y-1 bg-slate-950 border border-slate-800 rounded-2xl p-3">${lines.map((l) => `<li>• ${esc(l)}</li>`).join("")}</ul>
       <label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-c-terms" class="mt-0.5 accent-yellow-400">
-        <span>Ich akzeptiere die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> und habe die <a href="/rechtliches#widerruf" target="_blank" rel="noopener" class="underline font-bold">Widerrufsbelehrung</a> zur Kenntnis genommen.</span></label>
+        <span>Ich akzeptiere die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> und habe die <a href="/rechtliches#widerruf" target="_blank" rel="noopener" class="underline font-bold">Widerrufsbelehrung</a> zur Kenntnis genommen. Hinweise zur Datenverarbeitung: <a href="/datenschutz" target="_blank" rel="noopener" class="underline font-bold">Datenschutzerklärung</a>.</span></label>
       <label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-c-early" class="mt-0.5 accent-yellow-400">
         <span>Ich verlange ausdrücklich, dass PokeSwipe &amp; Radar vor Ablauf der Widerrufsfrist mit der Leistung beginnt. Mir ist bekannt, dass ich bei einem Widerruf anteiligen Wertersatz für die bereits erbrachte Leistung zahle und mein Widerrufsrecht erlischt, sobald die Leistung vollständig erbracht ist.</span></label>
       <p id="ps-c-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
@@ -410,6 +414,8 @@ async function openCard(cardId) {
           <p class="text-2xl font-black text-emerald-400">${price ? eur(price) : "Kein Preis"}</p>
           <p class="text-slate-400">Cardmarket-Trend${ch30 !== null ? ` • <span class="${ch30 >= 0 ? "text-emerald-400" : "text-rose-400"} font-bold">${pct(ch30)} (30 Tage)</span>` : ""}</p>
           <p class="text-slate-500">Ø 7 T: ${card.avg7 ? eur(card.avg7) : "–"} • Ø 30 T: ${card.avg30 ? eur(card.avg30) : "–"} • ab ${card.low ? eur(card.low) : "–"}</p>
+          ${Number(card.reverseTrend || card.reverseAvg) ? `<p class="text-purple-200 font-bold">✨ Reverse Holo: ${eur(Number(card.reverseTrend || card.reverseAvg))}${card.reverseLow ? ` <span class="text-slate-500 font-normal">• ab ${eur(Number(card.reverseLow))}</span>` : ""}</p>` : ""}
+          ${variantsOf(card.variants).length < VARIANT_KEYS.length ? `<p class="text-slate-500">Varianten: ${variantsOf(card.variants).map((v) => esc(VARIANT_LABEL[v])).join(", ")}</p>` : ""}
           <div class="flex gap-1.5 pt-1">
             <a href="${cm(card.name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2.5 py-1 rounded-lg">Cardmarket ↗</a>
             <a href="${ebay(card.name + " " + (card.id.split("-").pop() || ""))}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2.5 py-1 rounded-lg">eBay* ↗</a>
@@ -433,6 +439,7 @@ async function openCard(cardId) {
             ${input("ps-pf-qty", 'type="number" min="1" max="999" value="1" placeholder="Anzahl"')}
             ${input("ps-pf-buy", 'type="number" step="0.01" min="0" placeholder="Einkauf €"')}
           </div>
+          <div class="grid grid-cols-2 gap-2">${variantSelect("ps-pf-variant", variantsOf(card.variants))}${conditionSelect("ps-pf-cond")}</div>
           ${btn("Hinzufügen", `PS.addCardToPortfolio(${jsArg(card.id)})`, "w-full bg-emerald-500 text-slate-950")}
         </div>
       </div>
@@ -460,7 +467,10 @@ async function createAlert(cardId) {
 async function addCardToPortfolio(cardId) {
   if (!requireLogin()) return;
   try {
-    await api("/api/portfolio", { method: "POST", body: { cardId, quantity: $("ps-pf-qty")?.value || 1, purchasePrice: $("ps-pf-buy")?.value || null } });
+    await api("/api/portfolio", { method: "POST", body: {
+      cardId, quantity: $("ps-pf-qty")?.value || 1, purchasePrice: $("ps-pf-buy")?.value || null,
+      variant: $("ps-pf-variant")?.value || "normal", condition: $("ps-pf-cond")?.value || "NM",
+    } });
     closeModalEl("ps-card");
     toast("💼 Im Portfolio", "Der Wert wird ab jetzt automatisch mit Live-Preisen aktualisiert.");
     loadPortfolio();
@@ -488,24 +498,26 @@ async function submitCardListing(cardId, name) {
   } catch (e) { handleError(e); }
 }
 
-// Kartensuche (TCGdex) – Ergebnisse öffnen die Detailansicht
+// Kartensuche über den eigenen Katalog (/api/search, alle Sprachen) – Ergebnisse öffnen die Detailansicht
 async function searchCards(q, boxId) {
   const box = $(boxId);
-  if (!q) return toast("Suche", "Bitte einen Kartennamen eingeben (z. B. Glurak).");
-  box.innerHTML = `<p class="text-yellow-400 col-span-full text-center py-4 font-bold">⏳ Suche in der deutschen Kartendatenbank …</p>`;
+  if (!box) return;
+  if (!q || q.length < 2) return toast("Suche", "Bitte mindestens 2 Zeichen eingeben (z. B. Glurak oder „Glurak 4/102“).");
+  box.innerHTML = `<p class="text-yellow-400 col-span-full text-center py-4 font-bold">⏳ Suche im Kartenkatalog …</p>`;
   try {
-    const res = await fetch(`https://api.tcgdex.net/v2/de/cards?name=${encodeURIComponent(q)}`);
-    const data = await res.json();
-    const list = (Array.isArray(data) ? data : []).filter((c) => c.image).slice(0, 24);
-    if (!list.length) { box.innerHTML = `<p class="text-slate-400 col-span-full text-center py-4">Keine Karte gefunden. Versuche z. B. „Pikachu“, „Glurak“ oder „Mew“.</p>`; return; }
+    const { items } = await searchCatalog(q, { lang: "de,en,ja", limit: 24, channel: boxId });
+    const list = items.filter((c) => c.image);
+    if (!list.length) { box.innerHTML = `<p class="text-slate-400 col-span-full text-center py-4">Keine Karte gefunden. Versuche z. B. „Pikachu“, „Glurak 4/102“ oder „Mew ex“.</p>`; return; }
     box.innerHTML = list.map((c) => `
-      <button onclick="PS.openCard(${jsArg(c.id)})" class="bg-slate-900 border border-slate-800 hover:border-yellow-400 rounded-xl p-2 flex flex-col gap-1.5 text-center transition">
-        <img src="${esc(cdn(c.image + "/low.webp", 200))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-32 mx-auto object-contain rounded" />
-        <p class="font-bold text-white truncate text-[11px] w-full">${esc(c.name)} <span class="text-slate-500">${esc(c.localId || "")}</span></p>
-        <span class="text-[10px] font-black text-yellow-300">💶 Live-Preis & Alarm</span>
+      <button onclick="${c.lang === "de" ? `PS.openCard(${jsArg(c.cardId || c.id)})` : `PS.openPrint(${jsArg(c.printId)})`}" class="bg-slate-900 border border-slate-800 hover:border-yellow-400 rounded-xl p-2 flex flex-col gap-1.5 text-center transition">
+        <img src="${esc(searchThumb(c, 200))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-32 mx-auto object-contain rounded" />
+        <p class="font-bold text-white truncate text-[11px] w-full">${esc(c.name)}</p>
+        <p class="text-[10px] text-slate-500 truncate">${esc(searchMeta(c))}</p>
+        <span class="text-[10px] font-black text-yellow-300">${c.price ? `💶 ${esc(eur(c.price))}` : "💶 Live-Preis & Alarm"}</span>
       </button>`).join("");
-  } catch {
-    box.innerHTML = `<p class="text-rose-400 col-span-full text-center py-4">Kartendatenbank gerade nicht erreichbar.</p>`;
+  } catch (e) {
+    if (isAbort(e)) return;
+    box.innerHTML = `<p class="text-rose-400 col-span-full text-center py-4">${esc(e?.status === 429 ? e.message : "Kartensuche gerade nicht erreichbar. Bitte gleich erneut versuchen.")}</p>`;
   }
 }
 
@@ -670,6 +682,7 @@ function renderServerPortfolio() {
         <img src="${esc(cdn(i.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" class="w-8 h-11 object-contain rounded shrink-0" />
         <div class="min-w-0">
           <p class="font-bold text-white truncate">${langFlag(i.lang)}${i.quantity > 1 ? `${Number(i.quantity) || 0}× ` : ""}${esc(i.name)}</p>
+          <p class="flex gap-1 items-center">${variantBadge(i.variant)}${i.condition && i.condition !== "NM" ? `<span class="text-[9px] font-black bg-slate-700 text-slate-100 px-1.5 rounded">${esc(i.condition)}</span>` : ""}${i.live && i.variant !== "normal" && !i.exactVariant ? `<span class="text-[9px] text-slate-500">Basispreis</span>` : ""}</p>
           <p><span class="text-emerald-400 font-bold">${eur(i.value)}</span>
             ${i.live ? `<span class="text-[10px] text-cyan-300 font-bold">• LIVE</span>` : `<span class="text-[10px] text-slate-500">• Schätzwert</span>`}
             ${i.change30 !== null ? `<span class="${i.change30 >= 0 ? "text-emerald-400" : "text-rose-400"} text-[10px] font-bold">${pct(i.change30)}</span>` : ""}
@@ -704,12 +717,14 @@ function editItem(id) {
     <div class="space-y-2 text-xs">
       <label class="text-slate-300 font-bold">Anzahl</label>${input("ps-ed-qty", `type="number" min="1" max="999" value="${Number(i.quantity) || 1}"`)}
       <label class="text-slate-300 font-bold">Einkaufspreis pro Stück (€)</label>${input("ps-ed-buy", `type="number" step="0.01" min="0" value="${esc(i.purchasePrice ?? "")}"`)}
+      <div class="grid grid-cols-2 gap-2"><label class="space-y-1"><span class="text-slate-300 font-bold">Variante</span>${variantSelect("ps-ed-variant", i.variants?.length ? i.variants : VARIANT_KEYS, i.variant || "normal")}</label>
+        <label class="space-y-1"><span class="text-slate-300 font-bold">Zustand</span>${conditionSelect("ps-ed-cond", CONDITION_LABEL[i.condition] ? i.condition : "NM")}</label></div>
       ${i.live ? "" : `<label class="text-slate-300 font-bold">Geschätzter Wert pro Stück (€)</label>${input("ps-ed-val", `type="number" step="0.01" min="0" value="${esc(i.manualValue ?? "")}"`)}`}
       ${btn("Speichern", `PS.saveItem(${Number(i.id)})`, "w-full bg-emerald-500 text-slate-950")}
     </div>`);
 }
 async function saveItem(id) {
-  const body = { quantity: $("ps-ed-qty").value, purchasePrice: $("ps-ed-buy").value || null };
+  const body = { quantity: $("ps-ed-qty").value, purchasePrice: $("ps-ed-buy").value || null, variant: $("ps-ed-variant")?.value || "normal", condition: $("ps-ed-cond")?.value || "NM" };
   if ($("ps-ed-val")) body.manualValue = $("ps-ed-val").value || null;
   try { await api(`/api/portfolio/${id}`, { method: "PATCH", body }); closeModalEl("ps-card"); loadPortfolio(); } catch (e) { handleError(e); }
 }
@@ -752,6 +767,8 @@ function overridePortfolio() {
   };
   // Die Arena-Kartensuche öffnet jetzt die Detailansicht mit Live-Preis
   window.searchTCGdexLive = () => searchCards(($("tcgdex-search-inp")?.value || "").trim(), "tcgdex-results");
+  // Zentrale Katalogsuche auch für ältere Seitenteile (index.html)
+  window.psSearchCatalog = searchCatalog;
   // Alte lokale Preis-Wächter → echter Preis-Tracker
   window.addWishlistRule = () => {
     const q = ($("wish-card")?.value || "").trim();
@@ -857,23 +874,8 @@ async function flushListings() {
 // ---------------------------------------------------------------------------
 // Sicherer Tausch
 // ---------------------------------------------------------------------------
-function requestTrade(listingId) {
-  if (!requireLogin()) return;
-  const l = state.listings.find((x) => x.id === listingId);
-  if (!l) { toast("Inserat", "Das Angebot findest du im Tausch-Hub."); goMarket(); return; }
-  api(`/api/listings/${listingId}/view`, { method: "POST", body: {} }).catch(() => {});
-  modal("ps-trade-req", `
-    <h3 class="text-base font-black text-white">🤝 Tauschanfrage</h3>
-    <p class="text-xs text-slate-300">Du fragst <strong class="text-white">${esc(l.card_name)}</strong> (${eur(l.price)}) bei ${esc(l.seller)} an.</p>
-    <div class="space-y-2 text-xs">
-      <label class="text-slate-300 font-bold">Dein Angebot (Karten oder Preis)</label>
-      <textarea id="ps-tr-offer" maxlength="400" rows="2" placeholder="z. B. Glurak ex 199/165 NM + 20 € oder ${eur(l.price)} per PayPal Waren & Dienstleistungen" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white"></textarea>
-      <label class="text-slate-300 font-bold">Nachricht (optional)</label>
-      <textarea id="ps-tr-msg" maxlength="1000" rows="2" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white"></textarea>
-      ${btn("Anfrage senden", `PS.sendTradeRequest(${Number(l.id)})`, "w-full bg-emerald-500 text-slate-950")}
-    </div>
-    ${safetyTips()}`);
-}
+// Tauschanfrage & Match-Vorschlag: client/trading.js (strukturierte Kartenauswahl statt Freitext)
+const requestTrade = (id) => tradingApi.requestTrade(id);
 
 const safetyTips = () => `<div class="bg-slate-950 border border-cyan-500/30 rounded-2xl p-3 text-[11px] text-slate-300 space-y-1">
   <p class="font-black text-cyan-300">🛡️ Sicher tauschen</p>
@@ -881,20 +883,8 @@ const safetyTips = () => `<div class="bg-slate-950 border border-cyan-500/30 rou
   <p>• Versand versichert mit Sendungsnummer; bei hohen Werten persönlich übergeben.</p>
   <p>• Achte auf Bewertungen und den ✔-Badge. Verdächtig? Sofort ⚠️ melden.</p></div>`;
 
-async function sendTradeRequest(listingId) {
-  try {
-    await api("/api/trades", { method: "POST", body: { listingId, offer: $("ps-tr-offer").value, message: $("ps-tr-msg").value } });
-    closeModalEl("ps-trade-req");
-    toast("📨 Anfrage gesendet", "Du bekommst eine Mitteilung, sobald geantwortet wird.");
-    openTrades();
-  } catch (e) {
-    if (e.data?.tradeId) { closeModalEl("ps-trade-req"); openTrades(e.data.tradeId); return; }
-    handleError(e);
-  }
-}
-
 const statusLabel = {
-  pending: ["⏳ Offen", "text-amber-300"], accepted: ["✅ Angenommen", "text-emerald-300"], declined: ["❌ Abgelehnt", "text-rose-300"],
+  pending: ["⏳ Offen", "text-amber-300"], accepted: ["✅ Angenommen", "text-emerald-300"], shipping: ["📦 Versand läuft", "text-cyan-300"], declined: ["❌ Abgelehnt", "text-rose-300"],
   cancelled: ["🚫 Abgebrochen", "text-slate-400"], completed: ["🏆 Abgeschlossen", "text-cyan-300"],
 };
 
@@ -946,18 +936,19 @@ async function selectTrade(id) {
       <div class="flex justify-between items-start gap-2">
         <div class="min-w-0">
           <p class="font-black text-white">${esc(x.request)}</p>
-          <p class="text-slate-400">Angebot: <span class="text-amber-300">${esc(x.offer)}</span></p>
+          ${x.structured ? "" : `<p class="text-slate-400">Angebot: <span class="text-amber-300">${esc(x.offer)}</span></p>`}
           <button onclick="PS.openUser(${jsArg(partnerId)})" class="text-slate-300 underline">Partner: ${esc(partner)}</button>
         </div>
         <span class="${(statusLabel[x.status] || statusLabel.pending)[1]} font-black shrink-0">${(statusLabel[x.status] || statusLabel.pending)[0]}</span>
       </div>
       <div class="flex flex-wrap gap-1.5">
         ${x.status === "pending" && recv ? btn("Annehmen", `PS.tradeAction(${Number(x.id)}, 'accept')`, "bg-emerald-500 text-slate-950") + btn("Ablehnen", `PS.tradeAction(${Number(x.id)}, 'decline')`, "bg-rose-500/20 text-rose-300") : ""}
-        ${x.status === "accepted" && !myConfirmed ? btn("📦 Erhalt bestätigen", `PS.tradeAction(${Number(x.id)}, 'complete')`, "bg-cyan-400 text-slate-950") : ""}
-        ${x.status === "accepted" && myConfirmed ? `<span class="text-cyan-300 py-2">✓ Du hast bestätigt – wartet auf Partner</span>` : ""}
-        ${["pending", "accepted"].includes(x.status) ? btn("Abbrechen", `PS.tradeAction(${Number(x.id)}, 'cancel')`, "bg-slate-800 text-slate-300") : ""}
+        ${x.status === "accepted" && !myConfirmed && !x.structured ? btn("📦 Erhalt bestätigen", `PS.tradeAction(${Number(x.id)}, 'complete')`, "bg-cyan-400 text-slate-950") : ""}
+        ${x.status === "accepted" && myConfirmed && !x.structured ? `<span class="text-cyan-300 py-2">✓ Du hast bestätigt – wartet auf Partner</span>` : ""}
+        ${["pending", "accepted"].includes(x.status) && !x.from_shipped_at && !x.to_shipped_at ? btn("Abbrechen", `PS.tradeAction(${Number(x.id)}, 'cancel')`, "bg-slate-800 text-slate-300") : ""}
         ${btn("⚠️ Melden", `PS.report('trade', '${Number(x.id)}')`, "bg-slate-800 text-slate-400")}
       </div>
+      ${tradeDetailHtml(x)}
       ${x.status === "completed" && !x.reviewed ? `<div class="border-t border-slate-800 pt-2 space-y-1.5">
         <p class="font-black text-yellow-300">⭐ Wie lief der Tausch mit ${esc(partner)}?</p>
         <div class="flex gap-1" id="ps-stars">${[1, 2, 3, 4, 5].map((n) => `<button onclick="PS.pickStars(${n})" data-star="${n}" class="text-2xl text-slate-600">★</button>`).join("")}</div>
@@ -969,7 +960,7 @@ async function selectTrade(id) {
     ${["declined", "cancelled"].includes(x.status) ? "" : `<div class="flex gap-2 mt-2">
       <input id="ps-chat-in" maxlength="1000" placeholder="Private Nachricht …" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
       <button onclick="PS.sendMsg(${Number(x.id)})" class="bg-yellow-400 text-slate-950 font-black px-4 rounded-xl text-xs">Senden</button></div>`}
-    ${x.status === "pending" || x.status === "accepted" ? safetyTips() : ""}`;
+    ${["pending", "accepted", "shipping"].includes(x.status) ? safetyTips() : ""}`;
   $("ps-chat-in")?.addEventListener("keydown", (e) => e.key === "Enter" && sendMsg(x.id));
   await pollChat(id);
   // Während des Ladens wurde evtl. schon ein anderer Tausch gewählt – sonst bliebe ein verwaister Timer übrig
@@ -1002,7 +993,9 @@ async function pollChat(id) {
       box.scrollTop = box.scrollHeight;
     }
     const local = state.trades.find((t) => t.id === id);
-    if (local && trade && (local.status !== trade.status || local.from_confirmed !== trade.fromConfirmed || local.to_confirmed !== trade.toConfirmed)) {
+    if (local && trade && (local.status !== trade.status || local.from_confirmed !== trade.fromConfirmed || local.to_confirmed !== trade.toConfirmed
+      || Boolean(local.from_shipped_at) !== Boolean(trade.fromShippedAt) || Boolean(local.to_shipped_at) !== Boolean(trade.toShippedAt)
+      || Boolean(local.from_received_at) !== Boolean(trade.fromReceivedAt) || Boolean(local.to_received_at) !== Boolean(trade.toReceivedAt))) {
       const { trades } = await api("/api/trades");
       state.trades = trades;
       renderTrades(id);
@@ -1022,6 +1015,7 @@ async function sendMsg(id) {
 async function tradeAction(id, action) {
   if (action === "cancel" && !confirm("Tausch wirklich abbrechen?")) return;
   if (action === "complete" && !confirm("Hast du die Karte/Zahlung wirklich erhalten? Das kann nicht rückgängig gemacht werden.")) return;
+  if (action === "received" && !confirm("Ist das Paket deines Partners vollständig und wie beschrieben angekommen? Das kann nicht rückgängig gemacht werden.")) return;
   try {
     await api(`/api/trades/${id}/action`, { method: "POST", body: { action } });
     const { trades } = await api("/api/trades");
@@ -1131,6 +1125,7 @@ async function openAdmin() {
         ${tile("Aktive Inserate", Number(stats.active_listings) || 0)}
         ${tile("Abgeschlossene Tausche", Number(stats.completed_trades) || 0)}
       </div>
+      <div class="flex flex-wrap gap-2">${btn("🧾 DAC7-Meldung & BZSt-Export", "PS.openDac7Admin()", "bg-slate-800 text-white")}${btn("🧩 Set-Vollständigkeit", "PS.openSetCompleteness()", "bg-slate-800 text-white")}${btn("⚙️ Jobs & Fehler", "PS.openOps()", "bg-slate-800 text-white")}</div>
       <h4 class="text-sm font-black text-white">Offene Meldungen (${reports.length})</h4>
       <div class="space-y-1.5 max-h-80 overflow-y-auto text-xs">
         ${reports.length ? reports.map((r) => `<div class="bg-slate-900 rounded-xl p-2.5 border border-slate-800">
@@ -1195,16 +1190,16 @@ function refreshAll() {
 window.PS = {
   openAccount, renderLogin, doLogin, doSignup, forgot, saveProfile, logout: doLogout, oauth: (p) => oauthLogin(p),
   saveNewPassword, saveInvite, openPro, checkout, cancelPlan, boost, openCard, createAlert, addCardToPortfolio,
-  listCard, submitCardListing, deleteAlert, editItem, saveItem, removeItem, setListingStatus, requestTrade,
-  sendTradeRequest, openTrades, selectTrade, tradeAction, sendMsg, pickStars, sendReview, openUser, report,
-  openNotifications, openAdmin, resolveReport, openGenerator: openAutoReels, runTracker: runTrackerNow, goMarket,
+  listCard, submitCardListing, deleteAlert, editItem, saveItem, removeItem, setListingStatus,
+  openTrades, selectTrade, tradeAction, sendMsg, pickStars, sendReview, openUser, report,
+  openNotifications, openAdmin, resolveReport, openGenerator, runTracker: runTrackerNow, goMarket,
   loadPortfolio, loadListings, listingCard, refreshMe: async () => { await loadMe(); renderHeader(); },
   closeAll: () => ["ps-notifs", "ps-account"].forEach(closeModalEl),
   searchCards,
   scanQuickSearch: () => searchCards(($("scan-quick-q")?.value || "").trim(), "scan-quick-results"),
   ...featureApi,
   ...arenaApi,
-  ...boosterApi,
+  ...lazyBoosterApi,
   ...dealsRadarApi,
   ...shellApi,
   ...flipApi,
@@ -1212,6 +1207,8 @@ window.PS = {
   ...profileApi,
   ...marketApi,
   ...pwaApi,
+  ...complianceApi,
+  ...tradingApi,
   enablePush: wrapEnablePush(featureApi.enablePush),
   openPost: (id) => { history.replaceState(null, "", `/?tab=community&post=${Number(id)}`); routeCommunity(); },
 };
@@ -1226,11 +1223,10 @@ async function boot() {
   overridePortfolio();
   overrideMarket();
   initFeatures();
-  initReelStudio();
-  initAutoReels();
+  initLazyAdminTools();
   initShell();
   initArena();
-  initBooster();
+  initLazyBooster();
   initFlip();
   initCommunity();
   initDealsRadar();
@@ -1259,10 +1255,10 @@ async function boot() {
   else if (["swipe", "scan", "flip", "community", "map", "portfolio"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
   routeShell();
-  routeAutoReels();
   routeCommunity();
   routeProfile();
   routeMarket();
+  routeTrading();
 
   onAuthChange(async (event, user) => {
     if (event === "login" && user && !state.user) { state.user = user; await loadMe(); renderHeader(); refreshAll(); afterAuthFeatures(); }

@@ -2,6 +2,7 @@
 // Verkäuferkonto einrichten, Sofort-Kauf & verbindliche Preisangebote, Bestellungen (Versand, Erhalt, Reklamation,
 // Bewertung) und die Admin-Ansicht für Reklamationen.
 import { $, esc, jsArg, eur, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
+import { variantSelect, variantsOf, variantBadge, VARIANT_KEYS } from "./variants.js";
 
 const mk = { meta: null, orders: [], seller: null };
 const cents = (c) => eur((Number(c) || 0) / 100);
@@ -11,6 +12,7 @@ const STATUS = {
   disputed: ["⚠️ Reklamation", "bg-rose-500/20 text-rose-200"], releasing: ["⏳ Auszahlung läuft", "bg-slate-700 text-slate-100"],
   released: ["✅ Abgeschlossen", "bg-emerald-500/20 text-emerald-200"], refunded: ["↩️ Erstattet", "bg-slate-700 text-slate-200"],
   cancelled: ["🚫 Abgebrochen", "bg-slate-800 text-slate-400"], declined: ["❌ Abgelehnt", "bg-slate-800 text-slate-400"],
+  chargeback: ["🧊 Rückbuchung – eingefroren", "bg-rose-600/30 text-rose-100"], chargeback_lost: ["⛔ Rückbuchung verloren", "bg-rose-700/40 text-rose-100"],
 };
 
 async function meta() {
@@ -42,10 +44,11 @@ async function openSeller() {
       ${feeTable}
       ${!s.enabled ? `<p class="text-xs text-amber-300">Zahlungen sind auf dieser Seite noch nicht eingerichtet.</p>`
         : s.ready ? `<p class="text-sm font-black text-emerald-300">✅ Dein Verkäuferkonto ist verifiziert. Beim Inserieren kannst du „Sofort-Kauf mit Käuferschutz“ aktivieren.</p>
-            ${btn("📊 Auszahlungen & Kontodaten (Stripe)", "PS.sellerDashboard()", "w-full bg-slate-800 text-white")}`
+            ${btn("📊 Auszahlungen & Kontodaten (Stripe)", "PS.sellerDashboard()", "w-full bg-slate-800 text-white")}
+            ${btn("🧾 Steuerdaten (DAC7)", "PS.openTaxInfo()", "w-full bg-slate-800 text-cyan-200")}`
         : `${s.connected ? `<p class="text-xs text-amber-300">⏳ Die Verifizierung ist noch nicht abgeschlossen${s.requirements?.length ? ` (fehlt: ${esc(s.requirements.slice(0, 4).join(", "))})` : ""}.</p>` : ""}
             ${s.error ? `<p class="text-xs text-rose-300">${esc(s.error)}</p>` : ""}
-            ${s.termsAccepted ? "" : `<label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-sel-terms" class="mt-0.5 accent-yellow-400"><span>Ich verkaufe als Privatperson oder gebe meine gewerbliche Tätigkeit bei Stripe an, beschreibe Karten wahrheitsgemäß (Zustand, Echtheit), versende innerhalb von ${m.shipWindowDays} Tagen mit Sendungsnummer und akzeptiere die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> inkl. Provision. Die Identitätsprüfung übernimmt Stripe.</span></label>`}
+            ${s.termsAccepted ? "" : `<label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-sel-terms" class="mt-0.5 accent-yellow-400"><span>Ich verkaufe als Privatperson oder gebe meine gewerbliche Tätigkeit bei Stripe an, beschreibe Karten wahrheitsgemäß (Zustand, Echtheit), versende innerhalb von ${m.shipWindowDays} Tagen mit Sendungsnummer und akzeptiere die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> inkl. Provision. Die Identitätsprüfung übernimmt Stripe (<a href="/datenschutz#marktplatz" target="_blank" rel="noopener" class="underline">Datenschutz</a>).</span></label>`}
             <p id="ps-sel-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
             ${btn(s.connected ? "Verifizierung fortsetzen" : "Verkäuferkonto einrichten (ca. 5 Minuten)", "PS.sellerOnboard()", "w-full bg-yellow-400 text-slate-950")}`}`);
   } catch (e) { closeModalEl("ps-seller"); handleError(e); }
@@ -66,10 +69,11 @@ async function sellerDashboard() {
 // ---------------------------------------------------------------------------
 // Inserat-Formular: Sofort-Kauf, Versandkosten, Zustand
 // ---------------------------------------------------------------------------
-export function listingFormExtras() {
+export function listingFormExtras(variantsField = "") {
   const ready = Boolean(state.me?.sellerReady);
   const conds = { mint: "Mint", nm: "Near Mint", ex: "Excellent", gd: "Good", lp: "Light Played", pl: "Played", po: "Poor", graded: "Gegradet (Slab)", sealed: "Sealed / OVP" };
-  return `<label class="text-slate-300 font-bold">Sprache der Karte</label>
+  return `<label class="text-slate-300 font-bold">Variante</label>${variantSelect("ps-li-variant", variantsOf(variantsField))}
+    <label class="text-slate-300 font-bold">Sprache der Karte</label>
     <select id="ps-li-lang" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"><option value="de">🇩🇪 Deutsch</option><option value="en">🇬🇧 Englisch</option><option value="ja">🇯🇵 Japanisch</option></select>
     <label class="text-slate-300 font-bold">Zustand</label>
     <select id="ps-li-cond" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"><option value="">– bitte wählen –</option>${Object.entries(conds).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
@@ -83,7 +87,8 @@ export function listingFormExtras() {
 export function listingFormValues() {
   const buyNow = Boolean($("ps-li-buynow")?.checked && state.me?.sellerReady);
   const lang = ["de", "en", "ja"].includes($("ps-li-lang")?.value) ? $("ps-li-lang").value : "de";
-  return { condition: $("ps-li-cond")?.value || "", lang, buyNow, shippingCents: buyNow ? Math.round((parseFloat(String($("ps-li-ship")?.value || "0").replace(",", ".")) || 0) * 100) : 0 };
+  const variant = VARIANT_KEYS.includes($("ps-li-variant")?.value) ? $("ps-li-variant").value : "normal";
+  return { condition: $("ps-li-cond")?.value || "", lang, variant, buyNow, shippingCents: buyNow ? Math.round((parseFloat(String($("ps-li-ship")?.value || "0").replace(",", ".")) || 0) * 100) : 0 };
 }
 
 /** Kauf-Buttons im Inserat (nur fremde Inserate mit verifiziertem Verkäufer) */
@@ -96,11 +101,11 @@ export function listingBuyHtml(l) {
 }
 export function listingMetaHtml(l) {
   const conds = { mint: "Mint", nm: "NM", ex: "EX", gd: "GD", lp: "LP", pl: "PL", po: "PO", graded: "Slab", sealed: "OVP" };
-  return `${l.condition ? `<span class="text-[9px] font-black bg-slate-700 text-slate-100 px-1.5 rounded">${esc(conds[l.condition] || l.condition)}</span>` : ""}${l.buy_now ? `<span class="text-[9px] font-black bg-cyan-400 text-slate-950 px-1.5 rounded" title="Bezahlung über Treuhand, Auszahlung erst nach Erhalt">🔒 Käuferschutz</span>` : ""}`;
+  return `${variantBadge(l.variant)}${l.condition ? `<span class="text-[9px] font-black bg-slate-700 text-slate-100 px-1.5 rounded">${esc(conds[l.condition] || l.condition)}</span>` : ""}${l.buy_now ? `<span class="text-[9px] font-black bg-cyan-400 text-slate-950 px-1.5 rounded" title="Bezahlung über Treuhand, Auszahlung erst nach Erhalt">🔒 Käuferschutz</span>` : ""}`;
 }
 
 const buyerConsent = (m) => `<label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-buy-terms" class="mt-0.5 accent-cyan-400">
-  <span>Ich schließe einen verbindlichen Kaufvertrag mit dem Verkäufer (in der Regel Privatperson – dann ohne Widerrufsrecht und Gewährleistung). PokeSwipe verwahrt die Zahlung treuhänderisch: Bestätige ich den Erhalt nicht und melde kein Problem, wird ${m.autoReleaseDays} Tage nach Versand ausgezahlt. Es gelten die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a>.</span></label>
+  <span>Ich schließe einen verbindlichen Kaufvertrag mit dem Verkäufer (in der Regel Privatperson – dann ohne Widerrufsrecht und Gewährleistung). PokeSwipe verwahrt die Zahlung treuhänderisch: Bestätige ich den Erhalt nicht und melde kein Problem, wird ${m.autoReleaseDays} Tage nach Versand ausgezahlt. Es gelten die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> (<a href="/datenschutz#marktplatz" target="_blank" rel="noopener" class="underline">Datenschutz</a>).</span></label>
   <p id="ps-buy-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>`;
 
 async function openBuy(listingId) {

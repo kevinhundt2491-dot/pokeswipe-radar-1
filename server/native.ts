@@ -37,7 +37,7 @@ export function registerNative(app: any, hlp: Hlp) {
   // Gerät für Push registrieren (FCM-Token von @capacitor/push-notifications)
   app.post("/api/push/native", auth, async (c: any) => {
     const user = c.get("user");
-    if (!rateLimit(`npush:${user.id}`, 10, 600_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`npush:${user.id}`, 10, 600_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const b = await body(c);
     const token = str(b.token, 400);
     const platform = b.platform === "ios" ? "ios" : b.platform === "android" ? "android" : null;

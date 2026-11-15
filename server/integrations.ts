@@ -7,6 +7,7 @@ import { cardmarketPartnerId } from "./prices.ts";
 import { getOperator, operatorComplete, mailConfigured } from "./legal.ts";
 import { catalogStatus } from "./catalog.ts";
 import { SITE } from "./growth.ts";
+import { log } from "./log.ts";
 
 export const WEBHOOK_EVENTS = [
   "checkout.session.completed",
@@ -16,6 +17,10 @@ export const WEBHOOK_EVENTS = [
   "customer.subscription.deleted",
   "invoice.paid",
   "invoice.payment_failed",
+  // Phase 6: Rückbuchungen (Chargebacks) – Treuhand einfrieren, Auszahlung zurückholen, Konto markieren
+  "charge.dispute.created",
+  "charge.dispute.updated",
+  "charge.dispute.closed",
 ] as const;
 
 type AutoWebhook = { id: string; secret: string; url: string; createdAt: string };
@@ -116,7 +121,7 @@ export function registerIntegrations(app: any, hlp: { auth: any; adminOnly: any 
       const r = await setupStripeWebhook();
       return c.json(r, r.ok ? 200 : 400);
     } catch (e: any) {
-      console.error("Stripe-Webhook-Einrichtung fehlgeschlagen", e);
+      log.error("integrations", "Stripe-Webhook-Einrichtung fehlgeschlagen", { err: e });
       return c.json({ ok: false, error: String(e?.message || "Stripe-Fehler").slice(0, 200) }, 502);
     }
   });

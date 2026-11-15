@@ -1,5 +1,6 @@
 // PokeSwipe & Radar – Restock- & Vorbestell-Radar, Graded-Portfolio mit Einsendungs-Tracker und KI-Fake-Check.
 import { $, esc, jsArg, safeUrl, eur, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, btn } from "./core.js";
+import { searchCatalog, searchThumb, isAbort } from "./search.js";
 
 const PS = () => window.PS;
 const pill = (text, cls = "bg-yellow-400 text-slate-950") => `<span class="text-[10px] font-black uppercase ${cls} px-2.5 py-0.5 rounded-full">${text}</span>`;
@@ -383,12 +384,16 @@ async function gradedSearch() {
   if (!q) return;
   res.innerHTML = `<p class="col-span-full text-yellow-400">⏳ Suche …</p>`;
   try {
-    const data = await (await fetch(`https://api.tcgdex.net/v2/de/cards?name=${encodeURIComponent(q)}`)).json();
-    const list = (Array.isArray(data) ? data : []).filter((c) => c.image).slice(0, 18);
-    res.innerHTML = list.length ? list.map((c) => `<button onclick="PS.gradedPick(${jsArg(c.id)}, ${jsArg(`${c.name} ${c.localId || ""}`)})" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-1 text-center">
-      <img src="${esc(cdn(c.image + "/low.webp", 120))}" loading="lazy" class="h-20 mx-auto object-contain" /><p class="text-[10px] text-white truncate">${esc(c.name)} ${esc(c.localId || "")}</p></button>`).join("")
+    const { items } = await searchCatalog(q, { lang: "de,en", limit: 18, channel: "graded" });
+    const seen = new Set();
+    const list = items.filter((c) => c.image && c.cardId && !seen.has(c.cardId) && seen.add(c.cardId));
+    res.innerHTML = list.length ? list.map((c) => `<button onclick="PS.gradedPick(${jsArg(c.cardId)}, ${jsArg(`${c.name} ${c.number || ""}`.trim())})" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-1 text-center">
+      <img src="${esc(searchThumb(c, 120))}" loading="lazy" class="h-20 mx-auto object-contain" /><p class="text-[10px] text-white truncate">${esc(c.name)} ${esc(c.number || "")}</p></button>`).join("")
       : `<p class="col-span-full text-slate-400">Nichts gefunden – gib den Namen unten ein.</p>`;
-  } catch { res.innerHTML = `<p class="col-span-full text-rose-400">Kartendatenbank nicht erreichbar.</p>`; }
+  } catch (e) {
+    if (isAbort(e)) return;
+    res.innerHTML = `<p class="col-span-full text-rose-400">${esc(e?.status === 429 ? e.message : "Kartensuche nicht erreichbar.")}</p>`;
+  }
 }
 
 function pickGraded(id, label) {

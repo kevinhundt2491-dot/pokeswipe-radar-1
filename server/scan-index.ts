@@ -8,6 +8,9 @@ import { sql } from "drizzle-orm";
 import jpeg from "jpeg-js";
 import { db } from "../db/index.ts";
 import { rows, rateLimit, clientIp, str } from "./util.ts";
+import { publicCache } from "./cache.ts";
+import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
+import { log } from "./log.ts";
 import { gunzipSync } from "node:zlib";
 import { referenceHashes, wordsToHex, hexToWords, packWords, encodeBase64, WORDS } from "./scan-logic.ts";
 import * as seedDe from "./scan-seed/de.ts";
@@ -41,11 +44,18 @@ async function dueCards(limit: number): Promise<Todo[]> {
     LIMIT ${limit}`)).map((r: any) => ({ key: String(r.key), kind: r.kind, id: String(r.id), lang: r.lang, image: String(r.image), attempts: Number(r.attempts) || 0 }));
 }
 
-async function hashOne(t: Todo) {
+async function hashOne(t: Todo): Promise<boolean | "circuit"> {
   const url = lowJpegUrl(t.image);
   try {
     if (!url) throw new Error("Bildadresse nicht unterstützt");
-    const res = await fetch(url, { signal: AbortSignal.timeout(7000) });
+    let res: Response;
+    try {
+      res = await resilientFetch("tcgdex-assets", url, {}, { timeoutMs: 7000, attempts: 2 });
+    } catch (e) {
+      // Bild-CDN gesperrt (Circuit offen): keinen Fehlversuch für die Karte verbuchen
+      if (e instanceof CircuitOpenError) return "circuit";
+      throw e;
+    }
     if (!res.ok) throw new Error(`Bild ${res.status}`);
     const buf = new Uint8Array(await res.arrayBuffer());
     if (buf.length > 1_500_000) throw new Error("Bild zu groß");
@@ -93,7 +103,7 @@ export function seedMap(lang: Lang): Map<string, SeedEntry> {
       }
     }
   } catch (e) {
-    console.error("Scanner-Basis-Index konnte nicht gelesen werden", lang, e);
+    log.error("scan-index", "Scanner-Basis-Index konnte nicht gelesen werden", { lang, err: e });
   }
   seedCache.set(lang, map);
   return map;
@@ -144,18 +154,21 @@ export async function applySeedIndex({ force = false, deadlineMs = 15_000 } = {}
 export async function runHashIndex({ deadlineMs = 24_000, max = 600, concurrency = 8, forceSeed = false } = {}) {
   const started = Date.now();
   const seed = await applySeedIndex({ force: forceSeed, deadlineMs: Math.min(15_000, deadlineMs / 2) }).catch((e) => {
-    console.error("Scanner-Basis-Index", e);
+    log.error("scan-index", "Scanner-Basis-Index", { err: e });
     return { seeded: 0, skipped: false, error: String(e?.message || e) };
   });
   const queue = await dueCards(max);
-  let ok = 0, failed = 0;
+  let ok = 0, failed = 0, circuitOpen = false;
   const worker = async () => {
-    while (queue.length && Date.now() - started < deadlineMs - 2500) {
+    while (queue.length && !circuitOpen && Date.now() - started < deadlineMs - 2500) {
       const t = queue.shift()!;
-      if (await hashOne(t)) ok++; else failed++;
+      const r = await hashOne(t);
+      if (r === "circuit") { circuitOpen = true; queue.unshift(t); break; }
+      if (r) ok++; else failed++;
     }
   };
   await Promise.all(Array.from({ length: concurrency }, worker));
+  if (queue.length && !circuitOpen) markPartial(`Zeitbudget: ${queue.length} Karten im nächsten Lauf`);
   return { hashed: ok, failed, seeded: seed.seeded || 0, remaining: queue.length, ms: Date.now() - started };
 }
 
@@ -261,10 +274,9 @@ export function registerScanIndex(app: any, { auth, adminOnly }: { auth: any; ad
   app.get("/api/scan/index", async (c: any) => {
     const lang = String(c.req.query("lang") || "de");
     if (!(LANGS as readonly string[]).includes(lang)) return c.json({ error: "Unbekannte Sprache" }, 400);
-    if (!rateLimit(`scanidx:${clientIp(c)}`, 20, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`scanidx:${clientIp(c)}`, 20, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const idx = await buildIndex(lang as Lang);
-    c.header("Cache-Control", "public, max-age=3600");
-    c.header("Netlify-CDN-Cache-Control", "public, durable, s-maxage=3600, stale-while-revalidate=86400");
+    publicCache(c, "data", { sMaxAge: 3600, swr: 86_400, varyQuery: ["lang"] });
     return c.json(idx);
   });
 
@@ -275,7 +287,7 @@ export function registerScanIndex(app: any, { auth, adminOnly }: { auth: any; ad
 
   // Details zu erkannten Karten: ?keys=card:sv03.5-199,print:en:sv03.5-199 (max. 8)
   app.get("/api/scan/lookup", async (c: any) => {
-    if (!rateLimit(`scanlook:${clientIp(c)}`, 120, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`scanlook:${clientIp(c)}`, 120, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const keys = [...new Set(str(c.req.query("keys"), 600).split(",").map((k) => k.trim()).filter((k) => KEY_RE.test(k)))].slice(0, 8);
     if (!keys.length) return c.json({ error: "Keine gültige Karte" }, 400);
     c.header("Cache-Control", "public, max-age=300");

@@ -30,7 +30,9 @@ export function feeFor(plan: PlanId, priceCents: number, shippingCents = 0) {
   return { bps, feeCents: fee, totalCents: gross, payoutCents: gross - fee };
 }
 
-export type OrderStatus = "offered" | "awaiting_payment" | "paid" | "shipped" | "disputed" | "releasing" | "released" | "refunded" | "cancelled" | "declined";
+export type OrderStatus = "offered" | "awaiting_payment" | "paid" | "shipped" | "disputed" | "releasing" | "released" | "refunded" | "cancelled" | "declined"
+  // Phase 6: Rückbuchung (Stripe-Dispute) offen bzw. verloren – eingefroren, keine Übergänge möglich
+  | "chargeback" | "chargeback_lost";
 export type OrderRole = "buyer" | "seller" | "admin" | "system";
 export type OrderAction = "accept" | "decline" | "pay" | "cancel" | "ship" | "confirm" | "dispute" | "refund" | "release" | "expire";
 

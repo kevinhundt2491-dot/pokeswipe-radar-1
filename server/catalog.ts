@@ -6,6 +6,9 @@ import { rebuildSpecies, fillEnglishNames, backfillSealedSlugs, SEO_SITEMAPS, SE
 import { refreshCard, cardPrice, evaluateSealedAlerts } from "./prices.ts";
 import { SITE, h, slugify, cdnImage, pageShell, ebayUrl, cardmarketSearch } from "./growth.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
+import { setCompleteness } from "./set-completeness-logic.ts";
+import { publicCache } from "./cache.ts";
+import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
 
 const TCGDEX = "https://api.tcgdex.net/v2/de";
 const SET_ID_RE = /^[a-zA-Z0-9.\-_]{1,40}$/;
@@ -28,7 +31,7 @@ const https = (v: unknown, hosts?: string[]) => {
 };
 
 async function tcgdex(path: string, timeoutMs = 8000) {
-  const res = await fetch(`${TCGDEX}${path}`, { signal: AbortSignal.timeout(timeoutMs), headers: { Accept: "application/json" } });
+  const res = await resilientFetch("tcgdex", `${TCGDEX}${path}`, { headers: { Accept: "application/json" } }, { timeoutMs, attempts: 3 });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`TCGdex ${res.status}`);
   return res.json();
@@ -127,7 +130,7 @@ export async function runCatalogImport({ deadlineMs = 24_000, maxSets = 3, maxPr
     .orderBy(sql`${cardSets.cardsImportedAt} IS NOT NULL`, desc(cardSets.priority), desc(cardSets.releaseDate), asc(cardSets.id))
     .limit(maxSets);
   for (const s of due) {
-    if (Date.now() > deadline - 6000) break;
+    if (Date.now() > deadline - 6000) { markPartial("Zeitbudget: weitere Sets im nächsten Lauf"); break; }
     try { await importSet(s.id); result.setsImported.push(s.id); } catch (e) { result.errors++; console.warn("Katalog: Set nicht importiert", s.id, e); }
   }
 
@@ -142,9 +145,10 @@ export async function runCatalogImport({ deadlineMs = 24_000, maxSets = 3, maxPr
   await Promise.all(Array.from({ length: 4 }, async () => {
     while (i < stale.length && Date.now() < deadline) {
       const id = String(stale[i++].id);
-      try { await refreshCard(id); result.prices++; } catch { result.errors++; }
+      try { await refreshCard(id); result.prices++; } catch (e) { result.errors++; if (e instanceof CircuitOpenError) break; }
     }
   }));
+  if (i < stale.length) markPartial(`Zeitbudget/Quelle: ${stale.length - i} Preise offen`);
 
   // Pokémon-Arten (für /pokemon/<name>) aus den Kartendetails ableiten, englische Namen & Sealed-Slugs ergänzen
   try {
@@ -297,7 +301,7 @@ const SET_CSS = `<style>.cards{display:grid;grid-template-columns:repeat(auto-fi
 .si img{width:64px;height:36px;object-fit:contain}.crumb{font-size:12px;color:#94a3b8;margin-bottom:10px}.crumb a{color:#cbd5e1}</style>`;
 
 export async function setsIndexPage(c: any) {
-  if (!rateLimit(`setpage:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+  if (!(await rateLimit(`setpage:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
   const list = rows(await db.execute(sql`
     SELECT s.id, s.name, s.slug, s.serie_name, s.logo, s.release_date, s.card_count_total,
       (SELECT count(*)::int FROM cards c WHERE c.set_id = s.id AND COALESCE(c.trend, c.avg, c.low) IS NOT NULL) AS priced
@@ -312,8 +316,7 @@ export async function setsIndexPage(c: any) {
     ${[...groups].map(([serie, sets]) => `<h2>${h(serie)}</h2><div class="sets">${sets.map((s: any) => `<a class="si" href="/set/${encodeURIComponent(s.id)}/${h(s.slug)}">
       ${s.logo ? `<img src="${h(cdnImage(`${s.logo}.png`, 160))}" alt="" loading="lazy">` : ""}<span><b>${h(s.name)}</b><br><span class="muted">${s.release_date ? h(new Date(s.release_date).getFullYear()) + " • " : ""}${Number(s.card_count_total) || ""} Karten</span></span></a>`).join("")}</div>`).join("")
     || `<p class="muted">Der Katalog wird gerade importiert – bitte in Kürze erneut öffnen.</p>`}`;
-  c.header("Cache-Control", "public, max-age=600");
-  c.header("Netlify-CDN-Cache-Control", "public, s-maxage=3600, stale-while-revalidate=86400");
+  publicCache(c, "page");
   return c.html(pageShell({
     title: "Alle deutschen Pokémon-Sets mit Kartenpreisen | PokeSwipe & Radar",
     description: "Alle deutschen Pokémon-TCG-Erweiterungen mit kompletter Kartenliste, aktuellen Cardmarket-Preisen und den wertvollsten Karten je Set.",
@@ -326,7 +329,7 @@ export async function setsIndexPage(c: any) {
 export async function setPage(c: any) {
   const id = String(c.req.param("id") || "");
   if (!SET_ID_RE.test(id)) return c.html(pageShell({ title: "Set nicht gefunden", description: "", canonical: `${SITE()}/sets`, body: `<div class="card"><h1>Set nicht gefunden</h1><a class="btn y" href="/sets">Alle Sets</a></div>` }), 404);
-  if (!rateLimit(`setpage:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+  if (!(await rateLimit(`setpage:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
   const [set] = await db.select().from(cardSets).where(and(eq(cardSets.id, id), eq(cardSets.active, true))).limit(1);
   if (!set) {
     return c.html(pageShell({ title: "Set nicht gefunden | PokeSwipe & Radar", description: "", canonical: `${SITE()}/sets`,
@@ -376,18 +379,16 @@ export async function setPage(c: any) {
     ] },
     mainEntity: { "@type": "ItemList", numberOfItems: top.length, itemListElement: top.map((x, i) => ({ "@type": "ListItem", position: i + 1, url: `${SITE()}${cardLink(x)}`, name: x.name })) },
   };
-  c.header("Cache-Control", "public, max-age=600");
-  c.header("Netlify-CDN-Cache-Control", "public, s-maxage=3600, stale-while-revalidate=86400");
+  publicCache(c, "page");
   return c.html(pageShell({ title, description, canonical, image: set.logo ? `${SITE()}${cdnImage(`${set.logo}.png`, 600, "jpg")}` : undefined, body, jsonLd }));
 }
 
 // ---------------------------------------------------------------------------
 // Sitemaps (Index + Teil-Sitemaps, je max. 10.000 Karten)
 // ---------------------------------------------------------------------------
-const STATIC_PAGES = [...SEO_STATIC_PAGES, "/umzug", "/sets", "/ratgeber/pokemon-karten-wert", "/ratgeber/pokemon-karten-fake-erkennen", "/ratgeber/pokemon-displays-zum-uvp", "/rechtliches"];
+const STATIC_PAGES = [...SEO_STATIC_PAGES, "/umzug", "/sets", "/ratgeber/pokemon-karten-wert", "/ratgeber/pokemon-karten-fake-erkennen", "/ratgeber/pokemon-displays-zum-uvp", "/rechtliches", "/datenschutz"];
 const xml = (c: any, body: string) => {
-  c.header("Cache-Control", "public, max-age=3600");
-  c.header("Netlify-CDN-Cache-Control", "public, s-maxage=21600, stale-while-revalidate=86400");
+  publicCache(c, "sitemap");
   return c.body(`<?xml version="1.0" encoding="UTF-8"?>\n${body}`, 200, { "Content-Type": "application/xml; charset=utf-8" });
 };
 const loc = (path: string, extra = "") => `<url><loc>${h(`${SITE()}${path}`)}</loc>${extra}</url>`;
@@ -395,6 +396,33 @@ const sitemapCards = sql`FROM cards WHERE COALESCE(trend, avg, low) IS NOT NULL 
 
 export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> }) {
   const { auth, adminOnly, body } = hlp;
+
+  // Phase 6: Set-Vollständigkeits-Report (Admin) – importierte Karten je Set gegen card_count_official/total
+  app.get("/api/admin/set-completeness", auth, adminOnly, async (c: any) => {
+    const langRaw = String(c.req.query("lang") || "de");
+    if (!["de", "en", "ja"].includes(langRaw)) return c.json({ error: "Unbekannte Sprache." }, 400);
+    const onlyIncomplete = c.req.query("incomplete") === "1";
+    const sets = langRaw === "de"
+      ? rows(await db.execute(sql`SELECT s.id, s.name, s.serie_name, s.release_date, s.card_count_official AS official, s.card_count_total AS total, s.cards_imported_at,
+          COALESCE(array_agg(c.local_id) FILTER (WHERE c.local_id IS NOT NULL), '{}') AS local_ids
+          FROM card_sets s LEFT JOIN cards c ON c.set_id = s.id WHERE s.active GROUP BY s.id ORDER BY s.release_date DESC NULLS LAST`))
+      : rows(await db.execute(sql`SELECT s.id, s.name, s.serie_name, s.release_date, s.card_count_official AS official, s.card_count_total AS total, s.cards_imported_at,
+          COALESCE(array_agg(p.local_id) FILTER (WHERE p.local_id <> ''), '{}') AS local_ids
+          FROM print_sets s LEFT JOIN card_prints p ON p.lang = s.lang AND p.set_id = s.id WHERE s.lang = ${langRaw} AND s.active
+          GROUP BY s.lang, s.id ORDER BY s.release_date DESC NULLS LAST`));
+    const report = sets.map((s: any) => ({
+      id: String(s.id), name: String(s.name), serie: String(s.serie_name || ""),
+      releaseDate: s.release_date ? String(s.release_date).slice(0, 10) : null, importedAt: s.cards_imported_at,
+      ...setCompleteness(Array.isArray(s.local_ids) ? s.local_ids : [], { official: Number(s.official), total: Number(s.total) }),
+    })).filter((r: any) => !onlyIncomplete || r.status === "incomplete");
+    const summary = {
+      sets: report.length, complete: report.filter((r: any) => r.status === "complete").length,
+      incomplete: report.filter((r: any) => r.status === "incomplete").length, unknown: report.filter((r: any) => r.status === "unknown").length,
+      missingCards: report.reduce((a: number, r: any) => a + r.missingCount, 0),
+    };
+    c.header("Cache-Control", "private, no-store");
+    return c.json({ lang: langRaw, summary, sets: report });
+  });
 
   app.get("/sets", setsIndexPage);
   app.get("/set/:id/:slug?", setPage);
@@ -467,7 +495,7 @@ export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body
       id: cardSets.id, name: cardSets.name, serieName: cardSets.serieName, releaseDate: cardSets.releaseDate,
       cardCountTotal: cardSets.cardCountTotal, logo: cardSets.logo,
     }).from(cardSets).where(and(eq(cardSets.active, true), isNotNull(cardSets.cardsImportedAt))).orderBy(desc(cardSets.releaseDate)).limit(400);
-    c.header("Cache-Control", "public, max-age=1800");
+    publicCache(c, "data", { sMaxAge: 1800, swr: 86_400 });
     return c.json({ sets: list });
   });
 }

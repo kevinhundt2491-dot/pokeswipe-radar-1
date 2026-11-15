@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
+import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db, profiles } from "../db/index.ts";
 
@@ -26,20 +27,69 @@ export type AuthUser = {
   confirmed: boolean;
 };
 
+/**
+ * Token-Prüfung (Phase 6)
+ * Netlify Identity signiert Zugangs-Tokens mit HS256 und einem nicht öffentlichen Schlüssel der Instanz – einen
+ * JWKS-Endpunkt gibt es nicht (/.netlify/identity/.well-known/jwks.json → 404). Eine rein lokale Signaturprüfung ist
+ * deshalb nicht möglich, ohne den Schlüssel preiszugeben. Stattdessen:
+ * 1. Lokale Vorprüfung ohne Netzwerk: Format, Algorithmus (HS256), Ablaufzeit (exp), Nutzer-ID (sub) – abgelaufene oder
+ *    manipulierte Tokens werden sofort abgelehnt (kein Identity-Aufruf, schützt vor Last durch Müll-Tokens).
+ * 2. Einmalige Bestätigung bei der Identity-API je Token; das Ergebnis wird je Instanz bis zu 5 Minuten (höchstens bis
+ *    exp) unter dem SHA-256 des Tokens gehalten. Damit verursacht eine Sitzung höchstens einen Aufruf alle 5 Minuten
+ *    statt einen pro Anfrage. Die bestätigte sub muss zur Antwort der Identity-API passen.
+ * 3. Begrenzter Cache (LRU, 10.000 Einträge) statt komplettem Leeren bei Überlauf.
+ */
 type CacheEntry = { user: AuthUser | null; expires: number };
 const tokenCache = new Map<string, CacheEntry>();
+const TOKEN_CACHE_MAX = 10_000;
+const VERIFIED_TTL_MS = 5 * 60_000;
+const NEGATIVE_TTL_MS = 10_000;
+
+function b64urlJson(part: string): any {
+  try { return JSON.parse(Buffer.from(part, "base64url").toString("utf8")); } catch { return null; }
+}
+
+/** Lokale Prüfung der Token-Struktur. Liefert die Claims oder null (dann ist das Token sicher ungültig). */
+export function inspectToken(token: string, nowMs = Date.now()): { sub: string; exp: number } | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const header = b64urlJson(parts[0]);
+  const claims = b64urlJson(parts[1]);
+  if (!header || header.alg !== "HS256" || !claims || typeof claims !== "object") return null;
+  const exp = Number(claims.exp);
+  const sub = typeof claims.sub === "string" ? claims.sub : "";
+  if (!Number.isFinite(exp) || exp * 1000 <= nowMs || !sub || sub.length > 80) return null;
+  return { sub, exp };
+}
+
+function remember(key: string, entry: CacheEntry) {
+  tokenCache.delete(key);
+  if (tokenCache.size >= TOKEN_CACHE_MAX) {
+    const oldest = tokenCache.keys().next().value;
+    if (oldest !== undefined) tokenCache.delete(oldest);
+  }
+  tokenCache.set(key, entry);
+}
+
+/** Entfernt alle zwischengespeicherten Sitzungen eines Nutzers (z. B. nach Sperre). */
+export function forgetUserSessions(userId: string) {
+  for (const [k, v] of tokenCache) if (v.user?.id === userId) tokenCache.delete(k);
+}
 
 /**
- * Prüft das Netlify-Identity-JWT (Cookie nf_jwt oder Bearer-Header) direkt bei der
- * Identity-API dieser Website. Gefälschte oder abgelaufene Tokens werden abgelehnt.
+ * Prüft das Netlify-Identity-JWT (Cookie nf_jwt oder Bearer-Header). Gefälschte oder abgelaufene Tokens werden abgelehnt.
  */
 export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> {
   const header = c.req.header("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : getCookie(c, "nf_jwt");
   if (!token || token.length > 4096 || !/^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$/.test(token)) return null;
+  const claims = inspectToken(token);
+  if (!claims) return null;
 
-  const cached = tokenCache.get(token);
-  if (cached && cached.expires > Date.now()) return cached.user;
+  const key = createHash("sha256").update(token).digest("base64url");
+  const now = Date.now();
+  const cached = tokenCache.get(key);
+  if (cached && cached.expires > now) return cached.user;
 
   let user: AuthUser | null = null;
   try {
@@ -50,7 +100,7 @@ export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> 
     });
     if (res.ok) {
       const data: any = await res.json();
-      if (data?.id && data?.email) {
+      if (data?.id && data?.email && String(data.id) === claims.sub) {
         user = {
           id: String(data.id),
           email: String(data.email).toLowerCase(),
@@ -61,11 +111,10 @@ export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> 
       }
     }
   } catch {
-    user = null;
+    // Identity kurz nicht erreichbar: nicht zwischenspeichern, damit der nächste Versuch neu prüft
+    return null;
   }
-
-  if (tokenCache.size > 5000) tokenCache.clear();
-  tokenCache.set(token, { user, expires: Date.now() + (user ? 60_000 : 10_000) });
+  remember(key, { user, expires: user ? Math.min(now + VERIFIED_TTL_MS, claims.exp * 1000) : now + NEGATIVE_TTL_MS });
   return user;
 }
 

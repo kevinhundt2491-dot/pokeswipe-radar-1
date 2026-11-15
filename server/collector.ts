@@ -3,7 +3,8 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, cards, portfolioItems } from "../db/index.ts";
 import { PLANS, type PlanId } from "./plans.ts";
-import { CARD_ID_RE, cardPrice, getCard } from "./prices.ts";
+import { CARD_ID_RE, getCard } from "./prices.ts";
+import { parseVariant, variantPrice, normalizeVariant, VARIANT_LABELS, type Variant } from "./variant-logic.ts";
 import { fetchSet, pool } from "./features.ts";
 import { int, rateLimit } from "./util.ts";
 
@@ -39,10 +40,15 @@ export function registerCollector(app: any, h: { auth: any; body: (c: any) => Pr
     const cardId = c.req.param("cardId");
     if (!CARD_ID_RE.test(cardId)) return c.json({ error: "Ungültige Karten-ID" }, 400);
     const user = c.get("user"), plan: PlanId = c.get("plan");
-    if (!rateLimit(`qty:${user.id}`, 240, 60_000)) return c.json({ error: "Zu viele Änderungen – bitte kurz warten." }, 429);
-    const target = int((await body(c)).quantity, 0, 999, 0);
+    if (!(await rateLimit(`qty:${user.id}`, 240, 60_000))) return c.json({ error: "Zu viele Änderungen – bitte kurz warten." }, 429);
+    const b = await body(c);
+    const target = int(b.quantity, 0, 999, 0);
+    // Optional je Variante zählen (Master-Set: Normal und Reverse Holo getrennt); ohne Angabe zählt die Karte gesamt
+    const variant: Variant | null = b.variant === undefined || b.variant === null || b.variant === "" ? null : parseVariant(b.variant);
+    if (b.variant && !variant) return c.json({ error: "Unbekannte Kartenvariante." }, 400);
     const items = await db.select({ id: portfolioItems.id, quantity: portfolioItems.quantity }).from(portfolioItems)
-      .where(and(eq(portfolioItems.userId, user.id), eq(portfolioItems.cardId, cardId))).orderBy(asc(portfolioItems.id));
+      .where(and(eq(portfolioItems.userId, user.id), eq(portfolioItems.cardId, cardId), variant ? eq(portfolioItems.variant, variant) : undefined))
+      .orderBy(asc(portfolioItems.id));
     const current = items.reduce((s, i) => s + i.quantity, 0);
 
     if (target > current) {
@@ -55,7 +61,7 @@ export function registerCollector(app: any, h: { auth: any; body: (c: any) => Pr
         }
         const card = await getCard(cardId);
         if (!card) return c.json({ error: "Karte nicht gefunden" }, 404);
-        await db.insert(portfolioItems).values({ userId: user.id, cardId: card.id, name: card.name, image: card.image, quantity: target });
+        await db.insert(portfolioItems).values({ userId: user.id, cardId: card.id, name: card.name, image: card.image, quantity: target, variant: variant ?? "normal" });
       }
     } else if (target < current) {
       // Von den neuesten Einträgen abziehen, damit Einkaufspreise älterer Einträge erhalten bleiben
@@ -66,7 +72,7 @@ export function registerCollector(app: any, h: { auth: any; body: (c: any) => Pr
         else { await db.update(portfolioItems).set({ quantity: it.quantity - remove }).where(eq(portfolioItems.id, it.id)); remove = 0; }
       }
     }
-    return c.json({ ok: true, cardId, quantity: target });
+    return c.json({ ok: true, cardId, variant, quantity: target });
   });
 
   /** Duplikat-Radar: alle Karten mit Anzahl >= 2 inkl. Cardmarket-Daten (für Verkauf & CSV-Export). */
@@ -74,16 +80,17 @@ export function registerCollector(app: any, h: { auth: any; body: (c: any) => Pr
     const userId = c.get("user").id;
     const grouped = await db.select({
       cardId: portfolioItems.cardId,
+      variant: portfolioItems.variant,
       qty: sql<number>`sum(${portfolioItems.quantity})::int`,
       name: sql<string>`max(${portfolioItems.name})`,
       image: sql<string>`max(${portfolioItems.image})`,
     }).from(portfolioItems)
       .where(and(eq(portfolioItems.userId, userId), sql`${portfolioItems.cardId} IS NOT NULL`))
-      .groupBy(portfolioItems.cardId)
+      .groupBy(portfolioItems.cardId, portfolioItems.variant)
       .having(sql`sum(${portfolioItems.quantity}) >= 2`)
       .orderBy(desc(sql`sum(${portfolioItems.quantity})`))
       .limit(200);
-    const ids = grouped.map((g) => g.cardId!).filter(Boolean);
+    const ids = [...new Set(grouped.map((g) => g.cardId!).filter(Boolean))];
     const known = ids.length ? await db.select().from(cards).where(inArray(cards.id, ids)) : [];
     const cardMap = new Map(known.map((k) => [k.id, k]));
     const metas = new Map<string, CardMeta>();
@@ -97,10 +104,11 @@ export function registerCollector(app: any, h: { auth: any; body: (c: any) => Pr
 
     const list = grouped.map((g) => {
       const id = g.cardId!, k = cardMap.get(id), m = metas.get(id), s = sets.get(setIdOf(id));
-      const unit = cardPrice(k);
+      const variant = normalizeVariant(g.variant);
+      const unit = variantPrice(k, variant).price;
       const qty = Number(g.qty);
       return {
-        cardId: id, name: k?.name || g.name, image: k?.image || g.image || "", setName: k?.setName || "",
+        cardId: id, variant, variantLabel: VARIANT_LABELS[variant], name: k?.name || g.name, image: k?.image || g.image || "", setName: k?.setName || "",
         localId: localIdOf(id), qty, surplus: qty - 1, unit, surplusValue: unit * (qty - 1),
         enName: m?.enName || "", idProduct: m?.idProduct ?? null, rarity: m?.rarity || "",
         enSetName: s?.enName || "", abbr: s?.abbr || "",

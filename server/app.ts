@@ -4,7 +4,7 @@ import { and, desc, eq, gt, sql, inArray, or } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
 import {
   db, profiles, cards, priceHistory, portfolioItems, portfolioSnapshots, priceAlerts, notifications,
-  listings, trades, tradeMessages, reviews, reports, payments, freeBoostUsage, calendarEvents,
+  listings, trades, tradeMessages, reviews, reports, payments, freeBoostUsage, calendarEvents, cardPrints,
 } from "../db/index.ts";
 import { verifyIdentityToken, ensureProfile, isAdmin, type AuthUser } from "./auth.ts";
 import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, effectivePlan, type PlanId } from "./plans.ts";
@@ -23,16 +23,24 @@ import { registerFlip } from "./flip.ts";
 import { registerScanIndex } from "./scan-index.ts";
 import { registerCommunity, afterCommunityReport, applyModeration, isBlockedBetween, COMMUNITY_TARGETS } from "./community.ts";
 import { registerProfiles } from "./profiles.ts";
-import { registerMarket, fulfillOrderSession } from "./market.ts";
+import { registerMarket, fulfillOrderSession, buyNowListingGate, handleDisputeCreated, handleDisputeUpdated, handleDisputeClosed } from "./market.ts";
 import { registerArena } from "./arena.ts";
+import { registerTrading } from "./trading.ts";
+import { registerSearch } from "./search.ts";
 import { registerDealsRadar } from "./deals-radar.ts";
 import { registerShops } from "./shops.ts";
 import { registerNative } from "./native.ts";
 import { profileSlug } from "./community-logic.ts";
+import {
+  itemUnitValue, availableVariants, normalizeVariant, normalizeCondition, parseVariant, VARIANT_LABELS, CONDITION_CODES, type VariantPrices,
+} from "./variant-logic.ts";
 import { CONDITIONS, MARKET_MAX_SHIPPING_CENTS } from "./market-logic.ts";
 import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker, cardmarketPartnerId } from "./prices.ts";
-import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan } from "./billing.ts";
+import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan, createTaxedCheckout } from "./billing.ts";
+import { publicCache } from "./cache.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
+import { log } from "./log.ts";
+import { registerOps } from "./ops.ts";
 
 type Profile = typeof profiles.$inferSelect;
 type Vars = { user: AuthUser; profile: Profile; plan: PlanId };
@@ -47,7 +55,7 @@ app.use("/api/*", bodyLimit({
 }));
 
 app.onError((err, c) => {
-  console.error("API-Fehler", c.req.method, c.req.path, err);
+  log.error("api", "API-Fehler", { method: c.req.method, path: c.req.path, err });
   return c.json({ error: "Interner Fehler. Bitte später erneut versuchen." }, 500);
 });
 
@@ -65,7 +73,7 @@ const auth = async (c: any, next: any) => {
     profile = { ...profile, emailConfirmed: true };
   }
   if (profile.banned && c.req.method !== "GET") return c.json({ error: "Dein Konto ist gesperrt." }, 403);
-  if (c.req.method !== "GET" && !rateLimit(`w:${user.id}`, 60, 60_000)) {
+  if (c.req.method !== "GET" && !(await rateLimit(`w:${user.id}`, 60, 60_000))) {
     return c.json({ error: "Zu viele Aktionen in kurzer Zeit. Bitte kurz warten." }, 429);
   }
   c.set("user", user);
@@ -122,6 +130,7 @@ app.get("/api/me", auth, async (c) => {
       (SELECT count(*)::int FROM trades WHERE (to_user = ${user.id} AND status = 'pending')) AS open_trades
   `));
   return c.json({
+    hasBilling: Boolean(profile.stripeCustomerId),
     id: user.id,
     email: user.email,
     displayName: profile.displayName,
@@ -171,12 +180,12 @@ app.put("/api/me", auth, async (c) => {
 app.get("/api/cards/:id", async (c) => {
   const id = c.req.param("id");
   if (!CARD_ID_RE.test(id)) return c.json({ error: "Ungültige Karten-ID" }, 400);
-  if (!rateLimit(`card:${clientIp(c)}`, 60, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+  if (!(await rateLimit(`card:${clientIp(c)}`, 60, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
   const card = await getCard(id);
   if (!card) return c.json({ error: "Karte nicht gefunden" }, 404);
   const history = await db.select({ day: priceHistory.day, trend: priceHistory.trend, avg: priceHistory.avg, low: priceHistory.low })
     .from(priceHistory).where(eq(priceHistory.cardId, id)).orderBy(desc(priceHistory.day)).limit(90);
-  c.header("Cache-Control", "public, max-age=300");
+  publicCache(c, "data"); // öffentlich, ohne Login-/Cookie-Bezug
   return c.json({ card: { ...card, price: cardPrice(card) }, history: history.reverse() });
 });
 
@@ -189,21 +198,29 @@ app.get("/api/portfolio", auth, async (c) => {
     id: portfolioItems.id, cardId: portfolioItems.cardId, name: portfolioItems.name, image: portfolioItems.image,
     quantity: portfolioItems.quantity, purchasePrice: portfolioItems.purchasePrice, manualValue: portfolioItems.manualValue,
     condition: portfolioItems.condition, addedAt: portfolioItems.addedAt, lang: portfolioItems.lang, printId: portfolioItems.printId,
+    variant: portfolioItems.variant,
     trend: cards.trend, avg: cards.avg, low: cards.low, avg7: cards.avg7, avg30: cards.avg30, setName: cards.setName,
-    priceUpdatedAt: cards.priceUpdatedAt,
+    reverseTrend: cards.reverseTrend, reverseAvg: cards.reverseAvg, reverseLow: cards.reverseLow, reverseAvg30: cards.reverseAvg30,
+    availableVariants: cards.variants, priceUpdatedAt: cards.priceUpdatedAt, printVariantPrices: cardPrints.variantPrices,
   }).from(portfolioItems).leftJoin(cards, eq(cards.id, portfolioItems.cardId))
+    .leftJoin(cardPrints, eq(cardPrints.id, portfolioItems.printId))
     .where(eq(portfolioItems.userId, user.id)).orderBy(desc(portfolioItems.addedAt));
 
   let total = 0, cost = 0, costCovered = 0;
-  const enriched = items.map((i) => {
-    const live = cardPrice(i);
-    const unit = live || Number(i.manualValue ?? 0);
+  const enriched = items.map(({ printVariantPrices, ...i }) => {
+    const v = itemUnitValue(i, i, printVariantPrices as VariantPrices);
+    const unit = v.unit;
     const value = unit * i.quantity;
     total += value;
     if (i.purchasePrice !== null) { cost += Number(i.purchasePrice) * i.quantity; costCovered += value; }
-    const base = Number(i.avg30 ?? 0);
-    const change30 = live && base ? ((live - base) / base) * 100 : null;
-    return { ...i, unitValue: unit, value, live: Boolean(live), change30 };
+    // 30-Tage-Veränderung je Variante (Reverse Holo hat einen eigenen Verlauf)
+    const nowRaw = v.variant === "reverse_holo" && v.exactVariant ? Number(i.reverseTrend ?? i.reverseAvg ?? 0) : cardPrice(i);
+    const base = Number((v.variant === "reverse_holo" && v.exactVariant ? i.reverseAvg30 : i.avg30) ?? 0);
+    const change30 = v.live && nowRaw && base ? ((nowRaw - base) / base) * 100 : null;
+    return {
+      ...i, variantLabel: VARIANT_LABELS[v.variant], unitValue: unit, value, live: v.live, change30,
+      exactVariant: v.exactVariant, conditionFactor: v.conditionFactor, variants: availableVariants(i.availableVariants),
+    };
   });
 
   const movers = enriched.filter((i) => i.change30 !== null)
@@ -256,6 +273,11 @@ app.post("/api/portfolio", auth, async (c) => {
     cardId = card.id; name = name || card.name; image = card.image;
   }
   if (!name) return c.json({ error: "Bitte einen Kartennamen angeben." }, 400);
+  const variant = parseVariant(b.variant);
+  if (!variant) return c.json({ error: "Unbekannte Kartenvariante." }, 400);
+  if (b.condition !== undefined && b.condition !== "" && !(CONDITION_CODES as readonly string[]).includes(String(b.condition))) {
+    return c.json({ error: "Unbekannter Zustand." }, 400);
+  }
   const [item] = await db.insert(portfolioItems).values({
     userId: user.id,
     cardId,
@@ -264,9 +286,10 @@ app.post("/api/portfolio", auth, async (c) => {
     quantity: int(b.quantity, 1, 999, 1),
     purchasePrice: money(b.purchasePrice),
     manualValue: money(b.manualValue) ?? printValue,
-    condition: ["M", "NM", "EX", "GD", "LP", "PL", "PO", "PSA10", "PSA9"].includes(b.condition) ? b.condition : "NM",
+    condition: normalizeCondition(b.condition),
     lang,
     printId,
+    variant,
   }).returning();
   return c.json(item, 201);
 });
@@ -277,12 +300,26 @@ app.post("/api/portfolio/import", auth, async (c) => {
   const list = Array.isArray(b.items) ? b.items.slice(0, 200) : [];
   const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(portfolioItems).where(eq(portfolioItems.userId, user.id));
   const room = Math.max(0, PLANS[plan].portfolio - Number(r?.n ?? 0));
-  const values = list.slice(0, room).map((i: any) => ({
-    userId: user.id,
-    name: str(i?.name, 120) || "Pokémon Karte",
-    image: safeImage(i?.img),
-    manualValue: money(i?.value),
-  }));
+  // CSV-/Listen-Import: Karten-ID (falls erkannt), Anzahl, Variante, Zustand, Sprache und Einkaufspreis übernehmen
+  const wanted = list.slice(0, room);
+  const ids = [...new Set(wanted.map((i: any) => str(i?.cardId, 40)).filter((id: string) => CARD_ID_RE.test(id)))] as string[];
+  const known = ids.length ? await db.select({ id: cards.id, name: cards.name, image: cards.image }).from(cards).where(inArray(cards.id, ids)) : [];
+  const knownMap = new Map(known.map((k) => [k.id, k]));
+  const values = wanted.map((i: any) => {
+    const k = knownMap.get(str(i?.cardId, 40));
+    return {
+      userId: user.id,
+      cardId: k?.id ?? null,
+      name: str(i?.name, 120) || k?.name || "Pokémon Karte",
+      image: safeImage(i?.img) || k?.image || "",
+      quantity: int(i?.quantity, 1, 999, 1),
+      manualValue: money(i?.value),
+      purchasePrice: money(i?.purchasePrice),
+      variant: normalizeVariant(i?.variant),
+      condition: normalizeCondition(i?.condition),
+      lang: ["de", "en", "ja"].includes(String(i?.lang)) ? String(i.lang) : "de",
+    };
+  });
   if (values.length) await db.insert(portfolioItems).values(values);
   return c.json({ imported: values.length, skipped: list.length - values.length });
 });
@@ -295,6 +332,15 @@ app.patch("/api/portfolio/:id", auth, async (c) => {
   if (b.quantity !== undefined) updates.quantity = int(b.quantity, 1, 999, 1);
   if (b.purchasePrice !== undefined) updates.purchasePrice = money(b.purchasePrice);
   if (b.manualValue !== undefined) updates.manualValue = money(b.manualValue);
+  if (b.variant !== undefined) {
+    const v = parseVariant(b.variant);
+    if (!v) return c.json({ error: "Unbekannte Kartenvariante." }, 400);
+    updates.variant = v;
+  }
+  if (b.condition !== undefined) {
+    if (!(CONDITION_CODES as readonly string[]).includes(String(b.condition))) return c.json({ error: "Unbekannter Zustand." }, 400);
+    updates.condition = String(b.condition);
+  }
   if (!Object.keys(updates).length) return c.json({ error: "Nichts zu ändern." }, 400);
   const [item] = await db.update(portfolioItems).set(updates)
     .where(and(eq(portfolioItems.id, id), eq(portfolioItems.userId, user.id))).returning();
@@ -311,11 +357,17 @@ app.delete("/api/portfolio/:id", auth, async (c) => {
 app.get("/api/portfolio/export.csv", auth, async (c) => {
   if (c.get("plan") !== "pro") return c.json({ error: "CSV-Export ist im Pro-Trader-Tarif enthalten.", upgrade: true }, 402);
   const items = await db.select({ name: portfolioItems.name, quantity: portfolioItems.quantity, purchasePrice: portfolioItems.purchasePrice,
-    manualValue: portfolioItems.manualValue, trend: cards.trend, setName: cards.setName })
-    .from(portfolioItems).leftJoin(cards, eq(cards.id, portfolioItems.cardId)).where(eq(portfolioItems.userId, c.get("user").id));
+    manualValue: portfolioItems.manualValue, trend: cards.trend, avg: cards.avg, low: cards.low, reverseTrend: cards.reverseTrend,
+    reverseAvg: cards.reverseAvg, reverseLow: cards.reverseLow, setName: cards.setName, variant: portfolioItems.variant,
+    condition: portfolioItems.condition, lang: portfolioItems.lang, printVariantPrices: cardPrints.variantPrices })
+    .from(portfolioItems).leftJoin(cards, eq(cards.id, portfolioItems.cardId)).leftJoin(cardPrints, eq(cardPrints.id, portfolioItems.printId))
+    .where(eq(portfolioItems.userId, c.get("user").id));
   const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""').replace(/^[=+\-@]/, "'$&")}"`;
-  const csv = ["Karte;Set;Anzahl;Einkaufspreis;Marktwert (Trend)"]
-    .concat(items.map((i) => [i.name, i.setName, i.quantity, i.purchasePrice, i.trend ?? i.manualValue].map(esc).join(";")))
+  const csv = ["Karte;Set;Variante;Zustand;Sprache;Anzahl;Einkaufspreis;Marktwert je Stück"]
+    .concat(items.map((i) => {
+      const v = itemUnitValue(i, i, i.printVariantPrices as VariantPrices);
+      return [i.name, i.setName, VARIANT_LABELS[v.variant], i.condition, i.lang, i.quantity, i.purchasePrice, v.unit ? v.unit.toFixed(2) : ""].map(esc).join(";");
+    }))
     .join("\n");
   return c.body("﻿" + csv, 200, {
     "Content-Type": "text/csv; charset=utf-8",
@@ -444,10 +496,10 @@ app.get("/api/listings", async (c) => {
   const list = rows(await db.execute(sql`
     SELECT l.id, l.card_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.created_at, l.user_id,
       l.status, l.sealed_product_id, (l.boosted_until > now()) AS boosted, l.boosted_until,
-      (l.buy_now AND p.stripe_account_ready) AS buy_now, l.shipping_cents, l.condition,
+      (l.buy_now AND p.stripe_account_ready) AS buy_now, l.shipping_cents, l.condition, l.variant, l.lang,
       p.display_name AS seller, p.public_profile AS seller_public,
       (p.plan = 'pro' AND p.plan_until > now()) AS verified,
-      COALESCE(c.trend, c.avg)::float AS market_price,
+      (CASE WHEN l.variant = 'reverse_holo' THEN COALESCE(c.reverse_trend, c.reverse_avg, c.trend, c.avg) ELSE COALESCE(c.trend, c.avg) END)::float AS market_price,
       (SELECT round(avg(r.stars)::numeric, 1)::float FROM reviews r WHERE r.reviewee_id = l.user_id) AS rating,
       (SELECT count(*)::int FROM reviews r WHERE r.reviewee_id = l.user_id) AS rating_count
     FROM listings l
@@ -466,7 +518,7 @@ app.get("/api/listings", async (c) => {
         const r = l.price / l.market_price;
         priceCheck = r < 0.85 ? "deal" : r <= 1.1 ? "fair" : "high";
       }
-      return { ...l, priceCheck, seller_slug: profileSlug(l.seller) };
+      return { ...l, priceCheck, seller_slug: profileSlug(l.seller), variant_label: VARIANT_LABELS[normalizeVariant(l.variant)] };
     }),
   });
 });
@@ -481,6 +533,9 @@ app.post("/api/listings", auth, async (c) => {
   if (room <= 0) {
     return c.json({ error: `Limit erreicht: ${PLANS[plan].listings} aktive Inserate im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
   }
+  // Phase 6: Wertgrenze je Vertrauensstufe, Sperre nach Rückbuchung und DAC7-Sperre für Sofort-Kauf-Inserate
+  const sellGate = await buyNowListingGate(profile, input.slice(0, room));
+  if (sellGate) return c.json({ error: sellGate }, 403);
   const created = [];
   for (const it of input.slice(0, room)) {
     const cardName = str(it.card ?? it.cardName, 120);
@@ -502,8 +557,19 @@ app.post("/api/listings", auth, async (c) => {
     const condition = CONDITIONS[String(it.condition || "")] ? String(it.condition) : "";
     // Phase 5: Sprache des Drucks für den DE/EN/JP-Filter in Händler-Shops
     const lang = ["de", "en", "ja"].includes(String(it.lang)) ? String(it.lang) : "de";
+    // Phase 6: Kartenvariante und optionale Verknüpfung mit einem eigenen Portfolio-Eintrag (für strukturierte Tausche)
+    const variant = sealedProductId ? "normal" : parseVariant(it.variant);
+    if (!variant) return c.json({ error: `„${cardName}“: unbekannte Kartenvariante.` }, 400);
+    let portfolioItemId: number | null = null;
+    if (it.portfolioItemId !== undefined && it.portfolioItemId !== null && it.portfolioItemId !== "") {
+      const pid = int(it.portfolioItemId, 1, 2 ** 31 - 1, 0);
+      const [own] = pid ? await db.select({ id: portfolioItems.id }).from(portfolioItems)
+        .where(and(eq(portfolioItems.id, pid), eq(portfolioItems.userId, user.id))).limit(1) : [];
+      if (!own) return c.json({ error: "Die verknüpfte Karte ist nicht in deiner Sammlung." }, 404);
+      portfolioItemId = own.id;
+    }
     const [row] = await db.insert(listings).values({
-      userId: user.id, cardId, sealedProductId, cardName, image, price, buyNow, shippingCents, condition, lang,
+      userId: user.id, cardId, sealedProductId, cardName, image, price, buyNow, shippingCents, condition, lang, variant, portfolioItemId,
       want: str(it.want, 120) || "Tausch / Gebot",
       city: str(it.city, 60) || profile.city || "Deutschland",
     }).returning();
@@ -548,87 +614,7 @@ async function loadTrade(id: number, userId: string) {
   return t;
 }
 
-app.get("/api/trades", auth, async (c) => {
-  const userId = c.get("user").id;
-  const list = rows(await db.execute(sql`
-    SELECT t.*, l.card_name AS listing_card, l.image AS listing_image, l.price::float AS listing_price,
-      pf.display_name AS from_name, pt.display_name AS to_name,
-      EXISTS (SELECT 1 FROM reviews r WHERE r.trade_id = t.id AND r.reviewer_id = ${userId}) AS reviewed,
-      (SELECT count(*)::int FROM trade_messages m WHERE m.trade_id = t.id) AS message_count
-    FROM trades t
-    JOIN profiles pf ON pf.user_id = t.from_user
-    JOIN profiles pt ON pt.user_id = t.to_user
-    LEFT JOIN listings l ON l.id = t.listing_id
-    WHERE t.from_user = ${userId} OR t.to_user = ${userId}
-    ORDER BY t.updated_at DESC
-    LIMIT 60
-  `));
-  return c.json({ trades: list.map((t: any) => ({ ...t, role: t.from_user === userId ? "sender" : "receiver" })) });
-});
-
-app.post("/api/trades", auth, async (c) => {
-  const user = c.get("user"), profile = c.get("profile");
-  const b = await body(c);
-  const listingId = int(b.listingId, 1, 2 ** 31 - 1, 0);
-  const offer = str(b.offer, 400);
-  if (!listingId || offer.length < 3) return c.json({ error: "Bitte beschreibe dein Angebot." }, 400);
-  const [listing] = await db.select().from(listings).where(and(eq(listings.id, listingId), eq(listings.status, "active"))).limit(1);
-  if (!listing) return c.json({ error: "Inserat nicht mehr verfügbar." }, 404);
-  if (listing.userId === user.id) return c.json({ error: "Das ist dein eigenes Inserat." }, 400);
-  if (await isBlockedBetween(user.id, listing.userId)) return c.json({ error: "Tauschanfrage nicht möglich." }, 403);
-  const [dup] = await db.select({ id: trades.id }).from(trades).where(and(
-    eq(trades.listingId, listingId), eq(trades.fromUser, user.id), inArray(trades.status, ["pending", "accepted"]),
-  )).limit(1);
-  if (dup) return c.json({ error: "Du hast für dieses Inserat schon eine offene Anfrage.", tradeId: dup.id }, 409);
-  const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(trades)
-    .where(and(eq(trades.fromUser, user.id), sql`${trades.createdAt} > now() - interval '1 day'`));
-  if (Number(r?.n ?? 0) >= 30) return c.json({ error: "Tageslimit für Tauschanfragen erreicht." }, 429);
-
-  const [trade] = await db.insert(trades).values({
-    listingId, fromUser: user.id, toUser: listing.userId, offer, request: listing.cardName,
-  }).returning();
-  const msg = str(b.message, 1000);
-  if (msg) await db.insert(tradeMessages).values({ tradeId: trade.id, userId: user.id, body: msg });
-  await notify(listing.userId, "🤝 Neue Tauschanfrage", `${profile.displayName} möchte „${listing.cardName}“ – Angebot: ${offer}`, "/?tab=trades");
-  return c.json(trade, 201);
-});
-
-app.post("/api/trades/:id/action", auth, async (c) => {
-  const user = c.get("user"), profile = c.get("profile");
-  const b = await body(c);
-  const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
-  const t = await loadTrade(id, user.id);
-  if (!t) return c.json({ error: "Tausch nicht gefunden" }, 404);
-  const isReceiver = t.toUser === user.id;
-  const other = isReceiver ? t.fromUser : t.toUser;
-  const action = String(b.action || "");
-  let updates: Partial<typeof trades.$inferInsert> | null = null;
-  let message = "";
-
-  if ((action === "accept" || action === "decline") && isReceiver && t.status === "pending") {
-    updates = { status: action === "accept" ? "accepted" : "declined" };
-    message = action === "accept" ? "✅ Tausch angenommen" : "❌ Tausch abgelehnt";
-  } else if (action === "cancel" && ["pending", "accepted"].includes(t.status)) {
-    updates = { status: "cancelled" };
-    message = "🚫 Tausch abgebrochen";
-  } else if (action === "complete" && t.status === "accepted") {
-    const fromConfirmed = t.fromConfirmed || !isReceiver;
-    const toConfirmed = t.toConfirmed || isReceiver;
-    updates = { fromConfirmed, toConfirmed, status: fromConfirmed && toConfirmed ? "completed" : "accepted" };
-    message = updates.status === "completed" ? "🏆 Tausch abgeschlossen – bitte bewerten" : "📦 Partner hat den Erhalt bestätigt";
-  }
-  if (!updates) return c.json({ error: "Diese Aktion ist gerade nicht möglich." }, 409);
-
-  // Nur anwenden, wenn sich der Status seit dem Laden nicht geändert hat (keine Doppel-/Gegenaktionen)
-  const [updated] = await db.update(trades).set({ ...updates, updatedAt: new Date() })
-    .where(and(eq(trades.id, id), eq(trades.status, t.status))).returning();
-  if (!updated) return c.json({ error: "Diese Aktion ist gerade nicht möglich." }, 409);
-  if (updated.status === "completed" && t.listingId) {
-    await db.update(listings).set({ status: "sold" }).where(eq(listings.id, t.listingId));
-  }
-  await notify(other, message, `${profile.displayName} • ${t.request}`, "/?tab=trades");
-  return c.json(updated);
-});
+// Liste, strukturierte Anfrage (trade_items) und Statusaktionen: server/trading.ts (registerTrading)
 
 app.get("/api/trades/:id/messages", auth, async (c) => {
   const userId = c.get("user").id;
@@ -644,7 +630,7 @@ app.get("/api/trades/:id/messages", auth, async (c) => {
 
 app.post("/api/trades/:id/messages", auth, async (c) => {
   const user = c.get("user"), profile = c.get("profile");
-  if (!rateLimit(`msg:${user.id}`, 20, 60_000)) return c.json({ error: "Bitte nicht so schnell schreiben." }, 429);
+  if (!(await rateLimit(`msg:${user.id}`, 20, 60_000))) return c.json({ error: "Bitte nicht so schnell schreiben." }, 429);
   const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
   const t = await loadTrade(id, user.id);
   if (!t) return c.json({ error: "Tausch nicht gefunden" }, 404);
@@ -695,7 +681,7 @@ app.get("/api/users/:id", async (c) => {
 
 app.post("/api/reports", auth, async (c) => {
   const user = c.get("user");
-  if (!rateLimit(`report:${user.id}`, 5, 600_000)) return c.json({ error: "Zu viele Meldungen." }, 429);
+  if (!(await rateLimit(`report:${user.id}`, 5, 600_000))) return c.json({ error: "Zu viele Meldungen." }, 429);
   const b = await body(c);
   const targetType = ["listing", "user", "trade", "event", "order", ...COMMUNITY_TARGETS].includes(b.targetType) ? b.targetType : null;
   const reason = str(b.reason, 500);
@@ -737,7 +723,8 @@ app.post("/api/billing/checkout", auth, async (c) => {
   const trial = await trialDays(profile);
   const customer = await getOrCreateCustomer(s, profile);
   const origin = appOrigin(c);
-  const session = await s.checkout.sessions.create({
+  // Phase 6: Stripe Tax (automatische Umsatzsteuer), Rückfall ohne Steuerberechnung, falls im Dashboard nicht aktiv
+  const session = await createTaxedCheckout(s, {
     mode: "subscription",
     customer,
     client_reference_id: profile.userId,
@@ -748,6 +735,7 @@ app.post("/api/billing/checkout", auth, async (c) => {
       price_data: {
         currency: "eur",
         unit_amount: yearly ? PLANS[plan].yearlyPriceCents : PLANS[plan].priceCents,
+        tax_behavior: "inclusive", // Endpreise inkl. USt (B2C)
         recurring: { interval: yearly ? "year" : "month" },
         product_data: {
           name: `PokeSwipe ${PLANS[plan].label}${yearly ? " (Jahresabo)" : ""}`,
@@ -795,7 +783,7 @@ app.post("/api/billing/boost", auth, async (c) => {
     return c.json({ error: "Bitte bestätige vor der Bestellung die AGB und den sofortigen Leistungsbeginn.", needsConsent: true, kind: "boost" }, 428);
   }
   const origin = appOrigin(c);
-  const session = await s.checkout.sessions.create({
+  const session = await createTaxedCheckout(s, {
     mode: "payment",
     customer: await getOrCreateCustomer(s, profile),
     client_reference_id: user.id,
@@ -805,6 +793,7 @@ app.post("/api/billing/boost", auth, async (c) => {
       price_data: {
         currency: "eur",
         unit_amount: BOOST_PRICE_CENTS,
+        tax_behavior: "inclusive",
         product_data: { name: `Inserat-Boost (${BOOST_DAYS} Tage)`, description: listing.cardName.slice(0, 200) },
       },
     }],
@@ -880,6 +869,22 @@ app.post("/api/billing/cancel", auth, async (c) => {
   return c.json({ ok: true, cancelAtPeriodEnd: updated?.cancelAtPeriodEnd, planUntil: updated?.planUntil });
 });
 
+// Phase 6: Stripe-Kundenportal (Zahlungsmethode, Rechnungen, Rechnungsadresse, Abo verwalten)
+app.post("/api/billing/portal", auth, async (c) => {
+  const s = stripe(), profile = c.get("profile");
+  if (!s) return c.json({ error: "Zahlungen sind noch nicht eingerichtet." }, 503);
+  if (!profile.stripeCustomerId) return c.json({ error: "Für dein Konto gibt es noch keine Zahlungen oder Rechnungen." }, 400);
+  if (!(await rateLimit(`portal:${profile.userId}`, 10, 600_000))) return c.json({ error: "Bitte kurz warten und erneut versuchen." }, 429);
+  try {
+    const portal = await s.billingPortal.sessions.create({ customer: profile.stripeCustomerId, locale: "de", return_url: `${appOrigin(c)}/` });
+    return c.json({ url: portal.url });
+  } catch (e: any) {
+    log.error("billing", "Kundenportal-Sitzung fehlgeschlagen", { userId: profile.userId, err: e });
+    const notSetUp = /configuration|portal/i.test(String(e?.message));
+    return c.json({ error: notSetUp ? "Das Kundenportal ist im Stripe-Dashboard noch nicht eingerichtet (Einstellungen → Billing → Kundenportal)." : "Das Kundenportal ist gerade nicht erreichbar. Bitte später erneut versuchen." }, 502);
+  }
+});
+
 // Stripe-Webhook: aktiv, sobald STRIPE_WEBHOOK_SECRET gesetzt ist ODER der Webhook in der Admin-Zentrale
 // automatisch eingerichtet wurde (Geheimnis in Netlify Blobs). Kündigungen & Zahlungsausfälle greifen sofort.
 async function profileForSubscription(sub: any) {
@@ -926,10 +931,17 @@ app.post("/api/billing/webhook", async (c) => {
           }
         }
       }
+    } else if (event.type === "charge.dispute.created") {
+      // Phase 6: Rückbuchungen – Treuhand-Bestellung einfrieren bzw. Abo-Kunden markieren (Logik in server/market.ts)
+      await handleDisputeCreated(event.data.object as any);
+    } else if (event.type === "charge.dispute.updated") {
+      await handleDisputeUpdated(event.data.object as any);
+    } else if (event.type === "charge.dispute.closed") {
+      await handleDisputeClosed(event.data.object as any);
     }
     await recordWebhook(event.type);
   } catch (e: any) {
-    console.error("Webhook-Verarbeitung fehlgeschlagen", event.type, e);
+    log.error("stripe-webhook", "Webhook-Verarbeitung fehlgeschlagen", { type: event.type, err: e });
     await recordWebhook(event.type, `${event.type}: ${String(e?.message || e)}`);
     return c.json({ error: "Verarbeitung fehlgeschlagen" }, 500); // Stripe wiederholt die Zustellung automatisch
   }
@@ -1010,6 +1022,8 @@ registerLegal(app, { auth, adminOnly, body });
 registerSeo(app); // vor registerCatalog: eigene Teil-Sitemaps vor dem Muster /sitemaps/:file
 registerCommunity(app, { auth, adminOnly, body, safeImage, storeDataUrlImage });
 registerArena(app, { auth, body }); // Phase 5: Preference-Learning & Booster-Simulator
+registerTrading(app, { auth, body }); // Phase 6: Swipe-Likes, Matches, strukturierte Tausche
+registerSearch(app); // Phase 6: /api/search über den eigenen Katalog (pg_trgm)
 registerDealsRadar(app, { auth, body }); // Phase 5: geteilte Community-Deals & Sammler-Radar mit Login-Pflicht
 registerProfiles(app, { auth, body }); // ebenfalls vor registerCatalog (/sitemaps/profiles.xml)
 registerMarket(app, { auth, adminOnly, body });
@@ -1021,6 +1035,7 @@ registerFlip(app, { auth, adminOnly, body });
 registerScanIndex(app, { auth, adminOnly });
 registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
+registerOps(app, { auth, adminOnly }); // Betrieb: Job-Läufe, Circuits & Fehlerprotokoll für Admins
 
 // Öffentliche (nicht geheime) Client-Konfiguration. Der Firebase-Web-API-Schlüssel ist laut Firebase kein
 // Geheimnis, sondern nur eine Projekt-Kennung – die Sicherheit kommt aus den Datenbank-Regeln.

@@ -4,6 +4,9 @@ const ALIASES = {
   number: ["number", "nummer", "nr", "nr.", "card number", "collector number", "kartennummer", "localid", "no", "no.", "card #", "card no", "number in set"],
   set: ["set", "expansion", "edition", "serie", "set name", "setname", "erweiterung", "expansion name", "group", "series"],
   quantity: ["quantity", "count", "anzahl", "menge", "qty", "amount", "stück", "stk", "quantity owned", "owned", "total quantity"],
+  variant: ["variant", "variante", "version", "finish", "printing", "foil", "edition type", "ausführung", "reverse holo", "is reverse holo"],
+  condition: ["condition", "zustand", "cond", "card condition", "grade condition"],
+  lang: ["language", "sprache", "lang"],
   purchasePrice: ["purchase price", "einkaufspreis", "kaufpreis", "ek", "paid", "price paid", "preis", "price", "einkauf", "average cost paid", "avg cost paid", "average cost", "cost", "cost basis", "purchase cost", "buy price"],
 };
 
@@ -42,7 +45,28 @@ const toNumber = (v) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
-/** Wandelt CSV in Portfolio-Zeilen um: { name, number, set, quantity, purchasePrice }. */
+const VARIANT_WORDS = [
+  [/reverse|rev\.?\s*holo|\brh\b/i, "reverse_holo"], [/1st|first edition|erstauflage|1\.\s*auflage/i, "first_edition"],
+  [/shadowless/i, "shadowless"], [/promo/i, "promo"], [/holo|foil/i, "holo"],
+];
+/** Variante aus einer Zelle („Reverse Holofoil“, „1st Edition“, „Foil“, „yes“ bei „Is Reverse Holo“) oder dem Kartennamen. */
+export function detectVariant(cell, header = "", name = "") {
+  const v = String(cell || "").trim();
+  if (/reverse/i.test(header) && /^(1|yes|ja|true|x)$/i.test(v)) return "reverse_holo";
+  for (const [re, key] of VARIANT_WORDS) if (re.test(v)) return key;
+  if (/^(normal|non[- ]?holo|unlimited|standard|regular|no|nein|0|false)?$/i.test(v)) {
+    // Varianten-Hinweis im Namen, z. B. „Glurak (Reverse Holo)“
+    for (const [re, key] of VARIANT_WORDS.slice(0, 4)) if (re.test(name)) return key;
+    return "normal";
+  }
+  return "normal";
+}
+const CONDITION_WORDS = { m: "M", mt: "M", mint: "M", nm: "NM", "near mint": "NM", "nm-m": "NM", ex: "EX", excellent: "EX", gd: "GD", good: "GD",
+  lp: "LP", "light played": "LP", "lightly played": "LP", pl: "PL", played: "PL", mp: "PL", "moderately played": "PL", hp: "PO", "heavily played": "PO", po: "PO", poor: "PO", damaged: "PO", dmg: "PO" };
+export const detectCondition = (cell) => CONDITION_WORDS[String(cell || "").trim().toLowerCase()] || "NM";
+const LANG_WORDS = { de: "de", german: "de", deutsch: "de", en: "en", english: "en", englisch: "en", ja: "ja", jp: "ja", japanese: "ja", japanisch: "ja" };
+
+/** Wandelt CSV in Portfolio-Zeilen um: { name, number, set, quantity, purchasePrice, variant, condition, lang }. */
 export function csvToRows(text) {
   const table = parseCsv(text);
   if (!table.length) return [];
@@ -59,7 +83,8 @@ export function csvToRows(text) {
       // Einfache Liste: "Glurak ex 199/165" oder "Pikachu;25"
       const raw = cells.join(" ").trim();
       const m = /^(.*?)[\s#]+(\d{1,3}[a-z]?(?:\/\d{1,3})?)$/i.exec(raw);
-      return { name: (m ? m[1] : raw).trim(), number: m ? m[2] : "", set: "", quantity: 1, purchasePrice: null };
+      const name = (m ? m[1] : raw).trim();
+      return { name, number: m ? m[2] : "", set: "", quantity: 1, purchasePrice: null, variant: detectVariant("", "", name), condition: "NM", lang: "de" };
     }
     const get = (k) => (col[k] !== undefined ? cells[col[k]] ?? "" : "");
     const qty = parseInt(get("quantity"), 10);
@@ -69,6 +94,9 @@ export function csvToRows(text) {
       set: get("set"),
       quantity: Number.isFinite(qty) && qty > 0 ? Math.min(qty, 999) : 1,
       purchasePrice: toNumber(get("purchasePrice")),
+      variant: detectVariant(get("variant"), col.variant !== undefined ? header[col.variant] : "", get("name")),
+      condition: detectCondition(get("condition")),
+      lang: LANG_WORDS[String(get("lang")).trim().toLowerCase()] || "de",
     };
   }).filter((r) => r.name && r.name.length <= 120);
 }

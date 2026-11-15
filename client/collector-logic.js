@@ -48,13 +48,20 @@ export function groupDuplicates(items) {
   const map = new Map();
   for (const i of items || []) {
     if (!i?.cardId) continue;
-    const g = map.get(i.cardId) || { cardId: i.cardId, name: i.name, image: i.image, setName: i.setName || "", qty: 0, unit: 0 };
-    g.qty += Math.max(0, Number(i.quantity) || 0);
+    const g = map.get(i.cardId) || { cardId: i.cardId, name: i.name, image: i.image, setName: i.setName || "", qty: 0, unit: 0, variants: new Set(), itemId: null, itemQty: 0 };
+    const q = Math.max(0, Number(i.quantity) || 0);
+    g.qty += q;
     g.unit = Math.max(g.unit, Number(i.unitValue) || 0);
+    // Phase 6: Varianten mitführen; das Inserat wird mit dem größten Portfolio-Eintrag verknüpft (für strukturierte Tausche)
+    g.variants.add(i.variant || "normal");
+    if (q > g.itemQty) { g.itemQty = q; g.itemId = i.id ?? null; }
     map.set(i.cardId, g);
   }
   return [...map.values()].filter((g) => g.qty >= 2)
-    .map((g) => ({ ...g, surplus: g.qty - 1, surplusValue: round2(g.unit * (g.qty - 1)) }))
+    .map(({ variants, itemQty, ...g }) => ({
+      ...g, variant: variants.size === 1 ? [...variants][0] : "normal", variants: [...variants],
+      surplus: g.qty - 1, surplusValue: round2(g.unit * (g.qty - 1)),
+    }))
     .sort((a, b) => b.surplusValue - a.surplusValue);
 }
 

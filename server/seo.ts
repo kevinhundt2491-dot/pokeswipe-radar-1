@@ -11,14 +11,14 @@ import { db, pokemonSpecies, sealedProducts } from "../db/index.ts";
 import { SITE, h, slugify, cdnImage, pageShell, ebayUrl, cardmarketSearch, chartSvg } from "./growth.ts";
 import { rows, rateLimit, clientIp, euro } from "./util.ts";
 import { baseSpeciesName } from "./logic.ts";
+import { publicCache } from "./cache.ts";
+import { resilientFetch, CircuitOpenError } from "./resilience.ts";
 
 export { baseSpeciesName };
 
 const SPECIES_REFRESH_MS = 6 * 3600_000;
-const cacheHeaders = (c: any, maxAge = 600, cdn = 3600) => {
-  c.header("Cache-Control", `public, max-age=${maxAge}`);
-  c.header("Netlify-CDN-Cache-Control", `public, s-maxage=${cdn}, stale-while-revalidate=86400`);
-};
+/** Öffentliche SEO-Seiten ohne Login-/Cookie-Bezug: CDN-Cache (s. server/cache.ts). */
+const cacheHeaders = (c: any) => publicCache(c, "page");
 const crumbs = (items: [string, string][]) => ({
   "@type": "BreadcrumbList",
   itemListElement: items.map(([name, path], i) => ({ "@type": "ListItem", position: i + 1, name, item: `${SITE()}${path}` })),
@@ -93,10 +93,10 @@ export async function fillEnglishNames(max = 12, deadline = Date.now() + 8000) {
     if (Date.now() > deadline || !s.topCardId) break;
     let en = "-";
     try {
-      const res = await fetch(`https://api.tcgdex.net/v2/en/cards/${encodeURIComponent(s.topCardId)}`, { signal: AbortSignal.timeout(5000) });
+      const res = await resilientFetch("tcgdex", `https://api.tcgdex.net/v2/en/cards/${encodeURIComponent(s.topCardId)}`, {}, { timeoutMs: 5000, attempts: 2 });
       if (res.ok) { const d: any = await res.json(); en = baseSpeciesName(String(d?.name || "")).slice(0, 80) || "-"; }
       else if (res.status !== 404) continue;
-    } catch { continue; }
+    } catch (e) { if (e instanceof CircuitOpenError) break; continue; }
     await db.update(pokemonSpecies).set({ nameEn: en }).where(eq(pokemonSpecies.dexId, s.dexId));
     done++;
   }
@@ -121,7 +121,7 @@ const tile = (x: any) => `<a class="ci" href="${h(cardLink(x))}">${x.image ? `<i
   <span>${h(x.name)}</span><span class="muted">${h(x.set_name || "")}${x.local_id ? ` #${h(x.local_id)}` : ""}</span><b>${Number(x.price) > 0 ? h(euro(Number(x.price))) : "–"}</b></a>`;
 
 async function pokemonIndex(c: any) {
-  if (!rateLimit(`seo:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+  if (!(await rateLimit(`seo:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
   const list = await db.select().from(pokemonSpecies).orderBy(asc(pokemonSpecies.nameDe)).limit(2000);
   const groups = new Map<string, typeof list>();
   for (const s of list) {
@@ -137,7 +137,7 @@ async function pokemonIndex(c: any) {
     ${top.length ? `<h2>💎 Die gefragtesten Pokémon nach Kartenwert</h2><div class="az">${top.map((s) => `<a href="/pokemon/${h(s.slug)}"><span>${h(s.nameDe)}</span><b style="color:#34d399">${h(euro(Number(s.topPrice)))}</b></a>`).join("")}</div>` : ""}
     ${[...groups].map(([k, items]) => `<h2 id="${k}">${k}</h2><div class="az">${items.map((s) => `<a href="/pokemon/${h(s.slug)}"><span>${h(s.nameDe)}</span><span class="muted">${s.cardCount}</span></a>`).join("")}</div>`).join("")
       || `<p class="muted">Die Pokémon-Liste wird gerade aus dem Kartenkatalog aufgebaut – bitte in Kürze erneut öffnen.</p>`}`;
-  cacheHeaders(c, 900, 21600);
+  cacheHeaders(c);
   return c.html(pageShell({
     title: "Pokémon-Karten A–Z – Preise & Wert jedes Pokémon | PokeSwipe & Radar",
     description: `Alle ${list.length || ""} Pokémon mit ihren deutschen Sammelkarten und aktuellen Cardmarket-Preisen: Was ist meine Glurak-, Pikachu- oder Mewtu-Karte wert?`,
@@ -151,7 +151,7 @@ async function pokemonPage(c: any) {
   const notFound = () => c.html(pageShell({ title: "Pokémon nicht gefunden | PokeSwipe & Radar", description: "", canonical: `${SITE()}/pokemon`, robots: "noindex",
     body: `<div class="card"><h1>Pokémon nicht gefunden</h1><a class="btn y" href="/pokemon">Pokémon A–Z</a></div>` }), 404);
   if (!/^[a-z0-9-]{1,70}$/.test(slug)) return notFound();
-  if (!rateLimit(`seo:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+  if (!(await rateLimit(`seo:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
   const [sp] = await db.select().from(pokemonSpecies).where(eq(pokemonSpecies.slug, slug)).limit(1);
   if (!sp) return notFound();
   const list = rows(await db.execute(sql`
@@ -226,7 +226,7 @@ const uvpBadge = (p: any) => {
 };
 
 async function sealedIndex(c: any) {
-  if (!rateLimit(`seo:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+  if (!(await rateLimit(`seo:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
   const list = rows(await sealedQuery());
   const groups = new Map<string, any[]>();
   for (const p of list) groups.set(p.kind, [...(groups.get(p.kind) || []), p]);
@@ -251,7 +251,7 @@ async function sealedPage(c: any) {
   const notFound = () => c.html(pageShell({ title: "Produkt nicht gefunden | PokeSwipe & Radar", description: "", canonical: `${SITE()}/sealed`, robots: "noindex",
     body: `<div class="card"><h1>Produkt nicht gefunden</h1><a class="btn y" href="/sealed">Alle Displays &amp; Boxen</a></div>` }), 404);
   if (!/^[a-z0-9-]{1,90}$/.test(slug)) return notFound();
-  if (!rateLimit(`seo:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+  if (!(await rateLimit(`seo:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
   const idMatch = /^(\d{1,9})-/.exec(slug);
   let [p] = rows(await sealedQuery(sql`s.slug = ${slug}`));
   if (!p && idMatch) [p] = rows(await sealedQuery(sql`s.id = ${Number(idMatch[1])}`));
@@ -301,13 +301,13 @@ async function sealedPage(c: any) {
     ...(offers.length ? { offers: { "@type": "AggregateOffer", priceCurrency: "EUR", offerCount: offers.length,
       lowPrice: Number(p.community_min).toFixed(2), highPrice: Number(p.community_max).toFixed(2) } } : {}),
   };
-  cacheHeaders(c, 300, 1800);
+  cacheHeaders(c);
   return c.html(pageShell({ title, description, canonical, body, jsonLd: [jsonLd, { "@context": "https://schema.org", ...crumbs([["Start", "/"], ["Displays & Sealed", "/sealed"], [p.name, `/sealed/${sealedSlug(p)}`]]) }],
     image: p.image ? `${SITE()}${cdnImage(p.image, 600, "jpg")}` : undefined }));
 }
 
 async function trendsPage(c: any) {
-  if (!rateLimit(`seo:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+  if (!(await rateLimit(`seo:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
   const movers = (dir: "up" | "down") => db.execute(sql`
     SELECT id, name, image, set_name, local_id, COALESCE(trend, avg)::float AS price,
       ((COALESCE(trend, avg) - avg30) / avg30 * 100)::float AS change
@@ -331,7 +331,7 @@ async function trendsPage(c: any) {
     ${up.length ? `<h2>📈 Größte Gewinner (30 Tage)</h2><div class="cards">${up.map(t).join("")}</div>` : `<p class="muted">Die Trends bauen sich gerade auf.</p>`}
     ${down.length ? `<h2>📉 Größte Verlierer (30 Tage)</h2><div class="cards">${down.map(t).join("")}</div>` : ""}
     ${wanted.length ? `<h2>❤️ Meistgesuchte Karten der Community</h2><div class="cards">${wanted.map(t).join("")}</div>` : ""}`;
-  cacheHeaders(c, 900, 3600);
+  cacheHeaders(c);
   return c.html(pageShell({
     title: `Pokémon-Karten Preis-Trends ${month}: Gewinner & Verlierer | PokeSwipe & Radar`,
     description: `Welche Pokémon-Karten steigen im Wert? Die größten Preis-Gewinner und -Verlierer der letzten 30 Tage nach Cardmarket-Trend${up[0] ? ` – vorne: ${up[0].name} (+${Number(up[0].change).toFixed(0)} %)` : ""}.`,
@@ -345,8 +345,7 @@ async function trendsPage(c: any) {
 // Sitemaps & Routen (vor registerCatalog registrieren, damit /sitemaps/pokemon.xml nicht im Karten-Muster landet)
 // ---------------------------------------------------------------------------
 const xml = (c: any, body: string) => {
-  c.header("Cache-Control", "public, max-age=3600");
-  c.header("Netlify-CDN-Cache-Control", "public, s-maxage=21600, stale-while-revalidate=86400");
+  publicCache(c, "sitemap");
   return c.body(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${body}</urlset>`, 200, { "Content-Type": "application/xml; charset=utf-8" });
 };
 const loc = (path: string, lastmod?: unknown, extra = "<changefreq>daily</changefreq>") =>
@@ -376,7 +375,8 @@ export function registerSeo(app: any) {
     const dex = Number(c.req.param("dexId"));
     if (!Number.isInteger(dex) || dex < 1 || dex > 2000) return c.json({ error: "Ungültig" }, 400);
     const [sp] = await db.select().from(pokemonSpecies).where(eq(pokemonSpecies.dexId, dex)).limit(1);
-    c.header("Cache-Control", "public, max-age=3600");
-    return sp ? c.json({ species: sp }) : c.json({ error: "Nicht gefunden" }, 404);
+    if (!sp) return c.json({ error: "Nicht gefunden" }, 404);
+    publicCache(c, "data", { sMaxAge: 3600, swr: 86_400 });
+    return c.json({ species: sp });
   });
 }
