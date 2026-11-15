@@ -1,43 +1,26 @@
 # PokeSwipe & Radar (pokeswipe-radar.de)
 
-Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
+Die deutsche Sammler- & Trading-Plattform für Pokémon TCG – bewusst schlank, mit vier Bereichen:
 
-- **PokeSwipe & Arena** – Karten swipen, Booster-Simulator, Live-Kartensuche (TCGdex)
-- **Live-Preis-Tracker** – echte Cardmarket-Preise, stündliche Preisalarme, Deal-Alarm bei neuen Inseraten
-- **Portfolio** – Sammlung im Konto, Live-Wert, Gewinn/Verlust, täglicher Wertverlauf, Top-Mover
-- **Tausch-Hub** – Inserate mit Preis-Check, sichere Tauschanfragen, privater Chat, beidseitige Bestätigung, Bewertungen, Meldungen
-- **Community** – Pull-Wall, Live-Chat & Sammler-Radar (Firebase Realtime)
-- **Web-Push** – Alarme & Tausch-Nachrichten auch bei geschlossener App (Service Worker `public/sw.js`)
-- **KI-Kartenscan** – Foto mit der Handykamera, Erkennung über Netlify AI Gateway (Claude Haiku)
-- **Set-Fortschritt** – Karten abhaken, Wert der eigenen Karten und Kosten bis zum kompletten Set
-- **Sealed-Tracker** – Displays, ETBs, Top-Trainer-Boxen mit Admin-Referenzpreis + Community-Durchschnitt
-- **Grading-Partner** – PSA, CGC, Beckett, TAG mit Klick-Zählung (Affiliate)
-- **Händler-Shops** – eigene Shop-Seite `/shop/<name>` für Pro-Trader
-- **Empfehlungsprogramm** – geworbene Nutzer: 1. Monat gratis; Werber: Gratismonat, sobald der Geworbene zahlt
-- **Wunschliste & Tausch-Matches** – Push, sobald eine gesuchte Karte inseriert wird; Vorschläge für passende Tausch-Partner
-- **Öffentliche Kartenseiten** – `/karte/<id>/<name>` mit Preis, Verlauf, Angeboten und Vorschaubild für Google & WhatsApp; `/sitemap.xml`
-- **Teilen-Bilder** – Portfolio- und Pull-Bild (Instagram-Format) inkl. Empfehlungscode
-- **Grading-Rechner** – „Lohnt sich PSA?“ mit KI-Zustandscheck (Zentrierung, Ecken, Kanten, Oberfläche)
-- **Serien-Scan & CSV-Import** – viele Karten auf einmal ins Portfolio (Cardmarket-, Excel- oder Listen-Format)
-- **Bindung** – tägliche Serie, 15 Abzeichen, Bestenliste (nur mit Zustimmung), Wochen-Report per Push
-- **Kalender** – Set-Releases (Admin) und Community-Events mit Push-Erinnerung
-- **Shop-Statistik** – Aufrufe, Anfragen und gefragteste Inserate für Pro-Trader
-- **Offline-Modus** – App, Sammlung und Bilder bleiben ohne Netz verfügbar
-- **Master-Set-Tracker** – genaue Stückzahl pro Karte (0x, 1x, 2x, 5x …), Live-Fortschritt mit Restkosten,
-  „Set vervollständigen“-Modus mit Cardmarket- und eBay-Links je fehlender Karte und Wants-Listen-Export
-- **Duplikat-Radar** – Überschuss-Badges ab 2x, 1-Klick-Inserat im Tausch-Hub, Cardmarket-Verkaufs-Assistent und
-  CSV-Bulk-Export für den Cardmarket-Bestands-Import
-- **Restock- & Vorbestell-Radar** – automatische Prüfung beobachteter Shop-Produktseiten alle 2 Minuten (schema.org-Verfügbarkeit),
-  Community-Meldungen mit 2 Bestätigungen, UVP-Ampel, Vorbestell-Preisvergleich je Shop. Push für Premium/Pro sofort, Free 15 Min. später;
-  Pro mit Filtern (Shop, Stichwort, Höchstpreis, nur UVP). Shop-Links mit Amazon-Partner-Tag (`AMAZON_PARTNER_TAG`) und Klick-Zählung
-- **Graded-Portfolio** – Slabs mit Firma, Note, Zertifikat-Link, Wert, Gewinn und eBay-„Verkauft“-Link; **Grading-Einsendungs-Tracker**
-  mit Status und Push-Erinnerung bei Überfälligkeit
-- **KI-Fake-Check** – Vorder- und Rückseite, Prüfung auf typische Fälschungsmerkmale (Claude Sonnet über Netlify AI Gateway)
-- **Datenschutz** – Daten-Export (JSON), Konto selbst löschen, Impressum in der Admin-Zentrale pflegbar
+1. **Swipe & Preise** – Karten swipen (rechts = merken, links = weiter). Jede Karte zeigt live den Cardmarket-Trend,
+   das günstigste Angebot, Ø 30 Tage, die 30-Tage-Veränderung und einen 90-Tage-Verlauf. Darunter direkt die passenden
+   Angebote aus dem Tausch-Hub, „Im Chat verhandeln“ und „Selbst inserieren“.
+2. **Tausch-Hub** – Inserate mit Preis-Check, Filter (unter Marktwert, meine Stadt), private Verhandlung mit
+   Schnellantworten, beidseitige Bestätigung, Bewertungen, Meldungen.
+3. **Live-Chat** – öffentlicher Echtzeit-Chat (Firebase Realtime). Karten (`[karte:<id>]`) und Inserate (`[inserat:<id>]`)
+   lassen sich anhängen und erscheinen als anklickbare Vorschau mit Preis bzw. „Verhandeln“-Knopf. Dazu die Pull-Wall.
+4. **Sammlung** – Portfolio mit Live-Wert, Preisalarme, Wunschliste mit Tausch-Matches, KI-Kartenscan, Duplikat-Radar, CSV-Import.
+
+Freemium: Besucher 15, registrierte Nutzer 30 Swipes pro Tag, Premium/Pro unbegrenzt (Stripe Checkout).
+Web-Push, Offline-Modus, öffentliche Kartenseiten (`/karte/<id>/<name>`), Händler-Shops (`/shop/<name>`) und das
+Empfehlungsprogramm laufen weiter. Die Admin-Werkzeuge (Reel-Studio, Auto-Reels) werden nur für Admins nachgeladen.
+
+Die Server-Endpunkte für ältere Zusatzfunktionen (Restock-Radar, Sealed, Sets, Graded, Fake-Check, Kalender, Bestenliste)
+bestehen weiter, sind aber nicht mehr in der Oberfläche eingebunden.
 
 ## Echte Karten & Preise
 
-Swipe-Arena, Booster-Simulator, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten
+Swipe-Arena und Scanner nutzen einen festen Katalog echter Chase-Karten
 (Stürmische Funken, 151, Prismatische Entwicklungen, Zenit der Könige, Obsidianflammen, Mega-Entwicklung, Paradoxrift,
 Drachenwandel) mit offiziellen Set-Nummern (`REAL_CARDS` in `public/index.html`). Die Preise sind ein Stand vom 13.11.2026
 und werden beim Öffnen der Seite automatisch über `/api/prices` mit aktuellen Cardmarket-Werten (TCGdex) ersetzt.
