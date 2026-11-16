@@ -2,7 +2,7 @@
 // Wunschliste mit Tausch-Matches, Teilen-Bilder, Grading-Rechner mit KI-Zustandscheck, Serien-Scan,
 // CSV-Import, Kalender, Abzeichen & Bestenliste, tägliche Serie, Shop-Statistik, Konto & Datenschutz, Offline-Hinweis.
 import {
-  $, esc, jsArg, safeUrl, eur, pct, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, modal, closeModalEl, input, btn,
+  $, esc, jsArg, safeUrl, eur, pct, toast, FALLBACK_IMG, cdn, state, bearer, api, handleError, requireLogin, modal, closeModalEl, input, btn,
 } from "./core.js";
 import { csvToRows } from "./csv.js";
 import { lazyLiveScanApi } from "./lazy.js";
@@ -824,7 +824,9 @@ export async function adminGrowthHtml() {
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
       ${btn(st.webhook ? "🔁 Stripe-Webhook prüfen/erneuern" : "⚡ Stripe-Webhook automatisch einrichten", "PS.adminWebhookSetup()", "bg-indigo-600 text-white")}
       <p class="text-[10px] text-slate-400 self-center">Legt den Webhook auf <code>${esc(st.webhookUrl || "")}</code> in deinem Stripe-Konto an und speichert das Signatur-Geheimnis sicher – kein Kopieren nötig.</p>
-    </div>` : `<p class="text-xs text-slate-400">Status konnte nicht geladen werden.</p>`}
+      ${btn("📄 Analyse-Bericht (PDF) herunterladen", "PS.adminReportDownload()", "bg-slate-800 text-white")}
+      <p class="text-[10px] text-slate-400 self-center">Interner Bericht zu App, Geschäftsmodell und Konkurrenz – nur für Admins sichtbar.</p>
+    </div>` :`<p class="text-xs text-slate-400">Status konnte nicht geladen werden.</p>`}
 
     <h4 class="text-sm font-black text-white">⚖️ Impressum (Pflichtangaben § 5 DDG)</h4>
     <p class="text-[11px] text-slate-400">Daraus entstehen automatisch Impressum, Anbieterangaben in AGB und Widerrufsbelehrung sowie das Muster-Widerrufsformular (<a href="/rechtliches" target="_blank" class="underline">/rechtliches</a>). Gespeichert in Netlify Blobs, nicht im Code. Tipp: Statt der Privatadresse kann eine ladungsfähige Geschäftsadresse eingetragen werden.</p>
@@ -881,6 +883,21 @@ async function adminWebhookSetup() {
     const r = await api("/api/admin/integrations/stripe-webhook", { method: "POST", body: {} });
     toast("✅ Stripe-Webhook aktiv", r.created ? "Neu eingerichtet – Kündigungen und Zahlungsausfälle greifen ab sofort." : "Webhook ist eingerichtet und auf dem neuesten Stand.");
     window.PS?.openAdmin?.();
+  } catch (e) { handleError(e); }
+}
+async function adminReportDownload() {
+  try {
+    const res = await fetch("/api/admin/report.pdf", { headers: { Authorization: `Bearer ${bearer()}` }, credentials: "same-origin" });
+    if (!res.ok) {
+      let msg = `Fehler ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw Object.assign(new Error(msg), { status: res.status });
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url; a.download = "PokeSwipe-Radar-Analyse.pdf";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   } catch (e) { handleError(e); }
 }
 async function adminCatalogRun() {
@@ -959,7 +976,7 @@ export const growthApi = {
   conditionVariant: (id, v) => loadConditionPrices(id, v),
   openImport, addEvent, toggleRemind, removeEvent, board, setPref, openShopStats, exportData, deleteAccount,
   confirmDelete, openLegal, adminSaveLegal, adminRunGrowth, loadWishlist,
-  adminWebhookSetup, adminCatalogRun, adminCatalogIntlRun, adminSealedImport, adminCancelDone, adminCancelApply,
+  adminWebhookSetup, adminReportDownload, adminCatalogRun, adminCatalogIntlRun, adminSealedImport, adminCancelDone, adminCancelApply,
 };
 
 /** Fügt die Bereiche ein, bevor die Unter-Reiter gebaut werden. */

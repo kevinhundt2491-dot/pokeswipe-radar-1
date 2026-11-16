@@ -1001,6 +1001,19 @@ app.post("/api/stripe/webhook", stripeWebhook);
 // ---------------------------------------------------------------------------
 // Admin: Moderation & Einnahmen-Überblick (Rolle "admin" in Netlify Identity)
 // ---------------------------------------------------------------------------
+// Interner Analyse-Bericht (PDF) – liegt nur im Blob-Speicher, nicht im öffentlichen Repository
+app.get("/api/admin/report.pdf", auth, adminOnly, async (c) => {
+  const pdf = await getStore("admin-files").get("analyse-bericht.pdf", { type: "arrayBuffer" });
+  if (!pdf) return c.json({ error: "Kein Bericht hinterlegt." }, 404);
+  return new Response(pdf, {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": 'attachment; filename="PokeSwipe-Radar-Analyse.pdf"',
+      "Cache-Control": "private, no-store",
+    },
+  });
+});
+
 app.get("/api/admin/overview", auth, adminOnly, async (c) => {
   const [stats] = rows(await db.execute(sql`
     SELECT
