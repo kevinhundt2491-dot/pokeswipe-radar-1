@@ -802,6 +802,8 @@ export async function adminGrowthHtml() {
       <p class="text-white font-bold">${esc(k.reference)} • ${esc(k.name)} • ${esc(k.email)} <span class="text-slate-400">${new Date(k.created_at || k.createdAt).toLocaleString("de-DE")}</span></p>
       <p class="text-slate-300">${esc(k.kind)} • Status: <b>${esc(k.status)}</b>${k.effective_at || k.effectiveAt ? ` • Ende ${new Date(k.effective_at || k.effectiveAt).toLocaleDateString("de-DE")}` : ""}${k.verified ? " • angemeldet" : ""}</p>
       ${k.reason ? `<p class="text-slate-400">${esc(k.reason)}</p>` : ""}
+      ${k.status === "pending_confirmation" ? `<p class="text-amber-300">Ohne Anmeldung eingereicht – wartet auf Bestätigung über den Link an die Konto-E-Mail.</p>` : ""}
+      ${(k.userId || k.user_id) && ["review", "pending_confirmation"].includes(k.status) ? btn("Bei Stripe anwenden", `PS.adminCancelApply(${Number(k.id)})`, "mt-1 mr-1 bg-rose-500/30 text-rose-100") : ""}
       ${k.status === "review" ? btn("Als erledigt markieren", `PS.adminCancelDone(${Number(k.id)})`, "mt-1 bg-emerald-500/30 text-emerald-200") : ""}</div>`).join("") || `<p class="text-slate-500">Noch keine Kündigungen.</p>`}</div>
 
     <h4 class="text-sm font-black text-white">📚 Deutscher Kartenkatalog (SEO)</h4>
@@ -867,6 +869,10 @@ async function adminSealedImport() {
     toast("✅ Sealed importiert", `${r.created} neu, ${r.updated} aktualisiert, ${r.priced} Preise${r.skipped?.length ? `, ${r.skipped.length} übersprungen` : ""}`);
   } catch (e) { handleError(e); }
 }
+async function adminCancelApply(id) {
+  if (!confirm("Kündigung jetzt bei Stripe anwenden? Nur nach Prüfung der Identität (z. B. Antwort von der Konto-E-Mail).")) return;
+  try { const r = await api(`/api/admin/cancellations/${Number(id)}`, { method: "PATCH", body: { status: "applied", apply: true } }); toast("✅ Angewendet", `Status: ${r.status}`); window.PS?.openAdmin?.(); } catch (e) { handleError(e); }
+}
 async function adminCancelDone(id) {
   try { await api(`/api/admin/cancellations/${Number(id)}`, { method: "PATCH", body: { status: "applied" } }); toast("✅ Erledigt", ""); window.PS?.openAdmin?.(); } catch (e) { handleError(e); }
 }
@@ -914,7 +920,7 @@ export const growthApi = {
   addWish, removeWish, wishRequest, shareCardPage, shareCardImage, sharePortfolioImage, gradingFor, bulkPick,
   openImport, addEvent, toggleRemind, removeEvent, board, setPref, openShopStats, exportData, deleteAccount,
   confirmDelete, openLegal, adminSaveLegal, adminRunGrowth, loadWishlist,
-  adminWebhookSetup, adminCatalogRun, adminCatalogIntlRun, adminSealedImport, adminCancelDone,
+  adminWebhookSetup, adminCatalogRun, adminCatalogIntlRun, adminSealedImport, adminCancelDone, adminCancelApply,
 };
 
 /** Fügt die Bereiche ein, bevor die Unter-Reiter gebaut werden. */

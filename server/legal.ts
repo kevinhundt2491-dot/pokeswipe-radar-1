@@ -2,11 +2,10 @@
 // Muster-Widerrufsformular und Kündigungsbutton nach § 312k BGB (mit Bestätigungsseite und Eingangsnachweis).
 //
 // Anbieterangaben: Der Admin pflegt sie in der Admin-Zentrale unter „Rechtliches“ (gespeichert in Netlify Blobs).
-// Alternativ greift die Umgebungsvariable IMPRESSUM_TEXT (Freitext). Sind beide leer, gelten die festen
-// Standardangaben DEFAULT_OPERATOR – sie werden beim ersten Aufruf auch in die Konfiguration geschrieben,
-// damit das Impressum nie leer ist und im Admin-Bereich direkt bearbeitet werden kann.
-import { randomBytes } from "node:crypto";
-import { desc, eq, sql } from "drizzle-orm";
+// Alternativ greift die Umgebungsvariable IMPRESSUM_TEXT (Freitext). Personenbezogene Anbieterdaten stehen
+// bewusst nicht im Quellcode (öffentliches Repository).
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
 import { db, profiles, cancellations } from "../db/index.ts";
 import { verifyIdentityToken } from "./auth.ts";
@@ -19,7 +18,7 @@ import { log } from "./log.ts";
 import { buildPrivacyPolicy, privacyPage } from "./privacy.ts";
 
 /** Stand der Rechtstexte – wird bei jeder Bestellung als Nachweis in Stripe gespeichert. */
-export const LEGAL_VERSION = "2026-11-15";
+export const LEGAL_VERSION = "2026-11-16";
 const BRAND = "PokeSwipe & Radar";
 
 export type Operator = {
@@ -37,13 +36,6 @@ const EMPTY: Operator = {
 const FIELD_MAX: Record<keyof Operator, number> = {
   name: 120, company: 160, representative: 160, street: 160, zip: 12, city: 100, country: 60,
   email: 160, phone: 60, vatId: 30, register: 200, responsible: 200, smallBusiness: 0,
-};
-
-/** Feste Anbieterkennzeichnung (§ 5 DDG / § 18 Abs. 2 MStV) – Fallback, falls im Admin-Bereich nichts gespeichert ist. */
-export const DEFAULT_OPERATOR: Operator = {
-  name: "Kevin Hundt", company: "", representative: "", street: "Hähn 10", zip: "51515", city: "Kürten", country: "Deutschland",
-  email: "info@pokeswipe-radar.de", phone: "+49 174 2182874", vatId: "", register: "",
-  responsible: "Kevin Hundt, Hähn 10, 51515 Kürten", smallBusiness: true,
 };
 
 export function cleanOperator(raw: any): Operator {
@@ -64,30 +56,14 @@ async function loadSaved(): Promise<Saved> {
   try { return ((await getStore("app-config").get("legal", { type: "json" })) as Saved) || {}; } catch { return {}; }
 }
 
-let seeded = false;
-/** Schreibt die Standardangaben einmalig in die Konfiguration, falls dort noch nichts Eigenes gespeichert ist. */
-export async function seedDefaultOperator() {
-  if (seeded) return;
-  seeded = true;
-  try {
-    const saved = await loadSaved();
-    if (operatorComplete(cleanOperator(saved.operator || {})) || str(saved.impressum, 4000)) return;
-    await getStore("app-config").setJSON("legal", { operator: { ...DEFAULT_OPERATOR }, impressum: "", updatedAt: new Date().toISOString(), seeded: true });
-    console.info("Rechtliches: Standard-Anbieterangaben in der Konfiguration hinterlegt.");
-  } catch (e) {
-    seeded = false;
-    console.warn("Rechtliches: Standardangaben konnten nicht gespeichert werden (Fallback im Code aktiv).", e);
-  }
-}
-
 export async function getOperator() {
   const saved = await loadSaved();
   const own = cleanOperator(saved.operator || {});
   const legacy = str(saved.impressum, 4000) || str(process.env.IMPRESSUM_TEXT, 4000);
-  // Unvollständige oder fehlende Angaben → feste Standardangaben, damit das Impressum nie leer ist
-  const operator = operatorComplete(own) || legacy ? own : { ...DEFAULT_OPERATOR };
-  if (!operatorComplete(own) && !str(saved.impressum, 4000)) void seedDefaultOperator();
-  return { operator, legacy, updatedAt: saved.updatedAt || null };
+  // Anbieterangaben kommen ausschließlich aus der Admin-Konfiguration (keine personenbezogenen Daten im Quellcode).
+  // Unvollständige Angaben meldet die Admin-Zentrale unter „Integrationen“ (operatorComplete).
+  if (!operatorComplete(own) && !legacy) log.warn("legal", "Anbieterangaben unvollständig – bitte in der Admin-Zentrale unter „Rechtliches“ ergänzen.");
+  return { operator: own, legacy, updatedAt: saved.updatedAt || null };
 }
 
 const STREIT = "Verbraucherstreitbeilegung: Wir sind nicht bereit und nicht verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.";
@@ -120,7 +96,7 @@ export function impressumText(o: Operator, legacy = "") {
 }
 
 export function buildDocuments(input: Operator, legacy = ""): LegalDoc[] {
-  const o = operatorComplete(input) || legacy ? input : DEFAULT_OPERATOR;
+  const o = input;
   const prov = providerLine(o);
   const mail = o.email || "der im Impressum genannten E-Mail-Adresse";
   const vat = o.smallBusiness ? "Als Kleinunternehmer im Sinne von § 19 UStG berechnen wir keine Umsatzsteuer; alle Preise sind Endpreise." : "Alle Preise sind Endpreise in Euro inklusive der gesetzlichen Umsatzsteuer.";
@@ -227,6 +203,8 @@ export function buildDocuments(input: Operator, legacy = ""): LegalDoc[] {
           "(4) Bei einer Reklamation (z. B. nicht angekommen, falsche oder gefälschte Karte, erheblich schlechterer Zustand) wird die Auszahlung angehalten. Wir prüfen den Fall anhand der Angaben beider Seiten und der Sendungsverfolgung und entscheiden über Erstattung an den Käufer oder Auszahlung an den Verkäufer. Gesetzliche Ansprüche der Parteien untereinander bleiben unberührt.",
           "(5) Die Provision trägt der Verkäufer; sie beträgt im Tarif Free 6,5 %, Premium 5 % und Pro Trader (Pro-Pass) 3 % des Kaufpreises, mindestens 0,49 €, und fällt nur bei erfolgreichem Verkauf an. Für Käufer entstehen keine Gebühren. Ein verbindliches Preisangebot muss mindestens 50 % des Inseratspreises betragen; nimmt der Verkäufer es an, ist innerhalb von 48 Stunden zu zahlen.",
           "(6) Die Lieferadresse des Käufers wird dem Verkäufer erst nach erfolgreicher Zahlung und nur für die Abwicklung angezeigt. Zahlungen außerhalb des Käuferschutzes (z. B. PayPal Freunde & Familie, Vorkasse per Überweisung) sind auf eigenes Risiko und dürfen in der Community nicht beworben werden.",
+          "(7) Warenkorb: Artikel mehrerer Verkäufer können in einer Zahlung gekauft werden. Dabei kommt mit jedem Verkäufer ein eigener Kaufvertrag zustande; je Verkäufer gibt es eine eigene Bestellung mit eigenem Versand, eigener Auszahlung und eigenem Käuferschutz. Mit Beginn der Zahlung werden die Artikel bis zu 80 Minuten reserviert. Ist ein Artikel bei Abschluss der Zahlung nicht mehr verfügbar, wird der Anteil dieses Verkäufers automatisch erstattet.",
+          "(8) Kennzeichnung der Verkäufer: Vor dem Kauf wird angezeigt, ob ein Verkäufer als Privatperson oder als gewerblicher Händler (Unternehmer im Sinne des § 14 BGB) verkauft. Gewerbliche Händler hinterlegen ihre Anbieterangaben (Name/Firma, Anschrift, E-Mail, ggf. USt-IdNr. und Register), die Käufern angezeigt werden. Bei Käufen von gewerblichen Händlern steht Verbrauchern das gesetzliche Widerrufsrecht von 14 Tagen ab Erhalt der Ware zu; der Widerruf kann in der Bestellübersicht erklärt werden, die Erstattung erfolgt über den Käuferschutz nach Eingang der Rücksendung beim Händler. Bei Privatverkäufen besteht kein gesetzliches Widerrufsrecht.",
         ] },
         { h: "§ 8b Melde- und Abhilfeverfahren (Digital Services Act)", p: [
           `(1) Zentrale Kontaktstelle für Nutzer und Behörden (Art. 11, 12 DSA) ist ${mail}; Kommunikation auf Deutsch oder Englisch. Wir antworten nicht automatisiert.`,
@@ -301,7 +279,7 @@ export async function getLegalPayload() {
   const { operator, legacy, updatedAt } = await getOperator();
   const documents = withPrivacyPointer(buildDocuments(operator, legacy));
   return {
-    impressum: impressumText(operator, legacy) || impressumText(DEFAULT_OPERATOR),
+    impressum: impressumText(operator, legacy),
     operatorComplete: operatorComplete(operator) || Boolean(legacy),
     version: LEGAL_VERSION,
     updatedAt,
@@ -399,6 +377,25 @@ async function applyCancellation(profile: typeof profiles.$inferSelect, kind: st
   return { applied: true, effectiveAt: cancelAt ? new Date(cancelAt * 1000) : profile.planUntil, note: kind === "ausserordentlich" ? `${note} Außerordentliche Kündigung – Grund prüfen.`.trim() : note };
 }
 
+const CONFIRM_TTL_MS = 30 * 86400_000;
+const UNVERIFIED_STATUS_TEXT = "Deine Kündigung ist eingegangen. Besteht zu dieser E-Mail-Adresse ein Abo, senden wir an die im Konto hinterlegte Adresse einen Link, mit dem du die Kündigung bestätigst – danach endet das Abo zum nächstmöglichen Zeitpunkt. Schneller geht es, wenn du dich anmeldest und hier erneut kündigst. Hast du ein Abo mit einer anderen Adresse abgeschlossen, wiederhole die Kündigung bitte mit dieser Adresse oder antworte uns per E-Mail – wir ordnen sie dann manuell zu.";
+const tokenHash = (t: string) => createHash("sha256").update(t).digest("hex");
+const sameHash = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
+/** Wendet die Kündigung bei Stripe an und übersetzt das Ergebnis in den gespeicherten Status. */
+async function applyCancellationSafely(profile: typeof profiles.$inferSelect, kind: string) {
+  let status = "no_contract", effectiveAt: Date | null = null, adminNote = "";
+  try {
+    const r = await applyCancellation(profile, kind);
+    if (r.applied) { status = kind === "ausserordentlich" || r.note ? "review" : "applied"; effectiveAt = r.effectiveAt ? new Date(r.effectiveAt) : null; adminNote = r.note; }
+    else if (profile.planUntil && profile.planUntil.getTime() > Date.now() && profile.plan !== "free") { status = "review"; effectiveAt = profile.planUntil; }
+  } catch (e) {
+    log.error("legal", "Kündigung konnte nicht automatisch angewendet werden", { err: e });
+    status = "review"; adminNote = "Automatische Kündigung bei Stripe fehlgeschlagen – bitte manuell prüfen.";
+  }
+  return { status, effectiveAt, adminNote };
+}
+
 const newReference = () => `K-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomBytes(3).toString("hex").toUpperCase()}`;
 
 // ---------------------------------------------------------------------------
@@ -446,8 +443,6 @@ function cancelPage() {
 
 export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> }) {
   const { auth, adminOnly, body } = hlp;
-  // Beim Server-Start: Standard-Anbieterangaben hinterlegen, falls noch keine eigenen gespeichert sind
-  void seedDefaultOperator();
 
   app.get("/api/legal", async (c: any) => {
     c.header("Cache-Control", "public, max-age=300");
@@ -521,18 +516,18 @@ export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: 
     const viewer = await verifyIdentityToken(c).catch(() => null);
     let [profile] = viewer ? await db.select().from(profiles).where(eq(profiles.userId, viewer.id)).limit(1) : [];
     const verified = Boolean(profile);
+    // Ohne Anmeldung nur Zuordnung über die E-Mail – angewendet wird erst nach Klick auf den Bestätigungslink an die
+    // Konto-Adresse. So kann niemand fremde Abos kündigen, nur weil er die E-Mail-Adresse kennt.
     if (!profile) [profile] = await db.select().from(profiles).where(sql`lower(${profiles.email}) = ${email}`).limit(1);
 
     let status = "no_contract", effectiveAt: Date | null = null, adminNote = "";
-    if (profile) {
-      try {
-        const r = await applyCancellation(profile, kind);
-        if (r.applied) { status = kind === "ausserordentlich" || r.note ? "review" : "applied"; effectiveAt = r.effectiveAt ? new Date(r.effectiveAt) : null; adminNote = r.note; }
-        else if (profile.planUntil && profile.planUntil.getTime() > Date.now() && profile.plan !== "free") { status = "review"; effectiveAt = profile.planUntil; }
-      } catch (e) {
-        log.error("legal", "Kündigung konnte nicht automatisch angewendet werden", { err: e });
-        status = "review"; adminNote = "Automatische Kündigung bei Stripe fehlgeschlagen – bitte manuell prüfen.";
-      }
+    let confirmToken: string | null = null;
+    if (profile && verified) {
+      const r = await applyCancellationSafely(profile, kind);
+      status = r.status; effectiveAt = r.effectiveAt; adminNote = r.adminNote;
+    } else if (profile) {
+      status = "pending_confirmation";
+      confirmToken = randomBytes(24).toString("hex");
     }
     if (requestedDate && effectiveAt && new Date(requestedDate).getTime() > effectiveAt.getTime()) {
       // Wunschtermin nach dem nächstmöglichen Ende: Abo endet trotzdem zum Laufzeitende (früher ist für dich günstiger)
@@ -542,43 +537,105 @@ export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: 
     const reference = newReference();
     const [row] = await db.insert(cancellations).values({
       reference, userId: profile?.userId ?? null, name, email, contractRef, kind, reason: [reason, adminNote].filter(Boolean).join(" | ").slice(0, 1500),
-      timing, requestedDate, status, effectiveAt, verified,
+      timing, requestedDate, status, effectiveAt, verified, confirmTokenHash: confirmToken ? tokenHash(confirmToken) : null,
     }).returning();
 
-    const statusText = status === "applied"
-      ? `Deine Kündigung ist wirksam. Dein Abo endet am ${effectiveAt ? fmtDay(effectiveAt) : "Ende des bezahlten Zeitraums"}; bis dahin bleiben alle Vorteile aktiv. Danach wird nichts mehr abgebucht.`
-      : status === "review"
-        ? `Deine Kündigung ist eingegangen und wurde vorgemerkt${effectiveAt ? ` (Vertragsende spätestens ${fmtDay(effectiveAt)})` : ""}. Wir prüfen sie und melden uns, falls etwas fehlt.`
-        : "Deine Kündigung ist eingegangen. Zu dieser E-Mail-Adresse haben wir kein laufendes Abo gefunden. Falls du ein Abo mit einer anderen Adresse abgeschlossen hast, wiederhole die Kündigung bitte mit dieser Adresse oder antworte uns per E-Mail – wir ordnen sie dann manuell zu.";
-    const confirmation = confirmationText({ reference, createdAt: row.createdAt, name, email, contractRef, kind, reason, timing, requestedDate, effectiveAt, statusText });
+    // Ohne Anmeldung verrät die Antwort nicht, ob zu der Adresse ein Abo besteht (gleicher Text für alle Fälle)
+    const statusText = verified
+      ? (status === "applied"
+        ? `Deine Kündigung ist wirksam. Dein Abo endet am ${effectiveAt ? fmtDay(effectiveAt) : "Ende des bezahlten Zeitraums"}; bis dahin bleiben alle Vorteile aktiv. Danach wird nichts mehr abgebucht.`
+        : status === "review"
+          ? `Deine Kündigung ist eingegangen und wurde vorgemerkt${effectiveAt ? ` (Vertragsende spätestens ${fmtDay(effectiveAt)})` : ""}. Wir prüfen sie und melden uns, falls etwas fehlt.`
+          : "Deine Kündigung ist eingegangen. Zu deinem Konto haben wir kein laufendes Abo gefunden – es wird nichts abgebucht.")
+      : UNVERIFIED_STATUS_TEXT;
+    const confirmation = confirmationText({ reference, createdAt: row.createdAt, name, email, contractRef, kind, reason, timing, requestedDate, effectiveAt: verified ? effectiveAt : null, statusText });
 
-    // Bestätigung in Textform: E-Mail (falls eingerichtet) + Mitteilung im Konto
+    // Bestätigung in Textform (Eingangsnachweis): E-Mail (falls eingerichtet) + Mitteilung im Konto
     if (!mailConfigured()) console.info(`Kündigung ${reference} (${status}) gespeichert – E-Mail-Versand nicht eingerichtet (RESEND_API_KEY/MAIL_FROM fehlen); Bestätigung auf der Seite und im Konto.`);
     const mailed = await sendMail(confirmEmail || email, `Kündigungsbestätigung ${reference} – ${BRAND}`, confirmation);
     if (confirmEmail && confirmEmail !== email) await sendMail(email, `Kündigungsbestätigung ${reference} – ${BRAND}`, confirmation);
-    if (profile) {
-      await notify(profile.userId, "📄 Kündigung eingegangen", verified
-        ? `Nr. ${reference}. ${statusText}`.slice(0, 400)
-        : `Nr. ${reference}: Über „Verträge hier kündigen“ wurde dein Abo gekündigt. Warst du das nicht? Im Konto kannst du es mit „Abo fortsetzen“ wieder aktivieren.`, "/").catch(() => {});
+    if (profile && verified) {
+      await notify(profile.userId, "📄 Kündigung eingegangen", `Nr. ${reference}. ${statusText}`.slice(0, 400), "/").catch(() => {});
+    } else if (profile && confirmToken) {
+      // Bestätigungslink geht ausschließlich an die im Konto hinterlegte Adresse und in die Mitteilungen des Kontos
+      const link = `${SITE()}/api/legal/cancel/confirm?ref=${encodeURIComponent(reference)}&token=${confirmToken}`;
+      await sendMail(profile.email, `Kündigung ${reference} bestätigen – ${BRAND}`,
+        `Hallo ${profile.displayName},\n\nüber „Verträge hier kündigen“ wurde am ${fmtDateTime(row.createdAt)} eine Kündigung deines Abos eingereicht (Nr. ${reference}).\n\nWarst du das? Dann bestätige die Kündigung hier:\n${link}\n\nDer Link ist 30 Tage gültig. Warst du das nicht, musst du nichts tun – dein Abo läuft unverändert weiter.\n\n${BRAND}`).catch(() => false);
+      await notify(profile.userId, "📄 Kündigung bestätigen?", `Über „Verträge hier kündigen“ wurde eine Kündigung deines Abos eingereicht (Nr. ${reference}). Tippe hier, um sie zu bestätigen. Warst du das nicht, musst du nichts tun.`, link.replace(SITE(), "")).catch(() => {});
     }
     const { operator } = await getOperator();
     if (operator.email && (status !== "applied" || kind === "ausserordentlich")) {
-      await sendMail(operator.email, `Kündigung ${reference} prüfen (${status})`, `${confirmation}\n\nHinweis: ${adminNote || "-"}`);
+      await sendMail(operator.email, `Kündigung ${reference} prüfen (${status})`, `${confirmation}\n\nInterner Status: ${status}${verified ? "" : " (ohne Anmeldung – wird nach Bestätigung über den Link an die Konto-E-Mail angewendet; sonst bitte manuell prüfen)"}\nHinweis: ${adminNote || "-"}`);
     }
-    return c.json({ ok: true, reference, status, effectiveAt, confirmation, mailed });
+    return c.json({ ok: true, reference, status: verified ? status : "received", effectiveAt: verified ? effectiveAt : null, confirmation, mailed });
+  });
+
+  // Bestätigungslink aus der E-Mail: GET zeigt nur eine Seite mit Button (E-Mail-Scanner öffnen Links automatisch),
+  // erst der POST wendet die Kündigung an.
+  app.get("/api/legal/cancel/confirm", async (c: any) => {
+    const ref = str(c.req.query("ref"), 40), token = str(c.req.query("token"), 100);
+    c.header("Cache-Control", "no-store");
+    c.header("X-Robots-Tag", "noindex");
+    const valid = /^K-\d{8}-[0-9A-F]{6}$/.test(ref) && /^[0-9a-f]{48}$/.test(token);
+    return c.html(pageShell({
+      title: `Kündigung bestätigen | ${BRAND}`, description: "Kündigung bestätigen", canonical: `${SITE()}/kuendigen`,
+      body: `${LEGAL_CSS}<div class="card"><h1>Kündigung bestätigen</h1>${valid
+        ? `<p>Kündigung Nr. <strong>${h(ref)}</strong>. Mit dem Klick wird dein Abo zum nächstmöglichen Zeitpunkt beendet; bis dahin bleiben alle Vorteile aktiv.</p>
+          <form id="cc" data-ref="${h(ref)}" data-token="${h(token)}"><button class="go" type="submit" id="go">Kündigung jetzt bestätigen</button><p class="err" id="err" role="alert"></p></form><div id="done" hidden></div>`
+        : `<p class="err">Dieser Link ist ungültig. Bitte nutze den vollständigen Link aus der E-Mail oder kündige über <a href="/kuendigen">Verträge hier kündigen</a>.</p>`}</div>
+        <script src="/js/kuendigen-bestaetigen.js" defer></script>`,
+    }));
+  });
+
+  app.post("/api/legal/cancel/confirm", async (c: any) => {
+    if (!(await rateLimit(`cancel-confirm:${clientIp(c)}`, 20, 3600_000))) return c.json({ error: "Zu viele Versuche – bitte später erneut." }, 429);
+    const b = await body(c);
+    const ref = str(b.ref, 40), token = str(b.token, 100);
+    if (!/^K-\d{8}-[0-9A-F]{6}$/.test(ref) || !/^[0-9a-f]{48}$/.test(token)) return c.json({ error: "Ungültiger Link." }, 400);
+    const [row] = await db.select().from(cancellations).where(eq(cancellations.reference, ref)).limit(1);
+    if (!row || !row.confirmTokenHash || !row.userId || !sameHash(row.confirmTokenHash, tokenHash(token))) return c.json({ error: "Ungültiger oder abgelaufener Link." }, 404);
+    if (row.confirmedAt || row.status !== "pending_confirmation") return c.json({ ok: true, alreadyConfirmed: true, status: row.status, message: "Diese Kündigung wurde bereits bestätigt." });
+    if (Date.now() - new Date(row.createdAt).getTime() > CONFIRM_TTL_MS) return c.json({ error: "Der Link ist abgelaufen. Bitte kündige erneut über „Verträge hier kündigen“." }, 410);
+    // Genau einmal anwenden (Doppelklick)
+    const [claimed] = await db.update(cancellations).set({ confirmedAt: new Date(), status: "review" })
+      .where(and(eq(cancellations.id, row.id), eq(cancellations.status, "pending_confirmation"))).returning();
+    if (!claimed) return c.json({ ok: true, alreadyConfirmed: true, message: "Diese Kündigung wurde bereits bestätigt." });
+    const [profile] = await db.select().from(profiles).where(eq(profiles.userId, row.userId)).limit(1);
+    const r = profile ? await applyCancellationSafely(profile, row.kind) : { status: "no_contract", effectiveAt: null as Date | null, adminNote: "" };
+    await db.update(cancellations).set({ status: r.status, effectiveAt: r.effectiveAt, verified: true, reason: [row.reason, r.adminNote].filter(Boolean).join(" | ").slice(0, 1500) })
+      .where(eq(cancellations.id, row.id));
+    const message = r.status === "applied"
+      ? `Deine Kündigung ist wirksam. Dein Abo endet am ${r.effectiveAt ? fmtDay(r.effectiveAt) : "Ende des bezahlten Zeitraums"}; bis dahin bleiben alle Vorteile aktiv.`
+      : r.status === "review" ? "Deine Kündigung ist bestätigt und vorgemerkt. Wir prüfen sie und melden uns, falls etwas fehlt."
+        : "Deine Kündigung ist bestätigt. Zu deinem Konto haben wir kein laufendes Abo gefunden – es wird nichts abgebucht.";
+    if (profile) {
+      await notify(profile.userId, "📄 Kündigung bestätigt", `Nr. ${ref}. ${message}`.slice(0, 400), "/").catch(() => {});
+      await sendMail(profile.email, `Kündigung ${ref} bestätigt – ${BRAND}`, `${message}\n\nKündigungsnummer: ${ref}\nBestätigt am: ${fmtDateTime(new Date())}\n\n${BRAND}`).catch(() => false);
+    }
+    return c.json({ ok: true, status: r.status, effectiveAt: r.effectiveAt, message });
   });
 
   app.get("/api/admin/cancellations", auth, adminOnly, async (c: any) => {
     const list = await db.select().from(cancellations).orderBy(desc(cancellations.createdAt)).limit(200);
-    const [r] = rows(await db.execute(sql`SELECT count(*) FILTER (WHERE status = 'review')::int AS review FROM cancellations`));
+    const [r] = rows(await db.execute(sql`SELECT count(*) FILTER (WHERE status = 'review' OR (status = 'pending_confirmation' AND created_at < now() - interval '3 days'))::int AS review FROM cancellations`));
     return c.json({ cancellations: list, review: Number(r?.review ?? 0) });
   });
 
   app.patch("/api/admin/cancellations/:id", auth, adminOnly, async (c: any) => {
     const id = Number(c.req.param("id"));
     const b = await body(c);
-    const status = ["received", "applied", "no_contract", "review"].includes(b.status) ? b.status : null;
+    const status = ["received", "applied", "no_contract", "review", "pending_confirmation"].includes(b.status) ? b.status : null;
     if (!Number.isInteger(id) || !status) return c.json({ error: "Ungültig" }, 400);
+    const [before] = await db.select().from(cancellations).where(eq(cancellations.id, id)).limit(1);
+    if (!before) return c.json({ error: "Nicht gefunden" }, 404);
+    // Admin bestätigt eine nicht angemeldete Kündigung nach eigener Prüfung → jetzt bei Stripe anwenden
+    if (b.apply === true && before.userId && ["pending_confirmation", "review"].includes(before.status)) {
+      const [profile] = await db.select().from(profiles).where(eq(profiles.userId, before.userId)).limit(1);
+      const r = profile ? await applyCancellationSafely(profile, before.kind) : { status: "no_contract", effectiveAt: null as Date | null, adminNote: "" };
+      const [row] = await db.update(cancellations).set({ status: r.status, effectiveAt: r.effectiveAt, confirmedAt: before.confirmedAt ?? new Date() }).where(eq(cancellations.id, id)).returning();
+      if (profile) await notify(profile.userId, "📄 Kündigung bearbeitet", `Nr. ${before.reference}: ${r.status === "applied" ? `Dein Abo endet am ${r.effectiveAt ? fmtDay(r.effectiveAt) : "Ende des bezahlten Zeitraums"}.` : "Wir haben deine Kündigung geprüft."}`, "/").catch(() => {});
+      return c.json(row);
+    }
     const [row] = await db.update(cancellations).set({ status }).where(eq(cancellations.id, id)).returning();
     return row ? c.json(row) : c.json({ error: "Nicht gefunden" }, 404);
   });

@@ -70,3 +70,9 @@ export function effectivePlan(
     ? (profile.bonusPlan === "pro" ? "pro" : "premium") : "free";
   return PLAN_RANK[bonus] > PLAN_RANK[paid] ? bonus : paid;
 }
+
+/** Aktive Inserate: Tarif-Limit oder – für Händler mit großem Bestand – das vom Admin freigegebene höhere Limit. */
+export function listingLimit(plan: PlanId, override?: number | null): number {
+  const base = PLANS[plan]?.listings ?? PLANS.free.listings;
+  return override && override > base ? override : base;
+}

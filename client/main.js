@@ -22,6 +22,7 @@ import { initFlip, flipApi, syncFlip } from "./flip.js";
 import { initCommunity, communityApi, syncCommunity, routeCommunity, communityAdminHtml } from "./community.js";
 import { profileApi, routeProfile, userSocialHtml } from "./profile.js";
 import { marketApi, routeMarket, listingFormExtras, listingFormValues, listingBuyHtml, listingMetaHtml } from "./market.js";
+import { cartApi, routeCart, injectCartButton, refreshCartBadge } from "./cart.js";
 import { initPwa, pwaApi, wrapEnablePush, afterLoginPwa } from "./pwa.js";
 import { searchCatalog, searchThumb, searchMeta, isAbort } from "./search.js";
 import { complianceApi, billingPortalButton } from "./compliance.js";
@@ -108,6 +109,8 @@ function openAccount(hint = "") {
       ${btn(m?.publicProfile ? "🌐 Mein öffentliches Profil" : "🌐 Profil öffentlich machen", m?.publicProfile ? `PS.openProfile(${jsArg(m?.profileSlug || "")})` : "PS.openProfileSettings()", "bg-slate-800 text-yellow-300")}
       ${btn("🛒 Käufe & Verkäufe", "PS.openOrders()", "bg-slate-800 text-white")}
       ${btn(m?.sellerReady ? "🔒 Verkäuferkonto ✓" : "🔒 Verkaufen mit Käuferschutz", "PS.openSeller()", "bg-slate-800 text-cyan-300")}
+      ${btn("🛒 Warenkorb", "PS.openCart()", "bg-slate-800 text-white")}
+      ${btn("🏪 Händler-Bereich & Bestands-Import", "PS.openSellerHub()", "bg-slate-800 text-amber-200")}
       ${btn("⭐ Gefolgt & Follower", "PS.openFollowing()", "bg-slate-800 text-white")}
       ${btn("🚫 Blockierte Nutzer", "PS.openBlocks()", "bg-slate-800 text-slate-300")}
       ${btn("📲 Als App installieren", "PS.installApp()", "bg-slate-800 text-white")}
@@ -861,14 +864,29 @@ function overrideMarket() {
     window[name] = (...args) => { if (requireLogin()) return orig?.(...args); };
   }
 }
+// Der Server nimmt höchstens LISTING_BATCH Inserate pro Anfrage an – größere Stapel in Blöcken senden
+const LISTING_BATCH = 20;
 async function flushListings() {
   const items = listingQueue; listingQueue = [];
   if (!items.length) return;
-  try {
-    const r = await api("/api/listings", { method: "POST", body: { items } });
-    if (r.skipped) toast("Hinweis", `${r.skipped} Zeile(n) übersprungen (Limit oder fehlender Preis).`);
-    loadListings(); loadMe().then(renderHeader);
-  } catch (e) { handleError(e); }
+  let created = 0, skipped = 0, failed = 0;
+  for (let i = 0; i < items.length; i += LISTING_BATCH) {
+    const chunk = items.slice(i, i + LISTING_BATCH);
+    try {
+      const r = await api("/api/listings", { method: "POST", body: { items: chunk } });
+      created += Number(r.created) || 0; skipped += Number(r.skipped) || 0;
+    } catch (e) {
+      // Limit erreicht o. Ä.: Rest nicht mehr senden, Fehler einmal anzeigen
+      failed += items.length - i;
+      handleError(e);
+      break;
+    }
+  }
+  if (items.length > 1 || skipped || failed) {
+    toast(created ? `🚀 ${created} Inserat(e) veröffentlicht` : "Keine Inserate veröffentlicht",
+      [skipped ? `${skipped} übersprungen (Limit oder fehlender Preis)` : "", failed ? `${failed} nicht gesendet` : ""].filter(Boolean).join(" • "));
+  }
+  loadListings(); loadMe().then(renderHeader);
 }
 
 // ---------------------------------------------------------------------------
@@ -1156,6 +1174,7 @@ async function runTrackerNow() {
 // Header-Elemente
 // ---------------------------------------------------------------------------
 function injectHeader() {
+  injectCartButton();
   const authText = $("authBtnText");
   const profileBtn = authText?.closest("button");
   if (profileBtn) profileBtn.onclick = () => openAccount();
@@ -1206,6 +1225,7 @@ window.PS = {
   ...communityApi,
   ...profileApi,
   ...marketApi,
+  ...cartApi,
   ...pwaApi,
   ...complianceApi,
   ...tradingApi,
@@ -1254,6 +1274,8 @@ async function boot() {
   if (tab === "trades") openTrades();
   else if (["swipe", "scan", "flip", "community", "map", "portfolio"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
+  routeCart();
+  if (state.user) refreshCartBadge();
   routeShell();
   routeCommunity();
   routeProfile();

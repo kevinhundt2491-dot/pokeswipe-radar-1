@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildDocuments, impressumText, cleanOperator, operatorComplete, DEFAULT_OPERATOR } from "../server/legal.ts";
+import { buildDocuments, impressumText, cleanOperator, operatorComplete } from "../server/legal.ts";
 import { parseSealedCsv } from "../server/catalog.ts";
 
 const op = cleanOperator({ name: "Erika Muster", street: "Hauptstr. 1", zip: "50667", city: "Köln", email: "info@example.de", phone: "0221 123" });
@@ -26,16 +27,11 @@ test("Rechtstexte: AGB, Widerruf (inkl. digitale Leistungen) und Muster-Formular
   assert.ok(text("datenschutz").includes("Erika Muster"));
 });
 
-test("Rechtstexte: ohne gespeicherte Angaben greifen die festen Standard-Anbieterangaben – nie ein Platzhalter", () => {
-  assert.equal(operatorComplete(DEFAULT_OPERATOR), true);
-  const docs = buildDocuments(cleanOperator({}));
-  const all = JSON.stringify(docs);
-  assert.ok(!all.includes("gerade eingerichtet"));
-  const imp = docs.find((d) => d.id === "impressum")!.sections[0].p.join("\n");
-  for (const part of ["Kevin Hundt", "Hähn 10", "51515 Kürten", "info@pokeswipe-radar.de", "+49 174 2182874", "§ 19 UStG", "§ 18 Abs. 2 MStV: Kevin Hundt, Hähn 10, 51515 Kürten"]) assert.ok(imp.includes(part), part);
-  assert.ok(docs.find((d) => d.id === "widerruf")!.sections[0].p[2].includes("Kevin Hundt, Hähn 10, 51515 Kürten"));
-  // Eigene Angaben aus dem Admin-Bereich haben Vorrang
-  assert.ok(!JSON.stringify(buildDocuments(op)).includes("Hähn 10"));
+test("Rechtstexte: keine personenbezogenen Anbieterdaten im Quellcode – eigene Angaben aus dem Admin-Bereich werden verwendet", () => {
+  const src = readFileSync("server/legal.ts", "utf8");
+  assert.ok(!/DEFAULT_OPERATOR/.test(src));
+  const imp = buildDocuments(op).find((d) => d.id === "impressum")!.sections[0].p.join("\n");
+  assert.ok(imp.includes("Erika Muster"));
 });
 
 test("Impressum: ungültige E-Mail wird verworfen, Felder werden gekürzt", () => {

@@ -13,6 +13,7 @@ const STATUS = {
   released: ["✅ Abgeschlossen", "bg-emerald-500/20 text-emerald-200"], refunded: ["↩️ Erstattet", "bg-slate-700 text-slate-200"],
   cancelled: ["🚫 Abgebrochen", "bg-slate-800 text-slate-400"], declined: ["❌ Abgelehnt", "bg-slate-800 text-slate-400"],
   chargeback: ["🧊 Rückbuchung – eingefroren", "bg-rose-600/30 text-rose-100"], chargeback_lost: ["⛔ Rückbuchung verloren", "bg-rose-700/40 text-rose-100"],
+  withdrawn: ["↩️ Widerrufen – Rücksendung", "bg-amber-500/20 text-amber-200"],
 };
 
 async function meta() {
@@ -97,6 +98,7 @@ export function listingBuyHtml(l) {
   if (!l.buy_now) return "";
   if (own) return `<span class="text-[10px] font-black bg-cyan-500/20 text-cyan-200 px-2 py-1 rounded-lg self-center">🔒 Sofort-Kauf aktiv</span>`;
   return `<button onclick="PS.openBuy(${Number(l.id)})" class="bg-cyan-400 text-slate-950 font-black px-3 py-1.5 rounded-xl" title="Kauf mit Käuferschutz">🔒 Kaufen</button>
+    <button onclick="PS.addToCart(${Number(l.id)})" class="bg-slate-800 text-cyan-200 font-bold px-2.5 py-1.5 rounded-xl" title="In den Warenkorb (mehrere Karten, eine Zahlung)" aria-label="In den Warenkorb">🛒</button>
     <button onclick="PS.openOffer(${Number(l.id)})" class="bg-slate-800 text-cyan-200 font-bold px-2.5 py-1.5 rounded-xl">💰 Angebot</button>`;
 }
 export function listingMetaHtml(l) {
@@ -188,8 +190,10 @@ function orderCard(o, m) {
   const a = (action, label, cls) => btn(label, `PS.orderAction(${id}, '${action}')`, cls);
   const acts = [];
   if (isS && o.status === "offered") acts.push(a("accept", "✅ Annehmen", "bg-emerald-500 text-slate-950"), a("decline", "Ablehnen", "bg-slate-800 text-slate-300"));
-  if (isB && o.status === "awaiting_payment") acts.push(btn(`💳 Jetzt bezahlen (${cents(o.totalCents)})`, `PS.payOrder(${id})`, "bg-cyan-400 text-slate-950"));
-  if ((isB && ["offered", "awaiting_payment"].includes(o.status)) || (isS && o.status === "awaiting_payment")) acts.push(a("cancel", "Abbrechen", "bg-slate-800 text-slate-300"));
+  if (isB && o.status === "awaiting_payment" && !o.checkoutId) acts.push(btn(`💳 Jetzt bezahlen (${cents(o.totalCents)})`, `PS.payOrder(${id})`, "bg-cyan-400 text-slate-950"));
+  if (isB && o.canWithdraw) acts.push(btn("↩️ Widerrufen", `PS.withdrawOrder(${id})`, "bg-slate-800 text-amber-200"));
+  if (isS && o.status === "withdrawn") acts.push(a("accept_return", "Rücksendung erhalten – erstatten", "bg-emerald-500 text-slate-950"));
+  if (!o.checkoutId && ((isB && ["offered", "awaiting_payment"].includes(o.status)) || (isS && o.status === "awaiting_payment"))) acts.push(a("cancel", "Abbrechen", "bg-slate-800 text-slate-300"));
   if (isS && o.status === "paid") acts.push(btn("📦 Versand eintragen", `PS.shipOrder(${id})`, "bg-yellow-400 text-slate-950"), a("refund", "Stornieren & erstatten", "bg-slate-800 text-rose-300"));
   if (isB && ["paid", "shipped"].includes(o.status)) acts.push(a("confirm", "✅ Erhalten – Geld freigeben", "bg-emerald-500 text-slate-950"), a("dispute", "⚠️ Problem melden", "bg-slate-800 text-rose-300"));
   if (o.status === "released" && !o.reviewed) acts.push(btn("⭐ Bewerten", `PS.reviewOrder(${id})`, "bg-amber-400 text-slate-950"));
@@ -207,6 +211,9 @@ function orderCard(o, m) {
         ${o.status === "awaiting_payment" && o.payBy ? `<p class="text-[11px] text-amber-300">Zahlung bis ${new Date(o.payBy).toLocaleString("de-DE")}</p>` : ""}
         ${o.trackingNumber ? `<p class="text-[11px] text-slate-300">📦 ${esc(o.carrierLabel)} ${o.trackingUrl ? `<a href="${esc(o.trackingUrl)}" target="_blank" rel="noopener" class="underline text-cyan-300">${esc(o.trackingNumber)}</a>` : esc(o.trackingNumber)}${o.releaseAfter && o.status === "shipped" ? ` • automatische Auszahlung am ${new Date(o.releaseAfter).toLocaleDateString("de-DE")}` : ""}</p>` : ""}
         ${o.disputeReason ? `<p class="text-[11px] text-rose-300">⚠️ ${esc(o.disputeReason)}</p>` : ""}
+        <p class="text-[10px] text-slate-400">${o.sellerType === "business" ? `🏪 Gewerblicher Händler${o.sellerBusiness?.name ? `: ${esc(o.sellerBusiness.name)}, ${esc(o.sellerBusiness.address)}` : ""}${o.withdrawalUntil && ["shipped", "released"].includes(o.status) ? ` • Widerruf bis ${new Date(o.withdrawalUntil).toLocaleDateString("de-DE")}` : ""}` : "Privatverkauf (kein gesetzliches Widerrufsrecht)"}</p>
+        ${o.status === "withdrawn" ? `<p class="text-[11px] text-amber-200">↩️ Widerrufen ${o.withdrawnAt ? `am ${new Date(o.withdrawnAt).toLocaleDateString("de-DE")}` : ""}${o.returnTracking ? ` • Rücksendung ${esc(o.returnTracking)}` : ""}${o.withdrawalNote ? ` • „${esc(o.withdrawalNote)}“` : ""}</p>` : ""}
+        ${o.items?.length > 1 || (o.items?.length === 1 && o.items[0].quantity > 1) ? `<ul class="text-[11px] text-slate-300 list-disc pl-4">${o.items.map((i) => `<li>${Number(i.quantity)}× ${esc(i.title)}${i.condition ? ` (${esc(String(i.condition).toUpperCase())})` : ""} – ${cents(i.unitCents * i.quantity)}</li>`).join("")}</ul>` : ""}
       </div>
     </div>
     ${addr ? `<div class="bg-slate-950 border border-cyan-500/30 rounded-xl p-2.5 text-[11px] text-slate-200"><p class="font-black text-cyan-200 mb-0.5">📮 Lieferadresse (nur für dich sichtbar)</p>
@@ -226,6 +233,15 @@ async function orderAction(id, action) {
     body.reason = reason;
   }
   try { await api(`/api/orders/${id}/action`, { method: "POST", body }); toast("✅ Erledigt", ""); openOrders(); window.PS?.loadListings?.(); }
+  catch (e) { handleError(e); }
+}
+
+async function withdrawOrder(id) {
+  const o = mk.orders.find((x) => x.id === id);
+  if (!confirm(`Kauf „${o?.title || ""}“ widerrufen? Du sendest die Ware an den Händler zurück; nach Eingang wird dir der volle Betrag erstattet.`)) return;
+  const reason = prompt("Optional: Grund oder Hinweis für den Händler") || "";
+  const returnTracking = prompt("Optional: Sendungsnummer der Rücksendung (kannst du auch später per Nachricht nennen)") || "";
+  try { await api(`/api/orders/${Number(id)}/action`, { method: "POST", body: { action: "withdraw", reason, returnTracking } }); toast("↩️ Widerruf erklärt", "Bitte sende die Ware an die Anschrift des Händlers zurück."); openOrders(); }
   catch (e) { handleError(e); }
 }
 
@@ -307,7 +323,7 @@ async function resolveOrder(id, action) {
 
 export const marketApi = {
   openSeller, sellerOnboard, sellerDashboard, openBuy, buyNow: (id) => buyNow(id), openOffer, sendOffer,
-  openOrders, orderAction, payOrder, payOrderGo, shipOrder, shipOrderGo, reviewOrder, orderStars, sendOrderReview,
+  openOrders, orderAction, withdrawOrder, payOrder, payOrderGo, shipOrder, shipOrderGo, reviewOrder, orderStars, sendOrderReview,
   openMarketAdmin, resolveOrder,
   runEscrow: async () => { try { const r = await api("/api/admin/escrow/run", { method: "POST", body: {} }); toast("⏱️ Fristen geprüft", `${r.released} ausgezahlt, ${r.refunded} erstattet, ${r.expired} verfallen.`); openMarketAdmin(); } catch (e) { handleError(e); } },
 };

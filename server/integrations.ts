@@ -21,6 +21,9 @@ export const WEBHOOK_EVENTS = [
   "charge.dispute.created",
   "charge.dispute.updated",
   "charge.dispute.closed",
+  // Phase 7: Warenkorb-Checkout abgelaufen (Reservierung freigeben), Connect-Verkäuferkonto geändert
+  "checkout.session.expired",
+  "account.updated",
 ] as const;
 
 type AutoWebhook = { id: string; secret: string; url: string; createdAt: string };
