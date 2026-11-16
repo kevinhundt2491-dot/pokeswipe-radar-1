@@ -62,3 +62,12 @@ test("Tarife: Free bekommt Restock-Alarme verzögert, bezahlte sofort", () => {
   assert.equal(PLANS.pro.restockFilters, true);
   assert.ok(PLANS.free.fakeChecksPerMonth < PLANS.premium.fakeChecksPerMonth);
 });
+
+test("Schnell-Import: Produktname aus og:title/<title> und Art-Erkennung", async () => {
+  const { pageTitle, guessKind } = await import("../server/drops.ts");
+  assert.equal(pageTitle(`<meta property="og:title" content="Pokémon Karmesin &amp; Purpur 151 Elite-Trainer-Box | Smyths Toys Deutschland">`), "Pokémon Karmesin & Purpur 151 Elite-Trainer-Box");
+  assert.equal(pageTitle("<title>Amazon.de: Pokémon 151 Display : Spielzeug</title>"), "Pokémon 151 Display");
+  assert.equal(guessKind("151 Elite-Trainer-Box"), "etb");
+  assert.equal(guessKind("Prismatic Evolutions Booster Display"), "display");
+  assert.equal(guessKind("Glurak Tin"), "tin");
+});

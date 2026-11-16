@@ -227,15 +227,30 @@ async function removeDrop(id) {
 }
 
 // ------------------------------ Admin ------------------------------
+let adminOpen = false, bulkFailed = [];
 async function loadDropsAdmin() {
   const el = $("ps-drops-admin");
   if (!el) return;
   try {
     const a = await api("/api/admin/restock");
-    el.innerHTML = `<details class="bg-slate-950 rounded-2xl p-3 border border-purple-500/50 text-xs"><summary class="font-black text-purple-300 cursor-pointer">🛠 Admin: Überwachte Produktseiten (${Number(a.watches.length) || 0})</summary>
+    el.innerHTML = `<details ${adminOpen ? "open" : ""} ontoggle="PS.adminPanelToggle(this.open)" class="bg-slate-950 rounded-2xl p-3 border border-purple-500/50 text-xs"><summary class="font-black text-purple-300 cursor-pointer">🛠 Admin: Überwachte Produktseiten (${Number(a.watches.length) || 0})</summary>
       <div class="space-y-3 mt-3">
         <p class="${a.amazonTag ? "text-emerald-300" : "text-amber-300"}">${a.amazonTag ? "✔ Amazon-Partner-Tag aktiv" : "⚠️ AMAZON_PARTNER_TAG nicht gesetzt – Amazon-Klicks bringen noch keine Provision."}</p>
         <p class="${a.cardmarketId ? "text-emerald-300" : "text-amber-300"}">${a.cardmarketId ? "✔ Cardmarket-Partner-ID aktiv" : "⚠️ CARDMARKET_PARTNER_ID nicht gesetzt."}</p>
+        ${a.amazonTag && a.cardmarketId ? "" : `<div class="bg-slate-900 rounded-xl p-2.5 space-y-1.5 text-slate-300">
+          <p class="font-black text-white">💶 So schaltest du die Provisionen frei</p>
+          ${a.amazonTag ? "" : `<p>1. Bei <a class="text-yellow-300 underline" href="https://partnernet.amazon.de/" target="_blank" rel="noopener">Amazon PartnerNet</a> anmelden (kostenlos) und deine Website pokeswipe-radar.de eintragen. Deine Tracking-ID sieht aus wie <b>deinname-21</b>.</p>`}
+          ${a.cardmarketId ? "" : `<p>${a.amazonTag ? "1" : "2"}. Bei Cardmarket über den Support das Partnerprogramm anfragen und deine Partner-/Referrer-Kennung notieren.</p>`}
+          <p>Dann in Netlify unter <b>Project configuration → Environment variables</b> eintragen: <code class="text-purple-300">AMAZON_PARTNER_TAG</code> und <code class="text-purple-300">CARDMARKET_PARTNER_ID</code>. Nach dem nächsten Deploy hängt die App die Kennung automatisch an jeden Shop-Link – eBay-Links verdienen bereits jetzt.</p>
+          <p class="text-slate-500">Hinweis: Amazon verlangt innerhalb von 180 Tagen 3 qualifizierte Verkäufe, sonst wird das Konto geschlossen – also erst freischalten, wenn das Radar ein paar Produkte überwacht.</p>
+        </div>`}
+        <div class="bg-slate-900 rounded-xl p-2.5 space-y-2">
+          <p class="font-black text-white">⚡ Schnell-Import</p>
+          <p class="text-slate-400">Eine Produktseite pro Zeile (max. 25). Nur die URL reicht – Name, Preis, Verfügbarkeit und Art werden von der Seite gelesen. Optional: <code>Name | URL | UVP</code>.</p>
+          <textarea id="rw-bulk" rows="4" class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white text-xs" placeholder="https://www.amazon.de/dp/…&#10;151 Display | https://www.smythstoys.com/de/de-de/… | 179,64">${esc(bulkFailed.map((x) => x.line).join("\n"))}</textarea>
+          ${btn("⚡ Alle importieren", "PS.adminBulkWatch()", "w-full bg-purple-600 text-white")}
+          <div id="rw-bulk-result">${bulkFailed.map((x) => `<p class="text-amber-300 truncate">⚠️ ${esc(x.error)}: ${esc(x.line)}</p>`).join("")}</div>
+        </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
           ${field("rw-name", "Produkt", 'placeholder="151 Display (36 Booster)"')}${field("rw-set", "Set", 'placeholder="151"')}
           ${field("rw-url", "Produktseite (https)", 'placeholder="https://www.amazon.de/dp/…"')}${field("rw-uvp", "UVP (€)", 'inputmode="decimal"')}
@@ -261,6 +276,16 @@ async function adminAddWatch() {
     toast("✅ Hinzugefügt", "Die erste Prüfung legt den Ausgangszustand fest.");
     loadDrops();
   } catch (e) { handleError(e); }
+}
+async function adminBulkWatch() {
+  const out = $("rw-bulk-result");
+  if (out) out.innerHTML = `<p class="text-slate-400">⏳ Seiten werden gelesen …</p>`;
+  try {
+    const r = await api("/api/admin/restock/watches/bulk", { method: "POST", body: { lines: $("rw-bulk").value } });
+    toast("✅ Import fertig", `${Number(r.added) || 0} Produktseiten hinzugefügt.`);
+    bulkFailed = (r.results || []).filter((x) => !x.ok);
+    loadDrops();
+  } catch (e) { if (out) out.innerHTML = ""; handleError(e); }
 }
 async function adminToggleWatch(id, active) {
   try { await api(`/api/admin/restock/watches/${id}`, { method: "PATCH", body: { active } }); loadDrops(); } catch (e) { handleError(e); }
@@ -522,7 +547,7 @@ async function runFakeCheck() {
 // ===========================================================================
 export const dropsApi = {
   subscribeDrops, saveDropFilters, reportDrop, confirmDrop, dropGo, removeDrop, loadDrops,
-  adminAddWatch, adminToggleWatch, adminDeleteWatch, adminRunRestock,
+  adminAddWatch, adminBulkWatch, adminPanelToggle: (o) => { adminOpen = Boolean(o); }, adminToggleWatch, adminDeleteWatch, adminRunRestock,
   gradedSearch, gradedPick: pickGraded, addGraded, editGradedValue, removeGraded, addSubmission, setSubmissionStatus, removeSubmission,
   runFakeCheck,
 };
