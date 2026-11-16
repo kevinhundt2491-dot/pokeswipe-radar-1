@@ -523,4 +523,10 @@ export default [
   ["Jobs, Circuits & Fehler", "Jobs, circuits & errors"],
   ["Externe Quellen", "External sources"],
   ["Letzte Fehler", "Recent errors"],
+  ["So schaltest du die Provisionen frei", "How to unlock commissions"],
+  ["Schnell-Import", "Quick import"],
+  ["Alle importieren", "Import all"],
+  ["Seiten werden gelesen …", "Reading pages …"],
+  ["Import fertig", "Import finished"],
+  ["{added} Produktseiten hinzugefügt.", "{added} product pages added."],
 ];

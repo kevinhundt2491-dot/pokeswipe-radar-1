@@ -105,9 +105,38 @@ async function fetchProductPage(url: string) {
       try { await res.body?.cancel(); } catch {}
       throw new Error(`HTTP ${res.status}`);
     }
-    return parseAvailability(await readLimited(res, MAX_PAGE_BYTES));
+    const html = await readLimited(res, MAX_PAGE_BYTES);
+    return { ...parseAvailability(html), title: pageTitle(html) };
   }
   throw new Error("Zu viele Weiterleitungen");
+}
+
+const decodeEntities = (t: string) => t
+  .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+  .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n) || 32)).replace(/&nbsp;/g, " ");
+
+/** Produktname aus og:title bzw. <title> (Shop-Zusätze wie „| Amazon.de“ werden entfernt). */
+export function pageTitle(html: string) {
+  const og = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']{3,300})["']/i)
+    || html.match(/<meta[^>]+content=["']([^"']{3,300})["'][^>]+property=["']og:title["']/i);
+  const raw = og?.[1] || html.match(/<title[^>]*>([^<]{3,300})<\/title>/i)?.[1] || "";
+  return decodeEntities(raw).replace(/\s+/g, " ")
+    .replace(/^Amazon\.de\s*:\s*/i, "")
+    .replace(/\s*[|–—-]\s*(Amazon\.de|Smyths Toys.*|MediaMarkt|SATURN|OTTO|Müller.*|Thalia|Galeria|Pokémon Center.*|Cardmarket.*|Games-Island.*|Fantasywelt.*|Spiele Max.*)\s*$/i, "")
+    .replace(/\s*:\s*Spielzeug\s*$/i, "").trim().slice(0, 100);
+}
+
+/** Produktart grob aus dem Namen ableiten. */
+export function guessKind(name: string) {
+  const n = name.toLowerCase();
+  if (/elite[- ]?trainer|\betb\b/.test(n)) return "etb";
+  if (/top[- ]?trainer|\bttb\b/.test(n)) return "ttb";
+  if (/display|36 booster|booster ?box/.test(n)) return "display";
+  if (/bundle|6 booster/.test(n)) return "bundle";
+  if (/\btin\b/.test(n)) return "tin";
+  if (/kollektion|collection|premium/.test(n)) return "collection";
+  if (/booster/.test(n)) return "booster";
+  return "other";
 }
 
 async function makeDrop(values: typeof restockDrops.$inferInsert) {
@@ -442,6 +471,39 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
       status: ["in_stock", "preorder", "out_of_stock"].includes(b.status) ? b.status : "unknown",
     }).returning();
     return c.json(row);
+  });
+
+  // Mehrere Produktseiten auf einmal: je Zeile „URL“ oder „Name | URL | UVP“. Fehlender Name wird von der Seite gelesen.
+  app.post("/api/admin/restock/watches/bulk", auth, adminOnly, async (c: any) => {
+    const b = await body(c);
+    const lines = String(b.lines || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 25);
+    if (!lines.length) return c.json({ error: "Bitte mindestens eine Produkt-URL einfügen (eine pro Zeile)." }, 400);
+    const existing = new Set((await db.select({ url: restockWatches.url }).from(restockWatches)).map((r) => r.url));
+    const results: { line: string; ok: boolean; name?: string; error?: string }[] = [];
+    for (const line of lines) {
+      const parts = line.split("|").map((p) => p.trim());
+      const urlPart = parts.find((p) => /^https:\/\//i.test(p)) || "";
+      const url = str(urlPart, 500), shop = shopForUrl(url);
+      if (!shop) { results.push({ line, ok: false, error: "Keine unterstützte https-Shopseite" }); continue; }
+      if (existing.has(url)) { results.push({ line, ok: false, error: "Schon in der Liste" }); continue; }
+      const others = parts.filter((p) => p !== urlPart);
+      let name = str(others.find((p) => !/^[\d.,\s€]+$/.test(p)) || "", 100);
+      const uvp = money(others.find((p) => /^[\d.,\s€]+$/.test(p))?.replace(/[€\s]/g, "").replace(",", "."));
+      let status: Availability = "unknown", price: number | null = null;
+      try {
+        const page = await fetchProductPage(url);
+        status = page.status; price = page.price;
+        if (name.length < 3) name = page.title;
+      } catch {}
+      if (name.length < 3) { results.push({ line, ok: false, error: "Name nicht erkennbar – bitte „Name | URL“ angeben" }); continue; }
+      await db.insert(restockWatches).values({
+        name, kind: guessKind(name), shop, url, uvp, autoCheck: true, status,
+        lastPrice: price ? price.toFixed(2) : null, lastCheckedAt: status !== "unknown" ? new Date() : null,
+      });
+      existing.add(url);
+      results.push({ line, ok: true, name });
+    }
+    return c.json({ added: results.filter((r) => r.ok).length, results });
   });
 
   app.patch("/api/admin/restock/watches/:id", auth, adminOnly, async (c: any) => {
