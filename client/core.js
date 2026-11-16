@@ -3,8 +3,15 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => (window.sanitizeHTML ? window.sanitizeHTML(s) : String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`));
 /** Wert als sicheres JS-String-Argument in einem onclick="…"-Attribut (JSON + HTML-Escaping inkl. &). */
 const jsArg = (v) => esc(JSON.stringify(String(v ?? "")));
-const eur = (n) => `${(Number(n) || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\u00A0€`;
-const pct = (n) => `${n > 0 ? "+" : ""}${Number(n).toFixed(1).replace(".", ",")} %`;
+// Preise/Prozente: Deutsch "12,50 €" / "+3,4 %", Englisch (window.psLang aus client/i18n.js, en-IE) "€12.50" / "+3.4%"
+const eur = (n) => {
+  const en = globalThis.psLang === "en";
+  const v = (Number(n) || 0).toLocaleString(en ? "en-IE" : "de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return en ? `€${v}` : `${v}\u00A0€`;
+};
+const pct = (n) => (globalThis.psLang === "en"
+  ? `${n > 0 ? "+" : ""}${Number(n).toFixed(1)}%`
+  : `${n > 0 ? "+" : ""}${Number(n).toFixed(1).replace(".", ",")} %`);
 /**
  * In-App-Banner (+ Ton) ohne zusätzliche Browser-Benachrichtigung – echte Push-Nachrichten
  * kommen vom Server, so gibt es keine Doppelungen.
@@ -80,7 +87,7 @@ function bearer() {
 async function api(path, { method = "GET", body } = {}) {
   // Schreibende Anfragen immer als JSON senden – der Server lehnt sonst ab (CSRF-Schutz, auch für DELETE ohne Inhalt)
   if (method !== "GET" && method !== "HEAD" && body === undefined) body = {};
-  const headers = { Accept: "application/json" };
+  const headers = { Accept: "application/json", "Accept-Language": globalThis.psLang === "en" ? "en" : "de" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const token = bearer();
   if (token) headers.Authorization = `Bearer ${token}`;

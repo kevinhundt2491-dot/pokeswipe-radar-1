@@ -1,5 +1,9 @@
 // PokeSwipe & Radar – Konto, Abo, Portfolio, Preis-Tracker, sicherer Tausch
 // Wird zu /assets/app.js gebündelt und von index.html geladen.
+// i18n zuerst: setzt window.psLang/<html lang> und startet bei Englisch den DOM-Übersetzer vor dem ersten Rendern
+import { langSwitchHtml } from "./i18n.js";
+// Phase 8: Browser-Fehler an den Betriebs-Wächter melden (so früh wie möglich, damit auch Startfehler ankommen)
+import "./error-report.js";
 import {
   getUser, login, signup, logout, oauthLogin, handleAuthCallback, getSettings,
   requestPasswordRecovery, updateUser, acceptInvite, onAuthChange,
@@ -79,6 +83,7 @@ function openAccount(hint = "") {
   modal("ps-account", `
     <h3 class="text-base font-black text-white">👤 Dein Sammler-Konto</h3>
     <p class="text-xs text-slate-400">${esc(state.user.email || "")}</p>
+    <div class="flex items-center justify-between gap-2 text-xs text-slate-300"><span class="font-bold">🌐 Sprache / Language</span>${langSwitchHtml()}</div>
     <div class="bg-slate-950 rounded-2xl p-3.5 border border-slate-800 space-y-2 text-xs">
       <label class="block text-slate-300 font-bold">Öffentlicher Sammlername</label>
       ${input("ps-name", `maxlength="24" value="${esc(m?.displayName || "")}"`)}
@@ -1004,7 +1009,7 @@ async function pollChat(id) {
       if (!state.lastMsgId) box.innerHTML = "";
       box.insertAdjacentHTML("beforeend", messages.map((m) => `<div class="flex ${m.mine ? "justify-end" : "justify-start"}">
         <div class="max-w-[80%] ${m.mine ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-white"} rounded-2xl px-3 py-1.5">
-          ${m.mine ? "" : `<p class="text-[10px] font-black text-cyan-300">${esc(m.name)}</p>`}<p class="break-words">${esc(m.body)}</p>
+          ${m.mine ? "" : `<p class="text-[10px] font-black text-cyan-300">${esc(m.name)}</p>`}<p class="break-words" data-i18n-skip>${esc(m.body)}</p>
           <p class="text-[9px] opacity-60 text-right">${new Date(m.createdAt).toLocaleString("de-DE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}</p>
         </div></div>`).join(""));
       state.lastMsgId = messages[messages.length - 1].id;
@@ -1065,7 +1070,7 @@ async function openUser(id) {
       </div>
       ${u.city ? `<p class="text-xs text-slate-400">📍 ${esc(u.city)}</p>` : ""}
       <div class="space-y-1.5 max-h-60 overflow-y-auto text-xs">
-        ${u.reviews.length ? u.reviews.map((r) => `<div class="bg-slate-900 rounded-xl p-2"><p><span class="text-yellow-400">${"★".repeat(Math.max(0, Math.min(5, Math.round(Number(r.stars) || 0))))}${"☆".repeat(5 - Math.max(0, Math.min(5, Math.round(Number(r.stars) || 0))))}</span> <span class="text-slate-400">von ${esc(r.reviewer)}</span></p>${r.comment ? `<p class="text-slate-200">${esc(r.comment)}</p>` : ""}</div>`).join("")
+        ${u.reviews.length ? u.reviews.map((r) => `<div class="bg-slate-900 rounded-xl p-2"><p><span class="text-yellow-400">${"★".repeat(Math.max(0, Math.min(5, Math.round(Number(r.stars) || 0))))}${"☆".repeat(5 - Math.max(0, Math.min(5, Math.round(Number(r.stars) || 0))))}</span> <span class="text-slate-400">von ${esc(r.reviewer)}</span></p>${r.comment ? `<p class="text-slate-200" data-i18n-skip>${esc(r.comment)}</p>` : ""}</div>`).join("")
           : `<p class="text-slate-500">Noch keine Bewertungen.</p>`}
       </div>
       ${userSocialHtml(u)}

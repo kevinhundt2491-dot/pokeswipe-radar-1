@@ -12,6 +12,8 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/fonts/fonts.css" />
+  <!-- i18n: Sprache (DE/EN) vor dem ersten Bildaufbau setzen, siehe client/i18n.js -->
+  <script src="/js/i18n-boot.js"></script>
   <title>PokeSwipe & Radar | Die Pokémon TCG Community & Preis-Arena</title>
   <meta name="description" content="Pokémon-Karten: echte Cardmarket-Preise, Preisalarme, Portfolio mit Live-Wert, KI-Kartenscan, Wunschliste und sicherer Tausch mit Sammlern in deiner Nähe." />
   <link rel="canonical" href="https://pokeswipe-radar.de/" />
@@ -115,6 +117,10 @@
     .ps-chip[aria-pressed="true"] { background: #facc15; color: #0f172a; border-color: #facc15; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    /* i18n: bis zur ersten Übersetzung ausblenden (kein deutscher Blitz), Umschalter, nur-Englisch-Hinweise */
+    html.ps-i18n-pending body { visibility: hidden; }
+    html[lang="de"] [data-ps-lang="de"], html[lang="en"] [data-ps-lang="en"] { background: #facc15; color: #0f172a; }
+    html:not([lang="en"]) .ps-en-only { display: none !important; }
   </style>
   <link rel="stylesheet" href="/theme.css" />
   <!-- CSP: on…-Attribute ohne 'unsafe-inline' ausführen (muss vor allen Vorlagen geladen werden) -->
@@ -193,6 +199,12 @@
         <button onclick="openModal('pro-modal')" class="bg-gradient-to-r from-yellow-400 via-amber-500 to-red-500 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl shadow-md">
           👑 PRO
         </button>
+
+        <!-- Sprache: DE / EN (verdrahtet in client/i18n.js über data-ps-lang) -->
+        <div class="ps-lang-switch inline-flex items-center gap-0.5 bg-slate-900 border border-slate-600 rounded-xl p-0.5 text-[11px]" role="group" aria-label="Sprache / Language" data-i18n-skip translate="no">
+          <button type="button" data-ps-lang="de" title="Deutsch" class="px-2 py-1 rounded-lg font-black text-slate-300 hover:text-white">DE</button>
+          <button type="button" data-ps-lang="en" title="English" class="px-2 py-1 rounded-lg font-black text-slate-300 hover:text-white">EN</button>
+        </div>
       </div>
     </div>
   </header>
@@ -809,6 +821,13 @@
       </div>
       <input id="auth-username" type="text" maxlength="30" placeholder="Dein Sammlername (z. B. @PokeTrainer)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white" />
       <button onclick="saveUserProfile()" class="w-full bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">Name speichern</button>
+      <div class="flex items-center justify-between gap-2 text-xs text-slate-300">
+        <span class="font-bold">🌐 Sprache / Language</span>
+        <div class="ps-lang-switch inline-flex items-center gap-0.5 bg-slate-900 border border-slate-600 rounded-xl p-0.5 text-[11px]" role="group" aria-label="Sprache / Language" data-i18n-skip translate="no">
+          <button type="button" data-ps-lang="de" title="Deutsch" class="px-2 py-1 rounded-lg font-black text-slate-300 hover:text-white">DE</button>
+          <button type="button" data-ps-lang="en" title="English" class="px-2 py-1 rounded-lg font-black text-slate-300 hover:text-white">EN</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -855,6 +874,8 @@
         <button onclick="closeModal('legal-modal')" class="text-slate-400 font-bold">✕</button>
       </div>
       <p><a href="/datenschutz" class="block text-center bg-yellow-400 text-slate-950 font-black rounded-xl px-3 py-2 text-sm">🔒 Vollständige Datenschutzerklärung</a></p>
+      <p class="ps-en-only bg-slate-900 border border-yellow-400/40 rounded-xl px-3 py-2 text-slate-200" data-i18n-skip translate="no" lang="en">ℹ️ Legal notice: the imprint, terms, right of withdrawal and privacy policy are legally binding in German only and are therefore shown in German.</p>
+      <div data-i18n-skip lang="de" class="space-y-3">
       <p><strong>Projekt:</strong> PokeSwipe & Radar (pokeswipe-radar.de)</p>
       <p><strong>Pokémon-Fanprojekt-Hinweis:</strong> PokeSwipe & Radar ist ein unabhängiges, inoffizielles Fanprojekt und steht in keiner Verbindung zu Nintendo, Creatures Inc., GAME FREAK inc. oder The Pokémon Company und wird von diesen weder unterstützt noch gesponsert. Pokémon, Kartennamen und Kartenbilder sind Marken bzw. urheberrechtlich geschützte Werke ihrer jeweiligen Inhaber und werden ausschließlich zur Identifikation der Sammelkarten verwendet.</p>
       <p><strong>Preisangaben:</strong> Marktpreise stammen von Cardmarket (über TCGdex) und werden automatisch aktualisiert. Alle Angaben ohne Gewähr; maßgeblich ist der Preis beim jeweiligen Anbieter.</p>
@@ -867,6 +888,7 @@
       <p><strong>Deine Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch (Art. 15–21 DSGVO) sowie Beschwerde bei einer Datenschutz-Aufsichtsbehörde. Im Konto unter „Datenschutz & Konto“ kannst du alle Daten als Datei herunterladen und dein Konto selbst löschen. Verantwortlich für die Datenverarbeitung: Kevin Hundt, Hähn 10, 51515 Kürten, E-Mail: info@pokeswipe-radar.de. Die vollständige <a href="/rechtliches#datenschutz" class="underline font-bold">Datenschutzerklärung</a> findest du unter Rechtliches.</p>
       <p><strong>Abos:</strong> Premium (4,99 €/Monat oder 49 €/Jahr) und Pro Trader (9,99 €/Monat oder 99 €/Jahr). Das erste Abo kann 7 Tage kostenlos getestet werden (mit Einladung 30 Tage). Kündigung jederzeit im Konto unter „Abo kündigen“ oder ohne Anmeldung über <a href="/kuendigen" class="underline font-bold">„Verträge hier kündigen“</a> – die Vorteile bleiben bis zum Ende des bezahlten Zeitraums aktiv. Es gelten die <a href="/rechtliches#agb" class="underline">AGB</a> und die <a href="/rechtliches#widerruf" class="underline">Widerrufsbelehrung</a>.</p>
       <p><strong>Optionaler E-Mail-Versand:</strong> Kündigungsbestätigungen können über den Dienstleister Resend per E-Mail zugestellt werden (Empfängeradresse und Bestätigungstext).</p>
+      </div>
       </div>
     </div>
   </div>

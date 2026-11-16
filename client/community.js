@@ -105,7 +105,7 @@ function postHtml(p) {
       <span class="text-slate-500 shrink-0">${ago(p.createdAt)}</span>
     </div>
     ${p.pending ? `<p class="text-[11px] bg-amber-500/15 text-amber-200 rounded-lg px-2 py-1">⏳ Wird geprüft – nur für dich sichtbar.</p>` : ""}
-    ${p.caption ? `<p class="text-xs sm:text-sm text-white whitespace-pre-line break-words">${esc(p.caption)}</p>` : ""}
+    ${p.caption ? `<p class="text-xs sm:text-sm text-white whitespace-pre-line break-words" data-i18n-skip>${esc(p.caption)}</p>` : ""}
     ${img ? `<div class="bg-slate-950 rounded-xl p-2 flex justify-center"><img src="${esc(img)}" onerror="this.src='${FALLBACK_IMG}'" alt="Pull von ${esc(p.author.name)}" loading="lazy" class="max-h-80 rounded-lg object-contain" /></div>` : ""}
     <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800 text-xs">
       <button onclick="PS.likePost(${p.id})" class="${p.liked ? "bg-rose-500 text-white" : "bg-rose-500/20 text-rose-300"} hover:bg-rose-500/40 font-bold px-3 py-1 rounded-lg" aria-pressed="${p.liked}">❤️ ${p.likes}</button>
@@ -116,7 +116,7 @@ function postHtml(p) {
       ${canModerate ? `<button onclick="PS.deletePost(${p.id})" class="bg-slate-800 text-rose-300 font-bold px-2 py-1 rounded-lg" title="Löschen">🗑️</button>` : ""}
     </div>
     ${p.comments.length ? `<div class="space-y-1 bg-slate-950 p-2.5 rounded-xl text-xs max-h-60 overflow-y-auto">${p.comments.map((c) => `
-      <div class="flex gap-1.5 items-start group"><div class="flex-1 min-w-0 break-words">${authorBtn(c.author)}<span class="text-slate-200 ml-1">${esc(c.body)}</span>${c.pending ? ' <span class="text-amber-300 text-[10px]">⏳ wird geprüft</span>' : ""}</div>
+      <div class="flex gap-1.5 items-start group"><div class="flex-1 min-w-0 break-words">${authorBtn(c.author)}<span class="text-slate-200 ml-1" data-i18n-skip>${esc(c.body)}</span>${c.pending ? ' <span class="text-amber-300 text-[10px]">⏳ wird geprüft</span>' : ""}</div>
       ${c.mine || p.mine || state.me?.isAdmin ? `<button onclick="PS.deleteComment(${c.id})" class="text-slate-600 hover:text-rose-400" title="Löschen">✕</button>` : state.user ? `<button onclick="PS.report('comment', '${c.id}')" class="text-slate-600 hover:text-amber-300" title="Melden">⚠</button>` : ""}</div>`).join("")}</div>` : ""}
     ${state.user ? `<div class="flex gap-2">
       <input id="wall-cmt-${p.id}" type="text" maxlength="300" placeholder="Kommentar schreiben …" onkeydown="if(event.key==='Enter')PS.commentPost(${p.id})" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white" />
@@ -295,7 +295,7 @@ function renderChat() {
   if (!cm.chat.length) { box.innerHTML = `<p class="text-slate-500 text-center py-6">Noch keine Chat-Nachrichten. Schreibe die erste!</p>`; return; }
   box.innerHTML = cm.chat.map((m) => `
     <div class="bg-slate-900 border ${m.mine ? "border-yellow-400/30" : "border-slate-800"} rounded-xl px-3 py-2 flex gap-2 items-start">
-      <div class="flex-1 min-w-0 break-words">${authorBtn(m.author)}<span class="text-slate-200 ml-1">${esc(m.body)}</span>
+      <div class="flex-1 min-w-0 break-words">${authorBtn(m.author)}<span class="text-slate-200 ml-1" data-i18n-skip>${esc(m.body)}</span>
         ${m.pending ? '<span class="text-amber-300 text-[10px] ml-1">⏳ wird geprüft</span>' : ""}<span class="block text-[9px] text-slate-600">${ago(m.createdAt)}</span></div>
       ${m.mine || state.me?.isAdmin ? `<button onclick="PS.deleteChat(${m.id})" class="text-slate-600 hover:text-rose-400 text-[11px]" title="Löschen">✕</button>`
         : state.user ? `<button onclick="PS.report('chat', '${m.id}')" class="text-slate-600 hover:text-amber-300 text-[11px]" title="Melden">⚠</button>` : ""}

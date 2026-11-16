@@ -14,3 +14,7 @@
 .netlify
 .scan-seed-cache
 /public/assets/chunks
+
+# Playwright
+playwright-report/
+test-results/

@@ -14,6 +14,7 @@ import { ogJpeg, imgKey } from "./profiles.ts";
 import { blockedIds } from "./community.ts";
 import { str, rows, rateLimit, clientIp, euro } from "./util.ts";
 import { publicCache } from "./cache.ts";
+import { pt, euroL, fmtDate, fmtNumber, localPath, langFromPath, alternatesFor, withAppLang, PRICE_CHECK_LABELS, type Lang } from "./page-i18n.ts";
 
 type Hlp = {
   auth: any; body: (c: any) => Promise<Record<string, any>>;
@@ -35,12 +36,12 @@ const accentOf = (v: string | null | undefined) => (v && SHOP_ACCENTS[v] ? v : D
 const safeOwnImage = (v: string | null | undefined) => (v && IMG_RE.test(v) ? v : "");
 
 /** Antwortzeit in lesbarer Form („meist innerhalb von 2 Std.“). */
-export function responseLabel(minutes: number | null): string {
-  if (minutes === null || !Number.isFinite(minutes)) return "Antwortzeit: noch keine Daten";
-  if (minutes <= 60) return "Antwortet meist innerhalb 1 Std.";
-  if (minutes <= 6 * 60) return `Antwortet meist innerhalb ${Math.ceil(minutes / 60)} Std.`;
-  if (minutes <= 24 * 60) return "Antwortet meist am selben Tag";
-  return `Antwortet meist innerhalb ${Math.ceil(minutes / 1440)} Tagen`;
+export function responseLabel(minutes: number | null, lang: Lang = "de"): string {
+  if (minutes === null || !Number.isFinite(minutes)) return pt(lang, "shop.respNone");
+  if (minutes <= 60) return pt(lang, "shop.resp1h");
+  if (minutes <= 6 * 60) return pt(lang, "shop.respHours", { n: Math.ceil(minutes / 60) });
+  if (minutes <= 24 * 60) return pt(lang, "shop.respSameDay");
+  return pt(lang, "shop.respDays", { n: Math.ceil(minutes / 1440) });
 }
 
 async function shopProfile(slug: string) {
@@ -117,32 +118,40 @@ const SHOP_CSS = (accent: string) => `<style>
 .it img{width:100%;aspect-ratio:245/342;object-fit:cover;border-radius:8px;background:#0f172a;display:block}.it span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.it b{color:#34d399}.pc{font-size:10px;font-weight:900;border-radius:6px;padding:1px 6px}
 </style>`;
 
-function shopPage(d: NonNullable<Awaited<ReturnType<typeof shopDetails>>>) {
+function shopPage(d: NonNullable<Awaited<ReturnType<typeof shopDetails>>>, lang: Lang = "de") {
   const s = d.shop;
-  const url = `${SITE()}/shop/${s.slug}`;
-  const rating = s.rating.count ? `⭐ ${s.rating.avg.toLocaleString("de-DE")} (${s.rating.count} Bewertungen)` : "Noch keine Bewertungen";
-  const desc = `${s.title}: ${s.stats.active} Pokémon-Karten-Angebote von ${s.displayName}${s.city ? ` aus ${s.city}` : ""}. ${rating} · ${s.responseLabel}. Verifizierter Pro-Trader auf PokeSwipe & Radar.`;
-  const tab = (lang: string, label: string, n: number) => `<a class="${d.lang === lang ? "on" : ""}" href="/shop/${encodeURIComponent(String(s.slug))}${lang ? `?lang=${lang}` : ""}">${label}${lang ? ` (${n})` : ""}</a>`;
-  const pcLabel: Record<string, string> = { deal: "🔥 Unter Marktwert", fair: "✅ Fairer Preis", high: "über Markt" };
+  const t = (k: Parameters<typeof pt>[1], v?: Record<string, string | number>) => pt(lang, k, v);
+  const eur = (n: number) => euroL(lang, n);
+  const dePath = `/shop/${s.slug}${d.lang ? `?lang=${d.lang}` : ""}`;
+  const alternates = alternatesFor(dePath);
+  const url = `${SITE()}${localPath(lang, `/shop/${s.slug}`)}`;
+  const resp = responseLabel(s.responseMinutes, lang);
+  const rating = s.rating.count ? t("shop.rating", { avg: fmtNumber(lang, s.rating.avg), n: s.rating.count }) : t("shop.noRating");
+  const desc = t("shop.desc", { title: s.title, n: s.stats.active, name: s.displayName, city: s.city ? t("shop.descCity", { city: s.city }) : "", rating, resp });
+  const shopHref = localPath(lang, `/shop/${encodeURIComponent(String(s.slug))}`);
+  const tab = (l: string, label: string, n: number) => `<a class="${d.lang === l ? "on" : ""}" href="${shopHref}${l ? `?lang=${l}` : ""}">${label}${l ? ` (${n})` : ""}</a>`;
+  const pcLabel = PRICE_CHECK_LABELS[lang];
   const pcColor: Record<string, string> = { deal: "background:#34d399;color:#0f172a", fair: "background:#1e293b;color:#a7f3d0", high: "background:#1e293b;color:#fca5a5" };
+  const appShop = withAppLang(lang, `/?shop=${encodeURIComponent(String(s.slug))}`);
   const body = `${SHOP_CSS(s.accent)}
     <div class="sb"><div class="bn"${s.banner ? ` style="background-image:url('${h(cdnImage(s.banner, 1200))}')"` : ""}></div>
       <div class="in"><div class="lg"${s.logo ? ` style="background-image:url('${h(cdnImage(s.logo, 240))}')"` : ""}>${s.logo ? "" : "🏪"}</div>
-        <div><h1>${h(s.title)}<span class="vb">✔ Verifizierter Händler</span></h1>
-          <p class="muted" style="margin:4px 0 0">${h(s.displayName)}${s.city ? ` · 📍 ${h(s.city)}` : ""} · dabei seit ${new Date(s.memberSince).toLocaleDateString("de-DE", { month: "long", year: "numeric" })}</p>
-          <p style="margin:4px 0 0;font-size:13px">${h(rating)} · ⏱️ ${h(s.responseLabel)}${s.sellerVerified ? " · 🔒 Käuferschutz verfügbar" : ""}</p></div></div>
+        <div><h1>${h(s.title)}<span class="vb">${t("shop.verified")}</span></h1>
+          <p class="muted" style="margin:4px 0 0">${h(s.displayName)}${s.city ? ` · 📍 ${h(s.city)}` : ""} · ${t("shop.since", { date: fmtDate(lang, s.memberSince, { month: "long", year: "numeric" }) })}</p>
+          <p style="margin:4px 0 0;font-size:13px">${h(rating)} · ⏱️ ${h(resp)}${s.sellerVerified ? t("shop.protection") : ""}</p></div></div>
       ${s.bio ? `<p style="padding:0 16px 14px;margin:0;white-space:pre-line;font-size:14px">${h(s.bio)}</p>` : ""}</div>
-    <div class="kp"><div><b>${s.stats.active}</b>aktive Angebote</div><div><b>${s.completedTrades + s.stats.sales}</b>abgeschlossene Deals</div>
-      <div><b>${h(euro(s.stats.inventoryValue))}</b>Inventar-Wert</div><div><b>${s.stats.followers}</b>Follower</div></div>
-    <div class="tabs">${tab("", "Alle Sprachen", s.stats.active)}${tab("de", "🇩🇪 Deutsch", s.stats.langs.de)}${tab("en", "🇬🇧 Englisch", s.stats.langs.en)}${tab("ja", "🇯🇵 Japanisch", s.stats.langs.ja)}</div>
-    <div class="inv">${d.listings.length ? d.listings.map((l: any) => `<a class="it" href="/?shop=${encodeURIComponent(String(s.slug))}">
+    <div class="kp"><div><b>${s.stats.active}</b>${t("shop.active")}</div><div><b>${s.completedTrades + s.stats.sales}</b>${t("shop.deals")}</div>
+      <div><b>${h(eur(s.stats.inventoryValue))}</b>${t("shop.inventory")}</div><div><b>${s.stats.followers}</b>${t("shop.followers")}</div></div>
+    <div class="tabs">${tab("", t("shop.allLangs"), s.stats.active)}${tab("de", t("shop.langDe"), s.stats.langs.de)}${tab("en", t("shop.langEn"), s.stats.langs.en)}${tab("ja", t("shop.langJa"), s.stats.langs.ja)}</div>
+    <div class="inv">${d.listings.length ? d.listings.map((l: any) => `<a class="it" href="${lang === "en" ? h(appShop) : appShop}">
         <img src="${h(cdnImage(l.image || "/card-fallback.svg", 300))}" alt="${h(l.card_name)}" loading="lazy">
-        <span><strong>${h(FLAG[l.lang] || "")} ${h(l.card_name)}</strong></span><span><b>${h(euro(Number(l.price)))}</b>${l.buy_now ? " · 🔒 Sofort-Kauf" : ""}</span>
+        <span><strong>${h(FLAG[l.lang] || "")} ${h(l.card_name)}</strong></span><span><b>${h(eur(Number(l.price)))}</b>${l.buy_now ? t("shop.buyNow") : ""}</span>
         ${l.priceCheck ? `<span class="pc" style="${pcColor[l.priceCheck]}">${pcLabel[l.priceCheck]}</span>` : ""}</a>`).join("")
-      : `<p class="muted">Gerade keine Angebote${d.lang ? " in dieser Sprache" : ""}.</p>`}</div>
-    <div class="btns" style="margin-top:14px"><a class="btn y" href="/?shop=${encodeURIComponent(String(s.slug))}">🤝 In der App anfragen &amp; kaufen</a></div>`;
+      : `<p class="muted">${t("shop.empty", { filter: d.lang ? t("shop.emptyFilter") : "" })}</p>`}</div>
+    <div class="btns" style="margin-top:14px"><a class="btn y" href="${lang === "en" ? h(appShop) : appShop}">${t("shop.cta")}</a></div>`;
   return pageShell({
-    title: `${s.title} – Pokémon-Karten-Shop | PokeSwipe & Radar`, description: desc.slice(0, 300), canonical: d.lang ? `${url}?lang=${d.lang}` : url,
+    lang, alternates,
+    title: t("shop.title", { title: s.title }), description: desc.slice(0, 300), canonical: d.lang ? `${url}?lang=${d.lang}` : url,
     image: `${SITE()}/api/og/shop/${encodeURIComponent(String(s.slug))}.jpg`, body,
     jsonLd: {
       "@context": "https://schema.org", "@type": "Store", name: s.title, url, description: s.bio || desc,
@@ -200,22 +209,25 @@ export function registerShops(app: any, { auth, body, storeDataUrlImage, ratingO
     return c.json({ banner: safeOwnImage(p?.banner), logo: safeOwnImage(p?.logo), accent: accentOf(p?.accent) });
   });
 
-  // Öffentliche Shop-Seite (Google, WhatsApp-/Instagram-Vorschau); die App öffnet den Shop über /?shop=<name>
-  app.get("/shop/:slug", async (c: any) => {
+  const shopRoute = async (c: any) => {
+    const lang = langFromPath(c.req.path);
     const slug = str(c.req.param("slug"), 30).toLowerCase();
-    if (!(await rateLimit(`shoppage:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
+    if (!(await rateLimit(`shoppage:${clientIp(c)}`, 60, 60_000))) return c.text(pt(lang, "common.tooMany"), 429);
     const d = await shopDetails(slug, ratingOf, String(c.req.query("lang") || ""));
     if (!d) {
       return c.html(pageShell({
-        title: "Shop nicht gefunden – PokeSwipe & Radar", description: "Diesen Händler-Shop gibt es nicht (mehr).", canonical: `${SITE()}/`, robots: "noindex",
-        body: `<div class="card"><h1>🏪 Shop nicht gefunden</h1><p class="muted">Diesen Händler-Shop gibt es nicht (mehr) oder er ist gerade nicht aktiv.</p><div class="btns"><a class="btn y" href="/?tab=map">Zum Tausch-Hub</a></div></div>`,
+        lang, title: pt(lang, "shop.notFoundTitle"), description: pt(lang, "shop.notFoundDesc"), canonical: `${SITE()}${lang === "en" ? "/en/sets" : "/"}`, robots: "noindex",
+        body: `<div class="card"><h1>${pt(lang, "shop.notFoundH1")}</h1><p class="muted">${pt(lang, "shop.notFoundText")}</p><div class="btns"><a class="btn y" href="${h(withAppLang(lang, "/?tab=map"))}">${pt(lang, "shop.toHub")}</a></div></div>`,
       }), 404);
     }
     await recordShopView(c, d.profile.userId);
     // Seite ist nicht personalisiert; kurze CDN-Zeit, damit Inventar und Aufrufzähler aktuell bleiben
     publicCache(c, "page", { sMaxAge: 120, swr: 600, varyQuery: ["lang"] });
-    return c.html(shopPage(d));
-  });
+    return c.html(shopPage(d, lang));
+  };
+  // Öffentliche Shop-Seite (Google, WhatsApp-/Instagram-Vorschau); die App öffnet den Shop über /?shop=<name>
+  app.get("/shop/:slug", shopRoute);
+  app.get("/en/shop/:slug", shopRoute); // englische Fassung (?lang= bleibt der Inventar-Sprachfilter)
 
   app.get("/api/og/shop/:file", async (c: any) => {
     const slug = String(c.req.param("file")).replace(/\.jpg$/, "").toLowerCase();

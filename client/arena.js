@@ -386,7 +386,9 @@ function applyDrawer() {
 // ---------------------------------------------------------------------------
 // Detailansicht englischer/japanischer Drucke (beide Preis-Feeds getrennt)
 // ---------------------------------------------------------------------------
-const usd = (n) => `${(Number(n) || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
+const usd = (n) => (globalThis.psLang === "en"
+  ? "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  : (Number(n) || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $");
 
 export async function openPrint(id) {
   if (!/^(en|ja):[A-Za-z0-9.\-_]{2,40}$/.test(String(id || ""))) return;

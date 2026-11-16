@@ -12,7 +12,7 @@
 # die Sitemaps, Pokémon-/Sealed-/Trend-Seiten, Teilen-Kurzlinks (/s/…), Einladungsseiten, öffentliche Sammler-Profile (/u/…)
 # teilbare Pull-Wall-Beiträge (/p/…) und öffentliche Händler-Shops (/shop/…, mit Vorschaubild) – alles andere ist die statische App
 [server]
-  path = ["/api/*", "/karte/*", "/sitemap.xml", "/sitemaps/*", "/sets", "/set/*", "/rechtliches", "/impressum", "/agb", "/widerruf", "/datenschutz", "/kuendigen", "/pokemon", "/pokemon/*", "/sealed", "/sealed/*", "/trends", "/s/*", "/einladung/*", "/u/*", "/p/*", "/shop/*", "/.well-known/apple-app-site-association", "/.well-known/assetlinks.json"]
+  path = ["/api/*", "/karte/*", "/sitemap.xml", "/sitemaps/*", "/sets", "/set/*", "/rechtliches", "/impressum", "/agb", "/widerruf", "/datenschutz", "/kuendigen", "/pokemon", "/pokemon/*", "/sealed", "/sealed/*", "/trends", "/s/*", "/einladung/*", "/u/*", "/p/*", "/shop/*", "/.well-known/apple-app-site-association", "/.well-known/assetlinks.json", "/en", "/en/*"]
 
 # Kartenbilder über das Netlify Image CDN (verkleinert, WebP/AVIF)
 [images]

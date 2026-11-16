@@ -119,7 +119,10 @@ function wishRequest(listingId) {
 // Zusatz-Bereich in der Kartenansicht (Wunschliste, Teilen, Grading)
 export function cardExtrasHtml(c) {
   const price = c.price || 0;
-  return `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+  // Phase 8: Preise nach Zustand + letzte Verkäufe auf PokeSwipe (lädt nach, sobald der Bereich im DOM ist)
+  setTimeout(() => loadConditionPrices(c.id), 0);
+  return `<div id="ps-cond-box" data-card="${esc(String(c.id))}" class="bg-slate-950 rounded-2xl p-3 border border-emerald-400/30 text-xs mb-3"><p class="text-slate-400">⏳ Lade Preise nach Zustand …</p></div>
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
     <div class="bg-slate-950 rounded-2xl p-3 border border-rose-400/40 space-y-2">
       <p class="font-black text-rose-300">❤️ Wunschliste</p>
       ${input("ps-wish-max", `type="number" step="0.01" min="0" placeholder="Höchstpreis € (optional)"`)}
@@ -134,6 +137,29 @@ export function cardExtrasHtml(c) {
       ${btn("🏆 Lohnt sich Grading?", `PS.gradingFor(${Number(price) || 0})`, "w-full bg-yellow-400 text-slate-950")}
     </div></div>`;
 }
+
+const COND_SOURCE = { sales: "aus Verkäufen", blend: "Verkäufe + Referenz", reference: "Referenz", asks: "günstigstes Angebot", none: "" };
+async function loadConditionPrices(cardId, variant = "") {
+  const box = document.getElementById("ps-cond-box");
+  if (!box || box.dataset.card !== String(cardId)) return;
+  try {
+    const d = await api(`/api/cards/${encodeURIComponent(cardId)}/conditions${variant ? `?variant=${encodeURIComponent(variant)}` : ""}`);
+    if (!document.getElementById("ps-cond-box") || box.dataset.card !== String(cardId)) return;
+    const money = (v) => (v ? eur(v) : "–");
+    box.innerHTML = `<div class="flex flex-wrap items-center justify-between gap-2 mb-2"><p class="font-black text-emerald-300">📊 Preise nach Zustand</p>
+      ${d.variants.length > 1 ? `<select onchange="PS.conditionVariant(${jsArg(cardId)}, this.value)" class="bg-slate-900 border border-slate-700 rounded-lg text-[11px] text-white px-2 py-1" aria-label="Variante">${d.variants.map((v) => `<option value="${esc(v)}" ${v === d.variant ? "selected" : ""}>${esc(VARIANT_NAMES[v] || v)}</option>`).join("")}</select>` : ""}</div>
+      <div class="overflow-x-auto"><table class="w-full text-[11px]"><thead><tr class="text-slate-400 text-left"><th class="py-1 pr-2">Zustand</th><th class="pr-2">Wert</th><th class="pr-2">Verkauft (90 T.)</th><th>Ab</th></tr></thead>
+      <tbody>${d.conditions.map((r) => `<tr class="border-t border-slate-800"><td class="py-1 pr-2 font-black text-white">${esc(r.short)}</td>
+        <td class="pr-2"><b class="text-white">${money(r.value)}</b> <span class="text-slate-500">${esc(COND_SOURCE[r.valueSource] || "")}</span></td>
+        <td class="pr-2 text-slate-300">${r.soldCount90 ? `${money(r.soldMedian90)} (${Number(r.soldCount90)}×)` : "–"}</td>
+        <td class="text-slate-300">${r.askCount ? `${money(r.askLow)} (${Number(r.askCount)})` : "–"}</td></tr>`).join("")}</tbody></table></div>
+      ${d.recentSales.length ? `<p class="font-black text-white mt-2">✅ Zuletzt auf PokeSwipe verkauft</p><div class="space-y-0.5">${d.recentSales.slice(0, 5).map((x) => `<p class="flex justify-between text-slate-300"><span><b class="text-white">${eur(x.price)}</b> ${esc([x.condition.toUpperCase(), x.variant !== "normal" ? x.variantLabel : "", x.lang.toUpperCase()].filter(Boolean).join(" · "))}</span><span class="text-slate-500">${new Date(x.soldAt).toLocaleDateString(globalThis.psLang === "en" ? "en-GB" : "de-DE")}</span></p>`).join("")}</div>` : ""}
+      <p class="text-[10px] text-slate-500 mt-1">Verkäufe und Angebote auf PokeSwipe inkl. anteiligem Versand. Referenz = Cardmarket-Trend (NM) × üblicher Zustandsabschlag.</p>`;
+  } catch {
+    box.innerHTML = `<p class="text-slate-500">Preise nach Zustand sind gerade nicht verfügbar.</p>`;
+  }
+}
+const VARIANT_NAMES = { normal: "Normal", reverse_holo: "Reverse Holo", holo: "Holo", first_edition: "1st Edition", shadowless: "Shadowless", promo: "Promo" };
 
 function shareCardPage(id, name) {
   const slug = String(name).toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "karte";
@@ -918,6 +944,7 @@ function registerOffline() {
 // ===========================================================================
 export const growthApi = {
   addWish, removeWish, wishRequest, shareCardPage, shareCardImage, sharePortfolioImage, gradingFor, bulkPick,
+  conditionVariant: (id, v) => loadConditionPrices(id, v),
   openImport, addEvent, toggleRemind, removeEvent, board, setPref, openShopStats, exportData, deleteAccount,
   confirmDelete, openLegal, adminSaveLegal, adminRunGrowth, loadWishlist,
   adminWebhookSetup, adminCatalogRun, adminCatalogIntlRun, adminSealedImport, adminCancelDone, adminCancelApply,

@@ -21,7 +21,7 @@ async function openProfile(slug) {
           <p class="text-[11px] text-slate-400">${esc(p.level.icon)} ${esc(p.level.label)} • seit ${new Date(p.memberSince).toLocaleDateString("de-DE", { month: "short", year: "numeric" })}${p.city ? ` • 📍 ${esc(p.city)}` : ""}${p.sellerVerified ? " • 🔒 Verifizierter Verkäufer" : ""}</p>
         </div>
       </div>
-      ${p.bio ? `<p class="text-xs text-slate-200">${esc(p.bio)}</p>` : ""}
+      ${p.bio ? `<p class="text-xs text-slate-200" data-i18n-skip>${esc(p.bio)}</p>` : ""}
       ${p.isMe && !p.publicProfile ? `<p class="text-[11px] bg-amber-500/15 text-amber-200 rounded-xl px-3 py-2">🔒 Dein Profil ist privat – nur du siehst diese Vorschau. ${btn("Jetzt öffentlich machen", "PS.openProfileSettings()", "bg-yellow-400 text-slate-950 ml-1")}</p>` : ""}
       <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">
         ${stat(p.stats.cards, "Karten")}${stat(p.stats.sets, "Sets")}${stat(`<span id="ps-pf-followers">${p.followers}</span>`, "Follower")}${stat(p.following, "Folgt")}
@@ -38,7 +38,7 @@ async function openProfile(slug) {
         ${p.isMe ? "" : btn("🤝 Zum Tausch-Hub", "PS.closeProfileGoMarket()", "w-full bg-slate-800 text-white")}` : ""}
       ${p.dupes.length ? `<h4 class="text-sm font-black text-white">♻️ Doppelte Karten (tauschbar)</h4>${cardGrid(p.dupes, (x) => `<span class="text-slate-400">${Number(x.spare)}× doppelt</span>`)}` : ""}
       ${p.wishlist.length ? `<h4 class="text-sm font-black text-white">❤️ Sucht</h4>${cardGrid(p.wishlist)}` : ""}
-      ${p.posts.length ? `<h4 class="text-sm font-black text-white">📸 Letzte Pulls</h4><div class="grid grid-cols-3 gap-2">${p.posts.map((x) => `<a href="/?tab=community&post=${Number(x.id)}" class="block bg-slate-950 rounded-xl p-1.5 text-[10px] text-slate-300">${x.image ? `<img src="${esc(cdn(x.image, 240))}" class="w-full h-24 object-cover rounded-lg" loading="lazy">` : ""}<span class="block truncate mt-1">${esc(x.caption)}</span><span>❤️ ${Number(x.likes)}</span></a>`).join("")}</div>` : ""}`, { wide: true });
+      ${p.posts.length ? `<h4 class="text-sm font-black text-white">📸 Letzte Pulls</h4><div class="grid grid-cols-3 gap-2">${p.posts.map((x) => `<a href="/?tab=community&post=${Number(x.id)}" class="block bg-slate-950 rounded-xl p-1.5 text-[10px] text-slate-300">${x.image ? `<img src="${esc(cdn(x.image, 240))}" class="w-full h-24 object-cover rounded-lg" loading="lazy">` : ""}<span class="block truncate mt-1" data-i18n-skip>${esc(x.caption)}</span><span>❤️ ${Number(x.likes)}</span></a>`).join("")}</div>` : ""}`, { wide: true });
   } catch (e) {
     closeModalEl("ps-profile");
     if (e.status === 404) toast("🔒 Profil privat", "Dieses Sammler-Profil ist nicht öffentlich.");

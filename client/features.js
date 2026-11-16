@@ -4,6 +4,7 @@ import {
   $, esc, jsArg, safeUrl, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart,
 } from "./core.js";
+import { localePath } from "./i18n.js";
 import { liveScanPlaceholderHtml, lazyLiveScanApi, onLiveScanShownLazy } from "./lazy.js";
 import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml, collectorApi } from "./collector.js";
 import {
@@ -497,7 +498,7 @@ async function openShop(slug, lang = "") {
   if (!keep) modal("ps-shop", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Shop …</p>`, { wide: true });
   try {
     const { shop, listings } = await api(`/api/shops/${encodeURIComponent(slug)}${shopView.lang ? `?lang=${shopView.lang}` : ""}`);
-    const url = shop.publicUrl || `${location.origin}/shop/${encodeURIComponent(shop.slug || "")}`;
+    const url = localePath(shop.publicUrl || `${location.origin}/shop/${encodeURIComponent(shop.slug || "")}`);
     const accent = shopAccent(shop.accent);
     const st = shop.stats || { active: 0, sales: 0, followers: 0, inventoryValue: 0, langs: { de: 0, en: 0, ja: 0 } };
     const tab = (l, label, n) => `<button onclick="PS.openShop(${jsArg(shop.slug)}, ${jsArg(l)})" class="shrink-0 text-[11px] font-black px-3 py-1.5 rounded-xl ${shopView.lang === l ? "text-slate-950" : "bg-slate-800 text-slate-200"}" ${shopView.lang === l ? `style="background:${accent}"` : ""}>${label}${l ? ` (${Number(n) || 0})` : ""}</button>`;
@@ -514,7 +515,7 @@ async function openShop(slug, lang = "") {
           </div>
           <p class="text-xs text-slate-300 mt-2">${esc(shop.displayName)}${shop.city ? " • 📍 " + esc(shop.city) : ""} • dabei seit ${new Date(shop.memberSince).toLocaleDateString("de-DE", { month: "short", year: "numeric" })}</p>
           <p class="text-xs text-white">${shop.rating?.count ? `⭐ ${Number(shop.rating.avg) || 0} (${Number(shop.rating.count) || 0} Bewertungen)` : "Noch keine Bewertungen"} • ⏱️ ${esc(shop.responseLabel || "")}${shop.sellerVerified ? " • 🔒 Käuferschutz" : ""}</p>
-          ${shop.bio ? `<p class="text-xs text-slate-200 mt-2 whitespace-pre-line">${esc(shop.bio)}</p>` : ""}
+          ${shop.bio ? `<p class="text-xs text-slate-200 mt-2 whitespace-pre-line" data-i18n-skip>${esc(shop.bio)}</p>` : ""}
         </div>
       </div>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">

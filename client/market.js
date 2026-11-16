@@ -1,7 +1,7 @@
 // Phase 4: P2P-Marktplatz mit Käuferschutz (Treuhand über Stripe Connect)
 // Verkäuferkonto einrichten, Sofort-Kauf & verbindliche Preisangebote, Bestellungen (Versand, Erhalt, Reklamation,
 // Bewertung) und die Admin-Ansicht für Reklamationen.
-import { $, esc, jsArg, eur, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
+import { $, esc, jsArg, eur, toast, cdn, state, api, bearer, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
 import { variantSelect, variantsOf, variantBadge, VARIANT_KEYS } from "./variants.js";
 
 const mk = { meta: null, orders: [], seller: null };
@@ -261,11 +261,90 @@ async function payOrderGo(id) {
 async function shipOrder(id) {
   const m = await meta();
   modal("ps-ship", `<h3 class="text-base font-black text-white">📦 Versand eintragen</h3>
+    <div id="ps-label-box" class="bg-slate-900 border border-slate-800 rounded-2xl p-3 space-y-2"><p class="text-[11px] text-slate-400">⏳ Prüfe DHL-Etiketten …</p></div>
     <p class="text-xs text-slate-300">Tipp: Karten im Toploader + Teambag, versichert als Paket oder Einschreiben versenden.</p>
     <select id="ps-ship-carrier" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white">${Object.entries(m.carriers || {}).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select>
     <input id="ps-ship-nr" maxlength="40" placeholder="Sendungsnummer" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white">
     ${btn("Als versendet markieren", `PS.shipOrderGo(${id})`, "w-full bg-yellow-400 text-slate-950")}`);
+  renderLabelBox(id);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8: DHL-Versandetikett direkt aus der Bestellung (eigene DHL-Zugangsdaten des Händlers)
+// ---------------------------------------------------------------------------
+async function renderLabelBox(id) {
+  const box = $("ps-label-box");
+  if (!box) return;
+  try {
+    const [meta, { account }, { labels }] = await Promise.all([api("/api/shipping/meta"), api("/api/seller/shipping-account"), api(`/api/orders/${id}/labels`)]);
+    const active = labels.find((l) => l.status === "created");
+    if (active) fillTracking(active.shipmentNo);
+    if (!meta.enabled) { box.innerHTML = `<p class="text-[11px] text-slate-400">📮 DHL-Etiketten sind auf der Plattform noch nicht freigeschaltet.</p>`; return; }
+    if (!account.configured) {
+      box.innerHTML = `<p class="text-[11px] text-slate-300">📮 <b>DHL-Etikett mit einem Klick:</b> Hinterlege einmalig deine DHL-Geschäftskunden-Zugangsdaten im Händler-Bereich.</p>
+        ${btn("Zum Händler-Bereich", "PS.closeShipOpenSellerHub()", "w-full bg-slate-700 text-white")}`;
+      return;
+    }
+    const opts = meta.products.map((p) => `<option value="${esc(p.code)}">${esc(p.label)}</option>`).join("");
+    box.innerHTML = `<p class="text-sm font-black text-white">📮 DHL-Etikett${account.sandbox ? ` <span class="text-[10px] text-amber-300">(Testumgebung)</span>` : ""}</p>
+      ${active ? `<p class="text-[11px] text-emerald-300">✅ Etikett ${esc(active.productLabel)} · ${esc(active.shipmentNo)} · ${Number(active.weightG)} g</p>
+        <div class="flex gap-2">${btn("🖨️ PDF herunterladen", `PS.labelPdf(${jsArg(active.pdfUrl)}, ${jsArg(active.shipmentNo)})`, "flex-1 bg-cyan-400 text-slate-950")}
+          ${btn("Stornieren", `PS.cancelLabel(${Number(id)}, ${Number(active.id)})`, "bg-slate-700 text-rose-200")}</div>` : ""}
+      <div class="grid grid-cols-3 gap-2 text-[11px] text-slate-300">
+        <label class="col-span-2">Produkt<select id="ps-lbl-prod" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white"><option value="">Automatisch (nach Ziel & Gewicht)</option>${opts}</select></label>
+        <label>Gewicht (g)<input id="ps-lbl-w" type="number" min="10" max="31500" value="${Number(account.defaultWeightG) || 500}" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white"></label>
+        <label class="col-span-3">Format<select id="ps-lbl-fmt" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white">${meta.printFormats.map((f) => `<option value="${esc(f)}">${f === "A4" ? "A4 (Drucker)" : esc(f) + " (Etikettendrucker)"}</option>`).join("")}</select></label>
+      </div>
+      <p id="ps-lbl-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
+      ${btn(active ? "Neues Etikett erstellen (altes wird storniert)" : "Etikett erstellen (über deinen DHL-Vertrag)", `PS.createLabel(${Number(id)}, ${active ? "true" : "false"})`, "w-full bg-emerald-500 text-slate-950")}`;
+  } catch (e) { box.innerHTML = `<p class="text-[11px] text-rose-300">${esc(e.message || "DHL-Etiketten nicht verfügbar.")}</p>`; }
+}
+
+function fillTracking(no) {
+  const sel = $("ps-ship-carrier"), nr = $("ps-ship-nr");
+  if (sel && [...sel.options].some((o) => o.value === "dhl")) sel.value = "dhl";
+  if (nr && !nr.value) nr.value = no;
+}
+
+async function createLabel(id, replace = false) {
+  const msg = $("ps-lbl-msg");
+  if (msg) msg.textContent = "⏳ DHL erstellt das Etikett …";
+  try {
+    const r = await api(`/api/orders/${Number(id)}/label`, { method: "POST", body: {
+      product: $("ps-lbl-prod")?.value || "", weightG: Number($("ps-lbl-w")?.value) || 500, printFormat: $("ps-lbl-fmt")?.value || "A4", replace,
+    } });
+    const nr = $("ps-ship-nr"); if (nr) nr.value = "";
+    fillTracking(r.trackingNumber);
+    toast("📮 Etikett erstellt", `Sendungsnummer ${r.trackingNumber}${r.sandbox ? " (Testumgebung)" : ""}. Nach dem Aufkleben „Als versendet markieren“.`);
+    labelPdf(r.label.pdfUrl, r.trackingNumber);
+    renderLabelBox(id);
+  } catch (e) { if (msg) msg.textContent = e.message || "Etikett konnte nicht erstellt werden."; }
+}
+
+/** Etikett-PDF mit Anmeldung laden und als Datei speichern (der Download-Link braucht das Login-Token). */
+async function labelPdf(url, shipmentNo) {
+  try {
+    const token = bearer();
+    const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: "same-origin" });
+    if (!res.ok) throw new Error("Etikett konnte nicht geladen werden.");
+    const href = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = href; a.download = `DHL-${String(shipmentNo || "Etikett").replace(/[^A-Za-z0-9-]/g, "")}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 60_000);
+  } catch (e) { handleError(e); }
+}
+
+async function cancelLabel(id, labelId) {
+  if (!confirm("Etikett bei DHL stornieren? Bereits eingelieferte Sendungen lassen sich nicht stornieren.")) return;
+  try {
+    await api(`/api/orders/${Number(id)}/label/${Number(labelId)}`, { method: "DELETE" });
+    const nr = $("ps-ship-nr"); if (nr) nr.value = "";
+    toast("🗑️ Storniert", "Das Etikett wurde bei DHL storniert.");
+    renderLabelBox(id);
+  } catch (e) { handleError(e); }
+}
+
 async function shipOrderGo(id) {
   try {
     await api(`/api/orders/${id}/action`, { method: "POST", body: { action: "ship", carrier: $("ps-ship-carrier").value, trackingNumber: $("ps-ship-nr").value } });
@@ -323,7 +402,8 @@ async function resolveOrder(id, action) {
 
 export const marketApi = {
   openSeller, sellerOnboard, sellerDashboard, openBuy, buyNow: (id) => buyNow(id), openOffer, sendOffer,
-  openOrders, orderAction, withdrawOrder, payOrder, payOrderGo, shipOrder, shipOrderGo, reviewOrder, orderStars, sendOrderReview,
+  openOrders, orderAction, withdrawOrder, payOrder, payOrderGo, shipOrder, shipOrderGo, createLabel, cancelLabel, labelPdf,
+  closeShipOpenSellerHub: () => { closeModalEl("ps-ship"); window.PS?.openSellerHub?.(); }, reviewOrder, orderStars, sendOrderReview,
   openMarketAdmin, resolveOrder,
   runEscrow: async () => { try { const r = await api("/api/admin/escrow/run", { method: "POST", body: {} }); toast("⏱️ Fristen geprüft", `${r.released} ausgezahlt, ${r.refunded} erstattet, ${r.expired} verfallen.`); openMarketAdmin(); } catch (e) { handleError(e); } },
 };

@@ -4,7 +4,8 @@ import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { db, cards, cardSets, sealedProducts, sealedPriceHistory, catalogImportRuns } from "../db/index.ts";
 import { rebuildSpecies, fillEnglishNames, backfillSealedSlugs, SEO_SITEMAPS, SEO_STATIC_PAGES } from "./seo.ts";
 import { refreshCard, cardPrice, evaluateSealedAlerts } from "./prices.ts";
-import { SITE, h, slugify, cdnImage, pageShell, ebayUrl, cardmarketSearch } from "./growth.ts";
+import { SITE, h, slugify, cdnImage, pageShell, ebayUrl, cardmarketSearch, englishCardNames, englishSetNames } from "./growth.ts";
+import { pt, euroL, fmtDate, localPath, langFromPath, alternatesFor, withAppLang, displayName, toEnPath, type Lang } from "./page-i18n.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
 import { setCompleteness } from "./set-completeness-logic.ts";
 import { publicCache } from "./cache.ts";
@@ -293,94 +294,115 @@ export function parseSealedCsv(text: string): SealedImportRow[] {
 // ---------------------------------------------------------------------------
 // Öffentliche Set-Seiten (SEO)
 // ---------------------------------------------------------------------------
-const cmSearch = cardmarketSearch;
-const fmtDate = (d: unknown) => (d ? new Date(String(d)).toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" }) : "");
 const SET_CSS = `<style>.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}.ci{background:#0b1220;border:1px solid #1e293b;border-radius:14px;padding:6px;text-decoration:none;font-size:12px;display:block}
 .ci img{width:100%;border-radius:8px;display:block;aspect-ratio:245/342;object-fit:cover;background:#0f172a}.ci b{display:block;color:#34d399;font-size:13px}.ci span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sets{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}.si{display:flex;gap:10px;align-items:center;background:#0b1220;border:1px solid #1e293b;border-radius:14px;padding:10px;text-decoration:none;font-size:13px}
 .si img{width:64px;height:36px;object-fit:contain}.crumb{font-size:12px;color:#94a3b8;margin-bottom:10px}.crumb a{color:#cbd5e1}</style>`;
+const tr = (lang: Lang) => (k: Parameters<typeof pt>[1], v?: Record<string, string | number>) => pt(lang, k, v);
 
 export async function setsIndexPage(c: any) {
-  if (!(await rateLimit(`setpage:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
+  const lang = langFromPath(c.req.path);
+  const t = tr(lang), lp = (p: string) => localPath(lang, p);
+  if (!(await rateLimit(`setpage:${clientIp(c)}`, 60, 60_000))) return c.text(t("common.tooMany"), 429);
   const list = rows(await db.execute(sql`
     SELECT s.id, s.name, s.slug, s.serie_name, s.logo, s.release_date, s.card_count_total,
       (SELECT count(*)::int FROM cards c WHERE c.set_id = s.id AND COALESCE(c.trend, c.avg, c.low) IS NOT NULL) AS priced
     FROM card_sets s WHERE s.active AND s.cards_imported_at IS NOT NULL
     ORDER BY s.release_date DESC NULLS LAST, s.name
   `));
+  const en = lang === "en" ? await englishSetNames(list.map((s: any) => String(s.id))) : new Map();
   const groups = new Map<string, any[]>();
-  for (const s of list) { const k = s.serie_name || "Weitere Sets"; groups.set(k, [...(groups.get(k) || []), s]); }
-  const canonical = `${SITE()}/sets`;
-  const body = `${SET_CSS}<div class="card"><h1>Alle deutschen Pokémon-Sets</h1>
-    <p class="muted">${list.length} Erweiterungen mit Kartenliste und aktuellen Cardmarket-Preisen – von Karmesin &amp; Purpur bis zu den Klassikern.</p></div>
-    ${[...groups].map(([serie, sets]) => `<h2>${h(serie)}</h2><div class="sets">${sets.map((s: any) => `<a class="si" href="/set/${encodeURIComponent(s.id)}/${h(s.slug)}">
-      ${s.logo ? `<img src="${h(cdnImage(`${s.logo}.png`, 160))}" alt="" loading="lazy">` : ""}<span><b>${h(s.name)}</b><br><span class="muted">${s.release_date ? h(new Date(s.release_date).getFullYear()) + " • " : ""}${Number(s.card_count_total) || ""} Karten</span></span></a>`).join("")}</div>`).join("")
-    || `<p class="muted">Der Katalog wird gerade importiert – bitte in Kürze erneut öffnen.</p>`}`;
+  for (const s of list) {
+    const k = (lang === "en" && en.get(s.id)?.serieName) || s.serie_name || t("sets.otherSets");
+    groups.set(k, [...(groups.get(k) || []), s]);
+  }
+  const alternates = alternatesFor("/sets");
+  const canonical = `${SITE()}${lang === "en" ? alternates.en : alternates.de}`;
+  const setHref = (s: any) => lang === "en" ? lp(`/set/${encodeURIComponent(s.id)}/${slugify(en.get(s.id)?.name || s.name)}`) : `/set/${encodeURIComponent(s.id)}/${h(s.slug)}`;
+  const body = `${SET_CSS}<div class="card"><h1>${t("sets.h1")}</h1>
+    <p class="muted">${t("sets.intro", { n: list.length })}</p></div>
+    ${[...groups].map(([serie, sets]) => `<h2>${h(serie)}</h2><div class="sets">${sets.map((s: any) => `<a class="si" href="${setHref(s)}">
+      ${s.logo ? `<img src="${h(cdnImage(`${s.logo}.png`, 160))}" alt="" loading="lazy">` : ""}<span><b>${h(displayName(lang, s.name, en.get(s.id)?.name))}</b><br><span class="muted">${s.release_date ? h(new Date(s.release_date).getFullYear()) + " • " : ""}${t("sets.cards", { n: Number(s.card_count_total) || "" })}</span></span></a>`).join("")}</div>`).join("")
+    || `<p class="muted">${t("sets.importing")}</p>`}`;
   publicCache(c, "page");
   return c.html(pageShell({
-    title: "Alle deutschen Pokémon-Sets mit Kartenpreisen | PokeSwipe & Radar",
-    description: "Alle deutschen Pokémon-TCG-Erweiterungen mit kompletter Kartenliste, aktuellen Cardmarket-Preisen und den wertvollsten Karten je Set.",
+    lang, alternates,
+    title: t("sets.title"),
+    description: t("sets.desc"),
     canonical, body,
-    jsonLd: { "@context": "https://schema.org", "@type": "CollectionPage", name: "Deutsche Pokémon-Sets", url: canonical,
-      breadcrumb: { "@type": "BreadcrumbList", itemListElement: [{ "@type": "ListItem", position: 1, name: "Start", item: `${SITE()}/` }, { "@type": "ListItem", position: 2, name: "Sets", item: canonical }] } },
+    jsonLd: { "@context": "https://schema.org", "@type": "CollectionPage", name: t("sets.ldName"), url: canonical, ...(lang === "en" ? { inLanguage: "en" } : {}),
+      breadcrumb: { "@type": "BreadcrumbList", itemListElement: [{ "@type": "ListItem", position: 1, name: t("crumb.start"), item: `${SITE()}${lang === "en" ? "/?lang=en" : "/"}` }, { "@type": "ListItem", position: 2, name: t("crumb.sets"), item: canonical }] } },
   }));
 }
 
 export async function setPage(c: any) {
+  const lang = langFromPath(c.req.path);
+  const t = tr(lang), lp = (p: string) => localPath(lang, p), eur = (n: number) => euroL(lang, n);
   const id = String(c.req.param("id") || "");
-  if (!SET_ID_RE.test(id)) return c.html(pageShell({ title: "Set nicht gefunden", description: "", canonical: `${SITE()}/sets`, body: `<div class="card"><h1>Set nicht gefunden</h1><a class="btn y" href="/sets">Alle Sets</a></div>` }), 404);
-  if (!(await rateLimit(`setpage:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
+  const setsUrl = `${SITE()}${lp("/sets")}`;
+  if (!SET_ID_RE.test(id)) return c.html(pageShell({ lang, title: t("set.notFound"), description: "", canonical: setsUrl, body: `<div class="card"><h1>${t("set.notFound")}</h1><a class="btn y" href="${lp("/sets")}">${t("set.allSets")}</a></div>` }), 404);
+  if (!(await rateLimit(`setpage:${clientIp(c)}`, 60, 60_000))) return c.text(t("common.tooMany"), 429);
   const [set] = await db.select().from(cardSets).where(and(eq(cardSets.id, id), eq(cardSets.active, true))).limit(1);
   if (!set) {
-    return c.html(pageShell({ title: "Set nicht gefunden | PokeSwipe & Radar", description: "", canonical: `${SITE()}/sets`,
-      body: `<div class="card"><h1>Set nicht gefunden</h1><p class="muted">Dieses Set ist (noch) nicht im Katalog.</p><a class="btn y" href="/sets">Alle Sets</a></div>` }), 404);
+    return c.html(pageShell({ lang, title: `${t("set.notFound")} | PokeSwipe & Radar`, description: "", canonical: setsUrl,
+      body: `<div class="card"><h1>${t("set.notFound")}</h1><p class="muted">${t("set.notFoundText")}</p><a class="btn y" href="${lp("/sets")}">${t("set.allSets")}</a></div>` }), 404);
   }
   const list = await db.select({
     id: cards.id, name: cards.name, image: cards.image, localId: cards.localId, rarity: cards.rarity,
     trend: cards.trend, avg: cards.avg, low: cards.low,
   }).from(cards).where(eq(cards.setId, id)).limit(1500);
+  // Englische Set- und Kartennamen (für die englische Seite und den englischen hreflang-Slug)
+  const enSet = (await englishSetNames([set.id])).get(set.id);
+  const enCards = lang === "en" ? await englishCardNames(list.map((x) => x.id)) : new Map<string, { name: string; setName: string }>();
+  const cname = (x: { id: string; name: string }) => displayName(lang, x.name, enCards.get(x.id)?.name);
+  const setName = displayName(lang, set.name, enSet?.name);
+  const serieName = displayName(lang, set.serieName, enSet?.serieName);
   const byNumber = [...list].sort((a, b) => String(a.localId).localeCompare(String(b.localId), "de", { numeric: true }));
   const priced = list.map((x) => ({ ...x, price: cardPrice(x) })).filter((x) => x.price > 0).sort((a, b) => b.price - a.price);
   const setValue = priced.reduce((sum, x) => sum + x.price, 0);
   const top = priced.slice(0, 10);
-  const canonical = `${SITE()}/set/${encodeURIComponent(set.id)}/${set.slug || slugify(set.name)}`;
+  const alternates = alternatesFor(`/set/${encodeURIComponent(set.id)}/${set.slug || slugify(set.name)}`, `/set/${encodeURIComponent(set.id)}/${enSet ? slugify(enSet.name) : set.slug || slugify(set.name)}`);
+  const canonical = `${SITE()}${lang === "en" ? alternates.en : alternates.de}`;
   const year = set.releaseDate ? new Date(set.releaseDate).getFullYear() : "";
-  const title = `${set.name}${set.abbreviation ? ` (${set.abbreviation})` : ""} – Kartenliste & Preise${year ? ` ${year}` : ""} | PokeSwipe & Radar`;
-  const description = `${set.name}${set.serieName ? ` (${set.serieName})` : ""}: alle ${set.cardCountTotal || list.length} Karten mit aktuellem Cardmarket-Preis.${top[0] ? ` Wertvollste Karte: ${top[0].name} für ${euro(top[0].price)}.` : ""} Set-Wert, Top-10 und Preisalarm.`;
-  const cardLink = (x: { id: string; name: string }) => `/karte/${encodeURIComponent(x.id)}/${slugify(x.name)}`;
-  const tile = (x: any) => `<a class="ci" href="${h(cardLink(x))}">${x.image ? `<img src="${h(cdnImage(x.image, 200))}" alt="${h(x.name)} ${h(x.localId)}" loading="lazy" width="120" height="167">` : ""}
-    <span>${h(x.name)}</span><span class="muted">#${h(x.localId)}${x.rarity ? ` • ${h(x.rarity)}` : ""}</span><b>${cardPrice(x) ? h(euro(cardPrice(x))) : "–"}</b></a>`;
-  const body = `${SET_CSS}<p class="crumb"><a href="/">Start</a> › <a href="/sets">Sets</a> › ${h(set.name)}</p>
+  const title = t("set.title", { name: setName, abbr: set.abbreviation ? ` (${set.abbreviation})` : "", year: year ? ` ${year}` : "" });
+  const description = t("set.desc", { name: setName, serie: serieName ? ` (${serieName})` : "", n: set.cardCountTotal || list.length,
+    top: top[0] ? t("set.descTop", { name: cname(top[0]), price: eur(top[0].price) }) : "" });
+  const cardLink = (x: { id: string; name: string }) => lp(`/karte/${encodeURIComponent(x.id)}/${slugify(cname(x))}`);
+  const tile = (x: any) => `<a class="ci" href="${h(cardLink(x))}">${x.image ? `<img src="${h(cdnImage(x.image, 200))}" alt="${h(cname(x))} ${h(x.localId)}" loading="lazy" width="120" height="167">` : ""}
+    <span>${h(cname(x))}</span><span class="muted">#${h(x.localId)}${x.rarity ? ` • ${h(x.rarity)}` : ""}</span><b>${cardPrice(x) ? h(eur(cardPrice(x))) : "–"}</b></a>`;
+  const releaseFmt = (d: string) => fmtDate(lang, d, { day: "2-digit", month: "long", year: "numeric" });
+  const body = `${SET_CSS}<p class="crumb"><a href="${h(lp("/"))}">${t("crumb.start")}</a> › <a href="${lp("/sets")}">${t("crumb.sets")}</a> › ${h(setName)}</p>
   <div class="card">
-    ${set.logo ? `<img src="${h(cdnImage(`${set.logo}.png`, 400))}" alt="${h(set.name)} Logo" style="max-height:80px;max-width:260px;object-fit:contain;display:block;margin-bottom:10px">` : ""}
-    <h1>${h(set.name)}</h1>
-    <p class="muted">${[set.serieName, set.abbreviation, set.releaseDate ? `Erschienen am ${fmtDate(set.releaseDate)}` : ""].filter(Boolean).map(h).join(" • ")}</p>
+    ${set.logo ? `<img src="${h(cdnImage(`${set.logo}.png`, 400))}" alt="${h(t("set.logoAlt", { name: setName }))}" style="max-height:80px;max-width:260px;object-fit:contain;display:block;margin-bottom:10px">` : ""}
+    <h1>${h(setName)}</h1>
+    <p class="muted">${[serieName, set.abbreviation, set.releaseDate ? t("set.released", { date: releaseFmt(set.releaseDate) }) : ""].filter(Boolean).map(h).join(" • ")}</p>
     <div class="stats">
-      <div class="stat">Karten<b>${Number(set.cardCountTotal) || list.length}${set.cardCountOfficial && set.cardCountTotal > set.cardCountOfficial ? ` <span class="muted">(${set.cardCountOfficial} + ${set.cardCountTotal - set.cardCountOfficial} Secret)</span>` : ""}</b></div>
-      <div class="stat">Set-Wert (je 1×)<b>${setValue ? h(euro(setValue)) : "–"}</b></div>
-      <div class="stat">Mit Preis<b>${priced.length}/${list.length}</b></div>
+      <div class="stat">${t("set.cards")}<b>${Number(set.cardCountTotal) || list.length}${set.cardCountOfficial && set.cardCountTotal > set.cardCountOfficial ? ` <span class="muted">${t("set.secret", { a: set.cardCountOfficial, b: set.cardCountTotal - set.cardCountOfficial })}</span>` : ""}</b></div>
+      <div class="stat">${t("set.value")}<b>${setValue ? h(eur(setValue)) : "–"}</b></div>
+      <div class="stat">${t("set.priced")}<b>${priced.length}/${list.length}</b></div>
     </div>
     <div class="btns">
-      <a class="btn y" href="/?tab=portfolio&set=${encodeURIComponent(set.id)}">✅ Set-Fortschritt tracken</a>
-      <a class="btn" style="background:#4f46e5;color:#fff" href="${h(cmSearch(set.name))}" target="_blank" rel="noopener sponsored">Bei Cardmarket ansehen</a>
-      <a class="btn" style="background:#2563eb;color:#fff" href="${h(ebayUrl(`Pokemon ${set.name} Display`, "set"))}" target="_blank" rel="noopener sponsored">🛒 Display bei eBay*</a>
+      <a class="btn y" href="${h(withAppLang(lang, `/?tab=portfolio&set=${encodeURIComponent(set.id)}`))}">${t("set.track")}</a>
+      <a class="btn" style="background:#4f46e5;color:#fff" href="${h(cardmarketSearch(setName, lang))}" target="_blank" rel="noopener sponsored">${t("common.cardmarket")}</a>
+      <a class="btn" style="background:#2563eb;color:#fff" href="${h(ebayUrl(t("set.ebayQuery", { name: setName }), "set"))}" target="_blank" rel="noopener sponsored">${t("set.ebay")}</a>
     </div>
   </div>
-  ${top.length ? `<h2>💎 Die 10 wertvollsten Karten aus ${h(set.name)}</h2><div class="cards">${top.map(tile).join("")}</div>` : ""}
-  <h2>📋 Komplette Kartenliste</h2>
-  ${byNumber.length ? `<div class="cards">${byNumber.map(tile).join("")}</div>` : `<p class="muted">Die Kartenliste wird gerade importiert.</p>`}
-  <p class="muted" style="margin-top:14px">Preise: Cardmarket-Trend über TCGdex, werden laufend aktualisiert. Alle Angaben ohne Gewähr.</p>`;
+  ${top.length ? `<h2>${t("set.top10", { name: h(setName) })}</h2><div class="cards">${top.map(tile).join("")}</div>` : ""}
+  <h2>${t("set.list")}</h2>
+  ${byNumber.length ? `<div class="cards">${byNumber.map(tile).join("")}</div>` : `<p class="muted">${t("set.listImporting")}</p>`}
+  <p class="muted" style="margin-top:14px">${t("set.priceNote")}</p>`;
   const jsonLd = {
-    "@context": "https://schema.org", "@type": "CollectionPage", name: `${set.name} – Kartenliste & Preise`, url: canonical, description,
+    "@context": "https://schema.org", "@type": "CollectionPage", name: t("set.ldName", { name: setName }), url: canonical, description,
+    ...(lang === "en" ? { inLanguage: "en" } : {}),
     breadcrumb: { "@type": "BreadcrumbList", itemListElement: [
-      { "@type": "ListItem", position: 1, name: "Start", item: `${SITE()}/` },
-      { "@type": "ListItem", position: 2, name: "Sets", item: `${SITE()}/sets` },
-      { "@type": "ListItem", position: 3, name: set.name, item: canonical },
+      { "@type": "ListItem", position: 1, name: t("crumb.start"), item: `${SITE()}${lang === "en" ? "/?lang=en" : "/"}` },
+      { "@type": "ListItem", position: 2, name: t("crumb.sets"), item: setsUrl },
+      { "@type": "ListItem", position: 3, name: setName, item: canonical },
     ] },
-    mainEntity: { "@type": "ItemList", numberOfItems: top.length, itemListElement: top.map((x, i) => ({ "@type": "ListItem", position: i + 1, url: `${SITE()}${cardLink(x)}`, name: x.name })) },
+    mainEntity: { "@type": "ItemList", numberOfItems: top.length, itemListElement: top.map((x, i) => ({ "@type": "ListItem", position: i + 1, url: `${SITE()}${cardLink(x)}`, name: cname(x) })) },
   };
   publicCache(c, "page");
-  return c.html(pageShell({ title, description, canonical, image: set.logo ? `${SITE()}${cdnImage(`${set.logo}.png`, 600, "jpg")}` : undefined, body, jsonLd }));
+  return c.html(pageShell({ lang, alternates, title, description, canonical, image: set.logo ? `${SITE()}${cdnImage(`${set.logo}.png`, 600, "jpg")}` : undefined, body, jsonLd }));
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +415,8 @@ const xml = (c: any, body: string) => {
 };
 const loc = (path: string, extra = "") => `<url><loc>${h(`${SITE()}${path}`)}</loc>${extra}</url>`;
 const sitemapCards = sql`FROM cards WHERE COALESCE(trend, avg, low) IS NOT NULL OR (imported_at IS NOT NULL AND checked_at IS NOT NULL)`;
+/** Englische Seiten mit Gegenstück (Sitemap /sitemaps/en-pages.xml) */
+const EN_STATIC_PAGES = ["/sets", ...SEO_STATIC_PAGES].map((p) => toEnPath(p)).filter((p): p is string => Boolean(p));
 
 export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> }) {
   const { auth, adminOnly, body } = hlp;
@@ -426,12 +450,16 @@ export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body
 
   app.get("/sets", setsIndexPage);
   app.get("/set/:id/:slug?", setPage);
+  app.get("/en/sets", setsIndexPage); // englische Fassungen (Sprache aus dem Pfad)
+  app.get("/en/set/:id/:slug?", setPage);
 
   app.get("/sitemap.xml", async (c: any) => {
     const [r] = rows(await db.execute(sql`SELECT count(*)::int AS n ${sitemapCards}`));
     const parts = Math.max(1, Math.ceil(Number(r?.n ?? 0) / CARDS_PER_SITEMAP));
     const now = today();
-    const maps = ["/sitemaps/pages.xml", "/sitemaps/sets.xml", ...SEO_SITEMAPS, ...Array.from({ length: parts }, (_, i) => `/sitemaps/cards-${i + 1}.xml`)];
+    const maps = ["/sitemaps/pages.xml", "/sitemaps/sets.xml", ...SEO_SITEMAPS, ...Array.from({ length: parts }, (_, i) => `/sitemaps/cards-${i + 1}.xml`),
+      // Englische Fassungen (/en/…) als eigene Teil-Sitemaps – gleiche Aufteilung wie die deutschen Karten-Sitemaps
+      "/sitemaps/en-pages.xml", "/sitemaps/en-sets.xml", ...Array.from({ length: parts }, (_, i) => `/sitemaps/en-cards-${i + 1}.xml`)];
     return xml(c, `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${maps.map((m) => `<sitemap><loc>${h(`${SITE()}${m}`)}</loc><lastmod>${now}</lastmod></sitemap>`).join("")}</sitemapindex>`);
   });
 
@@ -445,6 +473,24 @@ export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body
     return xml(c, `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`);
   });
 
+  app.get("/sitemaps/en-pages.xml", async (c: any) => {
+    const shops = rows(await db.execute(sql`
+      SELECT shop_slug FROM profiles WHERE shop_slug IS NOT NULL AND plan = 'pro' AND plan_until > now() AND NOT banned LIMIT 2000
+    `));
+    const urls = EN_STATIC_PAGES.map((p) => loc(p, "<changefreq>weekly</changefreq><priority>0.7</priority>"))
+      .concat(shops.map((s: any) => loc(`/en/shop/${encodeURIComponent(s.shop_slug)}`, "<changefreq>daily</changefreq>")));
+    return xml(c, `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`);
+  });
+
+  app.get("/sitemaps/en-sets.xml", async (c: any) => {
+    const list = rows(await db.execute(sql`SELECT s.id, s.slug, s.name, e.name AS name_en, s.cards_imported_at FROM card_sets s
+      LEFT JOIN print_sets e ON e.lang = 'en' AND e.id = s.id
+      WHERE s.active AND s.cards_imported_at IS NOT NULL ORDER BY s.release_date DESC NULLS LAST`));
+    const urls = list.map((s: any) => loc(`/en/set/${encodeURIComponent(s.id)}/${s.name_en ? slugify(s.name_en) : s.slug || slugify(s.name)}`,
+      `<lastmod>${new Date(s.cards_imported_at).toISOString().slice(0, 10)}</lastmod><changefreq>daily</changefreq><priority>0.6</priority>`));
+    return xml(c, `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`);
+  });
+
   app.get("/sitemaps/sets.xml", async (c: any) => {
     const list = rows(await db.execute(sql`SELECT id, slug, name, cards_imported_at FROM card_sets WHERE active AND cards_imported_at IS NOT NULL ORDER BY release_date DESC NULLS LAST`));
     const urls = list.map((s: any) => loc(`/set/${encodeURIComponent(s.id)}/${s.slug || slugify(s.name)}`,
@@ -453,15 +499,22 @@ export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body
   });
 
   app.get("/sitemaps/:file", async (c: any) => {
-    const m = /^cards-(\d{1,3})\.xml$/.exec(String(c.req.param("file") || ""));
+    const m = /^(en-)?cards-(\d{1,3})\.xml$/.exec(String(c.req.param("file") || ""));
     if (!m) return c.text("Nicht gefunden", 404);
-    const page = Number(m[1]);
-    const list = rows(await db.execute(sql`
+    const en = Boolean(m[1]);
+    const page = Number(m[2]);
+    // Englisch: gleiche Karten und Seitenaufteilung, Slug aus dem englischen Druck (falls vorhanden)
+    const list = rows(await db.execute(en
+      ? sql`SELECT x.id, COALESCE(NULLIF(p.name, ''), x.name) AS name, x.updated FROM (
+          SELECT id, name, COALESCE(price_updated_at, checked_at) AS updated ${sitemapCards}
+          ORDER BY id LIMIT ${CARDS_PER_SITEMAP} OFFSET ${(page - 1) * CARDS_PER_SITEMAP}
+        ) x LEFT JOIN card_prints p ON p.id = 'en:' || x.id ORDER BY x.id`
+      : sql`
       SELECT id, name, COALESCE(price_updated_at, checked_at) AS updated ${sitemapCards}
       ORDER BY id LIMIT ${CARDS_PER_SITEMAP} OFFSET ${(page - 1) * CARDS_PER_SITEMAP}
     `));
     if (!list.length && page > 1) return c.text("Nicht gefunden", 404);
-    const urls = list.map((r: any) => loc(`/karte/${encodeURIComponent(r.id)}/${slugify(r.name)}`,
+    const urls = list.map((r: any) => loc(`${en ? "/en/card" : "/karte"}/${encodeURIComponent(r.id)}/${slugify(r.name)}`,
       `${r.updated ? `<lastmod>${new Date(r.updated).toISOString().slice(0, 10)}</lastmod>` : ""}<changefreq>daily</changefreq>`));
     return xml(c, `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`);
   });

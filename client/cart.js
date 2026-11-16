@@ -3,7 +3,7 @@
 import { $, esc, jsArg, eur, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
 
 const cents = (c) => eur((Number(c) || 0) / 100);
-const ct = { cart: null, importPoll: null };
+const ct = { cart: null, importPoll: null, proposal: null };
 
 // ---------------------------------------------------------------------------
 // Warenkorb-Zähler im Kopfbereich
@@ -92,10 +92,59 @@ function renderCart() {
       <div class="flex justify-between border-t border-slate-800 pt-1"><span class="text-white font-black">Gesamt</span><span class="text-emerald-400 font-black text-sm">${cents(c.totalCents)}</span></div>
       <p class="text-[10px] text-slate-500">Keine Käufergebühr. Eine Zahlung, je Verkäufer eine eigene Bestellung mit Käuferschutz: Das Geld wird erst ausgezahlt, wenn du den Erhalt bestätigst.</p>
     </div>
+    ${c.groups.reduce((n, g) => n + g.lines.length, 0) >= 1 ? `<div id="ps-cart-opt" class="bg-slate-900 border border-cyan-500/30 rounded-2xl p-3 space-y-2">
+      <div class="flex items-center justify-between gap-2"><p class="text-xs text-slate-200"><b class="text-cyan-300">💡 Günstiger zusammenstellen</b><br><span class="text-[10px] text-slate-400">Sucht dieselben Karten (gleiche Variante und Sprache, Zustand mindestens gleich gut) bei anderen Verkäufern und spart Versand.</span></p>
+        ${btn("Prüfen", "PS.cartOptimize()", "bg-cyan-400 text-slate-950 shrink-0")}</div>
+      <label class="flex gap-2 text-[11px] text-slate-300"><input type="checkbox" id="ps-opt-same" class="accent-cyan-400"> Nur exakt gleicher Zustand</label>
+      <div id="ps-opt-result"></div></div>` : ""}
     <label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-cart-terms" class="mt-0.5 accent-cyan-400">
       <span>Ich schließe mit jedem Verkäufer einen eigenen, verbindlichen Kaufvertrag.${hasBusiness ? ` Bei <b>gewerblichen Händlern</b> habe ich ${Number(c.withdrawalDays)} Tage Widerrufsrecht ab Erhalt (<a href="/rechtliches#widerruf" target="_blank" rel="noopener" class="underline">Belehrung</a>).` : ""}${hasPrivate ? " Bei <b>Privatverkäufen</b> besteht kein gesetzliches Widerrufsrecht und in der Regel keine Gewährleistung." : ""} Es gelten die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> (<a href="/datenschutz#marktplatz" target="_blank" rel="noopener" class="underline">Datenschutz</a>).</span></label>
     <p id="ps-cart-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
     ${c.groups.length ? btn(`Zahlungspflichtig bestellen (${cents(c.totalCents)})`, "PS.cartCheckout()", "w-full bg-cyan-400 text-slate-950") : ""}`, { wide: true });
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8: Warenkorb-Optimierer
+// ---------------------------------------------------------------------------
+async function cartOptimize() {
+  const box = $("ps-opt-result");
+  if (!box) return;
+  const sameCondition = Boolean($("ps-opt-same")?.checked);
+  box.innerHTML = `<p class="text-[11px] text-yellow-300">⏳ Vergleiche Angebote …</p>`;
+  try {
+    const p = await api("/api/cart/optimize", { method: "POST", body: { sameCondition } });
+    ct.proposal = { ...p, sameCondition };
+    box.innerHTML = proposalHtml(p);
+  } catch (e) { box.innerHTML = ""; handleError(e); }
+}
+
+function proposalHtml(p) {
+  if (!p.possible) return `<p class="text-[11px] text-emerald-300">✅ Dein Warenkorb ist bereits die günstigste Zusammenstellung.</p>`;
+  return `<div class="space-y-1 text-[11px]">
+    <p class="text-white">Spare <b class="text-emerald-400">${cents(p.savingsCents)}</b>: ${cents(p.currentCents)} → <b>${cents(p.optimizedCents)}</b> inkl. Versand
+      <span class="text-slate-400">(${Number(p.sellersBefore)} → ${Number(p.sellersAfter)} Verkäufer, Versand ${cents(p.currentShippingCents)} → ${cents(p.optimizedShippingCents)})</span></p>
+    ${p.changes.map((ch) => `<div class="bg-slate-950 rounded-xl p-2 border border-slate-800">
+      <p class="font-bold text-white truncate">${esc(ch.title)} <span class="text-slate-400">${Number(ch.quantity)}×</span></p>
+      <p class="text-slate-400 line-through">${esc(ch.from.seller)} · ${esc(ch.from.conditionLabel)} · ${cents(ch.from.unitCents)}</p>
+      ${ch.to.map((t) => `<p class="text-emerald-300">→ ${esc(t.seller)} · ${esc(t.conditionLabel)} · ${Number(t.quantity)}× ${cents(t.unitCents)}</p>`).join("")}
+    </div>`).join("")}
+    ${btn(`Vorschlag übernehmen (−${cents(p.savingsCents)})`, "PS.cartOptimizeApply()", "w-full bg-emerald-500 text-slate-950")}
+  </div>`;
+}
+
+async function cartOptimizeApply() {
+  const p = ct.proposal;
+  if (!p?.possible) return;
+  try {
+    const r = await api("/api/cart/optimize/apply", { method: "POST", body: { expectedTotalCents: p.optimizedCents, sameCondition: p.sameCondition } });
+    ct.cart = r.cart; ct.proposal = null;
+    renderCart();
+    toast("💡 Warenkorb optimiert", `Du sparst ${cents(r.savingsCents)}.`);
+  } catch (e) {
+    const d = e?.data || {};
+    if (d.proposal) { ct.proposal = { ...d.proposal, sameCondition: p.sameCondition }; const box = $("ps-opt-result"); if (box) box.innerHTML = `<p class="text-[11px] text-amber-300">${esc(e.message)}</p>${proposalHtml(d.proposal)}`; return; }
+    handleError(e);
+  }
 }
 
 async function cartQty(id, qty) {
@@ -196,9 +245,75 @@ async function openSellerHub() {
         <p id="ps-imp-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
         ${btn("Import starten", "PS.sellerImportStart()", "w-full bg-cyan-400 text-slate-950")}
       </div>
-      <div class="space-y-2"><p class="text-sm font-black text-white">Letzte Importe</p><div id="ps-imp-list">${importsHtml(imports)}</div></div>`, { wide: true });
+      <div class="space-y-2"><p class="text-sm font-black text-white">Letzte Importe</p><div id="ps-imp-list">${importsHtml(imports)}</div></div>
+      <div id="ps-ship-acc" class="bg-slate-900 border border-slate-800 rounded-2xl p-3 space-y-2"><p class="text-[11px] text-slate-400">⏳ Lade DHL-Versand …</p></div>`, { wide: true });
+    loadShipAccount();
     pollImports(imports);
   } catch (e) { closeModalEl("ps-seller-hub"); handleError(e); }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8: DHL-Versandetiketten – eigene Geschäftskunden-Zugangsdaten des Händlers
+// ---------------------------------------------------------------------------
+async function loadShipAccount() {
+  const el = $("ps-ship-acc");
+  if (!el) return;
+  try {
+    const [{ enabled, account: a }, meta] = await Promise.all([api("/api/seller/shipping-account"), api("/api/shipping/meta")]);
+    const inp = (id, label, val, ph = "", type = "text") => `<label class="text-[11px] text-slate-300 font-bold">${label}<input id="${id}" type="${type}" value="${esc(val ?? "")}" placeholder="${esc(ph)}" autocomplete="off" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white font-normal"></label>`;
+    const status = !a.configured ? "" : a.verifiedAt
+      ? `<p class="text-[11px] text-emerald-300">✅ Von DHL bestätigt${a.sandbox ? " (Testumgebung)" : ""}</p>`
+      : `<p class="text-[11px] text-amber-300">⚠️ Noch nicht bestätigt${a.lastError ? `: ${esc(a.lastError)}` : ""}</p>`;
+    el.innerHTML = `
+      <p class="text-sm font-black text-white">📮 DHL-Versandetiketten</p>
+      <p class="text-[11px] text-slate-400">Mit deinem eigenen DHL-Geschäftskundenvertrag erstellst du Etiketten direkt aus der Bestellung. Die Sendungsnummer wird automatisch eingetragen, abgerechnet wird über deinen DHL-Vertrag. Dein Passwort wird verschlüsselt gespeichert.</p>
+      ${enabled ? "" : `<p class="text-[11px] text-amber-300">Die DHL-Anbindung ist auf der Plattform noch nicht freigeschaltet. Du kannst deine Daten schon hinterlegen.</p>`}
+      ${status}
+      <div class="grid grid-cols-2 gap-2">
+        ${inp("ps-ship-user", "Benutzername (Geschäftskundenportal)", a.username)}
+        ${inp("ps-ship-pass", a.configured ? "Passwort (leer = unverändert)" : "Passwort", "", "", "password")}
+        ${inp("ps-ship-ekp", "EKP (10-stellige Kundennummer)", a.ekp, "1234567890")}
+        <label class="text-[11px] text-slate-300 font-bold">Standard-Produkt<select id="ps-ship-prod" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white font-normal">
+          ${meta.products.filter((p) => !p.international).map((p) => `<option value="${esc(p.code)}" ${a.defaultProduct === p.code ? "selected" : ""}>${esc(p.label)}</option>`).join("")}</select></label>
+        ${inp("ps-ship-weight", "Standardgewicht (g)", a.defaultWeightG ?? 500)}
+        ${inp("ps-ship-part", "Teilnahme (meist 01)", Object.values(a.participation || {})[0] || "01")}
+        ${inp("ps-ship-name", "Absender: Name / Firma", a.senderName ?? (state.me?.displayName || ""))}
+        ${inp("ps-ship-mail", "Absender: E-Mail (optional)", a.senderEmail)}
+        ${inp("ps-ship-street", "Straße", a.senderStreet)}${inp("ps-ship-house", "Hausnummer", a.senderHouse)}
+        ${inp("ps-ship-zip", "PLZ", a.senderZip)}${inp("ps-ship-city", "Ort", a.senderCity ?? (state.me?.city || ""))}
+      </div>
+      <label class="flex gap-2 text-xs text-slate-200"><input type="checkbox" id="ps-ship-sandbox" ${a.sandbox ? "checked" : ""} class="accent-cyan-400"> DHL-Testumgebung (Sandbox) – Etiketten sind nicht gültig</label>
+      <p id="ps-ship-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
+      <div class="flex gap-2">${btn(a.configured ? "Speichern & prüfen" : "Verbinden", "PS.shipAccountSave()", "flex-1 bg-emerald-500 text-slate-950")}
+        ${a.configured ? btn("Erneut prüfen", "PS.shipAccountVerify()", "bg-slate-700 text-white") + btn("Entfernen", "PS.shipAccountDelete()", "bg-rose-900 text-rose-100") : ""}</div>`;
+  } catch (e) { el.innerHTML = `<p class="text-[11px] text-rose-300">${esc(e.message || "DHL-Versand konnte nicht geladen werden.")}</p>`; }
+}
+
+async function shipAccountSave() {
+  const v = (id) => $(id)?.value?.trim() || "";
+  const part = v("ps-ship-part") || "01";
+  const body = {
+    username: v("ps-ship-user"), password: $("ps-ship-pass")?.value || "", ekp: v("ps-ship-ekp").replace(/\s/g, ""),
+    participation: { V62KP: part, V01PAK: part, V53WPAK: part, V66WPI: part }, sandbox: Boolean($("ps-ship-sandbox")?.checked),
+    senderName: v("ps-ship-name"), senderEmail: v("ps-ship-mail"), senderStreet: v("ps-ship-street"), senderHouse: v("ps-ship-house"),
+    senderZip: v("ps-ship-zip"), senderCity: v("ps-ship-city"), senderCountry: "DEU", defaultProduct: v("ps-ship-prod"), defaultWeightG: Number(v("ps-ship-weight")) || 500,
+  };
+  const msg = $("ps-ship-msg");
+  if (msg) msg.textContent = "⏳ Speichere und prüfe bei DHL …";
+  try {
+    const r = await api("/api/seller/shipping-account", { method: "PUT", body });
+    toast(r.verified ? "✅ DHL verbunden" : "💾 Gespeichert", r.verified ? "Du kannst jetzt Etiketten aus deinen Bestellungen erstellen." : r.verifyError);
+    loadShipAccount();
+  } catch (e) { if (msg) msg.textContent = e.message || "Speichern fehlgeschlagen."; }
+}
+async function shipAccountVerify() {
+  try { const r = await api("/api/seller/shipping-account/verify", { method: "POST", body: {} }); toast(r.verified ? "✅ DHL bestätigt" : "⚠️ DHL-Prüfung", r.verified ? "Zugangsdaten sind gültig." : r.error); loadShipAccount(); }
+  catch (e) { handleError(e); }
+}
+async function shipAccountDelete() {
+  if (!confirm("DHL-Zugangsdaten wirklich entfernen?")) return;
+  try { await api("/api/seller/shipping-account", { method: "DELETE" }); toast("🗑️ Entfernt", "Deine DHL-Zugangsdaten wurden gelöscht."); loadShipAccount(); }
+  catch (e) { handleError(e); }
 }
 
 const IMP_STATUS = { queued: "⏳ Wartet", running: "⚙️ Läuft", done: "✅ Fertig", failed: "❌ Fehlgeschlagen" };
@@ -284,6 +399,7 @@ async function sellerImportRetry(id) {
 
 export const cartApi = {
   openCart, addToCart: (id, q) => addToCart(id, q), cartQty, cartRemove, cartCheckout: () => cartCheckout(false), sellerInfo,
+  cartOptimize, cartOptimizeApply, shipAccountSave, shipAccountVerify, shipAccountDelete,
   closeCartGoMarket: () => { closeModalEl("ps-cart"); window.PS?.goMarket?.(); },
   openSellerHub, sellerTypeToggle, sellerSaveProfile, sellerImportStart, sellerImportReview, sellerImportErrors, sellerImportRetry,
   sellerImportResolve: (id, rowId, i) => resolveRow(id, rowId, { candidate: Number(i) }),

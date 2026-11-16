@@ -91,7 +91,7 @@ function renderIndexLine() {
     return;
   }
   if (!st) { el.textContent = ""; return; }
-  const sel = st.langs.filter((l) => sc.langs.includes(l.lang));
+  const sel = (Array.isArray(st.langs) ? st.langs : []).filter((l) => sc.langs.includes(l.lang));
   const hashed = sel.reduce((s, l) => s + l.hashed, 0), total = sel.reduce((s, l) => s + l.total, 0);
   el.textContent = total && hashed < total
     ? `Scanner-Index: ${hashed.toLocaleString("de-DE")} von ${total.toLocaleString("de-DE")} Karten bereit – wird automatisch vervollständigt (wertvolle Karten zuerst).`
