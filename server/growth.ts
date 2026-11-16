@@ -2,7 +2,7 @@
 // tägliche Serie, Abzeichen, Bestenliste, Kalender (Releases & Events), Wochen-Report, Shop-Statistik,
 // CSV-Import, KI-Zustandscheck, Rechtliches (Impressum, Daten-Export).
 import Anthropic from "@anthropic-ai/sdk";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
 import {
   db, profiles, cards, priceHistory, portfolioItems, priceAlerts, notifications, listings, trades, tradeMessages, reviews,
@@ -18,6 +18,14 @@ import { scanLimit } from "./viral.ts";
 import { checkMatchesAfterWishlist } from "./trading.ts";
 import { parseVariant, normalizeVariant, normalizeCondition, availableVariants, variantPrice, VARIANT_LABELS } from "./variant-logic.ts";
 import { publicCache } from "./cache.ts";
+import { conditionPricesForCard, recentMarketSales, type ConditionPrices } from "./condition-prices.ts";
+import { CONDITION_MIN_SALES } from "./condition-logic.ts";
+import { CONDITIONS } from "./market-logic.ts";
+import { cardPrints, printSets } from "../db/index.ts";
+import {
+  pt, euroL, fmtPct, fmtDate, OG_LOCALE, SOURCE_NOTES, CONDITIONS_EN, typeLabel, stageLabel, withAppLang, localPath, langFromPath,
+  hreflangTags, alternatesFor, pokemonEnSlug, displayName, type Lang, type Alternates,
+} from "./page-i18n.ts";
 
 type Profile = typeof profiles.$inferSelect;
 
@@ -27,8 +35,8 @@ const EPN_CAMPAIGN_ID = "5339244109";
 export const ebayUrl = (q: string, src = "web") =>
   `https://www.ebay.de/sch/i.html?_nkw=${encodeURIComponent(q)}&LH_BIN=1&_sop=15&mkcid=1&mkrid=707-53477-19255-0&siteid=77&campid=${EPN_CAMPAIGN_ID}&customid=${encodeURIComponent(`pokeswipe-${src}`)}&toolid=10001&mkevt=1`;
 /** Cardmarket-Suche mit UTM und (falls gesetzt) Partnerkennung CARDMARKET_PARTNER_ID. */
-export const cardmarketSearch = (q: string) => {
-  const u = new URL("https://www.cardmarket.com/de/Pokemon/Products/Search");
+export const cardmarketSearch = (q: string, lang: Lang = "de") => {
+  const u = new URL(`https://www.cardmarket.com/${lang === "en" ? "en" : "de"}/Pokemon/Products/Search`);
   u.searchParams.set("searchString", q.slice(0, 120));
   u.searchParams.set("utm_source", "pokeswipe_radar");
   u.searchParams.set("utm_medium", "seo");
@@ -124,13 +132,13 @@ async function refreshBadges(profile: Profile) {
 // ---------------------------------------------------------------------------
 // Öffentliche Kartenseite (für Google, WhatsApp-Vorschau & Teilen)
 // ---------------------------------------------------------------------------
-export function chartSvg(points: number[], w = 640, hgt = 160) {
+export function chartSvg(points: number[], w = 640, hgt = 160, lang: Lang = "de") {
   const v = points.filter((x) => Number.isFinite(x) && x > 0);
-  if (v.length < 2) return `<p class="muted">Der Preisverlauf baut sich täglich auf.</p>`;
+  if (v.length < 2) return `<p class="muted">${pt(lang, "chart.empty")}</p>`;
   const min = Math.min(...v) * 0.97, max = Math.max(...v) * 1.03, span = max - min || 1;
   const line = v.map((x, i) => `${((i / (v.length - 1)) * w).toFixed(1)},${(hgt - ((x - min) / span) * hgt).toFixed(1)}`).join(" ");
   const col = v[v.length - 1] >= v[0] ? "#34d399" : "#fb7185";
-  return `<svg viewBox="0 0 ${w} ${hgt}" preserveAspectRatio="none" style="width:100%;height:160px" role="img" aria-label="Preisverlauf">
+  return `<svg viewBox="0 0 ${w} ${hgt}" preserveAspectRatio="none" style="width:100%;height:160px" role="img" aria-label="${pt(lang, "chart.aria")}">
     <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".35"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
     <polygon fill="url(#g)" points="0,${hgt} ${line} ${w},${hgt}"/><polyline fill="none" stroke="${col}" stroke-width="2.5" vector-effect="non-scaling-stroke" points="${line}"/></svg>`;
 }
@@ -147,34 +155,101 @@ a{color:inherit}.wrap{max-width:960px;margin:0 auto;padding:16px}.top{display:fl
 .pill{font-size:11px;font-weight:900;border-radius:999px;padding:2px 8px}.deal{background:#10b981;color:#0f172a}.fair{background:#334155}.high{background:rgba(244,63,94,.3);color:#fecdd3}
 footer{margin:32px 0 16px;font-size:12px;color:#64748b;text-align:center}`;
 
-export function pageShell(o: { title: string; description: string; canonical: string; image?: string; body: string; jsonLd?: object | object[]; robots?: string }) {
-  return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${h(o.title)}</title><meta name="description" content="${h(o.description)}"><link rel="canonical" href="${h(o.canonical)}">${o.robots ? `<meta name="robots" content="${h(o.robots)}">` : ""}
-<meta property="og:type" content="website"><meta property="og:site_name" content="PokeSwipe & Radar"><meta property="og:locale" content="de_DE">
+export function pageShell(o: {
+  title: string; description: string; canonical: string; image?: string; body: string; jsonLd?: object | object[]; robots?: string;
+  /** Seitensprache (Standard Deutsch) */
+  lang?: Lang;
+  /** Beide Sprachfassungen (Pfade) – erzeugt hreflang-Verweise und den Sprachwechsel im Kopf */
+  alternates?: Alternates;
+}) {
+  const lang: Lang = o.lang === "en" ? "en" : "de";
+  const t = (k: Parameters<typeof pt>[1]) => pt(lang, k);
+  const home = lang === "en" ? withAppLang("en", "/") : "/";
+  const other = o.alternates ? (lang === "en" ? o.alternates.de : o.alternates.en) : "";
+  const switchLink = other ? `<a class="btn s" href="${h(other)}" hreflang="${lang === "en" ? "de" : "en"}" lang="${lang === "en" ? "de" : "en"}">${t("shell.switch")}</a>` : "";
+  const appBtn = `<a class="btn y" href="${h(home)}">${t("shell.openApp")}</a>`;
+  return `<!DOCTYPE html><html lang="${lang}"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${h(o.title)}</title><meta name="description" content="${h(o.description)}"><link rel="canonical" href="${h(o.canonical)}">${o.robots ? `<meta name="robots" content="${h(o.robots)}">` : ""}${o.alternates ? hreflangTags(SITE(), o.alternates, h) : ""}
+<meta property="og:type" content="website"><meta property="og:site_name" content="PokeSwipe & Radar"><meta property="og:locale" content="${OG_LOCALE[lang]}">${o.alternates ? `<meta property="og:locale:alternate" content="${OG_LOCALE[lang === "en" ? "de" : "en"]}">` : ""}
 <meta property="og:title" content="${h(o.title)}"><meta property="og:description" content="${h(o.description)}"><meta property="og:url" content="${h(o.canonical)}">
 ${o.image ? `<meta property="og:image" content="${h(o.image)}"><meta name="twitter:image" content="${h(o.image)}">` : ""}
 <meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#0b0f19"><link rel="icon" href="/icon.svg" type="image/svg+xml">
 ${(Array.isArray(o.jsonLd) ? o.jsonLd : o.jsonLd ? [o.jsonLd] : []).map((j) => `<script type="application/ld+json">${JSON.stringify(j).replace(/</g, "\\u003c")}</script>`).join("")}
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
-<div class="top"><a class="logo" href="/">Poke<span>Swipe</span> &amp; Radar</a><a class="btn y" href="/">App öffnen</a></div>
+<div class="top"><a class="logo" href="${h(home)}">Poke<span>Swipe</span> &amp; Radar</a>${switchLink ? `<span class="btns" style="margin:0">${switchLink}${appBtn}</span>` : appBtn}</div>
 ${o.body}
-<footer>Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link (eBay Partner Network): Wir erhalten ggf. eine Provision, für dich ohne Mehrkosten. Pokémon und alle Namen sind Marken ihrer Inhaber; PokeSwipe &amp; Radar ist ein unabhängiges Fanprojekt.<br><a href="/rechtliches#impressum">Impressum</a> · <a href="/datenschutz">Datenschutz</a> · <a href="/rechtliches#agb">AGB</a> · <a href="/rechtliches#widerruf">Widerruf</a> · <a href="/sets">Alle Sets</a> · <a href="/pokemon">Pokémon A–Z</a> · <a href="/sealed">Displays &amp; ETBs</a> · <a href="/trends">Preis-Trends</a> · <a href="/kuendigen"><b>Verträge hier kündigen</b></a></footer>
+<footer>${t("shell.footerNote")}<br><a href="/rechtliches#impressum">${t("shell.imprint")}</a> · <a href="/datenschutz">${t("shell.privacy")}</a> · <a href="/rechtliches#agb">${t("shell.terms")}</a> · <a href="/rechtliches#widerruf">${t("shell.withdrawal")}</a> · <a href="${localPath(lang, "/sets")}">${t("shell.allSets")}</a> · <a href="${localPath(lang, "/pokemon")}">${t("shell.pokemon")}</a> · <a href="${localPath(lang, "/sealed")}">${t("shell.sealed")}</a> · <a href="${localPath(lang, "/trends")}">${t("shell.trends")}</a> · <a href="/kuendigen"><b>${t("shell.cancel")}</b></a>${switchLink ? ` · <a href="${h(other)}" hreflang="${lang === "en" ? "de" : "en"}">${t("shell.switch")}</a>` : ""}</footer>
 </div></body></html>`;
 }
 
+const fmtDay = (lang: Lang, iso: string) => fmtDate(lang, iso, { timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", year: "numeric" });
+const conditionName = (lang: Lang, k: string) => (lang === "en" ? CONDITIONS_EN[k] : CONDITIONS[k]) || "";
+
+/** Tabelle „Preise nach Zustand“ und „Zuletzt auf PokeSwipe verkauft“ für die Kartenseite. */
+export function conditionSection(cond: ConditionPrices | null, sales: Awaited<ReturnType<typeof recentMarketSales>>, lang: Lang = "de") {
+  if (!cond || !cond.conditions.length) return "";
+  const t = (k: Parameters<typeof pt>[1], v?: Record<string, string | number>) => pt(lang, k, v);
+  const cell = (v: number | null) => (v ? h(euroL(lang, v)) : "–");
+  const table = `<h2>${t("cond.title")}${cond.variants.length > 1 ? ` <span class="muted" style="font-weight:600">(${h(cond.variantLabel)})</span>` : ""}</h2>
+  <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+  <thead><tr style="text-align:left;color:#94a3b8"><th style="padding:6px">${t("cond.colCondition")}</th><th style="padding:6px">${t("cond.colValue")}</th><th style="padding:6px">${t("cond.colSold")}</th><th style="padding:6px">${t("cond.colLast")}</th><th style="padding:6px">${t("cond.colAsks")}</th></tr></thead>
+  <tbody>${cond.conditions.map((r) => `<tr style="border-top:1px solid #1e293b">
+    <td style="padding:6px"><b>${h(r.short)}</b> <span class="muted">${h(conditionName(lang, r.condition))}</span></td>
+    <td style="padding:6px"><b>${cell(r.value)}</b><br><span class="muted" style="font-size:11px">${h(SOURCE_NOTES[lang][r.valueSource] || "")}</span></td>
+    <td style="padding:6px">${r.soldCount90 ? `${cell(r.soldMedian90)} <span class="muted">(${r.soldCount90}×)</span>` : "–"}</td>
+    <td style="padding:6px">${r.lastSoldPrice && r.lastSoldAt ? `${cell(r.lastSoldPrice)} <span class="muted">${h(fmtDay(lang, r.lastSoldAt))}</span>` : "–"}</td>
+    <td style="padding:6px">${r.askCount ? `${cell(r.askLow)} <span class="muted">(${r.askCount})</span>` : "–"}</td></tr>`).join("")}</tbody></table></div>
+  <p class="muted" style="font-size:12px">${t("cond.note", { min: CONDITION_MIN_SALES })}</p>`;
+  const recent = sales.length ? `<h2>${t("cond.recent")}</h2><div class="list">${sales.map((s) => `<div class="row"><span><b>${h(euroL(lang, s.price))}</b> <span class="muted">${s.condition ? `• ${h(s.condition.toUpperCase())} ` : ""}${s.variant !== "normal" ? `• ${h(s.variantLabel)} ` : ""}• ${h(s.lang.toUpperCase())}</span></span><span class="muted">${h(fmtDay(lang, s.soldAt))}</span></div>`).join("")}</div>` : "";
+  return table + recent;
+}
+
+/** Englische Namen deutscher Katalogkarten (gleiche TCGdex-ID im englischen Druck „en:<id>“). */
+export async function englishCardNames(ids: string[]): Promise<Map<string, { name: string; setName: string }>> {
+  const out = new Map<string, { name: string; setName: string }>();
+  const keys = [...new Set(ids.filter(Boolean))].map((id) => `en:${id}`);
+  for (let i = 0; i < keys.length; i += 500) {
+    const chunk = keys.slice(i, i + 500);
+    const list = await db.select({ id: cardPrints.id, name: cardPrints.name, setName: cardPrints.setName }).from(cardPrints)
+      .where(inArray(cardPrints.id, chunk)).catch(() => []);
+    for (const r of list) if (r.name) out.set(r.id.slice(3), { name: r.name, setName: r.setName || "" });
+  }
+  return out;
+}
+
+/** Englische Set-Namen (print_sets, Sprache en, gleiche Set-ID). */
+export async function englishSetNames(ids: string[]): Promise<Map<string, { name: string; serieName: string }>> {
+  const out = new Map<string, { name: string; serieName: string }>();
+  const list = [...new Set(ids.filter(Boolean))];
+  if (!list.length) return out;
+  const found = await db.select({ id: printSets.id, name: printSets.name, serieName: printSets.serieName }).from(printSets)
+    .where(and(eq(printSets.lang, "en"), inArray(printSets.id, list))).catch(() => []);
+  for (const r of found) if (r.name) out.set(r.id, { name: r.name, serieName: r.serieName || "" });
+  return out;
+}
+
 async function cardPage(c: any) {
+  const lang = langFromPath(c.req.path);
+  const t = (k: Parameters<typeof pt>[1], v?: Record<string, string | number>) => pt(lang, k, v);
+  const eur = (n: number) => euroL(lang, n);
+  const lp = (p: string) => localPath(lang, p);
   const id = String(c.req.param("id") || "");
-  if (!CARD_ID_RE.test(id)) return c.html(pageShell({ title: "Karte nicht gefunden", description: "", canonical: SITE(), body: `<div class="card"><h1>Karte nicht gefunden</h1></div>` }), 404);
-  if (!(await rateLimit(`cardpage:${clientIp(c)}`, 40, 60_000))) return c.text("Zu viele Anfragen", 429);
+  const home = lang === "en" ? `${SITE()}/en/sets` : SITE();
+  if (!CARD_ID_RE.test(id)) return c.html(pageShell({ lang, title: t("card.notFound"), description: "", canonical: home, body: `<div class="card"><h1>${t("card.notFound")}</h1></div>` }), 404);
+  if (!(await rateLimit(`cardpage:${clientIp(c)}`, 40, 60_000))) return c.text(t("common.tooMany"), 429);
   const card = await getCard(id, 12 * 3600_000);
   if (!card) {
-    return c.html(pageShell({ title: "Karte nicht gefunden | PokeSwipe & Radar", description: "", canonical: SITE(),
-      body: `<div class="card"><h1>Karte nicht gefunden</h1><p class="muted">Diese Karte gibt es nicht (mehr).</p><a class="btn y" href="/">Zur Kartensuche</a></div>` }), 404);
+    return c.html(pageShell({ lang, title: `${t("card.notFound")} | PokeSwipe & Radar`, description: "", canonical: home,
+      body: `<div class="card"><h1>${t("card.notFound")}</h1><p class="muted">${t("card.notFoundText")}</p><a class="btn y" href="${h(lp("/"))}">${t("card.toSearch")}</a></div>` }), 404);
   }
+  // Englischer Druck derselben Karte (Name/Set-Name) – für englische Seite und hreflang-Slug
+  const en = (await englishCardNames([card.id])).get(card.id);
+  const name = displayName(lang, card.name, en?.name);
+  const setName = displayName(lang, card.setName || "", en?.setName) || card.setName;
   const price = cardPrice(card);
-  const facts = [card.types ? `Typ: ${h(card.types.split(",").join(", "))}` : "", card.hp ? `${Number(card.hp)} KP` : "", card.stage ? h(card.stage) : "",
-    card.regulationMark ? `Regulation ${h(card.regulationMark)}` : ""].filter(Boolean);
-  const species = card.dexId ? rows(await db.execute(sql`SELECT name_de, slug, card_count FROM pokemon_species WHERE dex_id = ${card.dexId} LIMIT 1`))[0] : null;
+  const facts = [card.types ? t("card.type", { t: h(card.types.split(",").map((x) => typeLabel(lang, x)).join(", ")) }) : "", card.hp ? t("card.hp", { n: Number(card.hp) }) : "", card.stage ? h(stageLabel(lang, card.stage)) : "",
+    card.regulationMark ? t("card.regulation", { m: h(card.regulationMark) }) : ""].filter(Boolean);
+  const species = card.dexId ? rows(await db.execute(sql`SELECT name_de, name_en, slug, card_count FROM pokemon_species WHERE dex_id = ${card.dexId} LIMIT 1`))[0] : null;
   const hist = await db.select({ day: priceHistory.day, trend: priceHistory.trend }).from(priceHistory)
     .where(eq(priceHistory.cardId, id)).orderBy(desc(priceHistory.day)).limit(90);
   const series = hist.reverse().map((x) => Number(x.trend));
@@ -192,62 +267,72 @@ async function cardPage(c: any) {
     const vp = variantPrice(card, v);
     return { label: VARIANT_LABELS[v], price: vp.price, exact: vp.exact };
   });
+  // Phase 8: Preise nach Zustand (eigene Verkäufe + Angebote + Referenz) und letzte Verkäufe auf PokeSwipe
+  const cond = await conditionPricesForCard(id, undefined, card).catch(() => null);
+  const sales = await recentMarketSales(id, 8).catch(() => []);
   const ch30 = price && avg30 ? ((price - avg30) / avg30) * 100 : null;
-  const slug = slugify(card.name);
-  const canonical = `${SITE()}/karte/${encodeURIComponent(card.id)}/${slug}`;
-  const priceText = price ? euro(price) : "noch kein Preis";
-  const title = `${card.name} (${card.setName || card.id}) – Preis ${price ? euro(price) : "aktuell"} | PokeSwipe & Radar`;
-  const description = `Aktueller Cardmarket-Preis für ${card.name} aus ${card.setName || "Pokémon TCG"}: ${priceText}${ch30 !== null ? ` (${ch30 >= 0 ? "+" : ""}${ch30.toFixed(1).replace(".", ",")} % in 30 Tagen)` : ""}. Preisverlauf, Preisalarm und Tauschangebote aus der Community.`;
+  const dePath = `/karte/${encodeURIComponent(card.id)}/${slugify(card.name)}`;
+  const alternates = alternatesFor(dePath, `/karte/${encodeURIComponent(card.id)}/${slugify(en?.name || card.name)}`);
+  const canonical = `${SITE()}${lang === "en" ? alternates.en : alternates.de}`;
+  const priceText = price ? eur(price) : t("card.noPrice");
+  const change = ch30 !== null ? fmtPct(lang, ch30, 1, true) : "";
+  const title = t("card.title", { name, set: setName || card.id, price: price ? eur(price) : t("card.titlePriceFallback") });
+  const description = t("card.desc", { name, set: setName || "Pokémon TCG", price: priceText, change: ch30 !== null ? t("card.descChange", { change }) : "" });
   const ogImage = card.image ? `${SITE()}${cdnImage(card.image.replace(/\/high\.webp$/, "/high.png"), 600, "jpg")}` : "";
-  const appLink = (extra = "") => `/?card=${encodeURIComponent(card.id)}${extra}`;
+  const appLink = (extra = "") => withAppLang(lang, `/?card=${encodeURIComponent(card.id)}${extra}`);
   const badge = (p: number) => {
     if (!price) return "";
     const r = p / price;
-    return r < 0.85 ? `<span class="pill deal">🔥 Top-Deal</span>` : r <= 1.1 ? `<span class="pill fair">✓ Fair</span>` : `<span class="pill high">Über Markt</span>`;
+    return r < 0.85 ? `<span class="pill deal">${t("badge.deal")}</span>` : r <= 1.1 ? `<span class="pill fair">${t("badge.fair")}</span>` : `<span class="pill high">${t("badge.high")}</span>`;
   };
+  const setSlug = slugify((lang === "en" && en?.setName) || card.setName || card.setId || "");
+  const speciesName = species ? displayName(lang, species.name_de, species.name_en) : "";
+  const speciesSlug = species ? (lang === "en" ? pokemonEnSlug(species.name_en, species.slug) : species.slug) : "";
   const body = `<div class="card"><div class="grid">
-    <div>${card.image ? `<img class="img" src="${h(cdnImage(card.image, 520))}" alt="${h(card.name)} Pokémon-Karte" width="260" height="362">` : ""}</div>
+    <div>${card.image ? `<img class="img" src="${h(cdnImage(card.image, 520))}" alt="${h(t("card.imgAlt", { name }))}" width="260" height="362">` : ""}</div>
     <div>
-      <h1>${h(card.name)}</h1>
-      <p class="muted">${card.setId ? `<a href="/set/${encodeURIComponent(card.setId)}/${slugify(card.setName || card.setId)}">${h(card.setName)}</a>` : h(card.setName)}${card.localId ? ` • Nr. ${h(card.localId)}` : ""}${card.rarity ? ` • ${h(card.rarity)}` : ""}${card.illustrator ? ` • Illustration: ${h(card.illustrator)}` : ""}</p>
+      <h1>${h(name)}</h1>
+      <p class="muted">${card.setId ? `<a href="${h(lp(`/set/${encodeURIComponent(card.setId)}/${setSlug}`))}">${h(setName)}</a>` : h(setName)}${card.localId ? t("card.number", { n: h(card.localId) }) : ""}${card.rarity ? ` • ${h(card.rarity)}` : ""}${card.illustrator ? t("card.illustrator", { n: h(card.illustrator) }) : ""}</p>
       <p class="price">${h(priceText)}</p>
-      <p class="muted">Cardmarket-Trend${ch30 !== null ? ` • <span class="${ch30 >= 0 ? "up" : "down"}">${ch30 >= 0 ? "+" : ""}${ch30.toFixed(1).replace(".", ",")} % (30 Tage)</span>` : ""}</p>
+      <p class="muted">${t("card.trend")}${ch30 !== null ? ` • <span class="${ch30 >= 0 ? "up" : "down"}">${t("common.change30", { change })}</span>` : ""}</p>
       <div class="stats">
-        <div class="stat">Ø 7 Tage<b>${card.avg7 ? h(euro(Number(card.avg7))) : "–"}</b></div>
-        <div class="stat">Ø 30 Tage<b>${card.avg30 ? h(euro(Number(card.avg30))) : "–"}</b></div>
-        <div class="stat">Ab<b>${card.low ? h(euro(Number(card.low))) : "–"}</b></div>
+        <div class="stat">${t("card.avg7")}<b>${card.avg7 ? h(eur(Number(card.avg7))) : "–"}</b></div>
+        <div class="stat">${t("card.avg30")}<b>${card.avg30 ? h(eur(Number(card.avg30))) : "–"}</b></div>
+        <div class="stat">${t("card.from")}<b>${card.low ? h(eur(Number(card.low))) : "–"}</b></div>
       </div>
-      ${variantRows.length > 1 ? `<h2 style="font-size:15px;margin:14px 0 6px">Preise je Variante (Near Mint)</h2><div class="stats">${variantRows.map((v) =>
-        `<div class="stat">${h(v.label)}<b>${v.price ? h(euro(v.price)) : "–"}</b>${v.exact ? "" : `<span class="muted" style="font-size:10px">Basispreis</span>`}</div>`).join("")}</div>
-        <p class="muted" style="font-size:12px">Zustand: Excellent ≈ 85 %, Good ≈ 70 %, Light Played ≈ 60 %, Played ≈ 45 % des Near-Mint-Preises (Referenzwerte).</p>` : ""}
-      ${chartSvg(series)}
+      ${variantRows.length > 1 ? `<h2 style="font-size:15px;margin:14px 0 6px">${t("card.variants")}</h2><div class="stats">${variantRows.map((v) =>
+        `<div class="stat">${h(v.label)}<b>${v.price ? h(eur(v.price)) : "–"}</b>${v.exact ? "" : `<span class="muted" style="font-size:10px">${t("card.basePrice")}</span>`}</div>`).join("")}</div>
+` : ""}
+      ${chartSvg(series, 640, 160, lang)}
       <div class="btns">
-        <a class="btn y" href="${h(appLink())}">🎯 Preisalarm setzen</a>
-        <a class="btn g" href="${h(appLink("&wish=1"))}">❤️ Auf die Wunschliste</a>
-        <a class="btn s" href="${h(appLink("&list=1"))}">🤝 Selbst inserieren</a>
-        <a class="btn" style="background:#2563eb;color:#fff" href="${h(ebayUrl(`${card.name.replace(/-ex\b/, " ex")} ${card.id.split("-").pop()}`, "karte"))}" target="_blank" rel="noopener sponsored">🛒 Bei eBay kaufen*</a>
-        <a class="btn" style="background:#4f46e5;color:#fff" href="${h(cardmarketSearch(card.name))}" target="_blank" rel="noopener sponsored">Bei Cardmarket ansehen</a>
+        <a class="btn y" href="${h(appLink())}">${t("card.alert")}</a>
+        <a class="btn g" href="${h(appLink("&wish=1"))}">${t("card.wish")}</a>
+        <a class="btn s" href="${h(appLink("&list=1"))}">${t("card.list")}</a>
+        <a class="btn" style="background:#2563eb;color:#fff" href="${h(ebayUrl(`${name.replace(/-ex\b/, " ex")} ${card.id.split("-").pop()}`, "karte"))}" target="_blank" rel="noopener sponsored">${t("card.ebay")}</a>
+        <a class="btn" style="background:#4f46e5;color:#fff" href="${h(cardmarketSearch(name, lang))}" target="_blank" rel="noopener sponsored">${t("common.cardmarket")}</a>
       </div>
-      ${Number(wishers?.n) ? `<p class="muted" style="margin-top:10px">❤️ ${Number(wishers.n)} Sammler suchen diese Karte.</p>` : ""}
+      ${Number(wishers?.n) ? `<p class="muted" style="margin-top:10px">${t("card.wishers", { n: Number(wishers.n) })}</p>` : ""}
       ${facts.length ? `<p class="muted">${facts.join(" • ")}</p>` : ""}
-      ${species ? `<p style="margin-top:10px"><a class="btn s" href="/pokemon/${h(species.slug)}">📚 Alle ${Number(species.card_count)} ${h(species.name_de)}-Karten mit Preisen</a></p>` : ""}
+      ${species ? `<p style="margin-top:10px"><a class="btn s" href="${h(lp(`/pokemon/${speciesSlug}`))}">${t("card.species", { n: Number(species.card_count), name: h(speciesName) })}</a></p>` : ""}
     </div></div></div>
-  <h2>🛒 Jetzt kaufen &amp; Angebote</h2>
-  ${offers.length ? `<div class="list">${offers.map((o: any) => `<a class="row" href="${o.buyable ? `/?buy=${Number(o.id)}` : h(appLink("&tab=map"))}" style="text-decoration:none">
-      <span><b>${h(euro(o.price))}</b>${o.buyable ? ` <span class="muted">+ ${Number(o.shipping_cents) ? h(euro(Number(o.shipping_cents) / 100)) : "0 €"} Versand</span>` : ""} <span class="muted">${o.variant && o.variant !== "normal" ? `• ${h(VARIANT_LABELS[normalizeVariant(o.variant)])} ` : ""}${o.condition ? `• ${h(String(o.condition).toUpperCase())} ` : ""}• ${h(o.display_name)} (${o.seller_type === "business" ? "gewerblich" : "privat"})${Number(o.available) > 1 ? ` • ${Number(o.available)} Stück` : ""}</span></span>
-      ${o.buyable ? `<span class="pill fair">🛒 In den Warenkorb</span>` : badge(o.price)}</a>`).join("")}</div>
-    <p class="muted" style="font-size:12px">🛒 = Kauf mit Käuferschutz direkt in der App: Das Geld wird erst ausgezahlt, wenn du den Erhalt bestätigst. Bei gewerblichen Händlern gilt ein 14-tägiges Widerrufsrecht.</p>`
-    : `<p class="muted">Gerade keine Angebote. Setz die Karte auf deine Wunschliste – wir melden uns, sobald sie jemand anbietet.</p>`}`;
+  ${conditionSection(cond, sales, lang)}
+  <h2>${t("card.buyTitle")}</h2>
+  ${offers.length ? `<div class="list">${offers.map((o: any) => `<a class="row" href="${o.buyable ? h(withAppLang(lang, `/?buy=${Number(o.id)}`)) : h(appLink("&tab=map"))}" style="text-decoration:none">
+      <span><b>${h(eur(o.price))}</b>${o.buyable ? ` <span class="muted">${t("card.shipping", { price: Number(o.shipping_cents) ? h(eur(Number(o.shipping_cents) / 100)) : t("card.freeShipping") })}</span>` : ""} <span class="muted">${o.variant && o.variant !== "normal" ? `• ${h(VARIANT_LABELS[normalizeVariant(o.variant)])} ` : ""}${o.condition ? `• ${h(String(o.condition).toUpperCase())} ` : ""}• ${h(o.display_name)} (${o.seller_type === "business" ? t("card.business") : t("card.private")})${Number(o.available) > 1 ? t("card.pieces", { n: Number(o.available) }) : ""}</span></span>
+      ${o.buyable ? `<span class="pill fair">${t("card.addCart")}</span>` : badge(o.price)}</a>`).join("")}</div>
+    <p class="muted" style="font-size:12px">${t("card.protection")}</p>`
+    : `<p class="muted">${t("card.noOffers")}</p>`}`;
   const jsonLd: any = {
-    "@context": "https://schema.org", "@type": "Product", name: card.name, sku: card.id,
-    ...(card.rarity ? { additionalProperty: [{ "@type": "PropertyValue", name: "Seltenheit", value: card.rarity }] } : {}),
-    category: "Pokémon-Sammelkarte", brand: { "@type": "Brand", name: "Pokémon TCG" },
+    "@context": "https://schema.org", "@type": "Product", name, sku: card.id,
+    ...(card.rarity ? { additionalProperty: [{ "@type": "PropertyValue", name: t("card.ldRarity"), value: card.rarity }] } : {}),
+    category: t("card.ldCategory"), brand: { "@type": "Brand", name: "Pokémon TCG" },
+    ...(lang === "en" ? { url: canonical, inLanguage: "en" } : {}),
     ...(card.image ? { image: card.image } : {}),
     ...(offers.length ? { offers: { "@type": "AggregateOffer", priceCurrency: "EUR", offerCount: offers.length,
       lowPrice: Math.min(...offers.map((o: any) => o.price)).toFixed(2), highPrice: Math.max(...offers.map((o: any) => o.price)).toFixed(2) } } : {}),
   };
   publicCache(c, "page");
-  return c.html(pageShell({ title, description, canonical, image: ogImage, body, jsonLd }));
+  return c.html(pageShell({ lang, alternates, title, description, canonical, image: ogImage, body, jsonLd }));
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +832,10 @@ export function registerGrowth(app: any, hlp: {
 
   // ------------------------- Öffentliche Seiten (SEO) ----------------------
   app.get("/karte/:id/:slug?", cardPage);
+  // Englische Fassung (gleicher Renderer, Sprache aus dem Pfad) und /en → App auf Englisch
+  app.get("/en/card/:id/:slug?", cardPage);
+  app.get("/en", (c: any) => c.redirect("/?lang=en", 302));
+  app.get("/en/", (c: any) => c.redirect("/?lang=en", 302));
 
   // Manueller Start der Hintergrund-Aufgaben für Admins (Test)
   app.post("/api/admin/run-growth", auth, adminOnly, async (c: any) => c.json(await runGrowthJobs({ deadlineMs: 15_000 })));

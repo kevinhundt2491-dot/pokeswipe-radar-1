@@ -111,7 +111,13 @@
       if (!el.hasAttribute("data-cooldown") && (!ACTION_RE.test(code) || NAV_RE.test(code.split("(")[0]))) return;
       const key = code || el.textContent.trim().slice(0, 40);
       const now = Date.now(), last = cooldowns.get("btn:" + key) || 0;
-      if (now - last < COOLDOWN_MS) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+      if (now - last < COOLDOWN_MS) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        // Sichtbarer Hinweis statt stillem Verschlucken (z. B. nach „Bitte AGB bestätigen“ direkt erneut tippen)
+        const left = Math.max(1, Math.ceil((COOLDOWN_MS - (now - last)) / 1000));
+        try { triggerSmartPush("⏳ Kurz warten", `Bitte ${left} Sek. bis zur nächsten Aktion.`); } catch (err) {}
+        return;
+      }
       cooldowns.set("btn:" + key, now);
       el.classList.add("opacity-60");
       setTimeout(() => el.classList.remove("opacity-60"), COOLDOWN_MS);
@@ -126,7 +132,7 @@
     window.addEventListener("unhandledrejection", (e) => { console.warn("Nicht abgefangener Fehler:", e.reason); e.preventDefault(); });
     window.addEventListener("error", (e) => { if (e.message) console.warn("Skriptfehler:", e.message); });
     function safeRun(label, fn) { try { return fn(); } catch (err) { console.warn(label, err); } }
-    const fmtEur = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? `${Number(n).toFixed(2).replace(".", ",")} €` : "–");
+    const fmtEur = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? (window.psLang === "en" ? `€${Number(n).toFixed(2)}` : `${Number(n).toFixed(2).replace(".", ",")} €`) : "–");
     /** localStorage-JSON robust lesen: kaputte/fremde Werte brechen das Skript nicht mehr ab. */
     const lsJSON = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v && typeof v === typeof d && Array.isArray(v) === Array.isArray(d) ? v : d; } catch (e) { return d; } };
     const safeKey = (k) => (/^[A-Za-z0-9_-]{1,64}$/.test(String(k || "")) ? String(k) : "");
@@ -706,7 +712,7 @@
               <strong class="text-yellow-400">${sanitizeHTML(p.user)}</strong>
               <span class="text-slate-500">${new Date(p.timestamp || Date.now()).toLocaleDateString("de-DE")}</span>
             </div>
-            <p class="text-xs sm:text-sm text-white">${sanitizeHTML(p.caption)}</p>
+            <p class="text-xs sm:text-sm text-white" data-i18n-skip>${sanitizeHTML(p.caption)}</p>
             <div class="bg-slate-950 rounded-xl p-2 flex justify-center">
               <img src="${/^(data:image\/(jpeg|png|webp);base64,|https:\/\/|\/(?!\/))/.test(String(p.img || "")) ? sanitizeHTML(p.img) : FALLBACK_CARD_IMG}" alt="Pull" loading="lazy" class="max-h-56 rounded-lg object-contain" />
             </div>
@@ -736,7 +742,7 @@
       box.innerHTML = messages.map(m => `
         <div class="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
           <strong class="text-yellow-400">${sanitizeHTML(m.user)}:</strong>
-          <span class="text-slate-200 ml-1">${sanitizeHTML(m.text)}</span>
+          <span class="text-slate-200 ml-1" data-i18n-skip>${sanitizeHTML(m.text)}</span>
         </div>
       `).join("");
       box.scrollTop = box.scrollHeight;

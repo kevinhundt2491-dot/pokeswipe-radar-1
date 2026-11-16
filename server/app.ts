@@ -43,6 +43,9 @@ import { publicCache } from "./cache.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
 import { log } from "./log.ts";
 import { registerOps } from "./ops.ts";
+import { registerConditionPrices } from "./condition-prices.ts";
+import { registerShipping } from "./shipping.ts";
+import { registerAlerts } from "./alerts.ts";
 
 type Profile = typeof profiles.$inferSelect;
 type Vars = { user: AuthUser; profile: Profile; plan: PlanId };
@@ -1052,6 +1055,9 @@ registerProfiles(app, { auth, body }); // ebenfalls vor registerCatalog (/sitema
 registerMarket(app, { auth, adminOnly, body });
 // Phase 7: Warenkorb & Checkout über mehrere Verkäufer, Händler-Bestands-Import
 registerCart(app, { auth, adminOnly, body });
+registerConditionPrices(app); // Phase 8: Preise nach Zustand & Sold Comps aus dem eigenen Marktplatz
+registerShipping(app, { auth, body }); // Phase 8: DHL-Versandetiketten mit eigenen Händler-Zugangsdaten
+registerAlerts(app, { auth, adminOnly, body }); // Phase 8: Browser-Fehlerberichte, Testalarm, Alarm-Verlauf
 registerSellerImport(app, { auth, adminOnly, body });
 registerNative(app, { auth, body });
 registerCatalog(app, { auth, adminOnly, body });

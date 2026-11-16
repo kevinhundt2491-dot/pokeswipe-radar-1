@@ -271,29 +271,17 @@ function detailText(status: JobStatus, result: unknown, error: string | undefine
   return parts.join(" | ").slice(0, 2000);
 }
 
-function adminEmails() {
-  return [...new Set(String(process.env.ADMIN_EMAILS || "").split(/[,;\s]+/).map((e) => e.trim().toLowerCase()).filter(Boolean))];
-}
-
 /** Nach drei Fehlläufen in Folge: Admins benachrichtigen (höchstens alle 6 h je Job, gemerkt in error_log). */
 async function maybeAlert(name: string, error: string) {
   const recent = rowsOf(await db.execute(sql`SELECT status FROM job_runs WHERE job = ${name} ORDER BY started_at DESC LIMIT 3`)).map((r) => String(r.status));
   const [last] = rowsOf(await db.execute(sql`SELECT max(created_at) AS at FROM error_log WHERE scope = ${`alert:${name}`}`));
   const lastAlertAt = last?.at ? new Date(last.at).getTime() : null;
   if (!shouldAlert(recent, lastAlertAt, Date.now(), { cooldownMs: ALERT_COOLDOWN_MS })) return false;
-  const emails = adminEmails();
-  // Erst den Alarm vermerken (verhindert Doppel-Alarme paralleler Instanzen weitgehend), dann benachrichtigen
-  await db.execute(sql`INSERT INTO error_log (scope, message, context) VALUES (${`alert:${name}`}, ${`Job ${name}: 3 Fehlläufe in Folge`}, ${JSON.stringify({ error, admins: emails.length })}::jsonb)`);
-  if (!emails.length) {
-    log.warn("job", "Job-Alarm ohne Empfänger (ADMIN_EMAILS leer)", { job: name });
-    return false;
-  }
-  const admins = rowsOf(await db.execute(sql`SELECT user_id FROM profiles WHERE lower(email) IN (${sql.join(emails.map((e) => sql`${e}`), sql`, `)})`));
-  const { notify } = await import("./prices.ts");
-  for (const a of admins) {
-    await notify(String(a.user_id), `⚠️ Job ${name} fällt aus`, `Die letzten 3 Läufe sind fehlgeschlagen: ${error}`.slice(0, 400), "/?tab=admin").catch((e) => logError("job", e, { job: name, alert: true }));
-  }
-  log.warn("job", "Admins über Job-Ausfall benachrichtigt", { job: name, admins: admins.length });
+  // Phase 8: gemeinsamer Alarm-Kanal (Mitteilung/Push, E-Mail, optional Webhook) mit eigener Ruhezeit je Job
+  const { alertAdmins } = await import("./alerts.ts");
+  const r = await alertAdmins({ key: `job:${name}`, title: `⚠️ Job ${name} fällt aus`, text: `Die letzten 3 Läufe sind fehlgeschlagen: ${error}`.slice(0, 400), cooldownMs: ALERT_COOLDOWN_MS, severity: "critical" }, true);
+  // Vermerk für shouldAlert (Ruhezeit je Job wie bisher über alert:<job>)
+  await db.execute(sql`INSERT INTO error_log (scope, message, context) VALUES (${`alert:${name}`}, ${`Job ${name}: 3 Fehlläufe in Folge`}, ${JSON.stringify({ error, channels: (r as any).channels || [] })}::jsonb)`);
   return true;
 }
 

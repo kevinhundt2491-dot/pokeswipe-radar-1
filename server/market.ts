@@ -24,6 +24,7 @@ import {
 } from "./market-logic.ts";
 import { str, int, money, rows, rateLimit, trustedOrigin, euro } from "./util.ts";
 import { log } from "./log.ts";
+import { recordOrderSale, removeOrderSale, backfillMarketComps } from "./condition-prices.ts";
 import { currentJob } from "./resilience.ts";
 
 type Hlp = { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> };
@@ -147,6 +148,8 @@ export async function releaseOrder(order: Order, actor: OrderRole, note = "") {
     }
     await recordDac7Release(order, releasedAt).catch((e) => log.error("market", "DAC7-Zähler (Auszahlung)", { orderId: order.id, err: e }));
     await recordPayout(order, transfer.id, amount);
+    // Phase 8: abgeschlossener Verkauf → Sold Comps & Preise nach Zustand
+    await recordOrderSale(order.id);
     await notify(order.sellerId, "💸 Auszahlung freigegeben", `${eur(amount)} für „${order.title}“ sind unterwegs auf dein Konto (Provision ${eur(order.feeCents)}).${note ? ` ${note}` : ""}`, "/?orders=1");
     if (actor !== "buyer") await notify(order.buyerId, "✅ Kauf abgeschlossen", `„${order.title}“ ist abgeschlossen. Bitte bewerte den Verkäufer.`, "/?orders=1");
     else await notify(order.buyerId, "⭐ Danke! Bitte bewerten", `Wie lief der Kauf von „${order.title}“?`, "/?orders=1");
@@ -205,6 +208,7 @@ export async function refundOrder(order: Order, actor: OrderRole, reason: string
   // Nicht versendet → Karte(n) wieder verfügbar machen
   if (done && order.status === "paid" && opts.restock !== false) await restockOrder(order);
   if (done && order.transferId) await recordDac7Refund(order).catch((e) => log.error("market", "DAC7-Zähler (Erstattung)", { orderId: order.id, err: e }));
+  if (done) await removeOrderSale(order.id);
   await notify(order.buyerId, "↩️ Geld erstattet", `${eur(amount)} für „${order.title}“ werden zurückgebucht (je nach Bank 5–10 Tage). ${reason}`.trim(), "/?orders=1");
   await notify(order.sellerId, "↩️ Bestellung erstattet", `„${order.title}“ wurde dem Käufer erstattet. ${reason}`.trim(), "/?orders=1");
   return done;
@@ -456,7 +460,9 @@ export async function runEscrowJobs() {
     await notify(o.sellerId, "📦 Versand-Erinnerung", `Bitte versende „${o.title}“ und trage die Sendungsnummer ein – sonst wird der Kauf automatisch erstattet.`, "/?orders=1");
     await db.update(marketOrders).set({ updatedAt: new Date() }).where(eq(marketOrders.id, o.id));
   }
-  // 5. DAC7: meldepflichtige Verkäufer ohne Steuerdaten erinnern (max. 2-mal, danach Sperre für neue Verkäufe)
+  // 5. Phase 8: ausgezahlte Verkäufe ohne Comps nachtragen, erstattete/verlorene entfernen
+  try { const b = await backfillMarketComps(100); (result as any).compsRecorded = b.recorded; } catch (e) { result.errors++; log.error("market", "Comps-Nachtrag fehlgeschlagen", { err: e }); }
+  // 6. DAC7: meldepflichtige Verkäufer ohne Steuerdaten erinnern (max. 2-mal, danach Sperre für neue Verkäufe)
   try { result.dac7Reminders = (await runDac7Reminders()).reminded; } catch (e) { result.errors++; log.error("market", "DAC7-Erinnerungen fehlgeschlagen", { err: e }); }
   return result;
 }

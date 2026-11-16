@@ -1,6 +1,7 @@
 // PokeSwipe & Radar – virales Wachstum im Browser: verfolgte Teilen-Links mit Share-Sheet (WhatsApp, Telegram, X …),
 // Einladungs-Dashboard mit Stufen-Belohnungen, Teilen-Bonus und Werber-Bestenliste.
 import { $, esc, jsArg, toast, state, api, handleError, requireLogin, modal, btn } from "./core.js";
+import { localePath } from "./i18n.js";
 
 const PS = () => window.PS;
 const VIA_KEY = "ps_via";
@@ -23,6 +24,7 @@ async function trackedUrl(target, kind, title) {
 
 /** Share-Sheet: nativ teilen, WhatsApp, Telegram, X, Facebook, Link kopieren. */
 export async function shareTarget(target, kind = "card", title = "PokeSwipe & Radar", text = "") {
+  target = localePath(target); // englische Oberfläche → /en/karte/… usw.
   const url = await trackedUrl(target, kind, title);
   const msg = text || `${title} 👉`;
   const enc = encodeURIComponent;

@@ -783,8 +783,16 @@ export const soldComps = pgTable("sold_comps", {
   price: numeric({ precision: 10, scale: 2 }).notNull(), // EUR inkl. Versand
   soldAt: timestamp("sold_at", { withTimezone: true }).notNull(),
   url: text().notNull().default(""),
+  // Phase 8: Verkäufe im eigenen Marktplatz (source = "pokeswipe") mit Variante, Zustand und Bestellbezug
+  variant: text().notNull().default("normal"),
+  condition: text().notNull().default(""),
+  marketOrderId: integer("market_order_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("sold_comps_external").on(t.externalId), index("sold_comps_target").on(t.targetKind, t.targetId, t.gradeKey, t.soldAt)]);
+}, (t) => [
+  uniqueIndex("sold_comps_external").on(t.externalId), index("sold_comps_target").on(t.targetKind, t.targetId, t.gradeKey, t.soldAt),
+  index("sold_comps_condition").on(t.targetKind, t.targetId, t.variant, t.condition, t.soldAt),
+  index("sold_comps_order").on(t.marketOrderId),
+]);
 
 // Verdichtete Werte je Zustand/Grading (Median 30/90 Tage, günstigstes aktives Angebot)
 export const gradeValues = pgTable("grade_values", {
@@ -1242,3 +1250,45 @@ export const sellerImportRows = pgTable("seller_import_rows", {
   candidates: jsonb(),
   message: text().notNull().default(""),
 }, (t) => [index("seller_import_rows_import").on(t.importId, t.status)]);
+
+// ---------------------------------------------------------------------------
+// Phase 8: Versandetiketten (DHL Parcel DE Shipping API v2) mit den eigenen Geschäftskunden-Zugangsdaten des Händlers
+// ---------------------------------------------------------------------------
+export const sellerShippingAccounts = pgTable("seller_shipping_accounts", {
+  userId: text("user_id").primaryKey().references(() => profiles.userId, { onDelete: "cascade" }),
+  provider: text().notNull().default("dhl"),
+  username: text().notNull(),
+  // AES-256-GCM verschlüsselt (Schlüssel liegt getrennt von der Datenbank in Netlify Blobs)
+  passwordEnc: text("password_enc").notNull(),
+  ekp: text().notNull(), // 10-stellige DHL-Kundennummer (EKP)
+  participation: jsonb().notNull().default({}), // Teilnahme je Produkt, z. B. { "V01PAK": "01", "V62KP": "01" }
+  sandbox: boolean().notNull().default(false),
+  senderName: text("sender_name").notNull(),
+  senderStreet: text("sender_street").notNull(),
+  senderHouse: text("sender_house").notNull().default(""),
+  senderZip: text("sender_zip").notNull(),
+  senderCity: text("sender_city").notNull(),
+  senderCountry: text("sender_country").notNull().default("DEU"),
+  senderEmail: text("sender_email").notNull().default(""),
+  defaultProduct: text("default_product").notNull().default("V62KP"),
+  defaultWeightG: integer("default_weight_g").notNull().default(500),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  lastError: text("last_error").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const shippingLabels = pgTable("shipping_labels", {
+  id: serial().primaryKey(),
+  marketOrderId: integer("market_order_id").notNull().references(() => marketOrders.id, { onDelete: "cascade" }),
+  sellerId: text("seller_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  provider: text().notNull().default("dhl"),
+  product: text().notNull(),
+  shipmentNo: text("shipment_no").notNull(),
+  weightG: integer("weight_g").notNull(),
+  blobKey: text("blob_key").notNull(),
+  sandbox: boolean().notNull().default(false),
+  status: text().notNull().default("created"), // created | cancelled
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+}, (t) => [index("shipping_labels_order").on(t.marketOrderId, t.status), uniqueIndex("shipping_labels_shipment").on(t.provider, t.shipmentNo)]);

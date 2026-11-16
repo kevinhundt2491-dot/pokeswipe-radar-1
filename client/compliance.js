@@ -177,7 +177,7 @@ async function openOps() {
   if (!state.me?.isAdmin) return;
   modal("ps-ops", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Betriebsdaten …</p>`, { wide: true });
   try {
-    const r = await api("/api/admin/jobs");
+    const [r, al] = await Promise.all([api("/api/admin/jobs"), api("/api/admin/alerts").catch(() => ({ alerts: [], channels: {} }))]);
     const color = (st) => (st === "ok" ? "text-emerald-300" : st === "partial" ? "text-amber-300" : st === "skipped" ? "text-slate-400" : st ? "text-rose-300" : "text-slate-500");
     modal("ps-ops", `
       <h3 class="text-base font-black text-white">⚙️ Jobs, Circuits & Fehler</h3>
@@ -186,6 +186,15 @@ async function openOps() {
           <p class="font-black text-white">${esc(j.name)} <span class="${color(j.lastStatus)}">${esc(j.lastStatus || "noch nie gelaufen")}</span></p>
           <p class="text-slate-400">${j.lastRunAt ? new Date(j.lastRunAt).toLocaleString("de-DE") : "–"} • 24 h: ${Number(j.last24h.runs)} Läufe, ${Number(j.last24h.errors)} Fehler, ${Number(j.last24h.partial)} Teil-Läufe, Ø ${Number(j.last24h.avgMs)} ms</p>
         </div>`).join("")}</div>
+      <h4 class="text-sm font-black text-white">🚨 Alarme</h4>
+      <div class="bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-[11px] space-y-1.5">
+        <p class="text-slate-300">Der Wächter prüft alle 10 Minuten Fehler-Spitzen, zahlungskritische Fehler, überfällige Jobs und den Stripe-Webhook. Kanäle:
+          <span class="${al.channels.push ? "text-emerald-300" : "text-rose-300"}">Push/Mitteilung ${al.channels.push ? "✓" : "✗ (ADMIN_EMAILS fehlt)"}</span> •
+          <span class="${al.channels.email ? "text-emerald-300" : "text-amber-300"}">E-Mail ${al.channels.email ? "✓" : "✗ (RESEND_API_KEY/MAIL_FROM fehlen)"}</span> •
+          <span class="${al.channels.webhook ? "text-emerald-300" : "text-slate-400"}">Webhook ${al.channels.webhook ? "✓" : "– (optional: ALERT_WEBHOOK_URL)"}</span></p>
+        ${btn("Testalarm senden", "PS.sendTestAlert()", "bg-slate-800 text-white")}
+        <div class="max-h-40 overflow-y-auto space-y-1">${al.alerts.length ? al.alerts.map((x) => `<div class="border-t border-slate-800 pt-1"><p class="text-slate-400">${new Date(x.at).toLocaleString("de-DE")} • <span class="${x.severity === "critical" ? "text-rose-300" : "text-amber-300"}">${esc(x.title)}</span></p><p class="text-slate-300 break-words">${esc(x.text)}</p></div>`).join("") : `<p class="text-emerald-300">Noch keine Alarme.</p>`}</div>
+      </div>
       <h4 class="text-sm font-black text-white">Externe Quellen</h4>
       <div class="flex flex-wrap gap-1.5 text-[11px]">${r.circuits.length ? r.circuits.map((c) => `<span class="px-2 py-1 rounded-full ${c.phase === "closed" ? "bg-emerald-500/20 text-emerald-200" : c.phase === "half-open" ? "bg-amber-500/20 text-amber-200" : "bg-rose-500/30 text-rose-100"}" title="${esc(c.lastError || "")}">${esc(c.name)} • ${esc(c.phase)}${c.failures ? ` (${Number(c.failures)})` : ""}</span>`).join("") : `<span class="text-slate-400">Keine Störungen erfasst.</span>`}</div>
       <h4 class="text-sm font-black text-white">Letzte Fehler</h4>
@@ -194,4 +203,11 @@ async function openOps() {
   } catch (e) { closeModalEl("ps-ops"); handleError(e); }
 }
 
-export const complianceApi = { openBillingPortal, openTaxInfo, taxTypeChanged, saveTaxInfo, openDac7Admin, openSetCompleteness, openOps };
+async function sendTestAlert() {
+  try {
+    const r = await api("/api/admin/alerts/test", { method: "POST", body: {} });
+    toast(r.sent ? "✅ Testalarm gesendet" : "⚠️ Kein Kanal erreichbar", r.sent ? `Kanäle: ${(r.channels || []).join(", ")}` : "Bitte ADMIN_EMAILS, RESEND_API_KEY/MAIL_FROM oder ALERT_WEBHOOK_URL prüfen.");
+  } catch (e) { handleError(e); }
+}
+
+export const complianceApi = { openBillingPortal, openTaxInfo, taxTypeChanged, saveTaxInfo, openDac7Admin, openSetCompleteness, openOps, sendTestAlert };

@@ -140,3 +140,7 @@ export const securityHeaders: MiddlewareHandler = async (c, next) => {
 };
 
 export const euro = (n: number) => `${n.toFixed(2).replace(".", ",")} €`;
+
+const EURO_EN = new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Euro-Betrag je Sprache: "de" wie euro() („12,34 €“), "en" im englischen Format („€12.34“, mit Tausenderkomma). */
+export const euroIn = (n: number, lang: "de" | "en" = "de") => (lang === "en" ? EURO_EN.format(n) : euro(n));

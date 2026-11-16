@@ -1,0 +1,62 @@
+# VORLAGE – wird nicht automatisch ausgeführt.
+# Netlify darf keine Dateien in .github/workflows/ hochladen (GitHub verlangt dafür eine Extra-Berechtigung).
+# Zum Aktivieren: auf github.com im Repository „Add file → Create new file“, Pfad .github/workflows/e2e.yml,
+# und diesen Inhalt einfügen.
+# End-to-End-Tests (Playwright)
+#  • bei jedem Pull Request und Push auf main: App bauen, Unit-Tests + Browser-Tests (Desktop & Mobil, API simuliert)
+#  • stündlich: Live-Smoke-Test gegen https://pokeswipe-radar.de (nur lesend) – schlägt fehl, wenn die Seite im
+#    Echtbetrieb kaputt ist; GitHub benachrichtigt dann per E-Mail über den fehlgeschlagenen Lauf.
+name: e2e
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        env:
+          CI: "1"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
+
+  live:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:live
+        env:
+          CI: "1"
+          E2E_BASE_URL: https://pokeswipe-radar.de

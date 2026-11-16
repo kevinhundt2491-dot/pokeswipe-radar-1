@@ -19,9 +19,9 @@ import { notify } from "./prices.ts";
 import { isBlockedBetween } from "./community.ts";
 import { escrowBuyGate, escrowSellGate, refundOrder, syncSellerAccount } from "./market.ts";
 import {
-  groupCart, blockingProblems, sellerOrderTitle, validUnitPrice, validateBusinessProfile,
+  groupCart, blockingProblems, sellerOrderTitle, validUnitPrice, validateBusinessProfile, optimizeCart,
   CART_MAX_LINES, CART_MAX_QTY, CHECKOUT_MAX_SELLERS, CHECKOUT_TTL_MIN, RESERVATION_GRACE_MIN, WITHDRAWAL_DAYS,
-  type CartLine,
+  type CartLine, type OptNeed, type OptOffer,
 } from "./cart-logic.ts";
 import { SHIP_COUNTRIES, AUTO_RELEASE_DAYS, SHIP_WINDOW_DAYS, CONDITIONS } from "./market-logic.ts";
 import { VARIANT_LABELS, type Variant } from "./variant-logic.ts";
@@ -233,6 +233,76 @@ export async function offersForCard(cardId: string, limit = 12) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 8: Warenkorb-Optimierer
+// ---------------------------------------------------------------------------
+async function optimizerProposal(userId: string, opts: { sameCondition?: boolean } = {}) {
+  const lines = cartLines(userId);
+  const all = await lines;
+  const g = groupCart(all);
+  const ok = g.groups.flatMap((x) => x.lines);
+  if (!ok.length) return { lines: all, ok, result: null, offers: [] as OptOffer[], needs: [] as OptNeed[] };
+  const needs: OptNeed[] = ok.map((l) => ({
+    key: String(l.cartItemId), cardId: l.cardId, variant: l.variant, lang: l.lang, minCondition: l.condition,
+    quantity: l.quantity, currentListingId: l.listingId, title: l.title,
+  }));
+  const cardIds = [...new Set(ok.map((l) => l.cardId).filter((x): x is string => Boolean(x)))];
+  const cand = cardIds.length ? rows(await db.execute(sql`
+    SELECT l.id, l.user_id, p.display_name, l.card_id, l.variant, l.lang, l.condition, l.price::float AS price, l.shipping_cents,
+      greatest(l.quantity - l.reserved, 0) AS available
+    FROM listings l JOIN profiles p ON p.user_id = l.user_id
+    WHERE l.card_id IN (${sql.join(cardIds.map((id) => sql`${id}`), sql`, `)})
+      AND l.status = 'active' AND l.buy_now AND p.stripe_account_ready AND p.stripe_account_id IS NOT NULL AND NOT p.banned
+      AND l.user_id <> ${userId} AND l.quantity - l.reserved > 0
+      AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.blocker_id = ${userId} AND b.blocked_id = l.user_id) OR (b.blocker_id = l.user_id AND b.blocked_id = ${userId}))
+    ORDER BY l.price ASC LIMIT 1500`)) : [];
+  const offers = new Map<number, OptOffer>();
+  for (const r of cand) {
+    const unit = Math.round(Number(r.price) * 100);
+    if (!validUnitPrice(unit)) continue;
+    offers.set(Number(r.id), {
+      listingId: Number(r.id), sellerId: String(r.user_id), sellerName: String(r.display_name), cardId: String(r.card_id),
+      variant: String(r.variant || "normal"), lang: String(r.lang || "de"), condition: String(r.condition || ""),
+      unitCents: unit, shippingCents: Number(r.shipping_cents) || 0, available: Number(r.available),
+    });
+  }
+  // Die aktuellen Positionen sind immer Kandidaten (auch Karten ohne Katalog-ID, z. B. Sealed)
+  for (const l of ok) {
+    offers.set(l.listingId, {
+      listingId: l.listingId, sellerId: l.sellerId, sellerName: l.sellerName, cardId: l.cardId, variant: l.variant, lang: l.lang,
+      condition: l.condition, unitCents: l.unitCents, shippingCents: l.shippingCents, available: l.available,
+    });
+  }
+  const offerList = [...offers.values()];
+  const result = optimizeCart(needs, offerList, { sameCondition: opts.sameCondition });
+  return { lines: all, ok, result, offers: offerList, needs };
+}
+
+function proposalView(p: Awaited<ReturnType<typeof optimizerProposal>>) {
+  if (!p.result) return { possible: false, savingsCents: 0, currentCents: 0, optimizedCents: 0, changes: [] };
+  const byId = new Map(p.offers.map((o) => [o.listingId, o]));
+  const r = p.result;
+  const sellersOf = (a: Record<string, { listingId: number }[]>) => new Set(Object.values(a).flat().map((x) => byId.get(x.listingId)?.sellerId)).size;
+  return {
+    possible: r.savingsCents > 0,
+    currentCents: r.current?.totalCents ?? 0, optimizedCents: r.best?.totalCents ?? 0, savingsCents: r.savingsCents,
+    currentShippingCents: r.current?.shippingCents ?? 0, optimizedShippingCents: r.best?.shippingCents ?? 0,
+    sellersBefore: p.result.current ? p.result.current.sellers : 0, sellersAfter: sellersOf(r.assignment),
+    changes: r.changed.map((key) => {
+      const need = p.needs.find((n) => n.key === key)!;
+      const from = byId.get(need.currentListingId)!;
+      return {
+        cartItemId: Number(key), title: need.title, quantity: need.quantity,
+        from: { listingId: from.listingId, seller: from.sellerName, unitCents: from.unitCents, condition: from.condition, conditionLabel: CONDITIONS[from.condition] || from.condition },
+        to: r.assignment[key].map((x) => {
+          const o = byId.get(x.listingId)!;
+          return { listingId: o.listingId, seller: o.sellerName, quantity: x.quantity, unitCents: o.unitCents, shippingCents: o.shippingCents, condition: o.condition, conditionLabel: CONDITIONS[o.condition] || o.condition };
+        }),
+      };
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Routen
 // ---------------------------------------------------------------------------
 export function registerCart(app: any, hlp: Hlp) {
@@ -341,6 +411,46 @@ export function registerCart(app: any, hlp: Hlp) {
     const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
     await db.delete(cartItems).where(and(eq(cartItems.id, id), eq(cartItems.userId, user.id)));
     return c.json(cartView(await cartLines(user.id)));
+  });
+
+  // ---------------- Phase 8: Warenkorb-Optimierer ----------------
+  // Vorschlag berechnen (ändert nichts)
+  app.post("/api/cart/optimize", auth, async (c: any) => {
+    const user: AuthUser = c.get("user");
+    if (!(await rateLimit(`cartopt:${user.id}`, 20, 60_000))) return c.json({ error: "Zu viele Anfragen in kurzer Zeit." }, 429);
+    const b = await body(c);
+    return c.json(proposalView(await optimizerProposal(user.id, { sameCondition: b.sameCondition === true })));
+  });
+
+  // Vorschlag übernehmen: wird serverseitig neu berechnet; weicht der Gesamtpreis vom gezeigten ab → 409 mit neuem Vorschlag
+  app.post("/api/cart/optimize/apply", auth, async (c: any) => {
+    const user: AuthUser = c.get("user");
+    if (!(await rateLimit(`cartopt:${user.id}`, 20, 60_000))) return c.json({ error: "Zu viele Anfragen in kurzer Zeit." }, 429);
+    const b = await body(c);
+    const expected = int(b.expectedTotalCents, 0, 10 ** 9, -1);
+    if (expected < 0) return c.json({ error: "Erwarteter Gesamtpreis fehlt." }, 400);
+    const p = await optimizerProposal(user.id, { sameCondition: b.sameCondition === true });
+    const view = proposalView(p);
+    if (!p.result || !view.possible) return c.json({ error: "Dein Warenkorb ist bereits die günstigste Zusammenstellung.", proposal: view }, 409);
+    if (view.optimizedCents !== expected) return c.json({ error: "Die Angebote haben sich gerade geändert. Bitte prüfe den neuen Vorschlag.", proposal: view }, 409);
+    const r = p.result;
+    // Ohne Transaktion, aber ausfallsicher: erst die Zielmengen je Inserat schreiben, dann die alten Positionen entfernen.
+    // Bricht etwas ab, liegt schlimmstenfalls eine Karte doppelt im Warenkorb – es geht nie etwas verloren.
+    const changed = new Set(r.changed);
+    const desired = new Map<number, number>();
+    for (const l of p.ok) if (!changed.has(String(l.cartItemId))) desired.set(l.listingId, (desired.get(l.listingId) || 0) + l.quantity);
+    const touched = new Set<number>();
+    for (const key of r.changed) for (const a of r.assignment[key]) { desired.set(a.listingId, (desired.get(a.listingId) || 0) + a.quantity); touched.add(a.listingId); }
+    for (const listingId of touched) {
+      const o = p.offers.find((x) => x.listingId === listingId)!;
+      const quantity = Math.min(CART_MAX_QTY, desired.get(listingId)!);
+      await db.insert(cartItems).values({ userId: user.id, listingId, quantity, priceCentsAtAdd: o.unitCents })
+        .onConflictDoUpdate({ target: [cartItems.userId, cartItems.listingId], set: { quantity, priceCentsAtAdd: o.unitCents } });
+    }
+    const drop = p.ok.filter((l) => changed.has(String(l.cartItemId)) && !desired.has(l.listingId)).map((l) => l.cartItemId);
+    if (drop.length) await db.delete(cartItems).where(and(eq(cartItems.userId, user.id), inArray(cartItems.id, drop)));
+    log.info("cart", "Warenkorb optimiert", { userId: user.id, savingsCents: view.savingsCents, changed: r.changed.length });
+    return c.json({ ok: true, savingsCents: view.savingsCents, cart: cartView(await cartLines(user.id)) });
   });
 
   // ---------------- Checkout (eine Zahlung, je Verkäufer eine Teilbestellung) ----------------
