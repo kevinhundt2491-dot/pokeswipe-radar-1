@@ -25,7 +25,7 @@ import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
 import { initFlip, flipApi, syncFlip } from "./flip.js";
 import { initCommunity, communityApi, syncCommunity, routeCommunity, communityAdminHtml } from "./community.js";
 import { profileApi, routeProfile, userSocialHtml } from "./profile.js";
-import { marketApi, routeMarket, listingFormExtras, listingFormValues, listingBuyHtml, listingMetaHtml } from "./market.js";
+import { marketApi, routeMarket, listingFormExtras, listingFormValues, listingBuyHtml, listingMetaHtml, renderPsttgBanner } from "./market.js";
 import { cartApi, routeCart, injectCartButton, refreshCartBadge } from "./cart.js";
 import { initPwa, pwaApi, wrapEnablePush, afterLoginPwa } from "./pwa.js";
 import { searchCatalog, searchThumb, searchMeta, isAbort } from "./search.js";
@@ -48,6 +48,7 @@ async function loadMe() {
     // das ließ sich über die Konsole fälschen. Maßgeblich ist jetzt nur noch die Server-Antwort.
     localStorage.removeItem("pokeswipe_pro");
     if (state.me.displayName) localStorage.setItem("pokeswipe_user", state.me.displayName);
+    try { renderPsttgBanner(); } catch {}
   } catch (e) {
     state.me = null;
     if (e.status === 401) state.user = null;

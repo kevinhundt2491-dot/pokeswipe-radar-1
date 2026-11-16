@@ -24,7 +24,13 @@ export const WEBHOOK_EVENTS = [
   // Phase 7: Warenkorb-Checkout abgelaufen (Reservierung freigeben), Connect-Verkäuferkonto geändert
   "checkout.session.expired",
   "account.updated",
+  // Phase 10: Sicherheitsnetz für Treuhand-Zahlungen und Erstattungen außerhalb der App
+  "payment_intent.succeeded",
+  "charge.refunded",
 ] as const;
+
+/** Ereignisse der verbundenen Express-Konten (Verkäufer) – kommen nur bei einem Connect-Endpunkt an. */
+export const CONNECT_WEBHOOK_EVENTS = ["account.updated"] as const;
 
 type AutoWebhook = { id: string; secret: string; url: string; createdAt: string };
 type WebhookStatus = { lastEventAt: string | null; lastEventType: string | null; lastError: string | null; lastErrorAt: string | null };
@@ -32,9 +38,11 @@ type WebhookStatus = { lastEventAt: string | null; lastEventType: string | null;
 // Strenge Konsistenz: ein gerade per Admin-Klick gespeichertes Webhook-Geheimnis gilt sofort (ohne Deploy, ohne CDN-Verzögerung)
 const store = () => getStore({ name: "app-config", consistency: "strong" });
 const webhookUrl = () => `${(process.env.URL || SITE()).replace(/\/$/, "")}/api/billing/webhook`;
+// Eigene Adresse für den Connect-Endpunkt (gleicher Handler, eigenes Signatur-Geheimnis)
+const connectWebhookUrl = () => `${(process.env.URL || SITE()).replace(/\/$/, "")}/api/stripe/webhook?source=connect`;
 
-async function autoWebhook(): Promise<AutoWebhook | null> {
-  try { return (await store().get("stripe-webhook", { type: "json" })) as AutoWebhook | null; } catch { return null; }
+async function autoWebhook(key = "stripe-webhook"): Promise<AutoWebhook | null> {
+  try { return (await store().get(key, { type: "json" })) as AutoWebhook | null; } catch { return null; }
 }
 
 /** Alle gültigen Signatur-Geheimnisse: Netlify-Variable STRIPE_WEBHOOK_SECRET und/oder automatisch eingerichteter Webhook. */
@@ -42,8 +50,10 @@ export async function webhookSecrets() {
   const list: string[] = [];
   const env = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
   if (env) list.push(env);
-  const auto = await autoWebhook();
-  if (auto?.secret && !list.includes(auto.secret)) list.push(auto.secret);
+  for (const key of ["stripe-webhook", "stripe-webhook-connect"]) {
+    const auto = await autoWebhook(key);
+    if (auto?.secret && !list.includes(auto.secret)) list.push(auto.secret);
+  }
   return list;
 }
 
@@ -87,6 +97,26 @@ export async function setupStripeWebhook() {
   return { ok: true, id: created.id, url, created: true };
 }
 
+/** Phase 10: Connect-Endpunkt für Ereignisse der Verkäuferkonten (account.updated) anlegen bzw. erneuern. */
+async function setupConnectWebhook(s: NonNullable<ReturnType<typeof stripe>>) {
+  const url = connectWebhookUrl();
+  const auto = await autoWebhook("stripe-webhook-connect");
+  const existing = (await s.webhookEndpoints.list({ limit: 100 })).data.filter((e) => e.url === url);
+  const stored = auto && existing.find((e) => e.id === auto.id);
+  if (stored) {
+    await s.webhookEndpoints.update(stored.id, { enabled_events: [...CONNECT_WEBHOOK_EVENTS], disabled: false });
+    return { ok: true, id: stored.id, url, created: false };
+  }
+  for (const e of existing) await s.webhookEndpoints.del(e.id).catch(() => {});
+  const created = await s.webhookEndpoints.create({
+    url, connect: true, enabled_events: [...CONNECT_WEBHOOK_EVENTS],
+    description: "PokeSwipe & Radar – Verkäuferkonten (Stripe Connect, automatisch eingerichtet)",
+  });
+  if (!created.secret) return { ok: false, error: "Stripe hat kein Signatur-Geheimnis für den Connect-Endpunkt geliefert." };
+  await store().setJSON("stripe-webhook-connect", { id: created.id, secret: created.secret, url, createdAt: new Date().toISOString() } satisfies AutoWebhook);
+  return { ok: true, id: created.id, url, created: true };
+}
+
 export async function integrationStatus() {
   const key = String(process.env.STRIPE_SECRET_KEY || "");
   const auto = await autoWebhook();
@@ -100,6 +130,7 @@ export async function integrationStatus() {
     stripe: {
       key: key ? (key.startsWith("sk_live_") || key.startsWith("rk_live_") ? "live" : key.startsWith("sk_test_") || key.startsWith("rk_test_") ? "test" : "unbekannt") : null,
       webhook: process.env.STRIPE_WEBHOOK_SECRET ? "env" : auto?.secret ? "auto" : null,
+      connectWebhook: (await autoWebhook("stripe-webhook-connect"))?.secret ? "auto" : null,
       webhookUrl: webhookUrl(),
       lastEventAt: wh?.lastEventAt ?? null, lastEventType: wh?.lastEventType ?? null,
       lastError: wh?.lastError ?? null, lastErrorAt: wh?.lastErrorAt ?? null,
@@ -122,7 +153,12 @@ export function registerIntegrations(app: any, hlp: { auth: any; adminOnly: any 
   app.get("/api/admin/integrations", auth, adminOnly, async (c: any) => c.json(await integrationStatus()));
   app.post("/api/admin/integrations/stripe-webhook", auth, adminOnly, async (c: any) => {
     try {
-      const r = await setupStripeWebhook();
+      const r: any = await setupStripeWebhook();
+      // Connect-Endpunkt zusätzlich (Fehler hier blockieren den Haupt-Webhook nicht, z. B. wenn Connect noch nicht aktiviert ist)
+      if (r.ok) {
+        try { r.connect = await setupConnectWebhook(stripe()!); }
+        catch (e: any) { r.connect = { ok: false, error: String(e?.message || "Stripe-Fehler").slice(0, 200) }; }
+      }
       return c.json(r, r.ok ? 200 : 400);
     } catch (e: any) {
       log.error("integrations", "Stripe-Webhook-Einrichtung fehlgeschlagen", { err: e });

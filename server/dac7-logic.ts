@@ -8,6 +8,9 @@
 
 export const DAC7_TX_THRESHOLD = 30;
 export const DAC7_GROSS_THRESHOLD_CENTS = 200_000; // 2.000 €
+/** Vorwarnung (Phase 10): ab 25 Verkäufen ODER 1.700 € bitten wir rechtzeitig um Steuer-ID und Anschrift. */
+export const PSTTG_WARN_TX = 25;
+export const PSTTG_WARN_GROSS_CENTS = 170_000; // 1.700 €
 /** So viele Erinnerungen bekommt ein meldepflichtiger Verkäufer ohne Steuerdaten, danach wird gesperrt. */
 export const DAC7_MAX_REMINDERS = 2;
 /** Abstand zwischen zwei Erinnerungen und Frist nach der letzten Erinnerung bis zur Sperre */
@@ -25,6 +28,17 @@ export const netConsiderationCents = (s: Dac7Stats) => Math.max(0, (Number(s.gro
 
 export function dac7Reportable(s: Dac7Stats): boolean {
   return (Number(s.transactions) || 0) >= DAC7_TX_THRESHOLD || netConsiderationCents(s) >= DAC7_GROSS_THRESHOLD_CENTS; // § 4 Abs. 5 PStTG: ausgenommen nur unter 30 Verkäufen UND unter 2.000 €
+}
+
+/** Vorwarnschwelle erreicht (25 Verkäufe oder 1.700 € netto im Kalenderjahr)? */
+export function psttgWarningReached(s: Dac7Stats): boolean {
+  return (Number(s.transactions) || 0) >= PSTTG_WARN_TX || netConsiderationCents(s) >= PSTTG_WARN_GROSS_CENTS;
+}
+
+export type PsttgStage = "none" | "warning" | "reporting";
+/** Stufe für Banner und Export: reporting (ab 30 / 2.000 €) vor warning (ab 25 / 1.700 €). */
+export function psttgStage(s: Dac7Stats): PsttgStage {
+  return dac7Reportable(s) ? "reporting" : psttgWarningReached(s) ? "warning" : "none";
 }
 
 /**

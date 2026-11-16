@@ -23,7 +23,8 @@ import { registerFlip } from "./flip.ts";
 import { registerScanIndex } from "./scan-index.ts";
 import { registerCommunity, afterCommunityReport, applyModeration, isBlockedBetween, COMMUNITY_TARGETS } from "./community.ts";
 import { registerProfiles } from "./profiles.ts";
-import { registerMarket, syncSellerAccount, fulfillOrderSession, buyNowListingGate, handleDisputeCreated, handleDisputeUpdated, handleDisputeClosed } from "./market.ts";
+import { psttgNotice } from "./dac7.ts";
+import { registerMarket, syncSellerAccount, fulfillOrderSession, buyNowListingGate, handleDisputeCreated, handleChargeRefunded, handleDisputeUpdated, handleDisputeClosed } from "./market.ts";
 import { registerArena } from "./arena.ts";
 import { registerCart, fulfillCartSession, expireCheckout } from "./cart.ts";
 import { registerSellerImport } from "./seller-import.ts";
@@ -152,6 +153,8 @@ app.get("/api/me", auth, async (c) => {
     profileSlug: profileSlug(profile.displayName),
     publicProfile: profile.publicProfile,
     sellerReady: profile.stripeAccountReady,
+    // Phase 10: PStTG-Hinweis (ab 25 Verkäufen / 1.700 € im Jahr) – nur für Verkäufer mit Connect-Konto
+    psttg: profile.stripeAccountId ? await psttgNotice(user.id).catch(() => null) : null,
     usage: counts,
     rating: await ratingOf(user.id),
     freeBoostsLeft: await freeBoostsLeft(user.id, plan),
@@ -943,6 +946,16 @@ const stripeWebhook = async (c: any) => {
       // Phase 7: Warenkorb-Checkout nicht bezahlt → Reservierungen sofort freigeben
       const so = event.data.object as any;
       if (so.metadata?.kind === "cart" && Number(so.metadata?.checkoutId)) await expireCheckout(Number(so.metadata.checkoutId));
+    } else if (event.type === "payment_intent.succeeded") {
+      // Phase 10: Sicherheitsnetz für Treuhand-Zahlungen – Checkout-Session zur Zahlung suchen und abschließen (idempotent)
+      const pi = event.data.object as any;
+      if (pi.metadata?.kind === "order" || pi.metadata?.kind === "cart") {
+        const list = await s.checkout.sessions.list({ payment_intent: String(pi.id), limit: 1 });
+        if (list.data[0]) await fulfillSession(list.data[0].id);
+      }
+    } else if (event.type === "charge.refunded") {
+      // Phase 10: Erstattung außerhalb der App (Stripe-Dashboard) → Treuhand-Bestellung schließen bzw. pausieren
+      await handleChargeRefunded(event.data.object as any);
     } else if (event.type === "account.updated") {
       // Phase 7: Status eines Connect-Kontos übernehmen (kommt nur bei einem Connect-Endpunkt an; sonst gleicht runCartJobs regelmäßig ab)
       const acct = event.data.object as any;

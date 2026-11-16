@@ -48,6 +48,7 @@ function renderTaxInfo(r) {
     ${r.required ? `<p class="text-xs font-black ${r.blocked ? "text-rose-300" : "text-amber-300"}">${r.blocked
       ? "⛔ Neue Verkäufe mit Käuferschutz sind gesperrt, bis die Angaben vollständig sind."
       : "⚠️ Du hast die Meldeschwelle erreicht – bitte ergänze deine Angaben, sonst werden neue Verkäufe nach zwei Erinnerungen gesperrt."}</p>` : ""}
+    ${!r.required && !r.complete && r.notice?.stage === "warning" ? `<p class="text-xs font-black text-amber-300">⚠️ Du hast die Vorwarnschwelle erreicht (${Number(r.warnThresholds.transactions)} Verkäufe oder ${cents(r.warnThresholds.grossCents)}). Bitte hinterlege Steuer-ID und Anschrift schon jetzt, damit dein Verkaufen bei Erreichen der Meldegrenze nicht unterbrochen wird.</p>` : ""}
     ${r.complete ? `<p class="text-xs font-black text-emerald-300">✅ Angaben vollständig${t.updatedAt ? ` (zuletzt geändert am ${new Date(t.updatedAt).toLocaleDateString("de-DE")})` : ""}.</p>` : ""}
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
       <label class="block text-[11px] text-slate-300 font-bold space-y-1 sm:col-span-2"><span>Ich verkaufe als</span>
@@ -91,6 +92,7 @@ async function saveTaxInfo() {
     await api("/api/market/tax-info", { method: "PUT", body: payload });
     closeModalEl("ps-taxinfo");
     toast("🧾 Steuerdaten gespeichert", "Vielen Dank – deine Angaben sind vollständig.");
+    window.PS?.refreshMe?.().catch?.(() => {});
   } catch (e) {
     if (msg && e.status === 400) { msg.textContent = e.message; if (e.data?.field) $({ sellerType: "tx-type", legalName: "tx-name", street: "tx-street", postalCode: "tx-zip", city: "tx-city", country: "tx-country", birthDate: "tx-birth", taxId: "tx-tin", vatId: "tx-vat", businessRegNo: "tx-reg", iban: "tx-iban" }[e.data.field])?.focus(); }
     else handleError(e);

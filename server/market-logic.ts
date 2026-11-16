@@ -35,6 +35,24 @@ export type OrderStatus = "offered" | "awaiting_payment" | "paid" | "shipped" | 
   | "chargeback" | "chargeback_lost"
   // Phase 7: Käufer hat bei einem gewerblichen Händler widerrufen – Auszahlung pausiert bis zur Rücksendung
   | "withdrawn";
+/**
+ * Phase 10: Treuhand-Phase in der Fachsprache des Direktkaufs (für API, Admin-Auswertung und Exporte).
+ * Die internen Status bleiben unverändert; „delivered“ = Käufer hat den Erhalt bestätigt (danach sofort Auszahlung).
+ */
+export type EscrowPhase = "pending_payment" | "paid_in_escrow" | "shipped" | "delivered" | "released_to_seller" | "disputed" | "refunded" | "cancelled";
+export function escrowPhase(status: string): EscrowPhase {
+  switch (status) {
+    case "offered": case "awaiting_payment": return "pending_payment";
+    case "paid": return "paid_in_escrow";
+    case "shipped": return "shipped";
+    case "releasing": return "delivered";
+    case "released": return "released_to_seller";
+    case "disputed": case "chargeback": case "chargeback_lost": case "withdrawn": return "disputed";
+    case "refunded": return "refunded";
+    default: return "cancelled";
+  }
+}
+
 export type OrderRole = "buyer" | "seller" | "admin" | "system";
 export type OrderAction = "accept" | "decline" | "pay" | "cancel" | "ship" | "confirm" | "dispute" | "refund" | "release" | "expire" | "withdraw" | "accept_return";
 
