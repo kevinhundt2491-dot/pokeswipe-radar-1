@@ -34,6 +34,9 @@ export const profiles = pgTable("profiles", {
   // Wechsel-Bonus (einmalig beim Import einer Sammlung aus einer anderen App)
   switchBonusAt: timestamp("switch_bonus_at", { withTimezone: true }),
   planInterval: text("plan_interval").notNull().default("month"), // month | year
+  // Phase 9: Herkunft des bezahlten Tarifs – stripe (Web/Android) | apple (In-App-Kauf über RevenueCat)
+  planSource: text("plan_source").notNull().default("stripe"),
+  appStoreOriginalTxId: text("app_store_original_tx_id"),
   // Bindung: tägliche Serie, Bestenliste, Wochen-Report
   streak: integer().notNull().default(0),
   bestStreak: integer("best_streak").notNull().default(0),
@@ -575,7 +578,23 @@ export const restockWatches = pgTable("restock_watches", {
   failCount: integer("fail_count").notNull().default(0),
   active: boolean().notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // Phase 9: Health-Monitor – ok | degraded | paused (nach 3 Fehlversuchen in Folge: „Selektor-Update nötig“)
+  health: text().notNull().default("ok"),
+  healthReason: text("health_reason").notNull().default(""),
+  /** Erfolgreiche Extraktionsstufe: jsonld | meta | selector */
+  lastLayer: text("last_layer").notNull().default(""),
+  /** Status, der noch eine zweite Bestätigung braucht (unsichere Stufe „selector“) */
+  pendingStatus: text("pending_status"),
+  blockedUntil: timestamp("blocked_until", { withTimezone: true }),
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
 }, (t) => [index("restock_watches_active").on(t.active, t.lastCheckedAt)]);
+
+// Phase 9: Beobachter eines Produkts – bekommen Community-Restock-Meldungen zu genau diesem Produkt sofort per Push
+export const restockWatchFollows = pgTable("restock_watch_follows", {
+  watchId: integer("watch_id").notNull().references(() => restockWatches.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("restock_watch_follows_pk").on(t.watchId, t.userId), index("restock_watch_follows_user").on(t.userId)]);
 
 // Gemeldete oder automatisch erkannte Drops (Restock oder Vorbestellung)
 export const restockDrops = pgTable("restock_drops", {
@@ -1292,3 +1311,69 @@ export const shippingLabels = pgTable("shipping_labels", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
 }, (t) => [index("shipping_labels_order").on(t.marketOrderId, t.status), uniqueIndex("shipping_labels_shipment").on(t.provider, t.shipmentNo)]);
+
+// ---------------------------------------------------------------------------
+// Phase 9: Eigene Preis-Pipeline – verdichtete Marktwerte je Karte, Variante und Stufe
+// Stufen: nm | lp | mp | hp | dmg (Rohkarten) und psa8 | psa9 | psa10 (Graded)
+// Quellen: TCGdex/Cardmarket-Referenz, eBay-Verkäufe (sold_comps), PokeSwipe-Verkäufe, Graded-Verkäufe (grade_values)
+// ---------------------------------------------------------------------------
+export const marketValuations = pgTable("market_valuations", {
+  id: serial().primaryKey(),
+  cardId: text("card_id").notNull(),
+  variant: text().notNull().default("normal"),
+  tier: text().notNull(),
+  value: numeric({ precision: 10, scale: 2 }),
+  low: numeric({ precision: 10, scale: 2 }),
+  high: numeric({ precision: 10, scale: 2 }),
+  /** 0–100: wie belastbar der Wert ist (Anzahl Verkäufe, Alter, Übereinstimmung der Quellen) */
+  confidence: integer().notNull().default(0),
+  sampleSize: integer("sample_size").notNull().default(0),
+  /** Gewichtete Anteile je Quelle, z. B. {"cardmarket":0.6,"ebay":0.3,"pokeswipe":0.1} */
+  sources: jsonb().notNull().default({}),
+  trend7: doublePrecision("trend_7"),
+  trend30: doublePrecision("trend_30"),
+  /** Zeitpunkt der jüngsten Quelldaten (für „Zuletzt aktualisiert“) */
+  dataAt: timestamp("data_at", { withTimezone: true }),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("market_valuations_key").on(t.cardId, t.variant, t.tier), index("market_valuations_computed").on(t.computedAt)]);
+
+export const marketValuationHistory = pgTable("market_valuation_history", {
+  id: serial().primaryKey(),
+  cardId: text("card_id").notNull(),
+  variant: text().notNull().default("normal"),
+  tier: text().notNull(),
+  day: date().notNull(),
+  value: numeric({ precision: 10, scale: 2 }).notNull(),
+  confidence: integer().notNull().default(0),
+}, (t) => [uniqueIndex("market_valuation_history_key").on(t.cardId, t.variant, t.tier, t.day)]);
+
+// ---------------------------------------------------------------------------
+// Phase 9: Selbstlernender Scanner – echte Kamera-Fingerabdrücke bestätigter Scans
+// ---------------------------------------------------------------------------
+export const scanLearnedHashes = pgTable("scan_learned_hashes", {
+  id: serial().primaryKey(),
+  /** "card:<id>" oder "print:<lang>:<id>" wie im Scan-Index */
+  targetKey: text("target_key").notNull(),
+  lang: text().notNull(),
+  artP: text("art_p").notNull(),
+  artD: text("art_d").notNull(),
+  fullP: text("full_p").notNull(),
+  /** Farb-Signatur (16 × 4 Bit als Hex) – null bei älteren Clients */
+  color: text(),
+  /** confirm (Nutzer hat übernommen) | ai (KI-Foto-Scan) | admin */
+  source: text().notNull().default("confirm"),
+  hits: integer().notNull().default(1),
+  /** Unterschiedliche Konten, die diesen Fingerabdruck bestätigt haben */
+  confirmations: integer().notNull().default(1),
+  /** Im Index aktiv (plausibel zum Referenzbild oder mehrfach bestätigt) */
+  active: boolean().notNull().default(false),
+  firstUserId: text("first_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("scan_learned_hashes_target").on(t.targetKey), index("scan_learned_hashes_lang").on(t.lang, t.active)]);
+
+export const scanLearnVotes = pgTable("scan_learn_votes", {
+  hashId: integer("hash_id").notNull().references(() => scanLearnedHashes.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("scan_learn_votes_pk").on(t.hashId, t.userId)]);

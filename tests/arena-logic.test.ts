@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   updatePrefs, prefWeights, encodePrefParam, parsePrefParam, featureKeys, priceBand, mergePrefs, prefSummary, COLD_START_SWIPES,
-  buildPool, openPack, expectedValue, packBalance, slotOdds, PACK_LAYOUTS, boosterBucket, type BoosterCard,
 } from "../server/arena-logic.ts";
 import { radarRound, parseCardNumber } from "../server/community-logic.ts";
 import { seedMap, seedInfo } from "../server/scan-index.ts";
@@ -60,60 +59,6 @@ test("Profile zusammenführen", () => {
   assert.equal(m.swipes, 20);
   assert.equal(m.scores["r:sir"], undefined);
   assert.equal(m.scores["l:ja"], 0.5);
-});
-
-const card = (id: string, bucket: BoosterCard["bucket"], price: number | null): BoosterCard => ({ id, name: id, number: "", image: "", rarity: bucket, bucket, price });
-function samplePool() {
-  const list: BoosterCard[] = [];
-  for (let i = 0; i < 60; i++) list.push(card(`c${i}`, "common", 0.05));
-  for (let i = 0; i < 20; i++) list.push(card(`r${i}`, "rare", 0.3));
-  for (let i = 0; i < 10; i++) list.push(card(`u${i}`, "ultra", 3));
-  for (let i = 0; i < 12; i++) list.push(card(`i${i}`, "ir", 8));
-  for (let i = 0; i < 6; i++) list.push(card(`s${i}`, "sir", 60));
-  for (let i = 0; i < 3; i++) list.push(card(`h${i}`, "hyper", 25));
-  return buildPool(list);
-}
-
-test("Booster: Slot-Quoten summieren sich zu 100 %", () => {
-  const pool = samplePool();
-  for (const layout of Object.values(PACK_LAYOUTS)) {
-    for (const slot of layout.slots) {
-      const sum = slotOdds(slot, pool).reduce((s, o) => s + o.p, 0);
-      assert.ok(Math.abs(sum - 1) < 1e-9);
-    }
-  }
-});
-
-test("Booster: Kartenzahl, keine Doppelten, realistische Hit-Häufigkeit", () => {
-  const pool = samplePool();
-  let seed = 42;
-  const rng = () => ((seed = (seed * 1664525 + 1013904223) % 2 ** 32) / 2 ** 32);
-  let sir = 0;
-  const N = 20000;
-  for (let i = 0; i < N; i++) {
-    const pack = openPack(pool, PACK_LAYOUTS.intl, rng);
-    assert.equal(pack.length, 10);
-    assert.equal(new Set(pack.map((c) => c.id)).size, 10);
-    sir += pack.filter((c) => c.bucket === "sir").length;
-  }
-  const rate = sir / N;
-  assert.ok(rate > 1 / 75 && rate < 1 / 40, `SIR-Rate ${rate}`);
-});
-
-test("Booster: Erwartungswert und Bilanz", () => {
-  const pool = samplePool();
-  const { ev, hitChance } = expectedValue(pool, PACK_LAYOUTS.intl);
-  assert.ok(ev > 1 && ev < 6, `EV ${ev}`);
-  assert.ok(hitChance > 0.05 && hitChance < 0.25);
-  const b = packBalance([[{ ...card("x", "sir", 60), slot: "", reverse: false, value: 60, hit: true }]], 5.49);
-  assert.equal(b.profit, 54.51);
-  assert.equal(b.best?.id, "x");
-});
-
-test("Booster: Gruppe ohne Seltenheit nach Preis", () => {
-  assert.equal(boosterBucket(null, 3), "rare");
-  assert.equal(boosterBucket(null, 0.1), "common");
-  assert.equal(boosterBucket("sir", 0.1), "sir");
 });
 
 test("Sammler-Radar: Koordinaten auf ~1-km-Raster", () => {

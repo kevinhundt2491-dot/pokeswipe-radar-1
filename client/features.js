@@ -5,6 +5,7 @@ import {
   modal, closeModalEl, input, btn, sparkline, areaChart,
 } from "./core.js";
 import { localePath } from "./i18n.js";
+import { haptic, takePhoto, isNative } from "./native.js";
 import { liveScanPlaceholderHtml, lazyLiveScanApi, onLiveScanShownLazy } from "./lazy.js";
 import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml, collectorApi } from "./collector.js";
 import {
@@ -136,9 +137,9 @@ function scanPanelHtml() {
   return `<div id="ps-scan" class="poke-glass rounded-3xl p-4 sm:p-6 space-y-4 border-2 border-cyan-400/40">
     <div class="flex flex-wrap justify-between items-start gap-2">
       <div>
-        <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">📷 KI-Karten-Scanner</span>
+        <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">📷 Foto-Scanner (Gerät + KI)</span>
         <h2 class="text-base sm:text-lg font-black text-white mt-1">Karte fotografieren – Preis sofort sehen</h2>
-        <p class="text-xs text-slate-300">Die KI liest Name und Nummer, findet die passende Karte und zeigt dir den Cardmarket-Preis. Mit einem Tipp ins Portfolio oder als Preisalarm.</p>
+        <p class="text-xs text-slate-300">Erst erkennt dein Gerät die Karte (kostenlos, ohne Upload) – nur wenn das unsicher ist, liest die KI Name und Nummer. Mit einem Tipp ins Portfolio oder als Preisalarm.</p>
       </div>
       <span id="ps-scan-left" class="text-xs font-black text-cyan-300"></span>
     </div>
@@ -151,13 +152,41 @@ function scanPanelHtml() {
   </div>`;
 }
 
-async function handleScan(file) {
+/**
+ * Foto-Scan im Hybrid-Verfahren:
+ *  1. Erkennung auf dem Gerät (Fingerabdruck + Nummer, 0 € und kein Scan-Limit)
+ *  2. nur wenn unsicher: KI-Scan auf dem Server (Tageslimit je Tarif)
+ *  3. wählt der Nutzer danach eine Karte, lernt der Scanner-Index den Fingerabdruck dieses Fotos
+ */
+async function handleScan(file, { forceAi = false } = {}) {
   if (!file || !requireLogin()) return;
   const box = $("ps-scan-result");
-  box.innerHTML = `<p class="text-yellow-400 text-xs font-bold text-center py-4">🔍 KI erkennt deine Karte …</p>`;
+  box.innerHTML = `<p class="text-cyan-300 text-xs font-bold text-center py-4">⚡ Erkenne Karte auf dem Gerät …</p>`;
   try {
     const image = await resizeImage(file);
-    box.innerHTML = `<div class="flex gap-3 items-center"><img src="${image}" class="w-20 rounded-xl" /><p class="text-yellow-400 text-xs font-bold">🔍 KI erkennt deine Karte …</p></div>`;
+    lastScanImage = image;
+    let local = null;
+    if (!forceAi) {
+      box.innerHTML = `<div class="flex gap-3 items-center"><img src="${image}" class="w-20 rounded-xl" /><p class="text-cyan-300 text-xs font-bold">⚡ Erkenne Karte auf dem Gerät …</p></div>`;
+      try { local = await lazyLiveScanApi.liveScanRecognize(image); } catch { local = null; }
+      scanProbe = local?.probe || window.__psScanProbe || null;
+      if (local?.accepted && local.info) {
+        const i = local.info;
+        haptic("success");
+        window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
+        box.innerHTML = `<div class="bg-slate-950 rounded-2xl p-3 border border-emerald-400/50 text-xs space-y-2">
+          <p class="text-emerald-300 font-black">✅ Auf dem Gerät erkannt – kein KI-Scan verbraucht</p>
+          <button onclick="PS.scanPick(${jsArg(i.key)}, 'confirm')" class="w-full flex gap-3 items-center text-left bg-slate-900 hover:bg-slate-800 rounded-xl p-2">
+            <img src="${esc(cdn(i.image || FALLBACK_IMG, 160))}" onerror="this.src='${FALLBACK_IMG}'" class="w-14 h-20 object-contain" />
+            <span><span class="block font-black text-white">${esc(i.name)} ${esc(i.number || "")}</span>
+            <span class="block text-slate-400">${esc(i.setName || "")}</span><span class="block text-emerald-400 font-black">${i.price ? eur(i.price) : "–"}</span></span>
+          </button>
+          <button onclick="PS.scanAskAi()" class="w-full text-[11px] text-slate-400 underline">Falsche Karte? KI-Scan starten</button>
+        </div>`;
+        return;
+      }
+    }
+    box.innerHTML = `<div class="flex gap-3 items-center"><img src="${image}" class="w-20 rounded-xl" /><p class="text-yellow-400 text-xs font-bold">🔍 ${local?.glare ? "Starke Spiegelung – " : ""}KI erkennt deine Karte …</p></div>`;
     const r = await api("/api/scan", { method: "POST", body: { image } });
     PS().refreshMe();
     if (!r.found) {
@@ -167,10 +196,11 @@ async function handleScan(file) {
     }
     box.innerHTML = `<p class="text-xs text-slate-300">Erkannt: <strong class="text-white">${esc(r.detected.name)}</strong>${r.detected.number ? ` • Nr. ${esc(r.detected.number)}${r.detected.total ? "/" + esc(r.detected.total) : ""}` : ""} – tippe auf die passende Karte:</p>
       <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">${r.candidates.map((c) => `
-        <button onclick="PS.openCard(${jsArg(c.id)})" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-2 text-center">
+        <button onclick="PS.scanPick(${jsArg(`card:${c.id}`)}, 'ai')" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-2 text-center">
           <img src="${esc(cdn(c.image || FALLBACK_IMG, 200))}" onerror="this.src='${FALLBACK_IMG}'" class="h-28 mx-auto object-contain" loading="lazy" />
           <p class="text-[11px] font-bold text-white truncate">${esc(c.name)}</p><p class="text-[10px] text-slate-400">${esc(c.id)}</p>
         </button>`).join("")}</div>`;
+    window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
     if (r.candidates.length === 1) PS().openCard(r.candidates[0].id);
   } catch (e) {
     box.innerHTML = "";
@@ -178,9 +208,29 @@ async function handleScan(file) {
   }
 }
 
+let lastScanImage = null;
+let scanProbe = null;
+
+/** Karte aus dem Foto-Scan übernehmen: Details öffnen und den Fingerabdruck lernen (Stufe 2). */
+function scanPick(key, source) {
+  if (scanProbe) lazyLiveScanApi.liveScanLearn(key, scanProbe, source).catch?.(() => {});
+  const [kind, ...rest] = String(key).split(":");
+  const id = rest.join(":");
+  if (kind === "print") PS().openPrint?.(id); else PS().openCard(id);
+}
+
+/** Lokales Ergebnis verwerfen und doch die KI fragen. */
+async function scanAskAi() {
+  if (!lastScanImage) return;
+  const blob = await (await fetch(lastScanImage)).blob();
+  handleScan(new File([blob], "scan.jpg", { type: "image/jpeg" }), { forceAi: true });
+}
+
 /** KI-Foto-Scan (Server, Tageslimit je Tarif) – Rückfall, wenn der Live-Scanner eine Karte nicht kennt. */
 export function openPhotoScanner() {
   showSub("scan", "camera");
+  // In der App: native Kamera-Oberfläche (Capacitor Camera), im Browser: Datei-Auswahl mit Rückkamera
+  if (isNative()) { setTimeout(() => takePhoto().then((f) => f && handleScan(f)), 150); return; }
   setTimeout(() => $("ps-scan-input")?.click(), 150);
 }
 
@@ -714,13 +764,13 @@ async function adminSealedAdd() {
 // ===========================================================================
 const SUBTABS = {
   swipe: [
-    { key: "swipe", label: "Swipen & Booster", fallback: true, match: () => false },
+    { key: "swipe", label: "Karten swipen", fallback: true, match: () => false },
     { key: "search", label: "Kartensuche & Rip or Keep", match: (el) => el.querySelector("#tcgdex-search-inp, #ripkeep-select") },
   ],
   flip: [
     { key: "drops", label: "🚨 Restock & Vorbestellung", match: (el) => el.id === "ps-drops" },
     { key: "alerts", label: "Preisalarme", match: (el) => el.id === "ps-tracker" },
-    { key: "sealed", label: "Sealed", match: (el) => el.id === "ps-sealed" },
+    { key: "sealed", label: "Sealed-Analyse", pro: true, match: (el) => el.id === "ps-sealed" },
     { key: "deals", label: "Flip-Deals", fallback: true, match: () => false },
   ],
   scan: [
@@ -839,6 +889,11 @@ function injectPanels() {
   if (!$("ps-grading")) add("portfolio", gradingPanelHtml());
 
   $("ps-scan-input")?.addEventListener("change", (e) => { handleScan(e.target.files[0]); e.target.value = ""; });
+  $("ps-scan-input")?.closest("label")?.addEventListener("click", (e) => {
+    if (!isNative()) return;
+    e.preventDefault();
+    takePhoto().then((f) => f && handleScan(f));
+  });
   $("ps-set-q")?.addEventListener("input", renderSetList);
 
   // Push-Zentrale: echte Web-Push-Freigabe
@@ -883,7 +938,7 @@ function tidyLayout() {
 // Start
 // ===========================================================================
 export const featureApi = {
-  enablePush, disablePush, openScanner, openPhotoScanner, scanFile: (file) => handleScan(file), openSet, trackSet, untrackSet,
+  enablePush, disablePush, openScanner, openPhotoScanner, scanFile: (file) => handleScan(file), scanPick, scanAskAi, openSet, trackSet, untrackSet,
   ...lazyLiveScanApi,
   ...collectorApi,
   sealedKind: (k) => { sealedKind = k; renderSealed(); },

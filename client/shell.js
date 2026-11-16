@@ -1,5 +1,9 @@
-// PokeSwipe & Radar – App-Hülle: 5 Kernbereiche, Progressive Disclosure (Einfach/Profi), 3-Schritte-Onboarding
-// mit Demo-Modus ohne Registrierung und die gemeinsame Navigation „Community & Markt“.
+// PokeSwipe & Radar – App-Hülle: Kernbereiche, Progressive Disclosure (Einsteiger/Profi), 3-Schritte-Quickstart
+// für neue Nutzer, Ziel-Einführung mit Demo-Modus ohne Registrierung und die gemeinsame Navigation „Community & Tausch“.
+//
+// Einsteiger-Ansicht (Standard für neue Nutzer): 4 Kernbereiche – Scanner · Sammlung · Deals/Flip-Radar · Community & Tausch.
+// Profi-Ansicht: zusätzlich „Entdecken“ (Swipe-Arena) in der Navigation sowie Profi-Werkzeuge (Margen, PSA-Spreads,
+// Grading-Tools, Tausch-Rechner, Sealed-Analyse, Serien-Scan, Händler-Werkzeuge). Umschalter im Header und in der Schnellstart-Leiste.
 import { $, esc, toast, state, modal, closeModalEl } from "./core.js";
 import { applyArenaPreset } from "./arena.js";
 
@@ -8,6 +12,7 @@ const ONBOARD_KEY = "ps_onboarded"; // done | skipped
 const GOAL_KEY = "ps_goal"; // collect | trade | snipe
 const DEMO_KEY = "ps_demo";
 const DEMO_HIDE_KEY = "ps_demo_hidden";
+const QS_KEY = "ps_quickstart"; // { scan, value, alert, dismissed }
 
 // Wiederkehrende Nutzer erkennen, BEVOR die App in diesem Besuch neue Einträge schreibt:
 // Wer die App schon genutzt hat, behält die gewohnte volle Ansicht und sieht kein Pflicht-Onboarding.
@@ -20,6 +25,9 @@ const RETURNING = (() => {
   } catch {}
   return false;
 })();
+
+// Wer die App schon vor dem Quickstart genutzt hat, bekommt ihn nicht aufgedrängt (kann ihn über ❔ öffnen)
+const RETURNING_QS = (() => { try { return RETURNING && !localStorage.getItem(QS_KEY); } catch { return RETURNING; } })();
 
 const GOALS = {
   collect: {
@@ -80,8 +88,9 @@ export function setMode(mode, { silent = false } = {}) {
   if (mode !== "simple" && mode !== "pro") return;
   localStorage.setItem(MODE_KEY, mode);
   applyMode(mode);
-  if (!silent) toast(mode === "pro" ? "📊 Profi-Ansicht" : "✨ Einfache Ansicht",
-    mode === "pro" ? "Arbitrage-Margen, PSA-Links, Grading-Tools und alle Filter sind sichtbar." : "Nur das Wichtigste – Profi-Werte kannst du jederzeit einzeln aufklappen.");
+  renderQuickstartCard();
+  if (!silent) toast(mode === "pro" ? "📊 Profi-Ansicht" : "🌱 Einsteiger-Ansicht",
+    mode === "pro" ? "Alle Bereiche und Profi-Werkzeuge: Margen, PSA-Spreads, Grading-Tools, Sealed-Analyse, Serien-Scan und alle Filter." : "4 Kernbereiche: Scanner, Sammlung, Deals und Community & Tausch – Profi-Werte kannst du jederzeit einzeln aufklappen.");
 }
 
 // Modus sofort setzen (kein Aufblitzen der Profi-Elemente)
@@ -93,7 +102,7 @@ applyMode(getMode());
 function quickbarHtml() {
   const goal = GOALS[localStorage.getItem(GOAL_KEY)] ? localStorage.getItem(GOAL_KEY) : null;
   const actions = {
-    collect: [["📷 Karte scannen", "PS.openScanner()"], ["🃏 Karten entdecken", "switchTab('swipe')"], ["💼 Meine Sammlung", "switchTab('portfolio')"]],
+    collect: [["📷 Karte scannen", "PS.openScanner()"], ["💼 Meine Sammlung", "switchTab('portfolio')"], ["🃏 Karten swipen", "switchTab('swipe')"]],
     trade: [["🤝 Inserate ansehen", "PS.showSub('map', 'market')"], ["➕ Karte inserieren", "switchTab('map')"], ["🗺️ Sammler in der Nähe", "PS.showSub('map', 'radar')"]],
     snipe: [["🔥 Deals swipen", "PS.arenaQuickDeals()"], ["🚨 Restock-Radar", "PS.showSub('flip', 'drops')"], ["🔔 Preisalarme", "PS.showSub('flip', 'alerts')"]],
   }[goal || "collect"];
@@ -103,10 +112,10 @@ function quickbarHtml() {
     </div>
     <div class="flex items-center gap-1.5">
       <div class="flex bg-slate-950 border border-slate-700 rounded-xl p-0.5 text-[11px] font-black" role="group" aria-label="Ansicht">
-        <button type="button" data-mode-btn="simple" onclick="PS.setUiMode('simple')" class="ps-chip px-2.5 py-1 rounded-lg text-slate-300">✨ Einfach</button>
+        <button type="button" data-mode-btn="simple" onclick="PS.setUiMode('simple')" class="ps-chip px-2.5 py-1 rounded-lg text-slate-300">🌱 Einsteiger</button>
         <button type="button" data-mode-btn="pro" onclick="PS.setUiMode('pro')" class="ps-chip px-2.5 py-1 rounded-lg text-slate-300">📊 Profi</button>
       </div>
-      <button type="button" onclick="PS.openOnboarding()" class="text-slate-400 hover:text-white text-xs font-bold px-1.5" title="Einführung erneut starten" aria-label="Einführung erneut starten">❔</button>
+      <button type="button" onclick="PS.openQuickstart()" class="text-slate-400 hover:text-white text-xs font-bold px-1.5" title="Quickstart & Einführung" aria-label="Quickstart und Einführung öffnen">❔</button>
     </div>
   </div>`;
 }
@@ -122,6 +131,7 @@ function renderQuickbar() {
   // Großes Hero-Banner nur beim ersten Besuch – danach direkt zu den Inhalten
   hero.classList.toggle("hidden", !!localStorage.getItem(ONBOARD_KEY) || RETURNING);
   applyMode(getMode());
+  renderQuickstartCard();
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +189,7 @@ function renderOnboarding() {
       <p class="text-xs font-black text-white pt-1">Wie viel möchtest du sehen?</p>
       <div class="grid grid-cols-2 gap-2">
         <button type="button" onclick="PS.onboardMode('simple')" aria-pressed="${ob.mode === "simple"}" class="ps-goal-card text-left bg-slate-900 border-2 border-slate-700 rounded-2xl p-3">
-          <span class="block text-sm font-black text-white">✨ Einfach</span><span class="block text-[11px] text-slate-300">Aufgeräumt, nur das Wichtigste. Details aufklappbar.</span></button>
+          <span class="block text-sm font-black text-white">🌱 Einsteiger</span><span class="block text-[11px] text-slate-300">4 Kernbereiche, aufgeräumt. Details aufklappbar.</span></button>
         <button type="button" onclick="PS.onboardMode('pro')" aria-pressed="${ob.mode === "pro"}" class="ps-goal-card text-left bg-slate-900 border-2 border-slate-700 rounded-2xl p-3">
           <span class="block text-sm font-black text-white">📊 Profi</span><span class="block text-[11px] text-slate-300">Margen, PSA-Spreads, Grading-Tools, alle Filter.</span></button>
       </div>
@@ -195,7 +205,7 @@ function renderOnboarding() {
       <div class="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 text-xs text-slate-300 space-y-1.5">
         <p>🎯 Ziel: <strong class="text-white">${g.title}</strong></p>
         <p>🌍 Karten: <strong class="text-white">${esc(langs)}</strong></p>
-        <p>👀 Ansicht: <strong class="text-white">${ob.mode === "pro" ? "Profi" : "Einfach"}</strong> <span class="text-slate-500">(oben jederzeit umschaltbar)</span></p>
+        <p>👀 Ansicht: <strong class="text-white">${ob.mode === "pro" ? "Profi" : "Einsteiger"}</strong> <span class="text-slate-500">(oben jederzeit umschaltbar)</span></p>
         <p class="text-cyan-200">${esc(g.tip)}</p>
       </div>
       ${state.user
@@ -260,6 +270,114 @@ function skipOnboarding(fromClose = false) {
 }
 
 // ---------------------------------------------------------------------------
+// 3-Schritte-Quickstart für neue Nutzer: 1. Karte scannen → 2. Sammlungswert sehen → 3. Alarm/Schnäppchen
+// Fortschritt kommt über Ereignisse („ps:quickstart“) aus Scanner, Sammlung, Preisalarm und Restock-Radar.
+// ---------------------------------------------------------------------------
+const QS_STEPS = [
+  { key: "scan", icon: "📷", title: "Erste Karte scannen", text: "Karte vor die Kamera halten – Name und Preis in unter 1 Sekunde.", cta: "Scanner öffnen", on: "PS.openScanner()" },
+  { key: "value", icon: "💼", title: "Sammlungswert live sehen", text: "Deine Karten mit aktuellem Marktwert, Gewinn und Verlauf.", cta: "Sammlung öffnen", on: "switchTab('portfolio')" },
+  { key: "alert", icon: "🔔", title: "Preisalarm oder Schnäppchen aktivieren", text: "Push bei Wunschpreis, Restock zur UVP oder Deals unter Marktwert.", cta: "Alarm einrichten", on: "PS.quickstartAlert()" },
+];
+
+export function quickstartState() {
+  try { return { scan: false, value: false, alert: false, dismissed: false, ...JSON.parse(localStorage.getItem(QS_KEY) || "{}") }; }
+  catch { return { scan: false, value: false, alert: false, dismissed: false }; }
+}
+function saveQuickstart(st) { try { localStorage.setItem(QS_KEY, JSON.stringify(st)); } catch {} }
+
+/** Schritt erledigt (wird von Scanner, Sammlung, Alarmen per Ereignis gemeldet). */
+export function markQuickstart(step) {
+  const st = quickstartState();
+  if (!QS_STEPS.some((x) => x.key === step) || st[step]) return;
+  st[step] = true;
+  saveQuickstart(st);
+  const done = QS_STEPS.every((x) => st[x.key]);
+  if (!st.dismissed) toast(done ? "🎉 Quickstart geschafft!" : "✅ Schritt erledigt", done ? "Du kennst jetzt das Wichtigste. Mehr Werkzeuge findest du in der Profi-Ansicht." : QS_STEPS.find((x) => !st[x.key])?.title || "");
+  renderQuickstartCard();
+}
+
+function quickstartCardHtml(st) {
+  const next = QS_STEPS.find((x) => !st[x.key]);
+  const done = QS_STEPS.filter((x) => st[x.key]).length;
+  return `<div id="ps-quickstart" class="poke-glass rounded-2xl p-3 border border-yellow-400/40 space-y-2">
+    <div class="flex items-center justify-between gap-2">
+      <p class="text-xs font-black text-white">🚀 Quickstart · ${done}/3 erledigt</p>
+      <button type="button" onclick="PS.quickstartDismiss()" class="text-slate-400 hover:text-white text-xs font-bold px-1" aria-label="Quickstart ausblenden">✕</button>
+    </div>
+    <ol class="grid grid-cols-1 sm:grid-cols-3 gap-2">${QS_STEPS.map((x, i) => {
+      const ok = st[x.key], current = next?.key === x.key;
+      return `<li class="rounded-xl p-2.5 border ${ok ? "border-emerald-500/50 bg-emerald-500/10" : current ? "border-yellow-400 bg-slate-950" : "border-slate-800 bg-slate-950/60"} text-xs">
+        <p class="font-black ${ok ? "text-emerald-300" : "text-white"}">${ok ? "✅" : `${i + 1}.`} ${x.icon} ${esc(x.title)}</p>
+        <p class="text-[11px] text-slate-400 mt-0.5">${esc(x.text)}</p>
+        ${!ok && current ? `<button type="button" onclick="${x.on}" class="mt-1.5 w-full bg-yellow-400 text-slate-950 font-black py-1.5 rounded-lg text-[11px]">${esc(x.cta)} →</button>` : ""}
+      </li>`;
+    }).join("")}</ol>
+  </div>`;
+}
+
+/** Fortschritts-Karte unter der Schnellstart-Leiste – nur in der Einsteiger-Ansicht, bis alles erledigt oder ausgeblendet ist. */
+function renderQuickstartCard() {
+  const st = quickstartState();
+  const show = getMode() === "simple" && !st.dismissed && !QS_STEPS.every((x) => st[x.key]) && !RETURNING_QS;
+  const el = $("ps-quickstart");
+  if (!show) { el?.remove(); return; }
+  const bar = $("ps-quickbar");
+  if (!bar) return;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = quickstartCardHtml(st);
+  if (el) el.replaceWith(tmp.firstElementChild); else bar.after(tmp.firstElementChild);
+}
+
+/** Kompakter Quickstart beim allerersten Start (statt langer Einführung). */
+export function openQuickstart() {
+  const st = quickstartState();
+  modal("ps-onboarding", `
+    <h3 class="text-lg font-black text-white text-center">Willkommen bei PokeSwipe Radar 👋</h3>
+    <p class="text-xs text-slate-300 text-center">In 3 Schritten startklar – kostenlos und ohne Vorwissen.</p>
+    <ol class="space-y-2">${QS_STEPS.map((x, i) => `<li class="flex gap-3 items-start bg-slate-900 border border-slate-700 rounded-2xl p-3">
+      <span class="w-7 h-7 shrink-0 rounded-full ${st[x.key] ? "bg-emerald-400" : "bg-yellow-400"} text-slate-950 font-black text-xs flex items-center justify-center">${st[x.key] ? "✓" : i + 1}</span>
+      <span><span class="block text-sm font-black text-white">${x.icon} ${esc(x.title)}</span><span class="block text-[11px] text-slate-300">${esc(x.text)}</span></span></li>`).join("")}</ol>
+    <button type="button" onclick="PS.quickstartGo()" class="w-full bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-3 rounded-xl text-sm">📷 Los geht's: erste Karte scannen</button>
+    <div class="grid grid-cols-2 gap-2">
+      <button type="button" onclick="PS.quickstartLater()" class="bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">Erst umsehen</button>
+      <button type="button" onclick="PS.openOnboarding()" class="bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">⚙️ Ziel & Sprachen wählen</button>
+    </div>
+    <p class="text-[10px] text-slate-500 text-center">Du startest in der 🌱 Einsteiger-Ansicht. Profi-Werkzeuge schaltest du oben mit einem Tipp frei.</p>`,
+    { onClose: () => { if (!localStorage.getItem(ONBOARD_KEY)) { localStorage.setItem(ONBOARD_KEY, "skipped"); renderQuickbar(); } } });
+}
+
+function finishQuickstartIntro(action) {
+  localStorage.setItem(ONBOARD_KEY, "done");
+  if (!localStorage.getItem(MODE_KEY)) setMode("simple", { silent: true });
+  closeModalEl("ps-onboarding");
+  saveQuickstart(quickstartState());
+  renderQuickbar();
+  if (action === "scan") window.PS?.openScanner?.();
+}
+
+/** Schritt 3: Preisalarm (mit Sammlung) bzw. Restock-Radar/Deals (ohne Sammlung). */
+function quickstartAlert() {
+  window.PS?.showSub?.("flip", state.user && (state.me?.usage?.portfolio || 0) > 0 ? "alerts" : "drops");
+}
+
+// ---------------------------------------------------------------------------
+// Ansicht-Umschalter im Header (Einsteiger / Profi) – jederzeit mit einem Tipp erreichbar
+// ---------------------------------------------------------------------------
+function injectHeaderModeSwitch() {
+  if ($("ps-mode-header")) return;
+  const auth = $("authBtnText")?.closest("button");
+  if (!auth) return;
+  const el = document.createElement("div");
+  el.id = "ps-mode-header";
+  el.className = "ps-mode-switch inline-flex items-center gap-0.5 bg-slate-900 border border-slate-600 rounded-xl p-0.5 text-[11px]";
+  el.setAttribute("role", "group");
+  el.setAttribute("aria-label", "Ansicht");
+  el.innerHTML = `<button type="button" data-mode-btn="simple" onclick="PS.setUiMode('simple')" title="Einsteiger-Ansicht: 4 Kernbereiche" class="px-2 py-1 rounded-lg font-black text-slate-300">🌱<span class="hidden sm:inline"> Einsteiger</span></button>
+    <button type="button" data-mode-btn="pro" onclick="PS.setUiMode('pro')" title="Profi-Ansicht: alle Bereiche und Werkzeuge" class="px-2 py-1 rounded-lg font-black text-slate-300">📊<span class="hidden sm:inline"> Profi</span></button>`;
+  auth.before(el);
+}
+
+// ---------------------------------------------------------------------------
 // Demo-Hinweis für Nutzer ohne Konto
 // ---------------------------------------------------------------------------
 function renderDemoBanner() {
@@ -290,13 +408,36 @@ export const shellApi = {
   onboardSkip: () => skipOnboarding(false),
   hideDemoBanner: () => { sessionStorage.setItem(DEMO_HIDE_KEY, "1"); renderDemoBanner(); },
   arenaQuickDeals: () => { applyArenaPreset({ deals: true }); window.switchTab?.("swipe"); },
+  openQuickstart,
+  quickstartGo: () => finishQuickstartIntro("scan"),
+  quickstartLater: () => finishQuickstartIntro(""),
+  quickstartAlert,
+  quickstartDismiss: () => { const st = quickstartState(); st.dismissed = true; saveQuickstart(st); renderQuickstartCard(); toast("Quickstart ausgeblendet", "Über ❔ in der Schnellstart-Leiste kannst du ihn jederzeit wieder öffnen."); },
 };
+
+/** Im Deals-Bereich: Einstieg in die Swipe-Arena mit echten Unter-Marktwert-Deals (in der Einsteiger-Ansicht kein eigener Reiter). */
+function injectArenaEntry() {
+  const section = $("view-flip");
+  if (!section || $("ps-arena-entry")) return;
+  const el = document.createElement("div");
+  el.id = "ps-arena-entry";
+  el.className = "ps-simple-only poke-glass rounded-2xl p-2.5 flex items-center justify-between gap-2 text-xs";
+  el.innerHTML = `<p class="text-slate-200"><strong class="text-white">🃏 Deals swipen:</strong> echte Karten unter Marktwert und Tausch-Angebote – rechts merken, links weiter.</p>
+    <button type="button" onclick="PS.arenaQuickDeals()" class="shrink-0 bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-xl">Swipen →</button>`;
+  section.prepend(el);
+}
 
 export function initShell() {
   injectMarketSwitch();
+  injectArenaEntry();
+  injectHeaderModeSwitch();
   renderQuickbar();
   renderDemoBanner();
+  applyMode(getMode());
   window.addEventListener("ps:plan", () => renderDemoBanner());
+  // Quickstart-Fortschritt aus allen Bereichen
+  window.addEventListener("ps:quickstart", (e) => markQuickstart(String(e.detail || "")));
+  window.addEventListener("ps:tab", (e) => { if (e.detail === "portfolio" && quickstartState().scan) markQuickstart("value"); });
 }
 
 /** Nach dem Start: Onboarding beim ersten Besuch (nicht bei Direktlinks in einen Bereich), ?mode=, ?onboarding=1. */
@@ -305,8 +446,11 @@ export function routeShell() {
   const mode = params.get("mode");
   if (mode === "simple" || mode === "pro") setMode(mode, { silent: true });
   if (params.get("onboarding") === "1") return openOnboarding();
-  const deepLink = ["tab", "sub", "shop", "scan", "sealed", "card", "set"].some((k) => params.has(k)) || /^\/shop\//.test(location.pathname);
+  if (params.get("quickstart") === "1") return openQuickstart();
+  const deepLink = ["tab", "sub", "shop", "scan", "sealed", "card", "set", "reel", "drop", "pro"].some((k) => params.has(k)) || /^\/shop\//.test(location.pathname);
+  // Einsteiger-Ansicht: Start im Scanner (die Swipe-Arena ist dort kein Navigationspunkt)
+  if (getMode() === "simple" && !deepLink && !$("view-swipe")?.classList.contains("hidden")) window.switchTab?.("scan");
   if (!localStorage.getItem(ONBOARD_KEY) && !RETURNING && !deepLink && !state.recovery && !state.invite) {
-    setTimeout(() => { if (!localStorage.getItem(ONBOARD_KEY) && !document.querySelector("#ps-account:not(.hidden)")) openOnboarding(); }, 900);
+    setTimeout(() => { if (!localStorage.getItem(ONBOARD_KEY) && !document.querySelector("#ps-account:not(.hidden)")) openQuickstart(); }, 900);
   }
 }

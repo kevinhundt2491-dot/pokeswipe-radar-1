@@ -1,6 +1,6 @@
 // Englisches Wörterbuch, Teil 1 (siehe client/i18n-en.js)
 // Quellen: public/index.html, public/js/legacy-app.js, legacy-addons.js, promo.js, csp-handlers.js,
-// client/core.js, search.js, lazy.js, collector-logic.js, pwa.js, deals-radar.js, booster.js, csv.js
+// client/core.js, search.js, lazy.js, collector-logic.js, pwa.js, deals-radar.js, csv.js
 /** Absichtlich unveränderte Texte (Marken, bereits Englisch, Eigennamen, deutsche Karten-/Setnamen). */
 export const KEEP = [
   // Marken / bereits Englisch / Kürzel
@@ -116,6 +116,10 @@ export default [
   ["Entdecken", "Discover"],
   ["Meine Sammlung", "My collection"],
   ["Community & Markt", "Community & market"],
+  ["Community & Tausch", "Community & trade"],
+  ["Deals & Flip-Radar", "Deals & flip radar"],
+  ["🌱 Einsteiger", "🌱 Beginner"],
+  ["📊 Profi", "📊 Pro"],
   ["Sammlung", "Collection"],
   ["Markt", "Market"],
 
@@ -595,6 +599,7 @@ export default [
   ["vor {m} T.", "{m} d ago"],
   ["Link zum Angebot (https://…, optional)", "Link to the offer (https://…, optional)"],
   ["Sealed", "Sealed"],
+  ["Sealed-Analyse", "Sealed analysis"],
   ["Für alle sichtbar, 72 Std. aktiv. Tipp: Kartennummer angeben (z. B. „Glurak ex 199/165“) – dann rechnen wir den Rabatt zum Marktwert aus. Nur mit Konto, Spam- & Link-Filter aktiv.", "Visible to everyone, active for 72 hrs. Tip: add the card number (e.g. “Glurak ex 199/165”) and we'll work out the discount to market value. Account required, spam & link filter active."],
   ["Marktwert unbekannt", "Market value unknown"],
   ["wird geprüft", "under review"],
@@ -627,41 +632,11 @@ export default [
   ["Blockiert", "Blocked"],
   ["Du siehst die Inhalte dieser Person nicht mehr.", "You'll no longer see this person's content."],
 
-  // ---------------------------------------------------------------------------
-  // client/booster.js
-  // ---------------------------------------------------------------------------
+  // Seltenheits- und Bilanz-Begriffe (Arena, Sammlung)
   ["Hyper / Gold", "Hyper / Gold"],
   ["ex / Ultra Rare", "ex / Ultra Rare"],
   ["Selten", "Rare"],
   ["Häufig", "Common"],
-  ["10 Booster", "10 boosters"],
-  ["Ganzes Display", "Full display"],
-  ["Erwartungswert {ev} pro Booster (UVP ca. {packPrice}) • Hit-Chance {hitChance} % pro Pack • {cards} Karten im Pool", "Expected value {ev} per booster (MSRP approx. {packPrice}) • hit chance {hitChance}% per pack • {cards} cards in the pool"],
-  ["Deine Bilanz in diesem Set: {packs} Booster • Wert {value} • Kosten {cost}", "Your balance in this set: {packs} boosters • value {value} • cost {cost}"],
   ["zurücksetzen", "reset"],
-  ["Bester Pull: {value} • {name}", "Best pull: {value} • {name}"],
-  ["{all} Karten gezogen", "{all} cards pulled"],
-  ["{count} Booster • {hits} Hits (ab ex/Ultra Rare)", "{count} boosters • {hits} hits (ex/Ultra Rare and up)"],
-  ["{all} Karten gezogen • Erwartungswert {ev} pro Booster", "{all} cards pulled • expected value {ev} per booster"],
-  ["{count} Booster • {hits} Hits (ab ex/Ultra Rare) • Erwartungswert {ev} pro Booster", "{count} boosters • {hits} hits (ex/Ultra Rare and up) • expected value {ev} per booster"],
-  ["{count} • Erwartungswert {ev} pro Booster", "{count} • expected value {ev} per booster"],
-  ["Keine Hits in diesen Boostern – genau wie im echten Leben 😅", "No hits in these boosters – just like real life 😅"],
-  ["Pack-Wert", "Pack value"],
-  ["Kaufpreis", "Purchase price"],
   ["Bilanz", "Balance"],
-  ["Simulation mit typischen Zieh-Raten der Karmesin-&-Purpur-Ära und echten Marktpreisen (Cardmarket/TCGplayer). RH = Reverse Holo. Gesamt in diesem Set: {packs} Booster, {cost2}{cost3}.", "Simulation using typical pull rates of the Scarlet & Violet era and real market prices (Cardmarket/TCGplayer). RH = Reverse Holo. Total in this set: {packs} boosters, {cost2}{cost3}."],
-  ["Simulation mit typischen Zieh-Raten der Karmesin-&-Purpur-Ära und echten Marktpreisen (Cardmarket/TCGplayer). RH = Reverse Holo. Gesamt in diesem Set: {packs} Booster, {balance}.", "Simulation using typical pull rates of the Scarlet & Violet era and real market prices (Cardmarket/TCGplayer). RH = Reverse Holo. Total in this set: {packs} boosters, {balance}."],
-  ["Wahnsinns-Pull", "Insane pull"],
-  ["{name} – {value} Marktwert", "{name} – {value} market value"],
-  ["Kurz durchatmen", "Take a breather"],
-  ["Booster-Simulator", "Booster simulator"],
-  ["Gerade nicht erreichbar.", "Unavailable right now."],
-  ["Berechne Erwartungswert aus allen Karten des Sets …", "Calculating expected value from every card in the set …"],
-  ["RIP: Im Schnitt ziehst du {displayEv} aus {displayPacks} Boostern – mehr als die {price} OVP ({price2} %).", "RIP: on average you pull {displayEv} from {displayPacks} boosters – more than the {price} sealed price ({price2}%)."],
-  ["KEEP SEALED: Erwartet {displayEv} aus {displayPacks} Boostern – nur {price} % der {price2} OVP.", "KEEP SEALED: expected {displayEv} from {displayPacks} boosters – only {price}% of the {price2} sealed price."],
-  ["Erwartungswert eines Displays ({displayPacks} Booster)", "Expected value of a display ({displayPacks} boosters)"],
-  [". Trag deinen OVP-Preis ein für die Empfehlung.", ". Enter your sealed price for a recommendation."],
-  ["Erwartungswert aus {cards} Karten (echte Zieh-Raten)", "Expected value from {cards} cards (real pull rates)"],
-  ["Pro Booster {ev} • Hit-Chance {hitChance} % pro Pack • Einzelkarten verkaufen kostet Zeit und Gebühren – der echte Erlös liegt meist 20–30 % darunter.", "Per booster {ev} • hit chance {hitChance}% per pack • selling singles takes time and fees – real proceeds are usually 20–30% lower."],
-  ["Erwartungswert gerade nicht verfügbar.", "Expected value unavailable right now."],
 ];

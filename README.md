@@ -2,7 +2,7 @@
 
 Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
 
-- **PokeSwipe & Arena** – Karten swipen, Booster-Simulator, Live-Kartensuche (TCGdex)
+- **PokeSwipe & Arena** – echte Karten, Unter-Marktwert-Deals und Tausch-Angebote swipen, Live-Kartensuche (TCGdex)
 - **Live-Preis-Tracker** – echte Cardmarket-Preise, stündliche Preisalarme, Deal-Alarm bei neuen Inseraten
 - **Portfolio** – Sammlung im Konto, Live-Wert, Gewinn/Verlust, täglicher Wertverlauf, Top-Mover
 - **Tausch-Hub** – Inserate mit Preis-Check, sichere Tauschanfragen, privater Chat, beidseitige Bestätigung, Bewertungen, Meldungen
@@ -56,10 +56,11 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
   (Marktpreis vs. UVP, Preis pro Booster, Verlauf), `/trends` (Gewinner/Verlierer 30 Tage, meistgesuchte Karten);
   alle mit strukturierten Daten und eigenen Teil-Sitemaps
 
-- **Navigation mit 5 Kernbereichen** – Entdecken (Swipe-Arena), Live-Scanner, Flip-Radar, Meine Sammlung, Community & Markt.
-  Einfache und Profi-Ansicht (Profi-Werte wie Margen, PSA-Links, Grading-Tools, Tausch-Rechner nur in „Profi“ oder einzeln
-  aufklappbar), 3-Schritte-Onboarding beim ersten Besuch (Ziel: Sammeln / Tauschen / Deals snipen, Sprachen, Ansicht) mit
-  Demo-Modus ohne Anmeldung. Wiederkehrende Nutzer behalten die volle Ansicht (`client/shell.js`)
+- **Einsteiger- und Profi-Ansicht** – neue Nutzer starten in der 🌱 Einsteiger-Ansicht mit 4 Kernbereichen (Scanner, Sammlung,
+  Deals & Flip-Radar, Community & Tausch) und einem 3-Schritte-Quickstart (Karte scannen → Sammlungswert sehen → Preisalarm
+  oder Restock-Alarm). Die 📊 Profi-Ansicht (Umschalter im Header und in der Schnellstart-Leiste) zeigt zusätzlich „Entdecken“
+  (Swipe-Arena) und Profi-Werkzeuge wie Margen, PSA-Spreads, Grading-Tools, Tausch-Rechner, Sealed-Analyse und Serien-Scan.
+  Wiederkehrende Nutzer behalten die volle Ansicht (`client/shell.js`)
 - **Mehrsprachiger Katalog (DE/EN/JA)** – englische und japanische Drucke als eigene Einträge (`card_prints`, `print_sets`)
   mit eigenen Set-Codes, Nummern und Bildern; Preis-Feeds getrennt: Cardmarket (EUR, bei Japanisch eigene Produkte) und
   TCGplayer (USD, über EZB-Kurse `fx_rates` umgerechnet). Widersprechen sich die Feeds um mehr als Faktor 4, gilt TCGplayer.
@@ -95,9 +96,6 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
   - *Preference-Learning in der Swipe-Arena* – jeder Rechts-/Links-Swipe (und das Öffnen der Details) verändert Gewichte für
     Seltenheit, Sprache, Set und Preisband; ab 5 Swipes wird der Stapel serverseitig danach gewichtet (`server/arena-logic.ts`,
     `server/arena.ts`, Tabelle `swipe_preferences`; ohne Konto bleibt das Profil auf dem Gerät und geht als `?pw=` mit)
-  - *Set-Booster-Simulator* – Booster aller Sets aus dem Live-Katalog (🇩🇪/🇬🇧/🇯🇵) mit Slot-Aufbau und Zieh-Raten der
-    Karmesin-&-Purpur-Ära, 1/10/36 Packs, Pack-Wert-Bilanz und Sitzungs-Bilanz je Set; „Rip or Keep“ zeigt den Erwartungswert
-    des ganzen Displays (`/api/booster/open`, `/api/booster/ev`, `client/booster.js`, Karten-Pools 30 Min. im Server-Cache)
   - *Geteilte Community-Deals* im Flip-Radar (`/api/flip/community-deals`, Tabellen `community_deals`, `community_deal_votes`):
     für alle sichtbar, 72 Std. aktiv, Marktwert-Abgleich über die Kartennummer, Abstimmung „noch da / weg“, Melden & Blockieren
   - *Sammler-Radar mit Login-Pflicht* (`/api/radar`, Tabelle `radar_pins`): ein Pin pro Konto, Koordinaten serverseitig auf ein
@@ -111,7 +109,7 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
 
 ## Echte Karten & Preise
 
-Swipe-Arena, Booster-Simulator, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten
+Swipe-Arena, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten
 (Stürmische Funken, 151, Prismatische Entwicklungen, Zenit der Könige, Obsidianflammen, Mega-Entwicklung, Paradoxrift,
 Drachenwandel) mit offiziellen Set-Nummern (`REAL_CARDS` in `public/index.html`). Die Preise sind ein Stand vom 13.11.2026
 und werden beim Öffnen der Seite automatisch über `/api/prices` mit aktuellen Cardmarket-Werten (TCGdex) ersetzt.
@@ -137,7 +135,10 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 | Kartenkatalog-Import (alle 10 Minuten) | `netlify/functions/catalog-import.mts` → `server/catalog.ts` + `server/seo.ts` |
 | Pokémon-, Sealed- & Trend-Seiten | `server/seo.ts` |
 | Mehrsprachiger Katalog (EN/JA), Swipe-Deck-API | `server/intl-catalog.ts` + `server/intl-logic.ts`, Import `netlify/functions/catalog-intl-import.mts` |
-| Navigation, Onboarding, Einfach/Profi-Ansicht | `client/shell.js` |
+| Navigation, Quickstart, Einsteiger/Profi-Ansicht | `client/shell.js` |
+| Eigene Preis-Pipeline (Zustände, PSA 8/9/10) | `server/valuation.ts` + `server/valuation-logic.ts`, Anzeige `client/valuation.js` |
+| Native Plattform-Schicht (Haptik, Kamera, Teilen, Safe Area) | `client/native.js` |
+| Zahlungs-Weiche (Stripe / Apple In-App-Kauf / EU-DMA) | `client/payments.js`, `server/apple-billing-logic.ts`, Webhook in `server/native.ts` |
 | Dynamische Swipe-Arena (Filter, Nachladen, Druck-Details) | `client/arena.js` |
 | Teilen-Links, Einladungsseite, Empfehlungs-Stufen | `server/viral.ts` + `client/viral.js`, Stufen in `server/plans.ts` |
 | Rechtstexte & Kündigungsbutton | `server/legal.ts` (`/rechtliches`, `/kuendigen`, `/api/legal`) |
@@ -287,4 +288,28 @@ Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorg
 - **Härtung** – verteiltes Rate-Limiting (`rate_limits`), Token-Vorprüfung + Cache, strukturiertes Logging (`server/log.ts`, `error_log`),
   Circuit-Breaker/Backoff/Zeitbudget für alle geplanten Jobs (`server/resilience.ts`, `job_runs`, `job_circuits`), CDN-Cache für öffentliche
   Seiten (`server/cache.ts`), strikte CSP ohne `'unsafe-inline'` in `script-src` (Inline-Skripte ausgelagert nach `public/js/`,
-  on…-Attribute über `public/js/csp-handlers.js`), Code-Splitting (Reel-Studio, Auto-Reels, Live-Scanner, Booster als eigene Chunks)
+  on…-Attribute über `public/js/csp-handlers.js`), Code-Splitting (Reel-Studio, Auto-Reels, Live-Scanner als eigene Chunks)
+
+## Phase 9 – Architektur-, UX- und Qualitäts-Upgrade
+
+- **Booster-Simulator entfernt** – simuliertes Pack-Öffnen mit fiktiven Zieh-Raten (Frontend, `/api/booster/*`, Reels) ist raus.
+  Die Swipe-Arena mit echten Katalog-Karten, Unter-Marktwert-Deals und Tausch-Inseraten bleibt; „Rip or Keep“ vergleicht weiter
+  echte Chase-Preise mit dem OVP-Preis.
+- **Eigene Preis-Pipeline** (`server/valuation.ts`) – Marktwerte je Karte, Variante und Stufe (NM, LP, MP, HP, Damaged, PSA 8/9/10)
+  aus Cardmarket-Referenz, eBay-Verkäufen, verifizierten PokeSwipe-Verkäufen und Graded-Comps, mit Konfidenz, Spanne, Trend
+  (7/30 Tage) und Tagesverlauf (`market_valuations`, `market_valuation_history`). Graded-Werte nur aus echten Verkäufen.
+  Stale-While-Revalidate: Karten mit Preis kommen sofort aus der Datenbank, aktualisiert wird im Hintergrund
+  (`waitUntil`); bei offenem Circuit Breaker zeigt die App „Zuletzt aktualisiert“ statt einer Fehlermeldung.
+  Endpunkte: `GET /api/cards/:id/valuation`, `GET /api/prices/health`.
+- **Native App** (`client/native.js`) – Haptik, native Kamera, natives Teilen-Sheet, Status-Leiste, Safe-Area-Insets, Plattform-Erkennung
+  (`isNativeIOS`, `isNativeAndroid`, `isWeb`). **Zahlungs-Weiche** (`client/payments.js`): iOS nutzt Apple In-App-Kauf über RevenueCat
+  bzw. den EU-DMA-Hinweis, Web/Android Stripe unverändert. Einrichtung: `native/README.md` Abschnitt 5.
+- **Hybrid-Scanner** – Stufe 1 auf dem Gerät (Perspektiv-Entzerrung, Kontrast-Normalisierung für die Nummern-Erkennung,
+  pHash/dHash + Farb-Signatur, Spiegelungs-Erkennung), Stufe 2 lernender Index (`scan_learned_hashes`, `POST /api/scan/learn`,
+  Plausibilitätsprüfung gegen das Referenzbild), Stufe 3 KI nur, wenn die lokale Erkennung unsicher ist (Foto-Scan und
+  Serien-Scan fragen zuerst das Gerät).
+- **Restock-Radar mit Selbstheilung** – gestaffelte Auswertung (JSON-LD → Meta-Tags → Shop-Muster), wechselnde Browser-Kennung,
+  Backoff nach 403/429, Health-Monitor (nach 3 Fehlschlägen „Prüfung pausiert – Selektor-Update nötig“, keine falschen Alarme),
+  zweite Bestätigung bei unsicheren Shop-Mustern, 1-Klick „Restock melden“ mit Plausibilitätsprüfung und Sofort-Abruf der
+  Shop-Seite, „Produkt beobachten“ (`restock_watch_follows`).
+- **Einsteiger-Ansicht** – siehe oben.

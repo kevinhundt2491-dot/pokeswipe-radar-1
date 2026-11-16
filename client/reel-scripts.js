@@ -85,20 +85,20 @@ export const SCENARIOS = [
     },
   },
   {
-    key: "booster", n: 3, tab: "swipe", label: "Booster-Simulator",
-    title: "Booster-Simulator: Packs gratis aufreißen",
-    tags: ["#PackOpening", "#BoosterOpening"],
+    key: "restock", n: 3, tab: "flip", label: "Restock-Radar",
+    title: "Restock-Radar: Displays zur UVP statt Scalper-Preis",
+    tags: ["#PokemonRestock", "#UVP"],
     vo: {
       15: [
-        "Lohnt sich dieses Booster-Pack überhaupt?",
-        "Im Booster-Simulator reißt du es gratis mit echten Zieh-Raten auf.",
-        "Danach siehst du sofort den echten Wert deiner Pulls.",
+        "Schon wieder alles ausverkauft, bevor du klicken konntest?",
+        "Das Restock-Radar prüft die großen Shops alle zwei Minuten.",
+        "Die UVP-Ampel zeigt dir sofort, ob der Preis fair ist.",
         CTA15,
       ],
       30: [
-        "Bevor du Geld für Booster ausgibst, solltest du wissen, was im Schnitt drin ist.",
-        "Im Booster-Simulator von PokeSwipe Radar reißt du Packs gratis auf, mit echten Zieh-Raten und den aktuellen Marktpreisen jeder einzelnen Karte.",
-        "Mit zehn Boostern auf einmal siehst du deine Hits, den Gesamtwert und ob du im Plus landest.",
+        "Displays und Elite-Trainer-Boxen sind oft in Minuten weg, und danach zahlst du Scalper-Preise.",
+        "Das Restock-Radar von PokeSwipe Radar prüft Amazon, Müller, Smyths und weitere Shops alle zwei Minuten und meldet jeden Restock per Push.",
+        "Die UVP-Ampel zeigt dir auf einen Blick, ob der Preis fair ist, und die Community bestätigt Funde aus dem Laden.",
         CTA30,
       ],
     },
@@ -161,20 +161,20 @@ export const SCENARIOS = [
     },
   },
   {
-    key: "display", n: 7, tab: "swipe", label: "Display-Opening",
-    title: "Display-Opening: 36 Booster in Sekunden",
-    tags: ["#DisplayOpening", "#PackOpening"],
+    key: "graded", n: 7, tab: "portfolio", label: "Graded-Portfolio",
+    title: "Graded-Portfolio: Lohnt sich PSA für deine Karte?",
+    tags: ["#PSA10", "#PokemonGrading"],
     vo: {
       15: [
-        "Ein ganzes Display aufreißen, ohne einen Cent auszugeben?",
-        "Der Simulator öffnet alle sechsunddreißig Booster mit echten Zieh-Raten.",
-        "Du siehst jeden Hit und die komplette Bilanz.",
+        "Lohnt sich PSA für deine Karte wirklich?",
+        "Der Grading-Rechner vergleicht Gebühren mit echten Verkaufspreisen.",
+        "Und im Graded-Portfolio behältst du alle Slabs im Blick.",
         CTA15,
       ],
       30: [
-        "Was steckt wirklich in einem kompletten Display, und lohnt sich das Aufreißen überhaupt?",
-        "Der Booster-Simulator von PokeSwipe Radar öffnet alle sechsunddreißig Booster auf einmal, mit echten Zieh-Raten und aktuellen Marktpreisen.",
-        "Danach siehst du jeden einzelnen Hit, den Gesamtwert und die Bilanz, damit du weißt, ob du lieber versiegelt lässt.",
+        "Bevor du Karten zum Grading schickst, solltest du wissen, ob sich die Gebühren überhaupt lohnen.",
+        "Der Grading-Rechner von PokeSwipe Radar vergleicht den Rohwert mit echten Verkaufspreisen für PSA acht, neun und zehn.",
+        "Im Graded-Portfolio siehst du danach jeden Slab mit Note, Zertifikat und Wert, und der Einsendungs-Tracker erinnert dich an überfällige Rücksendungen.",
         CTA30,
       ],
     },
@@ -231,7 +231,7 @@ export const SCENARIOS = [
       30: [
         "Eine einzige App für alles, was Pokémon-Sammler in Deutschland wirklich brauchen.",
         "In der Swipe-Arena entdeckst du Karten, und der Flip-Radar zeigt dir live echte Angebote unter dem aktuellen Marktwert.",
-        "In deiner Sammlung siehst du jederzeit den Gesamtwert, und der Booster-Simulator verrät dir, ob sich das nächste Pack wirklich lohnt.",
+        "In deiner Sammlung siehst du jederzeit den Gesamtwert, und das Restock-Radar meldet dir neue Displays zur UVP.",
         CTA30,
       ],
     },
@@ -280,11 +280,11 @@ function hookFor(sc, f) {
   switch (sc.key) {
     case "arena": return card ? `Würdest du ${card} nach rechts swipen? 👀` : "Links oder rechts? So swipst du dich zum nächsten Deal 👀";
     case "flip": return card && f.pct ? `${card} gerade ${f.pct} unter Marktwert 🚨` : "Dieses Angebot liegt gerade unter Marktwert 🚨";
-    case "booster": return card ? `${card} aus einem Gratis-Booster gezogen – Glück oder Strategie? 🎁` : "Lohnt sich dieses Booster-Pack wirklich? 🎁";
+    case "restock": return card ? `${card} wieder da – zur UVP? 🚨` : "Nie wieder Scalper-Preise für Displays 🚨";
     case "portfolio": return f.total ? `Diese Sammlung ist gerade ${f.total} wert 📈` : "Was ist deine Sammlung heute wirklich wert? 📈";
     case "scanner": return card ? `Was ist ${card} gerade wert? Wir haben nachgeschaut 🔎` : "Kartenpreis in Sekunden statt Minuten 🔎";
     case "pricecheck": return card && f.price ? `${card}: ${f.price} – fair oder zu teuer? 💶` : "Zahlst du zu viel für deine Wunschkarte? 💶";
-    case "display": return card ? `Ein ganzes Display geöffnet – bester Pull: ${card} 📦` : "36 Booster auf einmal – was steckt wirklich drin? 📦";
+    case "graded": return card ? `${card} als PSA 10 – lohnt sich das? 💎` : "Lohnt sich Grading für deine Karte? 💎";
     case "market": return card ? `${card} sucht ein neues Zuhause – vielleicht bei dir? 🤝` : "Deine Wunschkarte liegt vielleicht schon in deiner Nähe 🤝";
     case "community": return "Diese Pulls feiert die Community gerade 🔥";
     case "tour": return card ? `Von ${card} bis zum Gesamtwert deiner Sammlung – alles in einer App 🚀` : "Eine App für alles, was Sammler brauchen 🚀";
@@ -297,14 +297,14 @@ function bodyFor(sc, f) {
   switch (sc.key) {
     case "arena": return ["In der Swipe-Arena wischst du dich durch echte Karten mit Live-Preisen von Cardmarket.", "Rechts merken, links weiter – und mit einem Tippen siehst du alle Details zur Karte."];
     case "flip": return ["Der Flip-Radar vergleicht echte Angebote laufend mit dem Cardmarket-Trend.", `Die Preis-Analyse zeigt dir echte Verkaufspreise, bevor du zuschlägst${f.price ? ` – hier für ${f.price}` : ""}.`];
-    case "booster": return ["Im Booster-Simulator öffnest du Packs gratis – mit echten Zieh-Raten und aktuellen Marktpreisen.", f.value ? `Ergebnis in diesem Video: ${f.value}.` : "So weißt du vorher, ob sich echtes Aufreißen lohnt."];
+    case "restock": return ["Das Restock-Radar prüft die großen Shops alle zwei Minuten und meldet jeden Drop per Push.", "Die UVP-Ampel zeigt sofort, ob der Preis fair oder ein Scalper-Preis ist."];
     case "portfolio": return ["Das Portfolio rechnet deine Sammlung live mit aktuellen Cardmarket-Preisen durch.", `Jede Karte mit Preisverlauf${f.count ? ` – hier ${f.count} Karten im Blick` : ""}, damit du weißt, wann sich Verkaufen lohnt.`];
     case "scanner": return ["Namen eintippen oder Karte vor die Kamera halten – PokeSwipe Radar findet sie in der deutschen Kartendatenbank.", "Ein Tippen zeigt dir den Live-Preis inklusive 30-Tage-Verlauf."];
     case "pricecheck": return ["Trend, günstigstes Angebot und Ersparnis auf einen Blick.", "Der Preisverlauf zeigt dir, ob gerade ein guter Zeitpunkt zum Kaufen ist."];
-    case "display": return ["Der Simulator öffnet alle 36 Booster eines Displays mit echten Zieh-Raten.", `Du siehst jeden Hit und die komplette Bilanz${f.value ? ` (${f.value})` : ""} – Rip or Keep in Sekunden.`];
+    case "graded": return ["Der Grading-Rechner vergleicht Gebühren mit echten Verkaufspreisen für PSA 8, 9 und 10.", "Im Graded-Portfolio stehen alle Slabs mit Note, Zertifikat und aktuellem Wert."];
     case "market": return ["Im Tausch-Markt findest du echte Inserate von Sammlern – mit Preis, Stadt und Suchliste.", "Tausch-Anfrage mit einem Tippen, alles Weitere sicher im Chat."];
     case "community": return ["Auf der Pull-Wall zeigt die Community ihre besten Hits mit aktuellem Marktwert.", "Scroll dich durch den Feed und poste deinen eigenen Pull."];
-    case "tour": return ["Swipe-Arena, Live Flip-Radar, Booster-Simulator und Portfolio – alles mit echten Marktpreisen.", "Gemacht für deutsche Sammler, die nie wieder überzahlen wollen."];
+    case "tour": return ["Swipe-Arena, Live Flip-Radar, Restock-Radar und Portfolio – alles mit echten Marktpreisen.", "Gemacht für deutsche Sammler, die nie wieder überzahlen wollen."];
     default: return ["Echte Karten, echte Preise, echte Deals."];
   }
 }

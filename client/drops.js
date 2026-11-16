@@ -1,6 +1,7 @@
 // PokeSwipe & Radar – Restock- & Vorbestell-Radar, Graded-Portfolio mit Einsendungs-Tracker und KI-Fake-Check.
 import { $, esc, jsArg, safeUrl, eur, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, btn } from "./core.js";
 import { searchCatalog, searchThumb, isAbort } from "./search.js";
+import { haptic } from "./native.js";
 
 const PS = () => window.PS;
 const pill = (text, cls = "bg-yellow-400 text-slate-950") => `<span class="text-[10px] font-black uppercase ${cls} px-2.5 py-0.5 rounded-full">${text}</span>`;
@@ -63,7 +64,7 @@ function dropsPanelHtml() {
         ${select("rd-kind", "Art", [["restock", "Wieder lieferbar / im Laden"], ["preorder", "Vorbestellung offen"]])}
         <div class="flex items-end">${btn("📣 Melden", "PS.reportDrop()", "w-full bg-rose-500 text-white")}</div>
       </div>
-      <p class="text-[10px] text-slate-500 mt-2">Community-Meldungen gehen live, sobald 2 andere Sammler sie bestätigen. Falschmeldungen führen zur Sperre.</p>
+      <p class="text-[10px] text-slate-500 mt-2">Schneller geht's mit „📣 Restock melden“ direkt am Produkt unten. Meldungen von vertrauenswürdigen Sammlern oder mit bestätigter Shop-Seite gehen sofort live, alle anderen nach 2 Bestätigungen. Falschmeldungen führen zur Sperre.</p>
     </details>
     <div class="space-y-2"><p class="font-black text-white text-sm">📝 Vorbestell- & Preis-Tracker</p>
       <p class="text-[11px] text-slate-400">Alle beobachteten Produkte mit Preis je Shop. ✅ = UVP, ⚠️ = leicht drüber, ❌ = Scalper-Preis.</p>
@@ -155,13 +156,47 @@ function dropCard(x) {
 
 function productCard(p) {
   const best = p.offers.filter((o) => o.price && (o.status === "in_stock" || o.status === "preorder")).sort((a, b) => a.price - b.price)[0];
+  const following = p.offers.some((o) => o.following);
+  const ids = p.offers.map((o) => Number(o.id)).join(",");
   return box(`<div class="flex justify-between gap-2"><div><p class="font-black text-white">${esc(p.name)}</p>
       <p class="text-slate-400">${esc(p.setName || "")}${p.releaseDay ? ` • Release ${esc(new Date(p.releaseDay).toLocaleDateString("de-DE"))}` : ""}</p></div>
       ${p.uvp ? `<p class="text-right shrink-0"><span class="text-[10px] text-slate-400 block">UVP</span><span class="font-black text-white">${eur(p.uvp)}</span></p>` : ""}</div>
     ${best ? `<p class="text-emerald-300 font-bold">Bester Preis: ${eur(best.price)} bei ${esc(best.shopLabel)}</p>` : ""}
-    <div class="space-y-1">${p.offers.map((o) => `<a href="/api/restock/watch/${Number(o.id)}/go" target="_blank" rel="noopener sponsored" class="flex items-center justify-between gap-2 bg-slate-900 hover:bg-slate-800 rounded-xl px-2.5 py-1.5">
-      <span class="font-bold text-white">${esc(o.shopLabel)}</span>
-      <span class="flex items-center gap-1.5">${pill(STATUS[o.status]?.[0] || esc(o.status), STATUS[o.status]?.[1] || "")}${o.price ? `<span class="font-black text-white">${eur(o.price)}</span>${o.verdict && o.verdict.level !== "unknown" ? `<span title="${esc(o.verdict.label)}">${o.verdict.level === "fair" ? "✅" : o.verdict.level === "scalper" ? "❌" : "⚠️"}</span>` : ""}` : ""}</span></a>`).join("")}</div>`);
+    <div class="space-y-1">${p.offers.map((o) => `<div class="flex items-center gap-1.5">
+      <a href="/api/restock/watch/${Number(o.id)}/go" target="_blank" rel="noopener sponsored" class="flex-1 min-w-0 flex items-center justify-between gap-2 bg-slate-900 hover:bg-slate-800 rounded-xl px-2.5 py-1.5">
+        <span class="font-bold text-white truncate">${esc(o.shopLabel)}${o.paused ? ` <span title="Automatische Prüfung pausiert – Meldungen der Community zählen hier besonders" class="text-amber-300">⏸</span>` : ""}</span>
+        <span class="flex items-center gap-1.5 shrink-0">${pill(STATUS[o.status]?.[0] || esc(o.status), STATUS[o.status]?.[1] || "")}${o.price ? `<span class="font-black text-white">${eur(o.price)}</span>${o.verdict && o.verdict.level !== "unknown" ? `<span title="${esc(o.verdict.label)}">${o.verdict.level === "fair" ? "✅" : o.verdict.level === "scalper" ? "❌" : "⚠️"}</span>` : ""}` : ""}</span></a>
+      ${o.status !== "in_stock" ? `<button type="button" onclick="PS.reportWatch(${Number(o.id)}, ${o.price ? Number(o.price) : "null"})" title="Hier ist es gerade wieder da? Mit einem Tipp melden" class="shrink-0 bg-rose-500 hover:bg-rose-400 text-white font-black text-[10px] px-2 py-1.5 rounded-xl">📣 Restock melden</button>` : ""}
+    </div>`).join("")}</div>
+    ${btn(following ? "🔕 Nicht mehr beobachten" : "🔔 Produkt beobachten", `PS.followProduct(${jsArg(ids)}, ${!following})`, `w-full ${following ? "bg-slate-800 text-slate-300" : "bg-yellow-400 text-slate-950"}`)}`);
+}
+
+/** 1-Klick-Meldung zu einem überwachten Produkt: Shop-Link ist bekannt, Preis optional bestätigen. */
+async function reportWatch(id, lastPrice) {
+  if (!requireLogin()) return;
+  const offer = drops?.products.flatMap((p) => p.offers.map((o) => ({ ...o, name: p.name }))).find((o) => Number(o.id) === Number(id));
+  const raw = prompt(`📣 Restock melden: ${offer ? `${offer.name} bei ${offer.shopLabel}` : "Produkt"}\nPreis im Shop (€) – leer lassen, wenn unbekannt:`, lastPrice ? String(lastPrice).replace(".", ",") : "");
+  if (raw === null) return;
+  try {
+    const r = await api("/api/restock/report", { method: "POST", body: { watchId: Number(id), price: raw.trim() || null, kind: offer?.status === "preorder" ? "preorder" : "restock" } });
+    haptic(r.live ? "success" : "light");
+    toast(r.live ? "🚨 Restock ist live!" : "📣 Danke für deine Meldung!",
+      r.live ? (r.verifiedByPage ? "Die Shop-Seite bestätigt es – alle Beobachter werden benachrichtigt." : "Alle Beobachter werden jetzt benachrichtigt.") : `Sobald ${r.needed} Sammler bestätigen, geht der Alarm raus.`);
+    loadDrops();
+  } catch (e) { handleError(e); }
+}
+
+async function followProduct(idList, follow) {
+  if (!requireLogin()) return;
+  const ids = String(idList).split(",").map(Number).filter((n) => n > 0);
+  try {
+    for (const id of ids) await api(`/api/restock/watch/${id}/follow`, { method: "POST", body: { follow } });
+    haptic("select");
+    if (follow) window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "alert" }));
+    toast(follow ? "🔔 Du beobachtest das Produkt" : "🔕 Beobachtung beendet", follow ? (drops?.delayMin ? `Restocks kommen per Push – im Free-Tarif ${drops.delayMin} Min. später.` : "Jeder Restock kommt sofort per Push.") : "");
+    if (follow && typeof Notification !== "undefined" && Notification.permission === "default") PS().enablePush?.();
+    loadDrops();
+  } catch (e) { handleError(e); }
 }
 
 async function subscribeDrops(enabled) {
@@ -170,6 +205,7 @@ async function subscribeDrops(enabled) {
     const s = drops?.subscription || {};
     await api("/api/restock/subscribe", { method: "POST", body: { ...s, enabled } });
     if (enabled && typeof Notification !== "undefined" && Notification.permission === "default") PS().enablePush?.();
+    if (enabled) window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "alert" }));
     toast(enabled ? "🔔 Restock-Alarm aktiv" : "Restock-Alarm aus", enabled ? (drops?.delayMin ? `Alarme kommen im Free-Tarif ${drops.delayMin} Min. später.` : "Du wirst sofort benachrichtigt.") : "");
     loadDrops();
   } catch (e) { handleError(e); }
@@ -258,10 +294,17 @@ async function loadDropsAdmin() {
         </div>
         <label class="flex items-center gap-2"><input id="rw-auto" type="checkbox" checked /> Automatisch prüfen (alle 2 Min.)</label>
         <div class="flex gap-2">${btn("➕ Produktseite hinzufügen", "PS.adminAddWatch()", "flex-1 bg-purple-600 text-white")}${btn("▶ Jetzt prüfen", "PS.adminRunRestock()", "bg-slate-800 text-white")}</div>
-        <div class="space-y-1">${a.watches.map((w) => `<div class="flex items-center justify-between gap-2 bg-slate-900 rounded-xl px-2.5 py-1.5 ${w.active ? "" : "opacity-50"}">
-          <div class="min-w-0"><p class="font-bold text-white truncate">${esc(w.name)} • ${esc(w.shop)}</p>
-            <p class="text-slate-500 truncate">${esc(STATUS[w.status]?.[0] || w.status)}${w.lastPrice ? ` • ${eur(w.lastPrice)}` : ""}${w.lastCheckedAt ? ` • geprüft ${ago(w.lastCheckedAt)}` : " • noch nicht geprüft"}${w.failCount ? ` • ⚠️ ${Number(w.failCount) || 0} Fehler (Seite blockt evtl. – dann manuell melden)` : ""}</p></div>
-          <div class="flex gap-1 shrink-0">${btn(w.active ? "Pause" : "Aktiv", `PS.adminToggleWatch(${Number(w.id)}, ${!w.active})`, "bg-slate-800 text-white")}${btn("🗑", `PS.adminDeleteWatch(${Number(w.id)})`, "bg-slate-800 text-rose-300")}</div></div>`).join("")}</div>
+        <div class="grid grid-cols-3 gap-1.5 text-center">
+          <div class="bg-slate-900 rounded-xl p-1.5"><p class="font-black text-emerald-300">${Number(a.health?.ok) || 0}</p><p class="text-[10px] text-slate-400">✅ Prüfung ok</p></div>
+          <div class="bg-slate-900 rounded-xl p-1.5"><p class="font-black text-amber-300">${Number(a.health?.degraded) || 0}</p><p class="text-[10px] text-slate-400">⚠️ eingeschränkt</p></div>
+          <div class="bg-slate-900 rounded-xl p-1.5"><p class="font-black text-rose-300">${Number(a.health?.paused) || 0}</p><p class="text-[10px] text-slate-400">⏸ Update nötig</p></div>
+        </div>
+        <div class="space-y-1">${a.watches.map((w) => `<div class="flex items-center justify-between gap-2 bg-slate-900 rounded-xl px-2.5 py-1.5 ${w.active ? "" : "opacity-50"} ${w.health === "paused" ? "border border-rose-500/60" : w.health === "degraded" ? "border border-amber-400/40" : ""}">
+          <div class="min-w-0"><p class="font-bold text-white truncate">${w.health === "paused" ? "⏸ " : w.health === "degraded" ? "⚠️ " : ""}${esc(w.name)} • ${esc(w.shop)}</p>
+            <p class="text-slate-500 truncate">${esc(STATUS[w.status]?.[0] || w.status)}${w.lastPrice ? ` • ${eur(w.lastPrice)}` : ""}${w.lastCheckedAt ? ` • geprüft ${ago(w.lastCheckedAt)}` : " • noch nicht geprüft"}${w.lastLayer ? ` • gelesen über ${esc({ jsonld: "JSON-LD", meta: "Meta-Tags", selector: "Shop-Muster" }[w.lastLayer] || w.lastLayer)}` : ""}${w.pendingStatus ? ` • wartet auf 2. Bestätigung (${esc(STATUS[w.pendingStatus]?.[0] || w.pendingStatus)})` : ""}</p>
+            ${w.healthReason ? `<p class="${w.health === "paused" ? "text-rose-300" : "text-amber-300"} truncate" title="${esc(w.healthReason)}">${esc(w.healthReason)}${w.blockedUntil && new Date(w.blockedUntil) > new Date() ? ` • Pause bis ${esc(new Date(w.blockedUntil).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }))}` : ""}</p>` : ""}</div>
+          <div class="flex gap-1 shrink-0">${w.health !== "ok" ? btn("▶ Fortsetzen", `PS.adminResumeWatch(${Number(w.id)})`, "bg-emerald-600 text-white") + btn("🔗", `PS.adminEditWatchUrl(${Number(w.id)}, ${jsArg(w.url)})`, "bg-slate-800 text-white") : ""}${btn(w.active ? "Pause" : "Aktiv", `PS.adminToggleWatch(${Number(w.id)}, ${!w.active})`, "bg-slate-800 text-white")}${btn("🗑", `PS.adminDeleteWatch(${Number(w.id)})`, "bg-slate-800 text-rose-300")}</div></div>`).join("")}</div>
+        <p class="text-slate-500">Health-Monitor: Nach 3 Fehlschlägen in Folge (kein Preis/Status lesbar, Sperre durch den Shop) pausiert die Prüfung automatisch – es gehen dann keine falschen „Ausverkauft“-/„Lieferbar“-Alarme raus. Nach einer Anpassung (neue URL) mit „▶ Fortsetzen“ wieder starten.</p>
         <p class="text-slate-500">Tipp: Als Admin gemeldete Drops (oben „Drop melden“) gehen sofort live – praktisch für Shops, die automatische Abrufe blockieren.</p>
       </div></details>`;
   } catch {}
@@ -290,6 +333,14 @@ async function adminBulkWatch() {
 async function adminToggleWatch(id, active) {
   try { await api(`/api/admin/restock/watches/${id}`, { method: "PATCH", body: { active } }); loadDrops(); } catch (e) { handleError(e); }
 }
+async function adminResumeWatch(id) {
+  try { await api(`/api/admin/restock/watches/${id}`, { method: "PATCH", body: { resume: true } }); toast("▶ Prüfung fortgesetzt", "Der nächste Lauf liest die Seite neu ein."); loadDrops(); } catch (e) { handleError(e); }
+}
+async function adminEditWatchUrl(id, current) {
+  const url = prompt("Neue Produkt-URL (https):", current || "");
+  if (!url || url === current) return;
+  try { await api(`/api/admin/restock/watches/${id}`, { method: "PATCH", body: { url } }); toast("✅ URL aktualisiert", "Die Prüfung startet neu."); loadDrops(); } catch (e) { handleError(e); }
+}
 async function adminDeleteWatch(id) {
   if (!confirm("Produktseite löschen?")) return;
   try { await api(`/api/admin/restock/watches/${id}`, { method: "DELETE" }); loadDrops(); } catch (e) { handleError(e); }
@@ -297,7 +348,7 @@ async function adminDeleteWatch(id) {
 async function adminRunRestock() {
   try {
     const r = await api("/api/admin/restock/run", { method: "POST", body: {} });
-    toast("▶ Prüfung fertig", `${r.checked} Seiten geprüft, ${r.drops} Drops, ${r.errors} Fehler, ${r.paid + r.free} Alarme.`);
+    toast("▶ Prüfung fertig", `${r.checked} Seiten geprüft, ${r.drops} Drops, ${r.errors} Fehler${r.paused ? `, ${r.paused} pausiert` : ""}, ${r.paid + r.free} Alarme.`);
     loadDrops();
   } catch (e) { handleError(e); }
 }
@@ -546,8 +597,8 @@ async function runFakeCheck() {
 // Einbau
 // ===========================================================================
 export const dropsApi = {
-  subscribeDrops, saveDropFilters, reportDrop, confirmDrop, dropGo, removeDrop, loadDrops,
-  adminAddWatch, adminBulkWatch, adminPanelToggle: (o) => { adminOpen = Boolean(o); }, adminToggleWatch, adminDeleteWatch, adminRunRestock,
+  subscribeDrops, saveDropFilters, reportDrop, confirmDrop, dropGo, removeDrop, loadDrops, reportWatch, followProduct,
+  adminAddWatch, adminBulkWatch, adminResumeWatch, adminEditWatchUrl, adminPanelToggle: (o) => { adminOpen = Boolean(o); }, adminToggleWatch, adminDeleteWatch, adminRunRestock,
   gradedSearch, gradedPick: pickGraded, addGraded, editGradedValue, removeGraded, addSubmission, setSubmissionStatus, removeSubmission,
   runFakeCheck,
 };

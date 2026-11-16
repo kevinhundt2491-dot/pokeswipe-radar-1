@@ -823,7 +823,8 @@ export function registerGrowth(app: any, hlp: {
       const card = await getCard(id, 6 * 3600_000);
       if (!card) return;
       const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
-      prices[id] = { trend: n(card.trend ?? card.avg), low: n(card.low), avg30: n(card.avg30), updated: card.priceUpdatedAt ? new Date(card.priceUpdatedAt).toISOString() : null };
+      const at = card.priceUpdatedAt ?? card.checkedAt;
+      prices[id] = { trend: n(card.trend ?? card.avg), low: n(card.low), avg30: n(card.avg30), updated: at ? new Date(at).toISOString() : null };
     }, Date.now() + 15_000);
     // Nur Karten-IDs aus der Abfrage bestimmen das Ergebnis – kein Nutzerbezug
     publicCache(c, "data", { sMaxAge: 900, swr: 86_400, varyQuery: ["ids"] });

@@ -4,6 +4,7 @@
 // Ohne Verbindung bleibt der feste Chase-Katalog aus index.html als Stapel aktiv.
 import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl, btn, sparkline } from "./core.js";
 import { updatePrefs, encodePrefParam, prefSummary, sanitizeScores, COLD_START_SWIPES } from "../server/arena-logic.ts";
+import { haptic } from "./native.js";
 
 const STORE_KEY = "ps_arena_filters";
 const PREF_KEY = "ps_arena_prefs";
@@ -100,6 +101,9 @@ async function flushEvents() {
 
 function onSwipe(item, dir) {
   if (!item || item.kind === "listing" && dir === "detail") return;
+  // Haptik: Merken spürbar, Weiter leicht; echte Unter-Marktwert-Deals mit Erfolgs-Feedback
+  if (dir === "right") haptic(Number(item.cm) > 0 && Number(item.price) > 0 && Number(item.price) <= Number(item.cm) * 0.85 ? "success" : "medium");
+  else if (dir === "left") haptic("light");
   const ev = featureEvent(item, dir);
   prefs = updatePrefs(prefs, [ev]);
   savePrefs();

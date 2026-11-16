@@ -527,7 +527,7 @@ export default [
   ["Produkt angelegt", "Product created"],
 
   // ---------------------------------------------------------------- Unter-Navigation
-  ["Swipen & Booster", "Swipe & boosters"],
+  ["Karten swipen", "Swipe cards"],
   ["Kartensuche & Rip or Keep", "Card search & Rip or Keep"],
   ["Restock & Vorbestellung", "Restock & pre-orders"],
   ["Flip-Deals", "Flip deals"],

@@ -44,6 +44,8 @@ import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityH
 import { log } from "./log.ts";
 import { registerOps } from "./ops.ts";
 import { registerConditionPrices } from "./condition-prices.ts";
+import { registerValuation, pricesDegraded } from "./valuation.ts";
+import { freshnessLabel, isStale } from "./valuation-logic.ts";
 import { registerShipping } from "./shipping.ts";
 import { registerAlerts } from "./alerts.ts";
 
@@ -144,6 +146,7 @@ app.get("/api/me", auth, async (c) => {
     planInfo: PLANS[plan],
     planUntil: profile.planUntil,
     cancelAtPeriodEnd: profile.cancelAtPeriodEnd,
+    planSource: profile.planSource, // stripe | apple (In-App-Kauf) – Kündigung bei Apple-Abos über die iPhone-Einstellungen
     isAdmin: isAdmin(user),
     emailConfirmed: user.confirmed,
     profileSlug: profileSlug(profile.displayName),
@@ -191,7 +194,12 @@ app.get("/api/cards/:id", async (c) => {
   const history = await db.select({ day: priceHistory.day, trend: priceHistory.trend, avg: priceHistory.avg, low: priceHistory.low })
     .from(priceHistory).where(eq(priceHistory.cardId, id)).orderBy(desc(priceHistory.day)).limit(90);
   publicCache(c, "data"); // öffentlich, ohne Login-/Cookie-Bezug
-  return c.json({ card: { ...card, price: cardPrice(card) }, history: history.reverse() });
+  const updatedAt = card.priceUpdatedAt ?? card.checkedAt ?? null;
+  return c.json({
+    card: { ...card, price: cardPrice(card) }, history: history.reverse(),
+    // Preise stammen immer aus der eigenen Datenbank – Zeitstempel & Hinweis, falls die Quelle gerade ausfällt
+    priceInfo: { updatedAt, freshness: freshnessLabel(updatedAt), stale: isStale(updatedAt), degraded: await pricesDegraded() },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -871,6 +879,9 @@ app.post("/api/billing/confirm", auth, async (c) => {
 
 app.post("/api/billing/cancel", auth, async (c) => {
   const s = stripe(), profile = c.get("profile");
+  if (profile.planSource === "apple" && !profile.stripeSubscriptionId) {
+    return c.json({ error: "Dein Abo läuft über den Apple App Store. Kündigen kannst du es auf dem iPhone unter Einstellungen → Apple-ID → Abonnements.", apple: true }, 409);
+  }
   if (!s || !profile.stripeSubscriptionId) return c.json({ error: "Kein aktives Abo." }, 404);
   const resume = (await body(c)).resume === true;
   const sub = await s.subscriptions.update(profile.stripeSubscriptionId, { cancel_at_period_end: !resume });
@@ -1056,6 +1067,7 @@ registerMarket(app, { auth, adminOnly, body });
 // Phase 7: Warenkorb & Checkout über mehrere Verkäufer, Händler-Bestands-Import
 registerCart(app, { auth, adminOnly, body });
 registerConditionPrices(app); // Phase 8: Preise nach Zustand & Sold Comps aus dem eigenen Marktplatz
+registerValuation(app); // Phase 9: eigene Preis-Pipeline (NM … Damaged, PSA 8/9/10) mit Stale-While-Revalidate
 registerShipping(app, { auth, body }); // Phase 8: DHL-Versandetiketten mit eigenen Händler-Zugangsdaten
 registerAlerts(app, { auth, adminOnly, body }); // Phase 8: Browser-Fehlerberichte, Testalarm, Alarm-Verlauf
 registerSellerImport(app, { auth, adminOnly, body });

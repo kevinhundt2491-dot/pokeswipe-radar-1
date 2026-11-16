@@ -344,6 +344,97 @@ export function normalizeCard(g: Gray, corners: Pt[]): Gray {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 9: Vorverarbeitung & Farb-Signatur (Hybrid-Scanner Stufe 1)
+// ---------------------------------------------------------------------------
+/**
+ * Helligkeits-/Kontrast-Normalisierung: streckt das 2.–98.-Perzentil auf 0…255. Gleicht dunkle Räume,
+ * Blitzlicht und Sleeves aus; die Spitzen (Spiegelungen) werden abgeschnitten statt das Bild zu dominieren.
+ */
+export function normalizeContrast(g: Gray, lo = 0.02, hi = 0.98): Gray {
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < g.d.length; i++) hist[Math.max(0, Math.min(255, g.d[i] | 0))]++;
+  const n = g.d.length;
+  let acc = 0, a = 0, b = 255;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * lo) { a = v; break; } }
+  acc = 0;
+  for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= n * (1 - hi)) { b = v; break; } }
+  if (b - a < 16) return g; // fast einfarbig – nichts zu strecken
+  const scale = 255 / (b - a);
+  const d = new Float32Array(n);
+  for (let i = 0; i < n; i++) d[i] = Math.max(0, Math.min(255, (g.d[i] - a) * scale));
+  return { w: g.w, h: g.h, d };
+}
+
+/** Anteil fast weißer Pixel (Spiegelung / Glanz der Folie). Über ~6 % sinkt die Treffsicherheit deutlich. */
+export function glareRatio(g: Gray, threshold = 248): number {
+  let n = 0;
+  for (let i = 0; i < g.d.length; i++) if (g.d[i] >= threshold) n++;
+  return g.d.length ? n / g.d.length : 0;
+}
+export const GLARE_HIGH = 0.06;
+
+/** 16 Farbklassen: 12 Farbtöne (gesättigt) + 4 Helligkeitsstufen (ungesättigt: schwarz, dunkel, hell, weiß). */
+export const COLOR_BINS = 16;
+
+/**
+ * Farb-Signatur des Artworks direkt aus dem RGBA-Kamerabild (perspektivisch korrekt über die Homographie).
+ * Ergebnis: 16 Klassen × 4 Bit als Hex-Text (16 Zeichen). Ergänzt pHash/dHash, die nur Helligkeit sehen –
+ * z. B. bei gleichen Motiven mit anderer Farbgebung (Shiny, Gold, Reverse-Muster).
+ */
+export function colorSignature(rgba: ArrayLike<number>, w: number, h: number, corners: Pt[], channels = 4): string {
+  const H = homography(corners);
+  const hist = new Float32Array(COLOR_BINS);
+  const GX = 24, GY = 16;
+  let total = 0;
+  for (let gy = 0; gy < GY; gy++) {
+    const v = ART_BOX.v0 + ((gy + 0.5) / GY) * (ART_BOX.v1 - ART_BOX.v0);
+    for (let gx = 0; gx < GX; gx++) {
+      const u = ART_BOX.u0 + ((gx + 0.5) / GX) * (ART_BOX.u1 - ART_BOX.u0);
+      const [x, y] = project(H, u, v);
+      const xi = Math.round(x), yi = Math.round(y);
+      if (xi < 0 || yi < 0 || xi >= w || yi >= h) continue;
+      const p = (yi * w + xi) * channels;
+      const r = rgba[p] / 255, g = rgba[p + 1] / 255, b = rgba[p + 2] / 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+      const sat = max ? delta / max : 0;
+      let bin: number;
+      if (sat > 0.25 && max > 0.15) {
+        let hue = 0;
+        if (max === r) hue = ((g - b) / delta) % 6;
+        else if (max === g) hue = (b - r) / delta + 2;
+        else hue = (r - g) / delta + 4;
+        hue = (hue * 60 + 360) % 360;
+        bin = Math.min(11, Math.floor(hue / 30));
+      } else bin = 12 + Math.min(3, Math.floor(max * 4));
+      hist[bin]++; total++;
+    }
+  }
+  let out = "";
+  for (let i = 0; i < COLOR_BINS; i++) out += Math.round(Math.min(1, (total ? hist[i] / total : 0) * 3) * 15).toString(16);
+  return out;
+}
+
+export const isColorSig = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{16}$/.test(s);
+
+/** L1-Abstand zweier Farb-Signaturen (0 … 240). */
+export function colorDistance(a: string, b: string): number {
+  if (!isColorSig(a) || !isColorSig(b)) return 0;
+  let d = 0;
+  for (let i = 0; i < COLOR_BINS; i++) d += Math.abs(parseInt(a[i], 16) - parseInt(b[i], 16));
+  return d;
+}
+
+/** Zuschlag auf den Hash-Abstand bei abweichenden Farben (ähnliche Farben: 0). */
+export const colorPenalty = (dist: number) => Math.max(0, dist - 18) * 0.3;
+
+/** Hamming-Abstand zweier 64-Bit-Hex-Hashes (null bei ungültigem Format). */
+export function hexDistance(a: string, b: string): number | null {
+  const x = hexToWords(a), y = hexToWords(b);
+  if (!x || !y) return null;
+  return popcount32(x[0] ^ y[0]) + popcount32(x[1] ^ y[1]);
+}
+
+// ---------------------------------------------------------------------------
 // Ziffern-Erkennung (Kartennummer „199/165“) über Vorlagenvergleich
 // ---------------------------------------------------------------------------
 export const GLYPH_W = 12;

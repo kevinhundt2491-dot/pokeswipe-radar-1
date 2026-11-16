@@ -3,7 +3,8 @@
 //    „Zum Home-Bildschirm“ (Voraussetzung für Web-Push unter iOS 16.4+)
 //  – Offline-Katalog vorladen (Sets, Swipe-Stapel, Scanner-Index) und Offline-Hinweis
 //  – In der nativen App (iOS/Android über Capacitor): Push über Firebase Cloud Messaging, Zurück-Taste, Deep-Links
-import { $, toast, state, api, modal, closeModalEl, btn, hooks } from "./core.js";
+import { $, toast, state, api, modal, closeModalEl, btn } from "./core.js";
+import { haptic } from "./native.js";
 
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const isStandalone = () => window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
@@ -92,14 +93,8 @@ async function registerNativePush() {
 function initNative() {
   if (!isNativeApp()) return;
   document.documentElement.classList.add("ps-native", `ps-${cap().getPlatform?.() || "app"}`);
-  // Apple-Richtlinie 3.1.1: digitale Abos in iOS-Apps nur über In-App-Kauf → in der iOS-Hülle keine Stripe-Abo-Kasse
-  // (der Marktplatz für physische Karten ist davon nicht betroffen). Bestehende Abos gelten weiter.
-  if (cap().getPlatform?.() === "ios") {
-    const info = () => toast("ℹ️ Tarife", "Abos lassen sich in der iOS-App nicht abschließen. Bestehende Premium- und Pro-Vorteile gelten hier automatisch.");
-    if (window.PS) window.PS.openPro = info;
-    window.activatePro = info;
-    hooks.openPro = info;
-  }
+  // Apple-Richtlinie 3.1.1: digitale Abos in iOS-Apps nur über In-App-Kauf – die Zahlungs-Weiche liegt in payments.js
+  // (iOS: StoreKit/RevenueCat bzw. EU-DMA-Hinweis; Web & Android: Stripe unverändert).
   const P = cap().Plugins || {};
   if (P.PushNotifications) {
     P.PushNotifications.addListener("registration", async (t) => {
@@ -110,7 +105,8 @@ function initNative() {
       } catch (e) { console.warn("Native Push", e); }
     });
     P.PushNotifications.addListener("registrationError", (e) => console.warn("Push-Registrierung", e));
-    P.PushNotifications.addListener("pushNotificationReceived", (n) => toast(`🔔 ${n.title || "PokeSwipe"}`, n.body || ""));
+    // Deal-/Restock-Treffer in der offenen App: Haptik + In-App-Hinweis
+    P.PushNotifications.addListener("pushNotificationReceived", (n) => { haptic("success"); toast(`🔔 ${n.title || "PokeSwipe"}`, n.body || ""); });
     P.PushNotifications.addListener("pushNotificationActionPerformed", (a) => {
       const url = a?.notification?.data?.url;
       if (typeof url === "string" && url.startsWith("/")) location.href = url;

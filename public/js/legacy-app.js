@@ -217,7 +217,6 @@
     // ECHTE KARTEN (offizielle Sets & Set-Nummern). Preise: Cardmarket über TCGdex, Stand 13.11.2026 –
     // werden beim Laden der Seite automatisch live aktualisiert (siehe refreshLivePrices).
     const PRICE_SNAPSHOT_DATE = "13.11.2026";
-    const REAL_SETS = {"sv08": {"tag": "Stürmische Funken", "full": "Karmesin & Purpur – Stürmische Funken", "sealedQuery": "Pokemon Stürmische Funken Display 36 Booster OVP deutsch"}, "sv03.5": {"tag": "151", "full": "Karmesin & Purpur – 151", "sealedQuery": "Pokemon 151 Booster Bundle deutsch OVP"}, "sv08.5": {"tag": "Prismatische Entwicklungen", "full": "Karmesin & Purpur – Prismatische Entwicklungen", "sealedQuery": "Pokemon Prismatische Entwicklungen Top Trainer Box deutsch"}, "swsh12.5gg": {"tag": "Zenit der Könige", "full": "Schwert & Schild – Zenit der Könige (Galar-Galerie)", "sealedQuery": "Pokemon Zenit der Könige Top Trainer Box deutsch"}, "sv03": {"tag": "Obsidianflammen", "full": "Karmesin & Purpur – Obsidianflammen", "sealedQuery": "Pokemon Obsidianflammen Display 36 Booster deutsch"}, "me01": {"tag": "Mega-Entwicklung", "full": "Mega-Entwicklung", "sealedQuery": "Pokemon Mega-Entwicklung Display 36 Booster deutsch"}, "sv04": {"tag": "Paradoxrift", "full": "Karmesin & Purpur – Paradoxrift", "sealedQuery": "Pokemon Paradoxrift Display 36 Booster deutsch"}, "swsh7": {"tag": "Drachenwandel", "full": "Schwert & Schild – Drachenwandel", "sealedQuery": "Pokemon Drachenwandel Display 36 Booster deutsch"}};
     const REAL_CARDS = [
       {"id": "sv08-238", "name": "Pikachu-ex", "num": "238/191", "setTag": "Stürmische Funken", "setFull": "Karmesin & Purpur – Stürmische Funken", "rarity": "Special Illustration Rare", "trend": 199.3, "low": 155, "avg30": 243.52, "img": "https://assets.tcgdex.net/de/sv/sv08/238/high.webp", "query": "Pikachu ex 238/191"},
       {"id": "sv08-239", "name": "Latias-ex", "num": "239/191", "setTag": "Stürmische Funken", "setFull": "Karmesin & Purpur – Stürmische Funken", "rarity": "Special Illustration Rare", "trend": 173.91, "low": 99, "avg30": 160.75, "img": "https://assets.tcgdex.net/de/sv/sv08/239/high.webp", "query": "Latias ex 239/191"},
@@ -247,7 +246,6 @@
       {"id": "swsh7-218", "name": "Rayquaza VMAX", "num": "218/203", "setTag": "Drachenwandel", "setFull": "Schwert & Schild – Drachenwandel", "rarity": "Alternate Art Secret Rare", "trend": 1154.9, "low": 350, "avg30": 1037.8, "img": "https://assets.tcgdex.net/de/swsh/swsh7/218/high.webp", "query": "Rayquaza VMAX 218/203"}
     ];
 
-    const setKeyOf = (c) => c.id.slice(0, c.id.lastIndexOf("-"));
     const cardLabel = (c) => `${c.name} (${c.num})`;
     // Abwärtskompatibel: Katalog nach Kartennummer (z. B. "238/191")
     const cardCatalog = Object.create(null);
@@ -377,8 +375,11 @@
       );
     }
 
+    const REAL_SETS = {"sv08": {"tag": "Stürmische Funken", "full": "Karmesin & Purpur – Stürmische Funken", "sealedQuery": "Pokemon Stürmische Funken Display 36 Booster OVP deutsch"}, "sv03.5": {"tag": "151", "full": "Karmesin & Purpur – 151", "sealedQuery": "Pokemon 151 Booster Bundle deutsch OVP"}, "sv08.5": {"tag": "Prismatische Entwicklungen", "full": "Karmesin & Purpur – Prismatische Entwicklungen", "sealedQuery": "Pokemon Prismatische Entwicklungen Top Trainer Box deutsch"}, "swsh12.5gg": {"tag": "Zenit der Könige", "full": "Schwert & Schild – Zenit der Könige (Galar-Galerie)", "sealedQuery": "Pokemon Zenit der Könige Top Trainer Box deutsch"}, "sv03": {"tag": "Obsidianflammen", "full": "Karmesin & Purpur – Obsidianflammen", "sealedQuery": "Pokemon Obsidianflammen Display 36 Booster deutsch"}, "me01": {"tag": "Mega-Entwicklung", "full": "Mega-Entwicklung", "sealedQuery": "Pokemon Mega-Entwicklung Display 36 Booster deutsch"}, "sv04": {"tag": "Paradoxrift", "full": "Karmesin & Purpur – Paradoxrift", "sealedQuery": "Pokemon Paradoxrift Display 36 Booster deutsch"}, "swsh7": {"tag": "Drachenwandel", "full": "Schwert & Schild – Drachenwandel", "sealedQuery": "Pokemon Drachenwandel Display 36 Booster deutsch"}};
+    const setKeyOf = (c) => c.id.slice(0, c.id.lastIndexOf("-"));
+
     // ===================================================================
-    // 1. SWIPE-ARENA & GRATIS BOOSTER-PACK-SIMULATOR
+    // 1. SWIPE-ARENA
     // ===================================================================
     const swipeCatalog = REAL_CARDS.map((c) => ({
       id: c.id, title: cardLabel(c), setTag: c.setTag, setFull: c.setFull, rarity: c.rarity,
@@ -388,7 +389,6 @@
     let activeDeck = [...swipeCatalog];
     let swipeIdx = 0;
     let savedMatches = lsJSON("pokeswipe_matches_clean", []);
-    let packsOpenedCount = parseInt(localStorage.getItem("pokeswipe_packs_count") || "0", 10);
 
     const SWIPE_LANG = { de: "🇩🇪 Deutsch", en: "🇬🇧 Englisch", ja: "🇯🇵 Japanisch" };
 
@@ -530,39 +530,6 @@
     }
 
     function clearMatches() { savedMatches = []; localStorage.removeItem("pokeswipe_matches_clean"); renderMatches(); }
-
-    // GRATIS BOOSTER-PACK-SIMULATOR (HÄLT SAMMLER AUF DER SEITE & GENERIERT AFFILIATE-KLICKS)
-    const RARITY_ICON = { "Special Illustration Rare": "🔥 Special Illustration Rare", "Hyper Rare (Gold)": "🌟 Hyper Rare (Gold)", "Alternate Art Secret Rare": "🌙 Alternate Art Secret Rare", "Mega Hyper Rare (Gold)": "🌀 Mega Hyper Rare (Gold)" };
-    const boosterPools = {};
-    REAL_CARDS.forEach((c) => {
-      const key = setKeyOf(c);
-      if (!boosterPools[key]) boosterPools[key] = { displayQuery: REAL_SETS[key]?.sealedQuery || `Pokemon ${c.setTag} Display`, cards: [] };
-      boosterPools[key].cards.push({ id: c.id, name: cardLabel(c), rarity: RARITY_ICON[c.rarity] || c.rarity, get val() { return c.trend; }, img: c.img, query: c.query });
-    });
-
-    function openVirtualBooster() {
-      const setKey = document.getElementById("pack-set-select").value || "sv08";
-      const pool = boosterPools[setKey] || boosterPools.sv08 || Object.values(boosterPools)[0];
-      const pulled = pool.cards[Math.floor(Math.random() * pool.cards.length)];
-
-      const imgEl = document.getElementById("pack-visual-img");
-      imgEl.classList.remove("pack-shake");
-      void imgEl.offsetWidth;
-      imgEl.classList.add("pack-shake");
-
-      delete imgEl.dataset.fallback;
-      imgEl.src = pulled.img;
-      document.getElementById("pack-hit-badge").textContent = pulled.rarity;
-      document.getElementById("pack-hit-name").textContent = pulled.name;
-      document.getElementById("pack-hit-val").textContent = `Cardmarket-Trend: ${fmtEur(pulled.val)} (Stand ${livePriceDate})`;
-      document.getElementById("pack-buy-card-link").href = buildEbayUrl(pulled.query, "bin", "booster");
-      document.getElementById("pack-buy-display-link").href = buildEbayUrl(pool.displayQuery, "bin", "booster-ovp");
-
-      packsOpenedCount += 1;
-      localStorage.setItem("pokeswipe_packs_count", String(packsOpenedCount));
-      document.getElementById("statPacksOpened").textContent = packsOpenedCount;
-      playPokePingSound();
-    }
 
     // ===================================================================
     // 2. FLIP-RADAR & WISHLIST
@@ -1476,11 +1443,7 @@
     (function init() {
       const u = getCurrentUser();
       if (u) document.getElementById("authBtnText").textContent = u;
-      document.getElementById("statPacksOpened").textContent = packsOpenedCount;
-
-      // Booster-Links initial befüllen
-      document.getElementById("pack-buy-card-link").href = buildEbayUrl(REAL_CARDS[0].query, "bin", "booster");
-      document.getElementById("pack-buy-display-link").href = buildEbayUrl(REAL_SETS.sv08.sealedQuery, "bin", "booster-ovp");
+      try { localStorage.removeItem("pokeswipe_packs_count"); localStorage.removeItem("ps_booster_balance"); } catch (e) {}
 
       [loadPushSettingsUI, hydrateStaticAffiliateLinks, renderSwipeCard, renderMatches, () => filterFlipDeals("all"), renderWishlist,
         renderPullWall, () => renderChatList([]), renderBatchRows, renderRadarUsers, renderMarket, renderPortfolio, calcBulk,

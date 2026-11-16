@@ -12,8 +12,8 @@ export const OUT_W = 1080, OUT_H = 1920;
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
-// Schlüssel der App im localStorage – werden nach jeder Aufnahme wiederhergestellt (Swipes/Booster
-// in der Aufnahme sollen die echte Merkliste oder Booster-Bilanz des Admins nicht verändern)
+// Schlüssel der App im localStorage – werden nach jeder Aufnahme wiederhergestellt (Swipes
+// in der Aufnahme sollen die echte Merkliste des Admins nicht verändern)
 const APP_KEY = /^(?!pokeswipe\.autoReels)(pokeswipe|ps_|ps\.)/i; // Generator-Einstellungen bleiben unberührt
 
 export class StageAbort extends Error { constructor() { super("Live-Aufnahme abgebrochen"); this.name = "StageAbort"; } }
