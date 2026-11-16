@@ -1,8 +1,10 @@
 // PokeSwipe & Radar – Rechtliches: Impressum (§ 5 DDG), AGB, Widerrufsbelehrung inkl. digitaler Leistungen,
 // Muster-Widerrufsformular und Kündigungsbutton nach § 312k BGB (mit Bestätigungsseite und Eingangsnachweis).
 //
-// Keine personenbezogenen Daten im Code: Name und Anschrift des Anbieters pflegt der Admin in der Admin-Zentrale
-// (gespeichert in Netlify Blobs). Alternativ greift die bisherige Umgebungsvariable IMPRESSUM_TEXT (Freitext).
+// Anbieterangaben: Der Admin pflegt sie in der Admin-Zentrale unter „Rechtliches“ (gespeichert in Netlify Blobs).
+// Alternativ greift die Umgebungsvariable IMPRESSUM_TEXT (Freitext). Sind beide leer, gelten die festen
+// Standardangaben DEFAULT_OPERATOR – sie werden beim ersten Aufruf auch in die Konfiguration geschrieben,
+// damit das Impressum nie leer ist und im Admin-Bereich direkt bearbeitet werden kann.
 import { randomBytes } from "node:crypto";
 import { desc, eq, sql } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
@@ -37,6 +39,13 @@ const FIELD_MAX: Record<keyof Operator, number> = {
   email: 160, phone: 60, vatId: 30, register: 200, responsible: 200, smallBusiness: 0,
 };
 
+/** Feste Anbieterkennzeichnung (§ 5 DDG / § 18 Abs. 2 MStV) – Fallback, falls im Admin-Bereich nichts gespeichert ist. */
+export const DEFAULT_OPERATOR: Operator = {
+  name: "Kevin Hundt", company: "", representative: "", street: "Hähn 10", zip: "51515", city: "Kürten", country: "Deutschland",
+  email: "info@pokeswipe-radar.de", phone: "+49 174 2182874", vatId: "", register: "",
+  responsible: "Kevin Hundt, Hähn 10, 51515 Kürten", smallBusiness: true,
+};
+
 export function cleanOperator(raw: any): Operator {
   const o: any = { ...EMPTY };
   for (const k of Object.keys(EMPTY) as (keyof Operator)[]) {
@@ -55,9 +64,30 @@ async function loadSaved(): Promise<Saved> {
   try { return ((await getStore("app-config").get("legal", { type: "json" })) as Saved) || {}; } catch { return {}; }
 }
 
+let seeded = false;
+/** Schreibt die Standardangaben einmalig in die Konfiguration, falls dort noch nichts Eigenes gespeichert ist. */
+export async function seedDefaultOperator() {
+  if (seeded) return;
+  seeded = true;
+  try {
+    const saved = await loadSaved();
+    if (operatorComplete(cleanOperator(saved.operator || {})) || str(saved.impressum, 4000)) return;
+    await getStore("app-config").setJSON("legal", { operator: { ...DEFAULT_OPERATOR }, impressum: "", updatedAt: new Date().toISOString(), seeded: true });
+    console.info("Rechtliches: Standard-Anbieterangaben in der Konfiguration hinterlegt.");
+  } catch (e) {
+    seeded = false;
+    console.warn("Rechtliches: Standardangaben konnten nicht gespeichert werden (Fallback im Code aktiv).", e);
+  }
+}
+
 export async function getOperator() {
   const saved = await loadSaved();
-  return { operator: cleanOperator(saved.operator || {}), legacy: str(saved.impressum, 4000) || str(process.env.IMPRESSUM_TEXT, 4000), updatedAt: saved.updatedAt || null };
+  const own = cleanOperator(saved.operator || {});
+  const legacy = str(saved.impressum, 4000) || str(process.env.IMPRESSUM_TEXT, 4000);
+  // Unvollständige oder fehlende Angaben → feste Standardangaben, damit das Impressum nie leer ist
+  const operator = operatorComplete(own) || legacy ? own : { ...DEFAULT_OPERATOR };
+  if (!operatorComplete(own) && !str(saved.impressum, 4000)) void seedDefaultOperator();
+  return { operator, legacy, updatedAt: saved.updatedAt || null };
 }
 
 const STREIT = "Verbraucherstreitbeilegung: Wir sind nicht bereit und nicht verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.";
@@ -73,7 +103,7 @@ export function impressumText(o: Operator, legacy = "") {
   if (!operatorComplete(o)) return legacy ? (legacy.includes("Streitbeilegung") ? legacy : `${legacy}\n\n${STREIT}`) : "";
   const lines = [
     o.company || o.name,
-    o.company && o.representative ? `Vertreten durch: ${o.representative}` : o.company && o.name ? `Inhaber: ${o.name}` : "",
+    o.company && o.representative ? `Vertreten durch: ${o.representative}` : o.company && o.name ? `Inhaber: ${o.name}` : null,
     o.street, `${o.zip} ${o.city}`, o.country,
     "",
     "Kontakt:",
@@ -89,7 +119,8 @@ export function impressumText(o: Operator, legacy = "") {
   return lines.filter((l) => l !== null && l !== undefined).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-export function buildDocuments(o: Operator, legacy = ""): LegalDoc[] {
+export function buildDocuments(input: Operator, legacy = ""): LegalDoc[] {
+  const o = operatorComplete(input) || legacy ? input : DEFAULT_OPERATOR;
   const prov = providerLine(o);
   const mail = o.email || "der im Impressum genannten E-Mail-Adresse";
   const vat = o.smallBusiness ? "Als Kleinunternehmer im Sinne von § 19 UStG berechnen wir keine Umsatzsteuer; alle Preise sind Endpreise." : "Alle Preise sind Endpreise in Euro inklusive der gesetzlichen Umsatzsteuer.";
@@ -98,8 +129,52 @@ export function buildDocuments(o: Operator, legacy = ""): LegalDoc[] {
   return [
     {
       id: "impressum", title: "Impressum",
-      sections: [{ h: "Angaben gemäß § 5 DDG", p: impressum ? impressum.split(/\n{2,}/) : ["Die Anbieterangaben werden gerade eingerichtet."] },
+      sections: [{ h: "Angaben gemäß § 5 DDG", p: impressum.split(/\n{2,}/) },
         { h: "Hinweis", p: [`${BRAND} ist ein unabhängiges, inoffizielles Fanprojekt und steht in keiner Verbindung zu Nintendo, Creatures Inc., GAME FREAK inc. oder The Pokémon Company. Pokémon und alle Kartennamen sind Marken ihrer jeweiligen Inhaber.`] }],
+    },
+    {
+      id: "datenschutz", title: "Datenschutzerklärung",
+      sections: [
+        { h: "1. Verantwortlicher", p: [
+          `Verantwortlich für die Datenverarbeitung auf pokeswipe-radar.de und in der App ${BRAND} ist: ${prov}${o.phone ? `, Telefon: ${o.phone}` : ""}.`,
+          "Ein Datenschutzbeauftragter ist nicht bestellt, da die gesetzlichen Voraussetzungen dafür nicht vorliegen. Bei Fragen zum Datenschutz wende dich direkt an die oben genannte E-Mail-Adresse.",
+        ] },
+        { h: "2. Aufruf der Website (Server-Logfiles)", p: [
+          "Beim Aufruf der Seite verarbeitet unser Hosting-Anbieter technisch notwendige Daten: IP-Adresse, Datum und Uhrzeit, aufgerufene Adresse, Referrer, Browser und Betriebssystem. Das dient der sicheren und stabilen Auslieferung (Art. 6 Abs. 1 lit. f DSGVO). Die Protokolle werden nach kurzer Zeit automatisch gelöscht.",
+        ] },
+        { h: "3. Hosting, Datenbank und Login – Netlify", p: [
+          "Website, Server-Funktionen, Datenbank, Dateispeicher, Bild-Optimierung und Login (Netlify Identity) betreibt Netlify, Inc. (USA). Gespeichert werden dort bei einem Konto: E-Mail-Adresse, Passwort (nur als Hash), Sammlername, Portfolio, Wunschliste, Preisalarme, Inserate, Tausche und Nachrichten, Bewertungen, Community-Beiträge, Abo-Status und Kündigungen. Rechtsgrundlage ist die Vertragserfüllung (Art. 6 Abs. 1 lit. b DSGVO).",
+          "Netlify ist unter dem EU-US Data Privacy Framework zertifiziert; zusätzlich bestehen EU-Standardvertragsklauseln (Art. 45, 46 DSGVO). Mit Netlify besteht ein Vertrag zur Auftragsverarbeitung. Datenschutzhinweise: netlify.com/privacy",
+        ] },
+        { h: "4. Zahlungen – Stripe", p: [
+          "Kostenpflichtige Abos (Premium, Pro Trader), Boosts und Käufe mit Käuferschutz wickeln wir über Stripe Payments Europe, Ltd., 1 Grand Canal Street Lower, Grand Canal Dock, Dublin, Irland, ab. Stripe verarbeitet Name, E-Mail-Adresse, Zahlungsdaten, Rechnungsadresse und die Transaktion, prüft Zahlungen auf Betrug und sendet die Bestellbestätigung. Wir selbst sehen keine vollständigen Karten- oder Kontodaten, sondern nur Kunden- und Abo-Kennungen, Betrag und Zahlungsstatus.",
+          "Rechtsgrundlage: Vertragserfüllung (Art. 6 Abs. 1 lit. b DSGVO) sowie gesetzliche Aufbewahrungspflichten (Art. 6 Abs. 1 lit. c DSGVO; § 147 AO, § 257 HGB – Buchungsbelege 8 bzw. 10 Jahre). Datenübermittlungen an Stripe, Inc. (USA) erfolgen auf Grundlage des EU-US Data Privacy Framework bzw. von Standardvertragsklauseln. Datenschutzhinweise: stripe.com/de/privacy",
+        ] },
+        { h: "5. Besucherzähler und Online-Anzeige – Google Firebase", p: [
+          "Für den anonymen Besucherzähler und die Online-Anzeige nutzen wir die Firebase Realtime Database (Rechenzentrum europe-west1, Belgien) und Firebase Authentication der Google Ireland Limited, Gordon House, Barrow Street, Dublin 4, Irland. Dafür lädt die Seite das Firebase-Skript von gstatic.com, vergibt eine zufällige, anonyme Kennung und überträgt technisch bedingt deine IP-Adresse. Es werden keine Namen, E-Mail-Adressen oder Inhalte in Firebase gespeichert.",
+          "Rechtsgrundlage ist unser berechtigtes Interesse an einer Reichweitenanzeige und einer funktionierenden Live-Anzeige (Art. 6 Abs. 1 lit. f DSGVO). Eine Übermittlung an Google LLC (USA) ist nicht auszuschließen und erfolgt auf Grundlage des EU-US Data Privacy Framework. Datenschutzhinweise: firebase.google.com/support/privacy",
+        ] },
+        { h: "6. Affiliate-Links – eBay Partner Network, Cardmarket, Amazon", p: [
+          "Mit * gekennzeichnete Links zu eBay, Cardmarket oder Amazon sind Partnerlinks. Wir nehmen am eBay Partner Network teil. Klickst du einen solchen Link, setzt erst der jeweilige Anbieter auf seiner Seite eine Kennung, um einen Kauf unserer Empfehlung zuzuordnen; wir erhalten keine personenbezogenen Daten von dir, sondern nur eine Provisionsabrechnung. Auf pokeswipe-radar.de selbst werden dafür keine Cookies gesetzt.",
+          "Für die Deal-Suche fragen wir über die eBay-Schnittstelle öffentliche Angebote ab; dabei werden keine Daten von dir an eBay übermittelt. Verantwortlich für Vorgänge auf den Partnerseiten sind die Anbieter selbst, z. B. eBay GmbH, Albert-Einstein-Ring 2–6, 14532 Kleinmachnow. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an der Finanzierung des Dienstes).",
+        ] },
+        { h: "7. Weitere Dienstleister", p: [
+          "KI-Kartenscan und Zustandscheck: Fotos werden über das Netlify AI Gateway an Anthropic PBC (USA) zur Auswertung gesendet und von uns nicht gespeichert (Art. 6 Abs. 1 lit. b DSGVO). Kartendaten und Preise: TCGdex/Cardmarket (es werden keine Nutzerdaten übertragen). Kartenansicht: Kartenkacheln von OpenStreetMap; beim Suchen eines Orts wird die Eingabe an OpenStreetMap Nominatim gesendet (IP-Adresse technisch bedingt). Push-Nachrichten: Zustellung über die Push-Dienste von Google, Apple, Mozilla bzw. Microsoft, nur wenn du Push aktivierst (Art. 6 Abs. 1 lit. a DSGVO). E-Mail-Bestätigungen (z. B. für Kündigungen) können über den Versanddienst Resend zugestellt werden (Empfängeradresse und Text).",
+        ] },
+        { h: "8. Speicher im Browser", p: [
+          "Wir setzen keine Werbe- oder Tracking-Cookies. Im Browser (LocalStorage, IndexedDB, Service Worker) speichern wir nur technisch notwendige Daten: Login-Token, Einstellungen und eine Offline-Kopie deiner Sammlung (§ 25 Abs. 2 Nr. 2 TDDDG). Beim Abmelden werden kontobezogene Daten gelöscht.",
+        ] },
+        { h: "9. Speicherdauer", p: [
+          "Kontodaten speichern wir, bis du dein Konto löschst. Du kannst es jederzeit im Konto unter „Datenschutz & Konto“ selbst löschen; die Daten werden dann entfernt, soweit keine gesetzlichen Aufbewahrungspflichten (z. B. für Rechnungen und Kündigungsnachweise) entgegenstehen. Öffentliche Inhalte wie Inserate oder Beiträge kannst du jederzeit selbst entfernen.",
+        ] },
+        { h: "10. Deine Rechte", p: [
+          "Du hast das Recht auf Auskunft (Art. 15 DSGVO), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der Verarbeitung (Art. 18), Datenübertragbarkeit (Art. 20) und Widerruf erteilter Einwilligungen mit Wirkung für die Zukunft (Art. 7 Abs. 3). Im Konto kannst du alle Daten als Datei herunterladen.",
+          "Widerspruchsrecht: Verarbeiten wir Daten auf Grundlage berechtigter Interessen (Art. 6 Abs. 1 lit. f DSGVO), kannst du aus Gründen, die sich aus deiner besonderen Situation ergeben, jederzeit widersprechen (Art. 21 DSGVO). Eine formlose Nachricht an " + mail + " genügt.",
+          "Du kannst dich außerdem bei einer Datenschutz-Aufsichtsbehörde beschweren, z. B. bei der für uns zuständigen Landesbeauftragten für Datenschutz und Informationsfreiheit Nordrhein-Westfalen, Kavalleriestraße 2–4, 40213 Düsseldorf.",
+          "Es findet keine automatisierte Entscheidungsfindung einschließlich Profiling im Sinne von Art. 22 DSGVO statt. Die Bereitstellung von Daten ist für ein Konto bzw. ein Abo erforderlich; ohne Konto ist die App eingeschränkt nutzbar.",
+          `Stand: ${new Date(LEGAL_VERSION).toLocaleDateString("de-DE")}`,
+        ] },
+      ],
     },
     {
       id: "agb", title: "Allgemeine Geschäftsbedingungen (AGB)",
@@ -175,7 +250,7 @@ export function buildDocuments(o: Operator, legacy = ""): LegalDoc[] {
         ] },
         { h: "§ 11 Gewährleistung", p: ["Es gelten die gesetzlichen Vorschriften über digitale Produkte (§§ 327 ff. BGB)."] },
         { h: "§ 12 Widerrufsrecht", p: ["Verbrauchern steht ein gesetzliches Widerrufsrecht zu. Einzelheiten findest du in der Widerrufsbelehrung unten."] },
-        { h: "§ 13 Datenschutz", p: ["Informationen zur Verarbeitung personenbezogener Daten findest du in der Datenschutzerklärung (in der App unter „Impressum & Datenschutz“)."] },
+        { h: "§ 13 Datenschutz", p: ["Informationen zur Verarbeitung personenbezogener Daten findest du in der Datenschutzerklärung unter pokeswipe-radar.de/rechtliches#datenschutz."] },
         { h: "§ 14 Schlussbestimmungen", p: [
           "(1) Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts. Bei Verbrauchern gilt diese Rechtswahl nur, soweit dadurch nicht der Schutz durch zwingende Bestimmungen des Rechts des Staates ihres gewöhnlichen Aufenthalts entzogen wird.",
           "(2) " + STREIT,
@@ -224,15 +299,29 @@ export function buildDocuments(o: Operator, legacy = ""): LegalDoc[] {
 
 export async function getLegalPayload() {
   const { operator, legacy, updatedAt } = await getOperator();
-  const documents = buildDocuments(operator, legacy);
+  const documents = withPrivacyPointer(buildDocuments(operator, legacy));
   return {
-    impressum: impressumText(operator, legacy),
+    impressum: impressumText(operator, legacy) || impressumText(DEFAULT_OPERATOR),
     operatorComplete: operatorComplete(operator) || Boolean(legacy),
     version: LEGAL_VERSION,
     updatedAt,
     documents,
     links: { all: "/rechtliches", cancel: "/kuendigen", privacy: "/datenschutz" },
   };
+}
+
+/**
+ * Es gibt genau EINE verbindliche Datenschutzerklärung: die vollständige Fassung unter /datenschutz (server/privacy.ts).
+ * Auf /rechtliches (Anker #datenschutz) steht deshalb nur ein Verweis darauf – zwei unterschiedlich ausführliche Texte
+ * könnten sich widersprechen.
+ */
+export function withPrivacyPointer(docs: LegalDoc[]): LegalDoc[] {
+  return docs.map((d) => d.id !== "datenschutz" ? d : {
+    ...d,
+    sections: [{ h: "", p: [
+      `Die vollständige Datenschutzerklärung nach Art. 13 und 14 DSGVO (Verantwortlicher, alle Dienstleister mit Sitz, Rechtsgrundlagen, Drittlandübermittlung, Speicherdauer und deine Rechte) findest du unter ${SITE()}/datenschutz.`,
+    ] }],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -325,7 +414,7 @@ button.go:disabled{opacity:.6}.err{color:#fda4af;font-size:13px;min-height:18px;
 
 export function legalPage(docs: LegalDoc[]) {
   return `${LEGAL_CSS}<div class="card doc"><h1>Rechtliches</h1>
-    <div class="toc">${docs.map((d) => `<a href="#${d.id}">${h(d.title)}</a>`).join("")}<a href="/datenschutz">Datenschutz</a><a href="/kuendigen" style="background:#f43f5e;color:#fff">Verträge hier kündigen</a></div>
+    <div class="toc">${docs.map((d) => `<a href="#${d.id}">${h(d.title)}</a>`).join("")}<a href="/kuendigen" style="background:#f43f5e;color:#fff">Verträge hier kündigen</a></div>
     ${docs.map((d) => `<section id="${d.id}"><h2>${h(d.title)}</h2>${d.sections.map((s) => `${s.h ? `<h3>${h(s.h)}</h3>` : ""}${s.p.map((x) => `<p>${h(x)}</p>`).join("")}`).join("")}</section>`).join("")}
     <p style="margin-top:24px"><a class="cancel-cta" href="/kuendigen">Verträge hier kündigen</a></p></div>`;
 }
@@ -357,6 +446,8 @@ function cancelPage() {
 
 export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> }) {
   const { auth, adminOnly, body } = hlp;
+  // Beim Server-Start: Standard-Anbieterangaben hinterlegen, falls noch keine eigenen gespeichert sind
+  void seedDefaultOperator();
 
   app.get("/api/legal", async (c: any) => {
     c.header("Cache-Control", "public, max-age=300");
@@ -378,20 +469,8 @@ export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: 
     return c.json({ ...saved, complete: operatorComplete(operator) });
   });
 
-  app.get("/rechtliches", async (c: any) => {
-    const p = await getLegalPayload();
-    c.header("Cache-Control", "public, max-age=300");
-    return c.html(pageShell({
-      title: `Impressum, AGB & Widerrufsbelehrung | ${BRAND}`,
-      description: `Impressum, Allgemeine Geschäftsbedingungen, Widerrufsbelehrung und Muster-Widerrufsformular von ${BRAND}.`,
-      canonical: `${SITE()}/rechtliches`, body: legalPage(p.documents),
-    }));
-  });
-  for (const [path, anchor] of [["/impressum", "impressum"], ["/agb", "agb"], ["/widerruf", "widerruf"]]) {
-    app.get(path, (c: any) => c.redirect(`/rechtliches#${anchor}`, 301));
-  }
-
-  // Datenschutzerklärung (Art. 13/14 DSGVO) – Verantwortlicher aus den Impressums-Daten des Admins
+  // Datenschutzerklärung (Art. 13/14 DSGVO) – Verantwortlicher aus den Impressums-Daten des Admins.
+  // Muss VOR den Kurz-Weiterleitungen (/impressum, /agb, … /datenschutz → /rechtliches#…) stehen: die erste passende Route gewinnt.
   app.get("/datenschutz", async (c: any) => {
     const { operator, legacy } = await getOperator();
     const doc = buildPrivacyPolicy(operator, { complete: operatorComplete(operator), legacy });
@@ -402,6 +481,19 @@ export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: 
       canonical: `${SITE()}/datenschutz`, body: `${LEGAL_CSS}${privacyPage(doc)}`,
     }));
   });
+
+  app.get("/rechtliches", async (c: any) => {
+    const p = await getLegalPayload();
+    c.header("Cache-Control", "public, max-age=300");
+    return c.html(pageShell({
+      title: `Impressum, Datenschutz, AGB & Widerrufsbelehrung | ${BRAND}`,
+      description: `Impressum, Datenschutzerklärung, Allgemeine Geschäftsbedingungen, Widerrufsbelehrung und Muster-Widerrufsformular von ${BRAND}.`,
+      canonical: `${SITE()}/rechtliches`, body: legalPage(p.documents),
+    }));
+  });
+  for (const [path, anchor] of [["/impressum", "impressum"], ["/agb", "agb"], ["/widerruf", "widerruf"], ["/datenschutz", "datenschutz"]]) {
+    app.get(path, (c: any) => c.redirect(`/rechtliches#${anchor}`, 301));
+  }
 
   app.get("/kuendigen", (c: any) => {
     c.header("Cache-Control", "public, max-age=600");
@@ -461,6 +553,7 @@ export function registerLegal(app: any, hlp: { auth: any; adminOnly: any; body: 
     const confirmation = confirmationText({ reference, createdAt: row.createdAt, name, email, contractRef, kind, reason, timing, requestedDate, effectiveAt, statusText });
 
     // Bestätigung in Textform: E-Mail (falls eingerichtet) + Mitteilung im Konto
+    if (!mailConfigured()) console.info(`Kündigung ${reference} (${status}) gespeichert – E-Mail-Versand nicht eingerichtet (RESEND_API_KEY/MAIL_FROM fehlen); Bestätigung auf der Seite und im Konto.`);
     const mailed = await sendMail(confirmEmail || email, `Kündigungsbestätigung ${reference} – ${BRAND}`, confirmation);
     if (confirmEmail && confirmEmail !== email) await sendMail(email, `Kündigungsbestätigung ${reference} – ${BRAND}`, confirmation);
     if (profile) {

@@ -740,13 +740,15 @@ function openLegal() {
   (origOpenModal || window.openModal)?.("legal-modal");
   loadImpressum();
 }
+// Feste Anbieterkennzeichnung (§ 5 DDG) – wird angezeigt, falls die API einmal nicht erreichbar ist
+const IMPRESSUM_FALLBACK = "Kevin Hundt\nHähn 10\n51515 Kürten\nDeutschland\n\nKontakt:\nE-Mail: info@pokeswipe-radar.de\nTelefon: +49 174 2182874\n\nKleinunternehmer gemäß § 19 UStG – es wird keine Umsatzsteuer berechnet.\n\nVerantwortlich für den Inhalt nach § 18 Abs. 2 MStV: Kevin Hundt, Hähn 10, 51515 Kürten";
 async function loadImpressum() {
   const box = $("ps-impressum");
   if (!box) return;
   try {
     const { impressum } = await api("/api/legal");
-    box.textContent = impressum || "Das Impressum wird gerade vom Betreiber eingerichtet.";
-  } catch { box.textContent = "Impressum konnte nicht geladen werden – bitte später erneut öffnen."; }
+    box.textContent = impressum || IMPRESSUM_FALLBACK;
+  } catch { box.textContent = IMPRESSUM_FALLBACK; }
 }
 
 const OP_FIELDS = [
@@ -963,12 +965,13 @@ export function injectGrowthPanels() {
     first?.after(el);
     const links = document.createElement("p");
     links.className = "flex flex-wrap gap-2";
-    links.innerHTML = `<a href="/rechtliches#agb" class="bg-slate-800 rounded-lg px-2 py-1 font-bold text-white">AGB</a>
+    links.innerHTML = `<a href="/rechtliches#datenschutz" class="bg-slate-800 rounded-lg px-2 py-1 font-bold text-white">Datenschutzerklärung</a>
+      <a href="/rechtliches#agb" class="bg-slate-800 rounded-lg px-2 py-1 font-bold text-white">AGB</a>
       <a href="/rechtliches#widerruf" class="bg-slate-800 rounded-lg px-2 py-1 font-bold text-white">Widerrufsbelehrung</a>
       <a href="/rechtliches#formular" class="bg-slate-800 rounded-lg px-2 py-1 font-bold text-white">Muster-Widerrufsformular</a>
       <a href="/kuendigen" class="bg-rose-600 rounded-lg px-2 py-1 font-black text-white">Verträge hier kündigen</a>`;
     el.after(links);
-    $("ps-impressum").textContent = "Wird geladen …";
+    $("ps-impressum").textContent = IMPRESSUM_FALLBACK;
     origOpenModal = window.openModal;
     window.openModal = (id) => { origOpenModal?.(id); if (id === "legal-modal") loadImpressum(); };
   }

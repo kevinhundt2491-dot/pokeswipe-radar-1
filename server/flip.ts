@@ -685,8 +685,14 @@ export function registerFlip(app: any, { auth, adminOnly, body }: { auth: any; a
     if (st?.lastSyncedAt && Date.now() - st.lastSyncedAt.getTime() < 30 * 60_000) return c.json({ ok: true, fresh: true });
     const t = await loadTarget(parsed.kind, parsed.id);
     if (!t) return c.json({ error: "Karte nicht gefunden" }, 404);
-    const r = await syncTarget(t);
-    return c.json({ ok: true, found: r.found, stored: r.stored, deals: r.deals });
+    try {
+      const r = await syncTarget(t);
+      return c.json({ ok: true, found: r.found, stored: r.stored, deals: r.deals });
+    } catch (e: any) {
+      // eBay nicht erreichbar / Schlüssel abgelehnt: vorhandener Datenbestand bleibt sichtbar
+      console.warn("eBay-Abgleich fehlgeschlagen – vorhandene Daten bleiben", parsed.id, String(e?.message || e));
+      return c.json({ ok: true, fresh: true, stale: true });
+    }
   });
 
   app.get("/api/admin/flip", auth, adminOnly, async (c: any) => c.json(await flipAdminStatus()));

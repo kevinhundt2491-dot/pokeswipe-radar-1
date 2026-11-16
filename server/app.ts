@@ -899,10 +899,16 @@ async function profileForSubscription(sub: any) {
   return p ?? null;
 }
 
-app.post("/api/billing/webhook", async (c) => {
+// Signatur-Geheimnisse werden bei jeder Anfrage frisch gelesen: STRIPE_WEBHOOK_SECRET (Netlify-Variable) und/oder
+// das per „Stripe-Webhook einrichten“ gespeicherte whsec_…-Geheimnis – der Endpunkt ist sofort nach dem Klick aktiv.
+// /api/stripe/webhook ist ein Alias für manuell in Stripe angelegte Endpunkte.
+const stripeWebhook = async (c: any) => {
   const s = stripe();
   const secrets = await webhookSecrets();
-  if (!s || !secrets.length) return c.json({ error: "Webhook nicht konfiguriert" }, 503);
+  if (!s || !secrets.length) {
+    console.warn(`Stripe-Webhook abgelehnt: ${!s ? "STRIPE_SECRET_KEY fehlt" : "kein Signatur-Geheimnis – in der Admin-Zentrale unter Integrationen „Stripe-Webhook einrichten“ klicken"}`);
+    return c.json({ error: "Webhook nicht konfiguriert" }, 503);
+  }
   const sig = c.req.header("stripe-signature") || "";
   const raw = await c.req.text();
   let event: any = null;
@@ -946,7 +952,9 @@ app.post("/api/billing/webhook", async (c) => {
     return c.json({ error: "Verarbeitung fehlgeschlagen" }, 500); // Stripe wiederholt die Zustellung automatisch
   }
   return c.json({ received: true });
-});
+};
+app.post("/api/billing/webhook", stripeWebhook);
+app.post("/api/stripe/webhook", stripeWebhook);
 
 // ---------------------------------------------------------------------------
 // Admin: Moderation & Einnahmen-Überblick (Rolle "admin" in Netlify Identity)
