@@ -1,7 +1,8 @@
 import { and, eq, isNull, lt, or, sql, lte, gte } from "drizzle-orm";
 import { db, cards, priceHistory, priceAlerts, notifications, sealedProducts, sealedAlerts } from "../db/index.ts";
 import { sendPush } from "./push.ts";
-import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
+import { resilientFetch, markPartial, CircuitOpenError, currentJob } from "./resilience.ts";
+import { getContext } from "@netlify/server";
 import { splitCardmarketPricing, CONDITION_FACTOR_SQL } from "./variant-logic.ts";
 
 const TCGDEX = "https://api.tcgdex.net/v2/de";
@@ -102,10 +103,41 @@ export async function refreshCard(cardId: string) {
   return saved;
 }
 
-/** Liefert eine Karte aus der DB; lädt sie nach, wenn sie fehlt oder älter als maxAgeMs ist. */
+// Stale-While-Revalidate: laufende Hintergrund-Aktualisierungen (je Karte höchstens eine gleichzeitig)
+const revalidating = new Set<string>();
+/** Karten mit Preis, die höchstens so alt sind, kommen sofort aus der DB und werden im Hintergrund aktualisiert. */
+const SWR_MAX_AGE_MS = 14 * 86400_000;
+
+function revalidateInBackground(cardId: string) {
+  if (revalidating.has(cardId) || revalidating.size > 200) return;
+  revalidating.add(cardId);
+  const task = refreshCard(cardId)
+    .then(async (saved) => {
+      if (!saved) return;
+      // eigene Bewertung (Zustände/Graded) nach dem neuen Referenzpreis aktualisieren
+      const { valuateCard } = await import("./valuation.ts");
+      await valuateCard(saved);
+    })
+    .catch(() => {}) // Ausfall der Quelle: gespeicherte Werte bleiben gültig, der Circuit Breaker übernimmt
+    .finally(() => revalidating.delete(cardId));
+  // Hintergrundarbeit beim Netlify Server anmelden, damit sie nach der Antwort zu Ende laufen darf
+  try { getContext().waitUntil(task); } catch { /* außerhalb einer Anfrage (Tests, Skripte) */ }
+}
+
+/**
+ * Liefert eine Karte aus der DB; lädt sie nach, wenn sie fehlt oder älter als maxAgeMs ist.
+ * Außerhalb geplanter Jobs gilt Stale-While-Revalidate: Hat die Karte schon einen Preis, kommt sie sofort aus der
+ * eigenen Datenbank (mit Zeitstempel) und wird im Hintergrund aktualisiert – Ausfälle oder langsame Antworten von
+ * TCGdex verzögern so keine Anfrage und erzeugen keine Fehlermeldung.
+ */
 export async function getCard(cardId: string, maxAgeMs = 6 * 3600_000) {
   const [existing] = await db.select().from(cards).where(eq(cards.id, cardId)).limit(1);
   if (existing && existing.checkedAt && Date.now() - existing.checkedAt.getTime() < maxAgeMs) return existing;
+  const hasPrice = Boolean(existing && (existing.trend || existing.avg || existing.low));
+  if (existing && hasPrice && !currentJob() && existing.checkedAt && Date.now() - existing.checkedAt.getTime() < SWR_MAX_AGE_MS) {
+    revalidateInBackground(cardId);
+    return existing;
+  }
   try {
     return (await refreshCard(cardId)) ?? existing ?? null;
   } catch {
@@ -199,7 +231,15 @@ export async function runTracker({ maxCards = 150, deadlineMs = Infinity } = {})
   `);
 
   alerts += await snapshotSealed();
-  return { refreshed, alerts, skipped };
+  // Eigene Preis-Pipeline: Zustands- und Graded-Werte aus allen Quellen neu verdichten (nur Datenbank, keine externe Abfrage)
+  let valuation: Record<string, number> = {};
+  try {
+    const { refreshValuations } = await import("./valuation.ts");
+    valuation = await refreshValuations({ ids: ids.slice(0, refreshed + skipped), deadline });
+  } catch (e) {
+    console.warn("Tracker: Bewertungen nicht aktualisiert", e);
+  }
+  return { refreshed, alerts, skipped, ...valuation };
 }
 
 /** Effektiver Sealed-Preis: Admin-Referenzpreis, sonst Durchschnitt der Community-Inserate. */

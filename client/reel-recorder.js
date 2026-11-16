@@ -80,7 +80,7 @@ export function estimateMarks(lines, D) {
 
 function cuesFor(key, marks, D) {
   const at = (i) => clamp(marks[i]?.start ?? 0, 0.05, D);
-  const action = { arena: "swipe", tour: "swipe", flip: "alert", booster: "coin", display: "coin", portfolio: "coin", scanner: "scan", pricecheck: "coin", market: "match", community: "pop" }[key] || "pop";
+  const action = { arena: "swipe", tour: "swipe", flip: "alert", restock: "alert", graded: "coin", portfolio: "coin", scanner: "scan", pricecheck: "coin", market: "match", community: "pop" }[key] || "pop";
   return [[0.02, "impact"], [at(1), action], [at(2), "pop"], [at(3), "cut"]];
 }
 

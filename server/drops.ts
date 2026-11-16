@@ -3,7 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { and, desc, eq, sql, inArray } from "drizzle-orm";
 import {
-  db, profiles, restockWatches, restockDrops, restockConfirmations, restockSubscriptions,
+  db, profiles, restockWatches, restockDrops, restockConfirmations, restockSubscriptions, restockWatchFollows,
   gradedCards, gradingSubmissions, cardScans, affiliateClicks, cards,
 } from "../db/index.ts";
 import { PLANS, effectivePlan, type PlanId } from "./plans.ts";
@@ -11,9 +11,12 @@ import { CARD_ID_RE, getCard, cardPrice, notify } from "./prices.ts";
 import { verifyIdentityToken, isAdmin } from "./auth.ts";
 import { berlinDay } from "./logic.ts";
 import {
-  SHOPS, shopForUrl, parseAvailability, uvpVerdict, affiliateUrl, matchesFilter, isDropTransition,
+  SHOPS, shopForUrl, uvpVerdict, affiliateUrl, matchesFilter,
   GRADE_COMPANIES, SUBMISSION_STATUS, type Availability,
+  extractProduct, userAgentFor, blockBackoffMs, nextHealth, confirmTransition, reportPlausibility, type CheckOutcome, type Extraction,
 } from "./drops-logic.ts";
+import { trustFor } from "./community.ts";
+import { parseRetryAfter } from "./resilience-logic.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
 import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
 import { shopCircuit } from "./resilience-logic.ts";
@@ -76,39 +79,63 @@ async function readLimited(res: Response, maxBytes: number) {
   return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, maxBytes));
 }
 
-async function fetchProductPage(url: string) {
-  if (!shopForUrl(url)) throw new Error("Shop nicht erlaubt");
-  const signal = AbortSignal.timeout(10_000);
-  let current = url;
-  // Weiterleitungen manuell folgen: jedes Ziel muss wieder ein erlaubter Shop sein (kein SSRF über offene Redirects)
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    // Circuit je Shop-Host: ein ausgefallener Shop sperrt nur sich selbst, nicht die übrigen Shops
-    const res = await resilientFetch(shopCircuit(current), current, {
-      redirect: "manual",
-      signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; PokeSwipeRadar/2.0; Restock-Check)",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "de-DE,de;q=0.9",
-      },
-    }, { timeoutMs: 8000, attempts: 2, totalMs: 10_000, threshold: 4 });
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      try { await res.body?.cancel(); } catch {}
-      if (!loc) throw new Error(`HTTP ${res.status}`);
-      const next = new URL(loc, current).href;
-      if (!shopForUrl(next)) throw new Error("Weiterleitung auf fremde Domain");
-      current = next;
-      continue;
+/** Shop sperrt den Abruf (403/429) – kein Fehler des Produkts, sondern Anlass für Backoff. */
+class BlockedError extends Error {
+  status: number;
+  retryAfterMs: number | null;
+  constructor(status: number, retryAfterMs: number | null) { super(`HTTP ${status}`); this.status = status; this.retryAfterMs = retryAfterMs; }
+}
+
+/**
+ * Lädt eine Produktseite und wertet sie gestaffelt aus (JSON-LD → Meta-Tags → Shop-Muster).
+ * Bei 403 wird einmal mit einer anderen Browser-Kennung wiederholt; 429/5xx übernimmt resilientFetch (Backoff,
+ * Retry-After, Circuit Breaker je Shop-Host).
+ */
+async function fetchProductPage(url: string, seed = 0): Promise<Extraction & { title: string }> {
+  const shop = shopForUrl(url);
+  if (!shop) throw new Error("Shop nicht erlaubt");
+  const signal = AbortSignal.timeout(12_000);
+  for (let uaTry = 0; uaTry < 2; uaTry++) {
+    let current = url;
+    let blocked: BlockedError | null = null;
+    // Weiterleitungen manuell folgen: jedes Ziel muss wieder ein erlaubter Shop sein (kein SSRF über offene Redirects)
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      // Circuit je Shop-Host: ein ausgefallener Shop sperrt nur sich selbst, nicht die übrigen Shops
+      const res = await resilientFetch(shopCircuit(current), current, {
+        redirect: "manual",
+        signal,
+        headers: {
+          "User-Agent": userAgentFor(seed, uaTry),
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "de-DE,de;q=0.9,en;q=0.6",
+          "Cache-Control": "no-cache",
+        },
+      }, { timeoutMs: 8000, attempts: 2, totalMs: 10_000, threshold: 4 });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        try { await res.body?.cancel(); } catch {}
+        if (!loc) throw new Error(`HTTP ${res.status}`);
+        const next = new URL(loc, current).href;
+        if (!shopForUrl(next)) throw new Error("Weiterleitung auf fremde Domain");
+        current = next;
+        continue;
+      }
+      if (res.status === 403 || res.status === 429) {
+        try { await res.body?.cancel(); } catch {}
+        blocked = new BlockedError(res.status, parseRetryAfter(res.headers.get("retry-after")));
+        break;
+      }
+      if (!res.ok) {
+        try { await res.body?.cancel(); } catch {}
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const html = await readLimited(res, MAX_PAGE_BYTES);
+      return { ...extractProduct(html, shop), title: pageTitle(html) };
     }
-    if (!res.ok) {
-      try { await res.body?.cancel(); } catch {}
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const html = await readLimited(res, MAX_PAGE_BYTES);
-    return { ...parseAvailability(html), title: pageTitle(html) };
+    if (!blocked) throw new Error("Zu viele Weiterleitungen");
+    if (uaTry === 1 || blocked.status === 429) throw blocked;
   }
-  throw new Error("Zu viele Weiterleitungen");
+  throw new Error("Abruf fehlgeschlagen");
 }
 
 const decodeEntities = (t: string) => t
@@ -144,38 +171,58 @@ async function makeDrop(values: typeof restockDrops.$inferInsert) {
   return row;
 }
 
+/** Neuer Drop zu einem überwachten Produkt (höchstens einer je 30 Minuten – Shops schwanken oft kurz). */
+async function dropForWatch(w: typeof restockWatches.$inferSelect, status: Availability, price: number | null, source: "auto" | "community" | "admin", reportedBy: string | null = null) {
+  const [recent] = await db.select({ id: restockDrops.id }).from(restockDrops)
+    .where(and(eq(restockDrops.watchId, w.id), sql`${restockDrops.createdAt} > now() - interval '30 minutes'`, inArray(restockDrops.status, ["live", "pending"]))).limit(1);
+  if (recent) return null;
+  return makeDrop({
+    watchId: w.id, kind: status === "preorder" ? "preorder" : "restock", source,
+    title: w.name, shop: w.shop, url: w.url, price: (price ?? num(w.lastPrice))?.toFixed(2) ?? null,
+    uvp: w.uvp, status: "live", liveAt: new Date(), reportedBy,
+  });
+}
+
 async function checkWatch(w: typeof restockWatches.$inferSelect) {
-  let result: { status: Availability; price: number | null };
+  let outcome: CheckOutcome;
+  let result: (Extraction & { title: string }) | null = null;
   try {
-    result = await fetchProductPage(w.url);
+    result = await fetchProductPage(w.url, w.id);
+    outcome = result.status === "unknown" && !result.price ? { kind: "unreadable" } : { kind: "ok", extraction: result };
   } catch (e: any) {
     // Shop gerade gesperrt (Circuit offen): nicht als Fehler dieses Produkts zählen, im nächsten Lauf erneut
     if (e instanceof CircuitOpenError) return { id: w.id, skipped: true };
-    await db.update(restockWatches).set({ lastCheckedAt: new Date(), failCount: w.failCount + 1 }).where(eq(restockWatches.id, w.id));
-    return { id: w.id, error: String(e?.message || e) };
+    outcome = e instanceof BlockedError ? { kind: "blocked", status: e.status, retryAfterMs: e.retryAfterMs } : { kind: "error", message: String(e?.message || e) };
   }
-  const changed = result.status !== "unknown" && result.status !== w.status;
-  await db.update(restockWatches).set({
-    lastCheckedAt: new Date(), failCount: 0,
-    ...(result.status !== "unknown" ? { status: result.status } : {}),
-    ...(result.price ? { lastPrice: result.price.toFixed(2) } : {}),
-    ...(changed ? { lastChangeAt: new Date() } : {}),
-  }).where(eq(restockWatches.id, w.id));
+  const health = nextHealth(w.failCount, outcome);
+  const blockedUntil = outcome.kind === "blocked" ? new Date(Date.now() + blockBackoffMs(health.failCount, outcome.retryAfterMs)) : null;
+  if (outcome.kind !== "ok" || !result || result.status === "unknown") {
+    // Nichts Verlässliches gelesen → Status bleibt unverändert, KEIN Alarm (keine falschen „Ausverkauft“/„Lieferbar“-Meldungen)
+    await db.update(restockWatches).set({
+      lastCheckedAt: new Date(), failCount: health.failCount, health: health.health, healthReason: health.reason,
+      ...(result?.price ? { lastPrice: result.price.toFixed(2) } : {}),
+      ...(blockedUntil ? { blockedUntil } : {}),
+      ...(health.health === "paused" && w.health !== "paused" ? { pausedAt: new Date() } : {}),
+    }).where(eq(restockWatches.id, w.id));
+    return { id: w.id, error: health.reason, paused: health.health === "paused" };
+  }
+  const changed = result.status !== w.status;
   // Erste Prüfung legt nur den Ausgangszustand fest – kein Alarm
-  if (w.lastCheckedAt && changed && isDropTransition(w.status, result.status)) {
-    // Kein zweiter Alarm für dasselbe Produkt innerhalb von 30 Minuten (Shops schwanken oft kurz)
-    const [recent] = await db.select({ id: restockDrops.id }).from(restockDrops)
-      .where(and(eq(restockDrops.watchId, w.id), sql`${restockDrops.createdAt} > now() - interval '30 minutes'`)).limit(1);
-    if (!recent) {
-      await makeDrop({
-        watchId: w.id, kind: result.status === "preorder" ? "preorder" : "restock", source: "auto",
-        title: w.name, shop: w.shop, url: w.url, price: (result.price ?? num(w.lastPrice))?.toFixed(2) ?? null,
-        uvp: w.uvp, status: "live", liveAt: new Date(),
-      });
-      return { id: w.id, drop: result.status };
-    }
+  const decision = w.lastCheckedAt ? confirmTransition(w.status, result, w.pendingStatus) : { fire: false, pending: null };
+  // Unsichere Stufe ohne Bestätigung: Status noch nicht übernehmen, beim nächsten Lauf erneut prüfen
+  const holdStatus = Boolean(decision.pending);
+  await db.update(restockWatches).set({
+    lastCheckedAt: new Date(), failCount: 0, health: health.health, healthReason: health.reason, lastLayer: result.layer || "",
+    pendingStatus: decision.pending, blockedUntil: null, pausedAt: null,
+    ...(!holdStatus ? { status: result.status } : {}),
+    ...(result.price ? { lastPrice: result.price.toFixed(2) } : {}),
+    ...(changed && !holdStatus ? { lastChangeAt: new Date() } : {}),
+  }).where(eq(restockWatches.id, w.id));
+  if (decision.fire) {
+    const drop = await dropForWatch(w, result.status, result.price, "auto");
+    if (drop) return { id: w.id, drop: result.status, layer: result.layer };
   }
-  return { id: w.id, status: result.status };
+  return { id: w.id, status: result.status, layer: result.layer, pending: decision.pending };
 }
 
 type Sub = { userId: string; plan: PlanId; filter: typeof restockSubscriptions.$inferSelect };
@@ -213,20 +260,32 @@ async function dispatchDrops(deadline: number) {
       sql`${restockDrops.liveAt} <= now() - make_interval(mins => ${freeDelay}::int)`, sql`${restockDrops.liveAt} > now() - interval '6 hours'`)).limit(10);
   if (!pendingPaid.length && !pendingFree.length) return { paid, free };
   const subs = await subscribers();
+  // Beobachter eines Produkts bekommen dessen Drops immer – auch ohne allgemeines Restock-Abo und unabhängig von Filtern
+  const watchIds = [...new Set([...pendingPaid, ...pendingFree].map((d) => d.watchId).filter(Boolean))] as number[];
+  const followers = watchIds.length ? await db.select({ watchId: restockWatchFollows.watchId, userId: restockWatchFollows.userId, p: profiles })
+    .from(restockWatchFollows).innerJoin(profiles, eq(profiles.userId, restockWatchFollows.userId))
+    .where(and(inArray(restockWatchFollows.watchId, watchIds), eq(profiles.banned, false))) : [];
+  const withFollowers = (d: typeof restockDrops.$inferSelect, paidTier: boolean, list: Sub[]) => {
+    const ids = new Set(list.map((s) => s.userId));
+    const extra = followers.filter((f) => f.watchId === d.watchId && f.userId !== d.reportedBy && !ids.has(f.userId))
+      .map((f) => ({ userId: f.userId, plan: effectivePlan(f.p), filter: null as any }))
+      .filter((f) => (PLANS[f.plan].restockDelayMin === 0) === paidTier);
+    return [...list, ...extra];
+  };
   for (const d of pendingPaid) {
     const [claimed] = await db.update(restockDrops).set({ paidNotified: true })
       .where(and(eq(restockDrops.id, d.id), eq(restockDrops.paidNotified, false))).returning();
     if (!claimed) continue;
-    const target = subs.filter((s) => PLANS[s.plan].restockDelayMin === 0 && s.userId !== d.reportedBy
-      && matchesFilter(d, s.filter, PLANS[s.plan].restockFilters));
+    const target = withFollowers(d, true, subs.filter((s) => PLANS[s.plan].restockDelayMin === 0 && s.userId !== d.reportedBy
+      && matchesFilter(d, s.filter, PLANS[s.plan].restockFilters)));
     paid += await sendDrop(d, target, deadline);
   }
   for (const d of pendingFree) {
     const [claimed] = await db.update(restockDrops).set({ freeNotified: true })
       .where(and(eq(restockDrops.id, d.id), eq(restockDrops.freeNotified, false))).returning();
     if (!claimed) continue;
-    const target = subs.filter((s) => PLANS[s.plan].restockDelayMin > 0 && s.userId !== d.reportedBy
-      && matchesFilter(d, s.filter, PLANS[s.plan].restockFilters));
+    const target = withFollowers(d, false, subs.filter((s) => PLANS[s.plan].restockDelayMin > 0 && s.userId !== d.reportedBy
+      && matchesFilter(d, s.filter, PLANS[s.plan].restockFilters)));
     free += await sendDrop(d, target, deadline);
   }
   return { paid, free };
@@ -251,6 +310,9 @@ export async function runRestockJobs({ deadlineMs = 20_000 } = {}) {
   const deadline = Date.now() + deadlineMs;
   const due = await db.select().from(restockWatches).where(and(
     eq(restockWatches.active, true), eq(restockWatches.autoCheck, true),
+    // Health-Monitor: pausierte Links (3 Fehlschläge in Folge) und gesperrte Shops (Backoff nach 403/429) überspringen
+    sql`${restockWatches.health} <> 'paused'`,
+    sql`(${restockWatches.blockedUntil} IS NULL OR ${restockWatches.blockedUntil} < now())`,
     // Nach Fehlern seltener prüfen (max. alle ~30 Minuten), damit Shops nicht unnötig belastet werden
     sql`(${restockWatches.lastCheckedAt} IS NULL OR ${restockWatches.lastCheckedAt} < now() - make_interval(mins => LEAST(30, 2 + ${restockWatches.failCount} * 4)))`,
   )).orderBy(sql`${restockWatches.lastCheckedAt} ASC NULLS FIRST`).limit(30);
@@ -260,7 +322,11 @@ export async function runRestockJobs({ deadlineMs = 20_000 } = {}) {
     checks.push(...(await Promise.all(due.slice(i, i + 6).map(checkWatch))));
   }
   const sent = await dispatchDrops(deadline);
-  return { checked: checks.length, drops: checks.filter((c) => c.drop).length, errors: checks.filter((c) => c.error).length, skippedOpenCircuit: checks.filter((c) => c.skipped).length, ...sent };
+  return {
+    checked: checks.length, drops: checks.filter((c) => c.drop).length, errors: checks.filter((c) => c.error).length,
+    paused: checks.filter((c) => c.paused).length, awaitingConfirmation: checks.filter((c) => c.pending).length,
+    skippedOpenCircuit: checks.filter((c) => c.skipped).length, ...sent,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +393,9 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
     // Vorbestell- & Preis-Übersicht je Produkt (alle Shops)
     const watches = await db.select().from(restockWatches).where(eq(restockWatches.active, true))
       .orderBy(sql`${restockWatches.releaseDay} DESC NULLS LAST`, restockWatches.name).limit(300);
+    const following = new Set<number>(viewer.userId && watches.length
+      ? (await db.select({ id: restockWatchFollows.watchId }).from(restockWatchFollows).where(eq(restockWatchFollows.userId, viewer.userId))).map((r) => r.id)
+      : []);
     const products = new Map<string, any>();
     for (const w of watches) {
       const key = w.name.toLowerCase();
@@ -338,7 +407,9 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
       p.offers.push({
         id: w.id, shop: w.shop, shopLabel: SHOPS[w.shop]?.label || w.shop, status: fresh ? "unknown" : w.status,
         price: fresh ? null : num(w.lastPrice), verdict: fresh ? null : uvpVerdict(num(w.lastPrice), num(w.uvp)),
-        checkedAt: w.lastCheckedAt, autoCheck: w.autoCheck, locked: fresh,
+        checkedAt: w.lastCheckedAt, autoCheck: w.autoCheck, locked: fresh, following: following.has(w.id),
+        // pausiert = automatische Prüfung gerade nicht verlässlich → Community-Meldungen sind hier besonders wertvoll
+        paused: w.health === "paused" || !w.autoCheck,
       });
     }
     let subscription = null;
@@ -374,29 +445,70 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
     return c.json({ ok: true, filtersApplied: filters, delayMin: PLANS[plan].restockDelayMin });
   });
 
-  // Community-Meldung: „Hier gibt es gerade UVP-Ware“
+  // Community-Meldung: „Hier gibt es gerade UVP-Ware“ – frei oder per 1-Klick zu einem überwachten Produkt (watchId)
   app.post("/api/restock/report", auth, async (c: any) => {
     const b = await body(c), user = c.get("user"), profile = c.get("profile");
     if (!(await rateLimit(`restock-report:${user.id}`, 5, 3600_000))) return c.json({ error: "Maximal 5 Meldungen pro Stunde." }, 429);
-    const title = str(b.title, 100);
+    const watchId = int(b.watchId, 0, 2 ** 31 - 1, 0);
+    const [watch] = watchId ? await db.select().from(restockWatches).where(and(eq(restockWatches.id, watchId), eq(restockWatches.active, true))).limit(1) : [];
+    if (watchId && !watch) return c.json({ error: "Produkt nicht gefunden." }, 404);
+    const title = watch ? watch.name : str(b.title, 100);
     if (title.length < 4) return c.json({ error: "Bitte gib an, welches Produkt es gibt (z. B. „151 Display“)." }, 400);
-    const rawUrl = str(b.url, 500);
+    const rawUrl = str(b.url, 500) || watch?.url || "";
     const shopFromUrl = rawUrl ? shopForUrl(rawUrl) : null;
     if (rawUrl && !shopFromUrl) return c.json({ error: "Link wird nicht unterstützt. Erlaubt sind die großen Shops (Amazon, Smyths, Müller, MediaMarkt, Otto …)." }, 400);
-    const shop = shopFromUrl || (str(b.shop, 20) in SHOPS ? str(b.shop, 20) : "other");
+    const shop = shopFromUrl || watch?.shop || (str(b.shop, 20) in SHOPS ? str(b.shop, 20) : "other");
     const city = str(b.city, 60);
     if (!rawUrl && !city) return c.json({ error: "Bitte einen Shop-Link oder die Stadt des Ladens angeben." }, 400);
     const [recent] = await db.select({ n: sql<number>`count(*)::int` }).from(restockDrops)
       .where(and(eq(restockDrops.reportedBy, user.id), sql`${restockDrops.createdAt} > now() - interval '1 hour'`));
     if (Number(recent?.n ?? 0) >= 5) return c.json({ error: "Maximal 5 Meldungen pro Stunde." }, 429);
+    const price = money(b.price) ? Number(money(b.price)) : null;
+    const uvp = watch?.uvp ? Number(watch.uvp) : money(b.uvp) ? Number(money(b.uvp)) : null;
     const admin = isAdmin(user);
+    // Schnelle Plausibilitätsprüfung: Shop passt, Preis realistisch, Vertrauen des Melders – bei Online-Links zusätzlich
+    // ein Sofort-Abruf der Produktseite (bestätigt sie „lieferbar/vorbestellbar“, geht der Alarm ohne Wartezeit raus)
+    let pageConfirms: boolean | null = null;
+    if (rawUrl && watch && watch.health !== "paused") {
+      try {
+        const page = await Promise.race([fetchProductPage(rawUrl, watch.id), new Promise<null>((r) => setTimeout(() => r(null), 7000))]);
+        if (page && page.status !== "unknown") pageConfirms = page.status === "in_stock" || page.status === "preorder";
+      } catch { pageConfirms = null; }
+    }
+    if (pageConfirms === false && !admin) {
+      return c.json({ error: "Die Produktseite zeigt das Produkt gerade als nicht verfügbar. Ist es nur im Laden erhältlich? Dann bitte ohne Link mit Stadt melden." }, 409);
+    }
+    const trust = (await trustFor([user.id])).get(user.id)?.score ?? 0;
+    const check = reportPlausibility({ url: rawUrl, watchShop: watch?.shop ?? null, price, uvp, trustScore: trust, admin, pageConfirms });
+    if (!check.ok) return c.json({ error: `Meldung nicht plausibel: ${check.reasons.join(", ")}.` }, 400);
+    const live = check.instant;
     const row = await makeDrop({
-      kind: b.kind === "preorder" ? "preorder" : "restock", source: admin ? "admin" : "community", title, shop,
-      url: rawUrl, city, price: money(b.price), uvp: money(b.uvp), reportedBy: profile.userId,
-      status: admin ? "live" : "pending", liveAt: admin ? new Date() : null,
+      watchId: watch?.id ?? null, kind: b.kind === "preorder" ? "preorder" : "restock", source: admin ? "admin" : "community", title, shop,
+      url: rawUrl, city, price: price !== null ? price.toFixed(2) : null, uvp: uvp !== null ? uvp.toFixed(2) : null, reportedBy: profile.userId,
+      status: live ? "live" : "pending", liveAt: live ? new Date() : null,
     });
-    if (admin) await dispatchDrops(Date.now() + 8000);
-    return c.json({ ok: true, id: row.id, live: admin, needed: CONFIRMATIONS_NEEDED });
+    if (watch && pageConfirms) {
+      await db.update(restockWatches).set({ status: b.kind === "preorder" ? "preorder" : "in_stock", lastChangeAt: new Date(), lastCheckedAt: new Date(), ...(price ? { lastPrice: price.toFixed(2) } : {}) })
+        .where(eq(restockWatches.id, watch.id));
+    }
+    if (live) await dispatchDrops(Date.now() + 8000);
+    return c.json({ ok: true, id: row.id, live, needed: CONFIRMATIONS_NEEDED, verifiedByPage: pageConfirms === true });
+  });
+
+  // Produkt beobachten: Drops genau dieses Produkts kommen per Push (auch ohne allgemeines Restock-Abo)
+  app.post("/api/restock/watch/:id/follow", auth, async (c: any) => {
+    const id = idParam(c), userId = c.get("user").id;
+    const [w] = await db.select({ id: restockWatches.id }).from(restockWatches).where(and(eq(restockWatches.id, id), eq(restockWatches.active, true))).limit(1);
+    if (!w) return c.json({ error: "Produkt nicht gefunden." }, 404);
+    const b = await body(c);
+    if (b.follow === false) {
+      await db.delete(restockWatchFollows).where(and(eq(restockWatchFollows.watchId, id), eq(restockWatchFollows.userId, userId)));
+      return c.json({ ok: true, following: false });
+    }
+    const [n] = await db.select({ n: sql<number>`count(*)::int` }).from(restockWatchFollows).where(eq(restockWatchFollows.userId, userId));
+    if (Number(n?.n ?? 0) >= 100) return c.json({ error: "Du beobachtest schon 100 Produkte." }, 400);
+    await db.insert(restockWatchFollows).values({ watchId: id, userId }).onConflictDoNothing();
+    return c.json({ ok: true, following: true });
   });
 
   app.post("/api/restock/:id/confirm", auth, async (c: any) => {
@@ -454,8 +566,11 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
 
   // ------------------------------ Admin ------------------------------
   app.get("/api/admin/restock", auth, adminOnly, async (c: any) => {
-    const watches = await db.select().from(restockWatches).orderBy(desc(restockWatches.createdAt)).limit(500);
-    return c.json({ watches, amazonTag: Boolean(TAGS().amazon), cardmarketId: Boolean(TAGS().cardmarket) });
+    const watches = await db.select().from(restockWatches)
+      .orderBy(sql`CASE ${restockWatches.health} WHEN 'paused' THEN 0 WHEN 'degraded' THEN 1 ELSE 2 END`, desc(restockWatches.createdAt)).limit(500);
+    const health = { ok: 0, degraded: 0, paused: 0 } as Record<string, number>;
+    for (const w of watches) if (w.active) health[w.health] = (health[w.health] || 0) + 1;
+    return c.json({ watches, health, amazonTag: Boolean(TAGS().amazon), cardmarketId: Boolean(TAGS().cardmarket) });
   });
 
   app.post("/api/admin/restock/watches", auth, adminOnly, async (c: any) => {
@@ -512,6 +627,13 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
     if (b.autoCheck !== undefined) set.autoCheck = Boolean(b.autoCheck);
     if (b.uvp !== undefined) set.uvp = money(b.uvp);
     if (["in_stock", "preorder", "out_of_stock", "unknown"].includes(b.status)) set.status = b.status;
+    if (b.url !== undefined) {
+      const url = str(b.url, 500), shop = shopForUrl(url);
+      if (!shop) return c.json({ error: "Bitte eine https-Produktseite eines unterstützten Shops angeben." }, 400);
+      set.url = url; set.shop = shop;
+    }
+    // Prüfung fortsetzen (nach Selektor-Update / neuer URL): Health zurücksetzen, nächster Lauf prüft sofort
+    if (b.resume === true || b.url !== undefined) Object.assign(set, { health: "ok", healthReason: "", failCount: 0, pausedAt: null, blockedUntil: null, pendingStatus: null, lastCheckedAt: null });
     if (!Object.keys(set).length) return c.json({ error: "Nichts zu ändern." }, 400);
     const [row] = await db.update(restockWatches).set(set).where(eq(restockWatches.id, idParam(c))).returning();
     return row ? c.json(row) : c.json({ error: "Nicht gefunden." }, 404);

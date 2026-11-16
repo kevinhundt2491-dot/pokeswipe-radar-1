@@ -12,7 +12,7 @@ import { publicCache } from "./cache.ts";
 import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
 import { log } from "./log.ts";
 import { gunzipSync } from "node:zlib";
-import { referenceHashes, wordsToHex, hexToWords, packWords, encodeBase64, WORDS } from "./scan-logic.ts";
+import { referenceHashes, wordsToHex, hexToWords, packWords, encodeBase64, hexDistance, isColorSig, WORDS } from "./scan-logic.ts";
 import * as seedDe from "./scan-seed/de.ts";
 import * as seedEn from "./scan-seed/en.ts";
 import * as seedJa from "./scan-seed/ja.ts";
@@ -217,7 +217,83 @@ export async function buildIndex(lang: Lang) {
     words.push(a[0], a[1], b[0], b[1], c[0], c[1]);
     if (r.set_id && Number(r.total) > 0) sets[String(r.set_id)] = Number(r.total);
   }
-  return { lang, count: ids.length, words: WORDS, ids: ids.join("\n"), sets, h: encodeBase64(packWords(words)), builtAt: new Date().toISOString() };
+  // Phase 9: gelernte Kamera-Fingerabdrücke (bestätigte Nutzer-Scans) als zusätzliche Zeilen derselben Karte anhängen.
+  // Sie stammen aus echten Kamerabildern (Licht, Sleeves, Toploader) und treffen daher oft besser als das Referenzbild.
+  const learnedStart = ids.length;
+  const colors: string[] = [];
+  const learned = rows(await db.execute(sql`
+    SELECT target_key, art_p, art_d, full_p, color FROM scan_learned_hashes
+    WHERE lang = ${lang} AND active ORDER BY confirmations DESC, hits DESC LIMIT 20000`));
+  for (const r of learned) {
+    const a = hexToWords(r.art_p), b = hexToWords(r.art_d), c = hexToWords(r.full_p);
+    if (!a || !b || !c) continue;
+    ids.push(String(r.target_key).replace(/^(card|print):/, ""));
+    words.push(a[0], a[1], b[0], b[1], c[0], c[1]);
+    colors.push(isColorSig(r.color) ? r.color : "");
+  }
+  return {
+    lang, count: ids.length, words: WORDS, ids: ids.join("\n"), sets, h: encodeBase64(packWords(words)),
+    learnedStart, learned: ids.length - learnedStart, colors: colors.join("\n"), builtAt: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9: Selbstlernender Index (Stufe 2 des Hybrid-Scanners)
+// ---------------------------------------------------------------------------
+const HASH_HEX = /^[0-9a-f]{16}$/;
+/** Kamera-Fingerabdruck gilt als plausibel, wenn sein Artwork-pHash so nah am Referenzbild liegt (von 64 Bit). */
+export const LEARN_PLAUSIBLE_ART = 24;
+/** So nah an einer schon gelernten Zeile → nur Zähler erhöhen statt neue Zeile */
+export const LEARN_DUPLICATE = 10;
+/** Höchstens so viele gelernte Zeilen je Karte (Index bleibt klein) */
+export const LEARN_MAX_PER_CARD = 12;
+
+export type LearnInput = { key: string; artP: string; artD: string; fullP: string; color?: string | null; source: "confirm" | "ai" | "admin"; userId: string };
+
+/**
+ * Speichert einen bestätigten Kamera-Fingerabdruck. Schutz gegen falsche oder böswillige Zuordnungen:
+ * • plausibel zum Referenzbild (Artwork-Abstand ≤ 24 Bit) → sofort aktiv
+ * • kein Referenzbild: aktiv nach KI-Erkennung + Nutzerbestätigung oder ab 2 verschiedenen Konten
+ * • weicht stark vom Referenzbild ab → nur mit zweiter Bestätigung durch ein anderes Konto (z. B. Sleeve, starke Spiegelung)
+ */
+export async function learnScan(i: LearnInput) {
+  if (!KEY_RE.test(i.key) || ![i.artP, i.artD, i.fullP].every((h) => HASH_HEX.test(h))) return { ok: false, reason: "invalid" };
+  const kind = i.key.startsWith("card:") ? "card" : "print";
+  const targetId = i.key.slice(kind.length + 1);
+  const lang = kind === "card" ? "de" : targetId.slice(0, 2);
+  const [ref] = rows(await db.execute(sql`
+    SELECT art_p FROM card_hashes WHERE target_kind = ${kind} AND target_id = ${targetId} AND art_p IS NOT NULL LIMIT 1`));
+  const refDist = ref ? hexDistance(i.artP, String(ref.art_p)) : null;
+  const plausible = refDist !== null && refDist <= LEARN_PLAUSIBLE_ART;
+  const existing = rows(await db.execute(sql`
+    SELECT id, art_p, art_d, full_p, confirmations, active, first_user_id FROM scan_learned_hashes WHERE target_key = ${i.key} LIMIT 50`));
+  for (const e of existing) {
+    const d = (hexDistance(i.artP, e.art_p) ?? 64) + 0.75 * (hexDistance(i.artD, e.art_d) ?? 64) + 0.75 * (hexDistance(i.fullP, e.full_p) ?? 64);
+    if (d > LEARN_DUPLICATE) continue;
+    const vote = rows(await db.execute(sql`INSERT INTO scan_learn_votes (hash_id, user_id) VALUES (${e.id}, ${i.userId}) ON CONFLICT DO NOTHING RETURNING hash_id`));
+    const confirmations = Number(e.confirmations) + (vote.length ? 1 : 0);
+    const active = Boolean(e.active) || confirmations >= 2;
+    await db.execute(sql`UPDATE scan_learned_hashes SET hits = hits + 1, confirmations = ${confirmations}, active = ${active},
+      color = COALESCE(color, ${isColorSig(i.color) ? i.color : null}), last_seen_at = now() WHERE id = ${e.id}`);
+    return { ok: true, merged: true, active };
+  }
+  if (existing.length >= LEARN_MAX_PER_CARD) return { ok: true, skipped: "full" };
+  // Starke Abweichung vom Referenzbild ohne KI: nicht speichern (häufigster Fall: falsche Karte übernommen)
+  if (refDist !== null && !plausible && i.source === "confirm") return { ok: true, skipped: "implausible" };
+  const active = plausible || i.source === "admin" || (refDist === null && i.source === "ai");
+  const [row] = rows(await db.execute(sql`
+    INSERT INTO scan_learned_hashes (target_key, lang, art_p, art_d, full_p, color, source, active, first_user_id)
+    VALUES (${i.key}, ${lang}, ${i.artP}, ${i.artD}, ${i.fullP}, ${isColorSig(i.color) ? i.color : null}, ${i.source}, ${active}, ${i.userId})
+    RETURNING id`));
+  if (row) await db.execute(sql`INSERT INTO scan_learn_votes (hash_id, user_id) VALUES (${row.id}, ${i.userId}) ON CONFLICT DO NOTHING`);
+  return { ok: true, created: true, active };
+}
+
+export async function learnedStats() {
+  const [r] = rows(await db.execute(sql`
+    SELECT count(*)::int AS total, count(*) FILTER (WHERE active)::int AS active, coalesce(sum(hits), 0)::int AS hits,
+      count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS week FROM scan_learned_hashes`));
+  return { total: Number(r?.total ?? 0), active: Number(r?.active ?? 0), hits: Number(r?.hits ?? 0), week: Number(r?.week ?? 0) };
 }
 
 type LookupRow = {
@@ -282,7 +358,7 @@ export function registerScanIndex(app: any, { auth, adminOnly }: { auth: any; ad
 
   app.get("/api/scan/status", async (c: any) => {
     c.header("Cache-Control", "public, max-age=300");
-    return c.json(await scanIndexStatus());
+    return c.json({ ...(await scanIndexStatus()), learned: await learnedStats().catch(() => null) });
   });
 
   // Details zu erkannten Karten: ?keys=card:sv03.5-199,print:en:sv03.5-199 (max. 8)
@@ -292,6 +368,21 @@ export function registerScanIndex(app: any, { auth, adminOnly }: { auth: any; ad
     if (!keys.length) return c.json({ error: "Keine gültige Karte" }, 400);
     c.header("Cache-Control", "public, max-age=300");
     return c.json({ items: await lookup(keys) });
+  });
+
+  // Stufe 2: bestätigten Scan lernen (Nutzer hat die erkannte Karte übernommen oder die KI hat sie erkannt)
+  app.post("/api/scan/learn", auth, async (c: any) => {
+    const user = c.get("user");
+    if (!(await rateLimit(`scanlearn:${user.id}`, 150, 86_400_000))) return c.json({ ok: true, skipped: "limit" });
+    let b: any = {};
+    try { b = await c.req.json(); } catch {}
+    const source = b.source === "ai" ? "ai" : "confirm";
+    const r = await learnScan({
+      key: str(b.key, 80), artP: str(b.artP, 16).toLowerCase(), artD: str(b.artD, 16).toLowerCase(), fullP: str(b.fullP, 16).toLowerCase(),
+      color: b.color ? str(b.color, 16).toLowerCase() : null, source, userId: user.id,
+    });
+    if (!r.ok) return c.json({ error: "Ungültiger Fingerabdruck." }, 400);
+    return c.json(r);
   });
 
   app.post("/api/admin/scan-index/run", auth, adminOnly, async (c: any) => {

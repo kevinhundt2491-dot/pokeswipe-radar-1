@@ -99,13 +99,6 @@
       70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
       100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
-    .pack-shake { animation: shakePack 0.45s ease-in-out; }
-    @keyframes shakePack {
-      0%, 100% { transform: rotate(0deg) scale(1); }
-      25% { transform: rotate(-6deg) scale(1.06); }
-      50% { transform: rotate(6deg) scale(1.1); }
-      75% { transform: rotate(-4deg) scale(1.06); }
-    }
     /* Progressive Disclosure: im einfachen Modus sind Profi-Werte ausgeblendet und einzeln aufklappbar */
     body.ps-simple .ps-pro-only { display: none !important; }
     body.ps-simple .ps-revealed .ps-pro-only { display: block !important; }
@@ -248,12 +241,12 @@
         </div>
         <span class="text-2xl">🃏</span>
       </div>
-      <div onclick="switchTab('swipe'); document.getElementById('pack-simulator-box').scrollIntoView({behavior:'smooth'});" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
+      <div onclick="PS.showSub('flip', 'drops')" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
         <div>
-          <p class="text-[10px] uppercase font-bold text-amber-300">🎁 Geöffnete Booster</p>
-          <p class="text-base sm:text-lg font-black text-yellow-400"><span id="statPacksOpened">0</span> Packs</p>
+          <p class="text-[10px] uppercase font-bold text-amber-300">🚨 Restock-Radar</p>
+          <p class="text-base sm:text-lg font-black text-yellow-400">UVP-Drops</p>
         </div>
-        <span class="text-2xl">✨</span>
+        <span class="text-2xl">📦</span>
       </div>
       <div onclick="switchTab('map')" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
         <div>
@@ -280,13 +273,13 @@
         📷 <span>Live-Scanner</span>
       </button>
       <button onclick="switchTab('flip')" id="tab-flip" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
-        ⚡ <span>Flip-Radar</span>
+        ⚡ <span>Deals &amp; Flip-Radar</span>
       </button>
       <button onclick="switchTab('portfolio')" id="tab-portfolio" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
         💼 <span>Meine Sammlung</span>
       </button>
       <button onclick="switchTab('map')" id="tab-map" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">
-        🤝 <span>Community & Markt</span>
+        🤝 <span>Community &amp; Tausch</span>
       </button>
     </nav>
   </div>
@@ -295,7 +288,7 @@
   <main class="relative z-10 max-w-7xl w-full mx-auto px-3 sm:px-6 mt-4 flex-grow">
 
     <!-- =================================================================== -->
-    <!-- REITER 1: STARTSEITE / ARENA (SWIPE + BOOSTER-OPENER + TOP-DEALS)   -->
+    <!-- REITER 1: STARTSEITE / ARENA (SWIPE + TOP-DEALS)                    -->
     <!-- =================================================================== -->
     <section id="view-swipe" class="space-y-6">
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -368,49 +361,8 @@
           </div>
         </div>
 
-        <!-- RECHTE SPALTE (5 Cols): BOOSTER-PACK-SIMULATOR (BINDUNG & AFFILIATE-MAGNET) + MERKLISTE -->
+        <!-- RECHTE SPALTE (5 Cols): MERKLISTE -->
         <div class="lg:col-span-5 space-y-5">
-
-          <!-- NEU: INTERAKTIVER BOOSTER-PACK-OPENER -->
-          <div id="pack-simulator-box" class="poke-glass rounded-3xl p-4 sm:p-5 border-2 border-yellow-400/50 space-y-3.5">
-            <div class="flex items-center justify-between">
-              <div>
-                <span class="text-[10px] font-black uppercase bg-gradient-to-r from-yellow-400 to-red-500 text-slate-950 px-2.5 py-0.5 rounded-full">🎁 Täglicher Pack-Opener</span>
-                <h3 class="text-base font-black text-white mt-1">Gratis Booster-Simulator öffnen!</h3>
-              </div>
-              <select id="pack-set-select" class="bg-slate-900 border border-yellow-400/40 rounded-xl px-2.5 py-1.5 text-xs text-yellow-300 font-bold">
-                <option value="sv08">⚡ Stürmische Funken</option>
-                <option value="sv03.5">🔥 Karmesin & Purpur 151</option>
-                <option value="sv08.5">💎 Prismatische Entwicklungen</option>
-                <option value="me01">🌀 Mega-Entwicklung</option>
-                <option value="swsh12.5gg">👑 Zenit der Könige</option>
-                <option value="sv03">🌋 Obsidianflammen</option>
-                <option value="swsh7">🌙 Drachenwandel</option>
-              </select>
-            </div>
-
-            <div id="pack-stage" class="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 text-center space-y-3">
-              <img id="pack-visual-img" src="https://assets.tcgdex.net/de/sv/sv08/238/high.webp" alt="Booster Hit" class="w-36 h-48 mx-auto object-contain rounded-xl shadow-xl border border-yellow-400/40 transition" />
-              <div>
-                <span id="pack-hit-badge" class="text-[10px] font-black uppercase bg-yellow-400/20 text-yellow-300 px-2.5 py-0.5 rounded-full">Bereit zum Öffnen</span>
-                <h4 id="pack-hit-name" class="text-sm font-black text-white mt-1">Teste dein Zieh-Glück!</h4>
-                <p id="pack-hit-val" class="text-xs text-emerald-400 font-bold">Ziehe SIR-Hits & prüfe sofort den echten eBay-Preis</p>
-              </div>
-
-              <button onclick="openVirtualBooster()" class="w-full bg-gradient-to-r from-yellow-400 via-amber-500 to-red-500 hover:opacity-95 text-slate-950 font-black py-3 rounded-xl text-xs sm:text-sm shadow-lg">
-                ✨ Booster jetzt aufreißen!
-              </button>
-
-              <div class="grid grid-cols-2 gap-2 pt-1 text-[11px]">
-                <a id="pack-buy-card-link" href="#" target="_blank" rel="noopener" class="bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 font-bold py-2 px-2 rounded-xl">
-                  🔎 Gezogene Karte auf eBay
-                </a>
-                <a id="pack-buy-display-link" href="#" target="_blank" rel="noopener" class="bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-bold py-2 px-2 rounded-xl">
-                  📦 Echtes Display sichern
-                </a>
-              </div>
-            </div>
-          </div>
 
           <!-- GEMERKTE KARTEN -->
           <div class="poke-glass rounded-3xl p-4 space-y-3">
@@ -747,9 +699,9 @@
     <div class="max-w-md mx-auto grid grid-cols-5 gap-1 px-2 py-1.5">
       <button onclick="switchTab('swipe')" id="mob-swipe" class="mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🃏</span><span class="text-[10px]">Entdecken</span></button>
       <button onclick="switchTab('scan')" id="mob-scan" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">📷</span><span class="text-[10px]">Scanner</span></button>
-      <button onclick="switchTab('flip')" id="mob-flip" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">⚡</span><span class="text-[10px]">Flip-Radar</span></button>
+      <button onclick="switchTab('flip')" id="mob-flip" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">⚡</span><span class="text-[10px]">Deals</span></button>
       <button onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">💼</span><span class="text-[10px]">Sammlung</span></button>
-      <button onclick="switchTab('map')" id="mob-map" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🤝</span><span class="text-[10px]">Markt</span></button>
+      <button onclick="switchTab('map')" id="mob-map" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🤝</span><span class="text-[10px]">Tausch</span></button>
     </div>
   </nav>
 
@@ -844,7 +796,7 @@
           <p class="text-yellow-400 font-black uppercase text-[10px]">Starter PRO</p>
           <p class="text-xl font-black text-white">4,99 € <span class="text-xs font-normal text-slate-400">/ Mo</span></p>
           <ul class="text-slate-300 space-y-1">
-            <li>✅ Unbegrenzte Swipes & Pack-Opener</li>
+            <li>✅ Restock-Alarme ohne Verzögerung</li>
             <li>✅ Exklusive Sniper-Deals (&gt;25 % unter Marktwert)</li>
             <li>✅ PSA-Grading-Profit-Analyse</li>
             <li>✅ Echtzeit Push-Preisalarme</li>

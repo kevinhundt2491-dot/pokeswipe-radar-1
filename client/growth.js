@@ -5,6 +5,7 @@ import {
   $, esc, jsArg, safeUrl, eur, pct, toast, FALLBACK_IMG, cdn, state, api, handleError, requireLogin, modal, closeModalEl, input, btn,
 } from "./core.js";
 import { csvToRows } from "./csv.js";
+import { lazyLiveScanApi } from "./lazy.js";
 import { searchCatalog, searchThumb, searchMeta, isAbort } from "./search.js";
 import { gradingEstimate } from "../server/logic.ts";
 
@@ -370,10 +371,10 @@ function resizeImage(file, max = 1280) {
 }
 
 export function bulkScanHtml() {
-  return `<label class="block cursor-pointer" id="ps-bulk-label">
+  return `<label class="ps-pro-only block cursor-pointer" id="ps-bulk-label">
       <input id="ps-bulk-input" type="file" accept="image/*" multiple class="hidden" />
       <div class="bg-slate-900 border-2 border-dashed border-cyan-400/60 text-cyan-200 font-black text-xs text-center py-3 rounded-2xl">📚 Serien-Scan: mehrere Fotos auswählen – eindeutige Treffer landen direkt im Portfolio</div>
-    </label><div id="ps-bulk-result" class="space-y-1.5"></div>`;
+    </label><div id="ps-bulk-result" class="ps-pro-only space-y-1.5"></div>`;
 }
 
 async function bulkScan(files) {
@@ -386,6 +387,17 @@ async function bulkScan(files) {
     const row = $(`ps-bulk-${i}`);
     try {
       const image = await resizeImage(list[i]);
+      // Hybrid-Scanner: zuerst auf dem Gerät erkennen (0 €, kein Scan-Limit) – die KI nur bei unsicheren Fotos
+      let local = null;
+      try { local = await lazyLiveScanApi.liveScanRecognize(image); } catch { local = null; }
+      if (local?.accepted && local.info) {
+        const it = local.info;
+        await api("/api/portfolio", { method: "POST", body: it.kind === "print" ? { printId: it.id } : { cardId: it.id } });
+        lazyLiveScanApi.liveScanLearn(it.key, local.probe, "confirm").catch?.(() => {});
+        added++;
+        row.innerHTML = `<img src="${esc(cdn(it.image, 60))}" class="w-7 h-10 object-contain" /><span class="text-emerald-300 font-bold">✅ ${esc(it.name)} ${esc(it.number || "")} hinzugefügt <span class="text-slate-500 font-normal">· auf dem Gerät erkannt</span></span>`;
+        continue;
+      }
       const r = await api("/api/scan", { method: "POST", body: { image } });
       if (!r.found) { row.innerHTML = `<span class="text-rose-300">✕ Nicht erkannt${r.detected?.name ? `: ${esc(r.detected.name)}` : ""}</span>`; continue; }
       const sure = r.candidates.length === 1 || (r.detected.number && r.detected.total && r.candidates.length <= 2);

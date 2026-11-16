@@ -72,9 +72,14 @@ function periodEnd(sub: Stripe.Subscription): Date | null {
 export async function applySubscription(userId: string, sub: Stripe.Subscription) {
   const live = ["active", "trialing", "past_due"].includes(sub.status);
   const plan = (sub.metadata?.plan in PLANS ? sub.metadata.plan : "premium") as PlanId;
+  // Ein aktives Apple-Abo (In-App-Kauf in der iOS-App) darf durch ein beendetes Stripe-Abo nicht gelöscht werden
+  const [current] = live ? [] : await db.select({ planSource: profiles.planSource, planUntil: profiles.planUntil }).from(profiles).where(eq(profiles.userId, userId)).limit(1);
+  const appleActive = current?.planSource === "apple" && current.planUntil && current.planUntil.getTime() > Date.now();
   const values = live
-    ? { plan, planUntil: periodEnd(sub), planInterval: sub.items?.data?.[0]?.price?.recurring?.interval === "year" ? "year" : "month", stripeSubscriptionId: sub.id, cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end), planCheckedAt: new Date() }
-    : { plan: "free", planUntil: null, stripeSubscriptionId: null, cancelAtPeriodEnd: false, planCheckedAt: new Date() };
+    ? { plan, planUntil: periodEnd(sub), planInterval: sub.items?.data?.[0]?.price?.recurring?.interval === "year" ? "year" : "month", stripeSubscriptionId: sub.id, cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end), planCheckedAt: new Date(), planSource: "stripe" }
+    : appleActive
+      ? { stripeSubscriptionId: null, planCheckedAt: new Date() }
+      : { plan: "free", planUntil: null, stripeSubscriptionId: null, cancelAtPeriodEnd: false, planCheckedAt: new Date() };
   const [updated] = await db.update(profiles).set(values).where(eq(profiles.userId, userId)).returning();
   if (updated && sub.status === "active" && updated.referredBy && !updated.referralRewarded) {
     await rewardReferral(updated);

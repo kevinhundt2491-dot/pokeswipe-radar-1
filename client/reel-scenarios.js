@@ -61,20 +61,13 @@ async function scrollModal(s, id, d) {
   await s.scrollTo(Math.min(box.scrollHeight, VIEW_H * 0.9), Math.max(800, d * 1000 * 0.7), box);
 }
 
-async function boosterReady(s) {
-  await s.waitFor(() => s.$("#pack-results") && s.byText("button", /10 Booster/), 12_000, "Booster-Simulator lädt nicht").catch(() => {});
-  const box = s.$("#pack-simulator-box");
+/** Bereich in der echten App öffnen und an den Anfang scrollen. */
+async function sectionReady(s, view, sub, selector) {
+  try { s.win.PS?.showSub?.(view, sub); } catch {}
+  await s.waitFor(() => s.$(selector), 12_000, `${selector} lädt nicht`).catch(() => {});
+  const box = s.$(selector);
   if (box) { const r = box.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 64)); }
   await s.idle({ quietMs: 300 });
-}
-
-async function waitPackResult(s, prev) {
-  await s.waitFor(() => (s.$("#pack-results")?.textContent || "") !== prev && (s.$("#pack-results")?.children.length || 0) > 0, 12_000, "Booster-Ergebnis lädt nicht").catch(() => {});
-  await s.idle({ quietMs: 250, timeoutMs: 5000 });
-  s.fact("card", s.text("#pack-hit-name"));
-  const bal = s.$("#pack-results .grid")?.textContent || "";
-  const val = s.text("#pack-hit-val");
-  s.fact("value", val || bal);
 }
 
 function bestFlipDeal(s) {
@@ -160,29 +153,24 @@ export const CHOREO = {
     ],
   },
 
-  // 3) Booster-Simulator: echtes Aufreißen eines Packs, danach 10 Booster
-  booster: {
-    async setup(s) { await boosterReady(s); s.fact("card", s.text("#pack-hit-name")); },
+  // 3) Restock-Radar: Live-Drops, UVP-Ampel und Preisvergleich je Shop
+  restock: {
+    async setup(s) {
+      await sectionReady(s, "flip", "drops", "#ps-drops");
+      const first = s.$("#ps-drops p.font-black");
+      if (first) s.fact("card", first.textContent?.replace(/^[^\p{L}\d]+/u, ""));
+    },
     beats: [
       async (s, d) => {
-        const btn = s.byText("button", /Booster jetzt aufreißen/);
-        if (btn) { const { x, y } = s.center(btn); await s.moveFinger(x, y, Math.min(900, d * 400)); }
+        const head = s.$("#ps-drops");
+        if (head) { const { x, y } = s.center(head); await s.moveFinger(x, Math.min(y, VIEW_H * 0.4), Math.min(900, d * 400)); }
       },
-      async (s) => {
-        const btn = s.byText("button", /Booster jetzt aufreißen/);
-        const prev = s.$("#pack-results")?.textContent || "";
-        if (btn) { await s.tap(btn); await waitPackResult(s, prev); }
-      },
-      async (s) => {
-        const btn = s.byText("button", /10 Booster/);
-        const prev = s.$("#pack-results")?.textContent || "";
-        if (btn) { await s.tap(btn); await waitPackResult(s, prev); }
-        const res = s.$("#pack-results");
-        if (res) await s.reveal(res, { ms: 700, ratio: 0.2 });
-      },
-      async (s, d) => { s.hideFinger(); await s.scrollBy(VIEW_H * 0.55, Math.max(900, d * 800)); },
+      async (s, d) => { s.hideFinger(); await s.scrollBy(VIEW_H * 0.45, Math.max(900, d * 800)); },
+      async (s, d) => { await s.scrollBy(VIEW_H * 0.45, Math.max(900, d * 800)); },
+      async (s, d) => { await s.sleep(Math.min(1500, d * 400)); },
     ],
   },
+
 
   // 4) Sammlung: echtes Scrollen durch das Live-Portfolio mit realem Gesamtwert
   portfolio: {
@@ -279,28 +267,20 @@ export const CHOREO = {
     ],
   },
 
-  // 7) Display-Opening: ganzes Display (36 Booster) im echten Simulator
-  display: {
-    async setup(s) { await boosterReady(s); },
+  // 7) Graded-Portfolio & Grading-Rechner
+  graded: {
+    async setup(s) { await sectionReady(s, "portfolio", "graded", "#ps-graded"); },
     beats: [
       async (s, d) => {
-        const sel = s.$("#pack-set-select");
-        if (sel) { const { x, y } = s.center(sel); await s.moveFinger(x, y, Math.min(900, d * 400)); }
+        const box = s.$("#ps-graded");
+        if (box) await s.spotlight(box, Math.min(1800, d * 500));
       },
-      async (s) => {
-        const btn = s.byText("button", /Ganzes Display/);
-        const prev = s.$("#pack-results")?.textContent || "";
-        if (btn) { await s.tap(btn); await waitPackResult(s, prev); }
-      },
-      async (s, d) => {
-        const res = s.$("#pack-results");
-        if (res) await s.reveal(res, { ms: 700, ratio: 0.15 });
-        const best = s.$$("#pack-results button").find((b) => s.visible(b));
-        if (best) { await s.spotlight(best, Math.min(1800, d * 500)); s.fact("card", best.querySelector("span")?.textContent || s.text("#pack-hit-name")); }
-      },
-      async (s, d) => { s.hideFinger(); await s.scrollBy(VIEW_H * 0.6, Math.max(900, d * 800)); },
+      async (s, d) => { s.hideFinger(); await s.scrollBy(VIEW_H * 0.45, Math.max(900, d * 800)); },
+      async (s, d) => { await s.scrollBy(VIEW_H * 0.45, Math.max(900, d * 800)); },
+      async (s, d) => { await s.sleep(Math.min(1500, d * 400)); },
     ],
   },
+
 
   // 8) Tausch-Markt: echte Inserate anderer Sammler
   market: {
@@ -392,7 +372,6 @@ export const CHOREO = {
         const nav = s.$("#mob-swipe");
         if (nav) await s.tap(nav, { reveal: false });
         await s.idle({ quietMs: 300, timeoutMs: 4000 });
-        await boosterReady(s);
         s.hideFinger();
         await s.sleep(Math.min(1500, d * 300));
       },

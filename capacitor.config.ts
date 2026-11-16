@@ -21,12 +21,14 @@ const config: CapacitorConfig = {
     url: SERVER_URL,
     cleartext: false,
     androidScheme: "https",
-    // Diese Seiten bleiben in der App (Login-Bestätigung, Stripe-Checkout, Stripe-Verifizierung für Verkäufer)
+    // Diese Seiten bleiben in der App (Login-Bestätigung, Stripe-Checkout für den Marktplatz mit physischen Karten,
+    // Stripe-Verifizierung für Verkäufer). Digitale Abos laufen in der iOS-App NICHT über Stripe (client/payments.js).
     allowNavigation: ["pokeswipe-radar.de", "*.pokeswipe-radar.de", "pokeswipe-radar.netlify.app", "checkout.stripe.com", "connect.stripe.com", "*.stripe.com"],
     errorPath: "404.html",
   },
   ios: {
-    contentInset: "automatic",
+    // Randlos bis unter Dynamic Island/Notch – die Abstände übernimmt das CSS über env(safe-area-inset-*) (public/theme.css)
+    contentInset: "never",
     scheme: "PokeSwipe",
     limitsNavigationsToAppBoundDomains: false,
     preferredContentMode: "mobile",
@@ -39,6 +41,9 @@ const config: CapacitorConfig = {
   plugins: {
     PushNotifications: { presentationOptions: ["badge", "sound", "alert"] },
     SplashScreen: { launchShowDuration: 900, backgroundColor: "#070a14", showSpinner: false, androidScaleType: "CENTER_CROP" },
+    // Phase 9: native Integrationen (client/native.js) – Status-Leiste dunkel, Kamera-Oberfläche, Haptik, Teilen-Sheet
+    StatusBar: { style: "DARK", overlaysWebView: true, backgroundColor: "#00000000" },
+    Camera: { presentationStyle: "fullscreen" },
   },
 };
 

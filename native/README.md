@@ -103,9 +103,43 @@ Store-Material:
 
 Tipps für die Prüfung:
 
-- Apple prüft Web-Hüllen streng (Richtlinie 4.2). Kamera-Scanner, Push und Offline-Modus sind native Funktionen, die in der Beschreibung genannt werden sollten.
+- Apple prüft Web-Hüllen streng (Richtlinie 4.2). Die App nutzt deshalb echte native Funktionen (`client/native.js`) –
+  diese in der App-Beschreibung und in den Prüf-Notizen nennen:
+  - **Haptik** (`@capacitor/haptics`) beim Erkennen einer Karte, beim Swipen, bei Deal-/Restock-Treffern und in der Navigation
+  - **Native Kamera** (`@capacitor/camera`) für den Foto-Scan, **Live-Scanner** mit Erkennung direkt auf dem Gerät
+  - **Push** (`@capacitor/push-notifications`) für Preis- und Restock-Alarme
+  - **Natives Teilen-Sheet** (`@capacitor/share`) für Pull-Wall, Profile, Shops und Einladungen
+  - **Status-Leiste & Safe Area** (`@capacitor/status-bar`, `env(safe-area-inset-*)`) für Dynamic Island, Notch und Home-Indikator
+  - **Offline-Modus**, Zurück-Taste (Android), Universal Links
 - Für den Marktplatz mit Treuhand: Die Bezahlung physischer Waren über Stripe ist bei Apple und Google erlaubt (keine In-App-Käufe nötig).
-- Digitale Abos (Premium/Pro) müssen in iOS-Apps laut Apple-Richtlinie 3.1.1 über In-App-Käufe laufen. Deshalb öffnet die iOS-App keine Stripe-Abo-Kasse (`client/pwa.js`). Bestehende Abos gelten in der App automatisch. Android und Web sind nicht betroffen. Wer Abos auch in der iOS-App verkaufen will, muss StoreKit anbinden.
+
+## 5. Abos in der iOS-App (Apple In-App-Kauf / EU-DMA)
+
+Digitale Abos (Premium/Pro Trader) müssen in iOS-Apps laut Apple-Richtlinie 3.1.1 über In-App-Käufe laufen. Die
+Zahlungs-Weiche in `client/payments.js` wählt automatisch:
+
+| Umgebung | Zahlungsweg |
+|---|---|
+| Web, Android-App | Stripe Checkout – unverändert (AGB, Widerruf, Kündigungsbutton § 312k) |
+| iOS-App mit `REVENUECAT_IOS_API_KEY` | Apple In-App-Kauf (StoreKit) über RevenueCat, Preise aus dem App Store, „Käufe wiederherstellen“ |
+| iOS-App mit `IOS_EXTERNAL_PURCHASE_EU=1` | Apple-konformer Hinweis „Du verlässt die App“ → Kauf im System-Browser (nur mit Apple-Berechtigung *StoreKit External Purchase* für die EU) |
+| iOS-App ohne beides | neutraler Hinweis ohne Kauf-Link, bestehende Abos gelten |
+
+Einrichtung In-App-Kauf:
+
+1. In App Store Connect vier Auto-Renewable-Abos in einer Abo-Gruppe anlegen (Preise passend zu Web: 4,99 €/49 € bzw. 9,99 €/99 €):
+   `de.pokeswiperadar.premium.monthly`, `de.pokeswiperadar.premium.yearly`, `de.pokeswiperadar.pro.monthly`, `de.pokeswiperadar.pro.yearly`
+   (andere IDs über `IOS_PRODUCT_IDS` als JSON, z. B. `{"meine.id":{"plan":"pro","interval":"month"}}`).
+2. Bei [RevenueCat](https://www.revenuecat.com) ein Projekt anlegen, die App-Store-App verbinden, die Produkte einer
+   „Current Offering“ zuordnen.
+3. Netlify-Umgebungsvariablen setzen: `REVENUECAT_IOS_API_KEY` (öffentlicher SDK-Schlüssel, beginnt mit `appl_`) und
+   `REVENUECAT_WEBHOOK_AUTH` (frei gewähltes Geheimnis).
+4. In RevenueCat unter *Integrations → Webhooks* die URL `https://pokeswipe-radar.de/api/billing/revenuecat/webhook` mit
+   dem Authorization-Header `Bearer <REVENUECAT_WEBHOOK_AUTH>` eintragen. Sandbox-Käufe zählen nur mit `REVENUECAT_ALLOW_SANDBOX=1`.
+5. `npm run cap:sync` – das Plugin `@revenuecat/purchases-capacitor` ist bereits in `package.json`.
+
+Apple-Abos werden im Profil als `plan_source = apple` geführt; ein beendetes Stripe-Abo überschreibt sie nicht. Gekündigt
+werden sie in den iPhone-Einstellungen (Apple-ID → Abonnements) – der Kündigungsbutton im Web weist darauf hin.
 
 ## Lokal gegen einen Deploy-Preview testen
 

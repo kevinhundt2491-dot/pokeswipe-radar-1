@@ -607,7 +607,7 @@
     ctx.fillText("🌐 pokeswipe-radar.de", 360, 1140);
     ctx.fillStyle = "#94a3b8";
     ctx.font = "bold 22px system-ui, sans-serif";
-    ctx.fillText("Kostenloser Preis-Radar • Tausch-Hub • Booster-Simulator", 360, 1185);
+    ctx.fillText("Live-Preise • Restock-Radar • Tausch-Hub", 360, 1185);
 
     const link = document.createElement("a");
     link.download = "pokeswipe-radar-story-flex.png";

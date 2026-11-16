@@ -1,7 +1,7 @@
 // PokeSwipe & Radar – Phase 5: reine Logik (ohne Datenbank) für
 //   1. die Preference-Learning-Engine der Swipe-Arena (lernt aus Rechts-/Links-Swipes, gewichtet den Stapel) und
 //   2. den Set-Booster-Simulator (Slot-Aufbau mit realistischen Zieh-Raten, Erwartungswert, Pack-Bilanz).
-// Wird im Browser (client/arena.js, client/booster.js) und auf dem Server (server/arena.ts) gleich verwendet.
+// Wird im Browser (client/arena.js) und auf dem Server (server/arena.ts) gleich verwendet.
 
 export const PREF_LANGS = ["de", "en", "ja"] as const;
 export const PREF_RARITIES = ["sir", "ir", "hyper", "ultra", "rare", "common", "none"] as const;
@@ -167,114 +167,4 @@ export function mergePrefs(a: PrefProfile | null | undefined, b: PrefProfile | n
   const scores: PrefScores = {};
   for (const k of new Set([...Object.keys(sa), ...Object.keys(sb)])) scores[k] = round2((sa[k] || 0) * wa + (sb[k] || 0) * (1 - wa));
   return { scores: sanitizeScores(scores), swipes: a.swipes + b.swipes, likes: (a.likes || 0) + (b.likes || 0) };
-}
-
-// ---------------------------------------------------------------------------
-// Set-Booster-Simulator
-// ---------------------------------------------------------------------------
-export type BoosterBucket = "sir" | "ir" | "hyper" | "ultra" | "rare" | "common";
-export type BoosterCard = { id: string; name: string; number: string; image: string; rarity: string; bucket: BoosterBucket; price: number | null };
-export type SlotOption = { bucket: BoosterBucket; p: number };
-export type Slot = { label: string; count: number; options: SlotOption[]; fallback: BoosterBucket; reverse?: boolean };
-export type PackLayout = { id: string; label: string; cards: number; packPrice: number; slots: Slot[] };
-
-/**
- * Slot-Aufbau nach den öffentlich dokumentierten Ziehquoten der Karmesin-&-Purpur-Ära (Mittelwerte vieler Sets):
- * Deutsch/Englisch 10 Karten (7 Häufig/Nicht so häufig, 1 Reverse, 1 Reverse-/Hit-Slot, 1 Selten-Slot),
- * Japanisch 5 Karten (3 Häufig, 1 Reverse-/AR-Slot, 1 Selten-Slot) mit höheren Hit-Raten.
- */
-export const PACK_LAYOUTS: Record<"intl" | "ja", PackLayout> = {
-  intl: {
-    id: "intl", label: "Booster (10 Karten)", cards: 10, packPrice: 5.49,
-    slots: [
-      { label: "Häufig / Nicht so häufig", count: 7, options: [], fallback: "common" },
-      { label: "Reverse Holo", count: 1, options: [], fallback: "common", reverse: true },
-      { label: "Reverse / Illustration-Hit", count: 1, options: [{ bucket: "sir", p: 1 / 55 }, { bucket: "hyper", p: 1 / 110 }, { bucket: "ir", p: 1 / 12 }], fallback: "rare", reverse: true },
-      { label: "Selten-Slot", count: 1, options: [{ bucket: "ultra", p: 1 / 5 }], fallback: "rare" },
-    ],
-  },
-  ja: {
-    id: "ja", label: "Japanischer Booster (5 Karten)", cards: 5, packPrice: 2.2,
-    slots: [
-      { label: "Häufig / Nicht so häufig", count: 3, options: [], fallback: "common" },
-      { label: "Reverse / AR-Hit", count: 1, options: [{ bucket: "sir", p: 1 / 32 }, { bucket: "hyper", p: 1 / 60 }, { bucket: "ir", p: 1 / 6 }], fallback: "common", reverse: true },
-      { label: "Selten-Slot", count: 1, options: [{ bucket: "ultra", p: 1 / 3.5 }], fallback: "rare" },
-    ],
-  },
-};
-
-/** Ersatzwerte, wenn eine Karte (noch) keinen Marktpreis hat. */
-export const FALLBACK_PRICE: Record<BoosterBucket, number> = { common: 0.05, rare: 0.25, ultra: 1.5, ir: 4, sir: 25, hyper: 12 };
-
-/** Seltenheits-Gruppe für den Simulator: ohne Angabe zählt die Karte nach Preis (≥ 2 € = Selten, sonst Häufig). */
-export function boosterBucket(bucket: string | null | undefined, price: number | null): BoosterBucket {
-  if (bucket && ["sir", "ir", "hyper", "ultra", "rare", "common"].includes(bucket)) return bucket as BoosterBucket;
-  return Number(price) >= 2 ? "rare" : "common";
-}
-
-export type Pool = Record<BoosterBucket, BoosterCard[]>;
-
-export function buildPool(list: BoosterCard[]): Pool {
-  const pool: Pool = { sir: [], ir: [], hyper: [], ultra: [], rare: [], common: [] };
-  for (const c of list) pool[c.bucket].push(c);
-  // Sets ohne eigene Häufig-/Selten-Karten im Katalog (z. B. Spezial-Sets): auf die nächstliegende Gruppe ausweichen
-  if (!pool.common.length) pool.common = pool.rare.length ? pool.rare : [...pool.ultra];
-  if (!pool.rare.length) pool.rare = pool.common.length ? pool.common : [...pool.ultra];
-  return pool;
-}
-
-const value = (c: BoosterCard) => (Number(c.price) > 0 ? Number(c.price) : FALLBACK_PRICE[c.bucket]);
-const avg = (list: BoosterCard[]) => (list.length ? list.reduce((s, c) => s + value(c), 0) / list.length : 0);
-
-/** Wahrscheinlichkeiten eines Slots für dieses Set (Gruppen ohne Karten entfallen, ihre Quote geht an den Rückfall). */
-export function slotOdds(slot: Slot, pool: Pool): SlotOption[] {
-  const active = slot.options.filter((o) => pool[o.bucket]?.length);
-  const rest = Math.max(0, 1 - active.reduce((s, o) => s + o.p, 0));
-  return [...active, { bucket: slot.fallback, p: rest }];
-}
-
-/** Erwartungswert eines Boosters (Summe der Slot-Erwartungswerte) und Anteil der Hits. */
-export function expectedValue(pool: Pool, layout: PackLayout) {
-  let ev = 0, hitChance = 1;
-  for (const slot of layout.slots) {
-    const odds = slotOdds(slot, pool);
-    const slotEv = odds.reduce((s, o) => s + o.p * avg(pool[o.bucket] || []), 0);
-    ev += slotEv * slot.count;
-    const hitP = odds.filter((o) => ["sir", "hyper", "ir"].includes(o.bucket)).reduce((s, o) => s + o.p, 0);
-    hitChance *= Math.pow(1 - hitP, slot.count);
-  }
-  return { ev: round2(ev), hitChance: round2((1 - hitChance) * 100) / 100 };
-}
-
-export type PulledCard = BoosterCard & { slot: string; reverse: boolean; value: number; hit: boolean };
-
-/** Öffnet einen Booster mit gegebener Zufallsquelle (0 ≤ rng() < 1). Doppelte Karten pro Pack werden vermieden. */
-export function openPack(pool: Pool, layout: PackLayout, rng: () => number): PulledCard[] {
-  const out: PulledCard[] = [];
-  const used = new Set<string>();
-  for (const slot of layout.slots) {
-    const odds = slotOdds(slot, pool);
-    for (let i = 0; i < slot.count; i++) {
-      let r = rng(), bucket = slot.fallback;
-      for (const o of odds) {
-        if (r < o.p) { bucket = o.bucket; break; }
-        r -= o.p;
-      }
-      const list = pool[bucket]?.length ? pool[bucket] : pool[slot.fallback];
-      if (!list?.length) continue;
-      let card = list[Math.floor(rng() * list.length)];
-      for (let tries = 0; tries < 4 && used.has(card.id) && list.length > 1; tries++) card = list[Math.floor(rng() * list.length)];
-      used.add(card.id);
-      out.push({ ...card, slot: slot.label, reverse: Boolean(slot.reverse) && ["common", "rare"].includes(card.bucket), value: round2(value(card)), hit: ["sir", "hyper", "ir", "ultra"].includes(card.bucket) });
-    }
-  }
-  return out;
-}
-
-/** Bilanz eines oder mehrerer geöffneter Packs gegen den Kaufpreis. */
-export function packBalance(packs: PulledCard[][], packPrice: number) {
-  const value = round2(packs.flat().reduce((s, c) => s + c.value, 0));
-  const cost = round2(packs.length * packPrice);
-  const best = packs.flat().sort((a, b) => b.value - a.value)[0] || null;
-  return { packs: packs.length, value, cost, profit: round2(value - cost), roi: cost ? Math.round((value / cost) * 100) : 0, best };
 }

@@ -31,7 +31,10 @@ import { initPwa, pwaApi, wrapEnablePush, afterLoginPwa } from "./pwa.js";
 import { searchCatalog, searchThumb, searchMeta, isAbort } from "./search.js";
 import { complianceApi, billingPortalButton } from "./compliance.js";
 import { tradingApi, tradeDetailHtml, routeTrading } from "./trading.js";
-import { syncAdminTools, openGenerator, initLazyAdminTools, lazyBoosterApi, initLazyBooster } from "./lazy.js";
+import { syncAdminTools, openGenerator, initLazyAdminTools } from "./lazy.js";
+import { valuationApi, loadValuation } from "./valuation.js";
+import { initNativePlatform, nativeApi } from "./native.js";
+import { initPayments, routePayments, paymentsApi } from "./payments.js";
 import { variantSelect, conditionSelect, variantsOf, variantBadge, VARIANT_LABEL, VARIANT_KEYS, CONDITION_LABEL } from "./variants.js";
 
 // ---------------------------------------------------------------------------
@@ -410,7 +413,7 @@ const cleanUrl = () => history.replaceState(null, "", location.pathname);
 async function openCard(cardId) {
   modal("ps-card", `<p class="text-yellow-400 text-xs font-bold text-center py-6">⏳ Lade Live-Preis von Cardmarket …</p>`);
   try {
-    const { card, history } = await api(`/api/cards/${encodeURIComponent(cardId)}`);
+    const { card, history, priceInfo } = await api(`/api/cards/${encodeURIComponent(cardId)}`);
     const price = card.price;
     const ch30 = card.avg30 && price ? ((price - card.avg30) / card.avg30) * 100 : null;
     modal("ps-card", `
@@ -422,6 +425,7 @@ async function openCard(cardId) {
           <p class="text-2xl font-black text-emerald-400">${price ? eur(price) : "Kein Preis"}</p>
           <p class="text-slate-400">Cardmarket-Trend${ch30 !== null ? ` • <span class="${ch30 >= 0 ? "text-emerald-400" : "text-rose-400"} font-bold">${pct(ch30)} (30 Tage)</span>` : ""}</p>
           <p class="text-slate-500">Ø 7 T: ${card.avg7 ? eur(card.avg7) : "–"} • Ø 30 T: ${card.avg30 ? eur(card.avg30) : "–"} • ab ${card.low ? eur(card.low) : "–"}</p>
+          ${priceInfo ? `<p class="text-[10px] ${priceInfo.stale || priceInfo.degraded ? "text-amber-300" : "text-slate-500"}">🕒 Zuletzt aktualisiert: ${esc(priceInfo.freshness)}${priceInfo.degraded ? " (aus der PokeSwipe-Datenbank)" : ""}</p>` : ""}
           ${Number(card.reverseTrend || card.reverseAvg) ? `<p class="text-purple-200 font-bold">✨ Reverse Holo: ${eur(Number(card.reverseTrend || card.reverseAvg))}${card.reverseLow ? ` <span class="text-slate-500 font-normal">• ab ${eur(Number(card.reverseLow))}</span>` : ""}</p>` : ""}
           ${variantsOf(card.variants).length < VARIANT_KEYS.length ? `<p class="text-slate-500">Varianten: ${variantsOf(card.variants).map((v) => esc(VARIANT_LABEL[v])).join(", ")}</p>` : ""}
           <div class="flex gap-1.5 pt-1">
@@ -431,6 +435,7 @@ async function openCard(cardId) {
         </div>
       </div>
       <div class="bg-slate-950 rounded-2xl p-3 border border-slate-800">${sparkline(history.map((h) => h.trend), 400, 60)}</div>
+      <div id="ps-card-valuation"></div>
       <div id="ps-card-comps"></div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
         <div class="bg-slate-950 rounded-2xl p-3 border border-yellow-400/40 space-y-2">
@@ -453,7 +458,9 @@ async function openCard(cardId) {
       </div>
       <button onclick="PS.listCard(${jsArg(card.id)}, ${jsArg(card.name)}, ${Number(price) || 0})" class="w-full bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">🤝 Diese Karte im Tausch-Hub inserieren</button>
       ${cardExtrasHtml(card)}
-      <p class="text-[10px] text-slate-500">Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link</p>`, { wide: true });
+      <p class="text-[10px] text-slate-500">Preise: eigene PokeSwipe-Preisdatenbank (Cardmarket-Referenz, eBay- und PokeSwipe-Verkäufe), stündlich aktualisiert. *Affiliate-Link</p>`, { wide: true });
+    // Eigene Bewertung nach Zustand & Graded-Stufen (Phase 9)
+    loadValuation(card.id);
     // Verkaufspreise, PSA-Werte & bestes eBay-Angebot (Flip-Radar Phase 2)
     flipApi.compsSummary("ps-card-comps", "card", card.id);
   } catch (e) {
@@ -468,6 +475,7 @@ async function createAlert(cardId) {
     await api("/api/alerts", { method: "POST", body: { cardId, targetPrice: $("ps-al-price").value, direction: $("ps-al-dir").value } });
     closeModalEl("ps-card");
     toast("🎯 Preisalarm aktiv", "Der Tracker prüft die Karte jede Stunde – du bekommst sofort eine Mitteilung.");
+    window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "alert" }));
     loadAlerts(); loadMe().then(renderHeader);
   } catch (e) { handleError(e); }
 }
@@ -1213,6 +1221,9 @@ function refreshAll() {
 // ---------------------------------------------------------------------------
 window.PS = {
   openAccount, renderLogin, doLogin, doSignup, forgot, saveProfile, logout: doLogout, oauth: (p) => oauthLogin(p),
+  ...valuationApi,
+  ...paymentsApi,
+  ...nativeApi,
   saveNewPassword, saveInvite, openPro, checkout, cancelPlan, boost, openCard, createAlert, addCardToPortfolio,
   listCard, submitCardListing, deleteAlert, editItem, saveItem, removeItem, setListingStatus,
   openTrades, selectTrade, tradeAction, sendMsg, pickStars, sendReview, openUser, report,
@@ -1223,7 +1234,6 @@ window.PS = {
   scanQuickSearch: () => searchCards(($("scan-quick-q")?.value || "").trim(), "scan-quick-results"),
   ...featureApi,
   ...arenaApi,
-  ...lazyBoosterApi,
   ...dealsRadarApi,
   ...shellApi,
   ...flipApi,
@@ -1242,6 +1252,7 @@ hooks.openPro = openPro;
 window.activatePro = (plan) => checkout(plan === "VIP" || plan === "pro" ? "pro" : "premium");
 
 async function boot() {
+  initNativePlatform(); // Plattform-Erkennung, Safe Area, Status-Leiste, natives Teilen & Haptik (Web: nur Safe Area)
   injectHeader();
   injectTracker();
   injectPortfolioDash();
@@ -1251,11 +1262,11 @@ async function boot() {
   initLazyAdminTools();
   initShell();
   initArena();
-  initLazyBooster();
   initFlip();
   initCommunity();
   initDealsRadar();
   initPwa();
+  initPayments(); // nach initPwa: ersetzt in der iOS-App den Stripe-Checkout durch In-App-Kauf
 
   try {
     const result = await handleAuthCallback();
@@ -1282,6 +1293,7 @@ async function boot() {
   routeCart();
   if (state.user) refreshCartBadge();
   routeShell();
+  routePayments();
   routeCommunity();
   routeProfile();
   routeMarket();

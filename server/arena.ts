@@ -1,19 +1,14 @@
-// PokeSwipe & Radar – Phase 5: Preference-Learning der Swipe-Arena und Set-Booster-Simulator (Server).
+// PokeSwipe & Radar – Phase 5: Preference-Learning der Swipe-Arena (Server).
 //
 // • /api/swipe/feedback  (Login)  Swipe-Ereignisse übernehmen → gelernte Vorlieben in swipe_preferences
 // • /api/swipe/prefs     (Login)  Zusammenfassung „Dein Geschmack“ abrufen / zurücksetzen
 // • Deck-Gewichtung: prefFactorSql() multipliziert in /api/swipe/deck das Zufallsgewicht jeder Karte mit den gelernten Faktoren
-// • /api/booster/open    Booster eines echten Sets (DE/EN/JA) mit Slot-Aufbau und Zieh-Raten öffnen, Pack-Wert-Bilanz
-// • /api/booster/ev      Erwartungswert je Booster/Display („Rip or Keep“)
-// Karten-Pools je Set liegen 30 Minuten im Speicher (serverseitiger Cache), das CDN cached den Erwartungswert.
-import { randomInt } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db, swipePreferences } from "../db/index.ts";
-import { rows, rateLimit, clientIp, int } from "./util.ts";
-import { RARITY_SQL, rarityBucket } from "./intl-logic.ts";
+import { rows, rateLimit, int } from "./util.ts";
+import { RARITY_SQL } from "./intl-logic.ts";
 import {
-  updatePrefs, prefWeights, prefSummary, sanitizeScores, mergePrefs, parsePrefParam, PRICE_BANDS, PACK_LAYOUTS,
-  buildPool, openPack, expectedValue, packBalance, boosterBucket, slotOdds, type PrefProfile, type SwipeEvent, type BoosterCard, type Pool,
+  updatePrefs, prefWeights, prefSummary, sanitizeScores, mergePrefs, parsePrefParam, PRICE_BANDS, type PrefProfile, type SwipeEvent,
 } from "./arena-logic.ts";
 
 type Hlp = { auth: any; body: (c: any) => Promise<Record<string, any>> };
@@ -92,46 +87,6 @@ const validEvent = (e: any): SwipeEvent | null => {
 // ---------------------------------------------------------------------------
 // Booster-Simulator: Karten-Pools je Set (30 Minuten im Speicher)
 // ---------------------------------------------------------------------------
-type SetPool = { pool: Pool; setName: string; lang: "de" | "en" | "ja"; total: number; at: number };
-const poolCache = new Map<string, SetPool>();
-const POOL_TTL = 30 * 60_000;
-
-async function loadPool(lang: "de" | "en" | "ja", setId: string): Promise<SetPool | null> {
-  const key = `${lang}:${setId}`;
-  const hit = poolCache.get(key);
-  if (hit && Date.now() - hit.at < POOL_TTL) return hit;
-  const list = lang === "de"
-    ? rows(await db.execute(sql`
-        SELECT c.id, c.name, c.local_id, s.card_count_official AS official, c.image, c.rarity, COALESCE(c.trend, c.avg, c.low)::float AS price, c.set_name
-        FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id WHERE c.set_id = ${setId} AND c.image <> '' LIMIT 600`))
-    : rows(await db.execute(sql`
-        SELECT p.id, p.name, p.local_id, p.number, p.image, p.rarity, p.price_eur::float AS price, p.set_name
-        FROM card_prints p WHERE p.lang = ${lang} AND p.set_id = ${setId} AND p.image <> '' LIMIT 600`));
-  if (list.length < 8) return null;
-  const cards: BoosterCard[] = list.map((r: any) => {
-    const price = r.price === null || r.price === undefined ? null : Number(r.price);
-    return {
-      id: String(r.id), name: String(r.name), image: String(r.image || ""), rarity: String(r.rarity || ""),
-      number: r.number ? String(r.number) : r.local_id && Number(r.official) > 0 && /^\d+$/.test(r.local_id) ? `${r.local_id}/${r.official}` : String(r.local_id || ""),
-      bucket: boosterBucket(rarityBucket(r.rarity), price), price,
-    };
-  });
-  const entry: SetPool = { pool: buildPool(cards), setName: String(list[0].set_name || setId), lang, total: cards.length, at: Date.now() };
-  if (poolCache.size > 300) poolCache.clear();
-  poolCache.set(key, entry);
-  return entry;
-}
-
-const rng = () => randomInt(0, 2 ** 32 - 1) / 2 ** 32;
-
-function parseSet(raw: unknown) {
-  const m = SET_RE.exec(String(raw ?? ""));
-  return m ? { lang: m[1] as "de" | "en" | "ja", id: m[2] } : null;
-}
-
-const layoutFor = (lang: string) => (lang === "ja" ? PACK_LAYOUTS.ja : PACK_LAYOUTS.intl);
-
-// ---------------------------------------------------------------------------
 // Routen
 // ---------------------------------------------------------------------------
 export function registerArena(app: any, { auth, body }: Hlp) {
@@ -157,47 +112,6 @@ export function registerArena(app: any, { auth, body }: Hlp) {
   app.delete("/api/swipe/prefs", auth, async (c: any) => {
     await db.delete(swipePreferences).where(sql`${swipePreferences.userId} = ${c.get("user").id}`);
     return c.json({ ok: true });
-  });
-
-  // Öffnet 1–36 Booster eines Sets (36 = ganzes Display). Kein Schreibzugriff – die Bilanz führt der Browser.
-  app.get("/api/booster/open", async (c: any) => {
-    if (!(await rateLimit(`boost:${clientIp(c)}`, 40, 60_000))) return c.json({ error: "Bitte kurz warten – zu viele Booster auf einmal." }, 429);
-    const set = parseSet(c.req.query("set"));
-    if (!set) return c.json({ error: "Unbekanntes Set" }, 400);
-    const count = int(c.req.query("packs"), 1, 36, 1);
-    const entry = await loadPool(set.lang, set.id);
-    if (!entry) return c.json({ error: "Für dieses Set sind noch nicht genug Karten im Katalog." }, 404);
-    const layout = layoutFor(set.lang);
-    const packs = Array.from({ length: count }, () => openPack(entry.pool, layout, rng));
-    const ev = expectedValue(entry.pool, layout);
-    c.header("Cache-Control", "no-store");
-    return c.json({
-      set: { key: `${set.lang}:${set.id}`, lang: set.lang, id: set.id, name: entry.setName, cards: entry.total },
-      layout: { label: layout.label, cards: layout.cards, packPrice: layout.packPrice },
-      packs, balance: packBalance(packs, layout.packPrice), ev,
-    });
-  });
-
-  // Erwartungswert je Booster und Display mit den Zieh-Quoten je Slot (für „Rip or Keep“ und die Simulator-Anzeige)
-  app.get("/api/booster/ev", async (c: any) => {
-    if (!(await rateLimit(`boostev:${clientIp(c)}`, 60, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
-    const set = parseSet(c.req.query("set"));
-    if (!set) return c.json({ error: "Unbekanntes Set" }, 400);
-    const entry = await loadPool(set.lang, set.id);
-    if (!entry) return c.json({ error: "Für dieses Set sind noch nicht genug Karten im Katalog." }, 404);
-    const layout = layoutFor(set.lang);
-    const ev = expectedValue(entry.pool, layout);
-    const top = Object.values(entry.pool).flat().filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i)
-      .sort((a, b) => (Number(b.price) || 0) - (Number(a.price) || 0)).slice(0, 5);
-    const odds = layout.slots.map((s) => ({ slot: s.label, count: s.count, odds: slotOdds(s, entry.pool).map((o) => ({ bucket: o.bucket, pct: Math.round(o.p * 10000) / 100, cards: entry.pool[o.bucket]?.length || 0 })) }));
-    c.header("Cache-Control", "public, max-age=900");
-    c.header("Netlify-CDN-Cache-Control", "public, s-maxage=1800, stale-while-revalidate=3600");
-    return c.json({
-      set: { key: `${set.lang}:${set.id}`, lang: set.lang, name: entry.setName, cards: entry.total },
-      layout: { label: layout.label, cards: layout.cards, packPrice: layout.packPrice },
-      ev: ev.ev, hitChance: ev.hitChance, displayEv: Math.round(ev.ev * (set.lang === "ja" ? 30 : 36) * 100) / 100,
-      displayPacks: set.lang === "ja" ? 30 : 36, odds, top,
-    });
   });
 }
 

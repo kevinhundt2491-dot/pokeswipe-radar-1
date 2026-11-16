@@ -1,13 +1,15 @@
 // PokeSwipe & Radar – Web Worker des On-Device-Scanners (eigener Thread, die Oberfläche bleibt flüssig).
 // Ablauf pro Kamerabild: Graustufen → Kantenerkennung → Perspektivkorrektur → pHash/dHash des Artworks und der Karte →
-// Hamming-Suche im lokalen Index → Kartennummer lesen (Plattform-Texterkennung, sonst Ziffern-Vorlagenvergleich) → Entscheidung.
+// Hamming-Suche im lokalen Index (Referenzbilder + gelernte Kamera-Fingerabdrücke) → Farb-Abgleich → Kartennummer lesen
+// (Plattform-Texterkennung, sonst Ziffern-Vorlagenvergleich auf kontrastnormalisiertem Streifen) → Entscheidung.
 // Es verlässt kein Bild das Gerät.
 import {
   rgbaToGray, resize, detectCard, normalizeCard, cardHashes, topMatches, decide, homography, warp, readNumber,
   parseNumberText, glyphVector, splitIndexId, localNumber, decodeBase64, unpackWords, NUMBER_STRIPS, WORDS, SCORE_STRONG,
+  normalizeContrast, glareRatio, colorSignature, colorDistance, colorPenalty, wordsToHex, GLARE_HIGH,
 } from "../../server/scan-logic.ts";
 
-const idx = { keys: [], langs: [], localNum: new Int32Array(0), total: new Int32Array(0), words: new Uint32Array(0), count: 0, perLang: {} };
+const idx = { keys: [], langs: [], localNum: new Int32Array(0), total: new Int32Array(0), words: new Uint32Array(0), colors: [], count: 0, perLang: {}, learned: 0 };
 let glyphs = null;
 let textDetector = null;
 let busy = false;
@@ -26,7 +28,11 @@ async function loadIndex(langs) {
       const words = unpackWords(decodeBase64(String(data.h || "")));
       const ids = String(data.ids || "").split("\n").filter(Boolean);
       const n = Math.min(ids.length, Math.floor(words.length / WORDS));
-      parts.push({ lang, ids: ids.slice(0, n), words: words.subarray(0, n * WORDS), sets: data.sets || {} });
+      // Farb-Signaturen gibt es nur für gelernte Zeilen (ab learnedStart)
+      const start = Number(data.learnedStart) >= 0 ? Number(data.learnedStart) : n;
+      const learnedColors = String(data.colors || "").split("\n");
+      const colors = Array.from({ length: n }, (_, i) => (i >= start ? learnedColors[i - start] || "" : ""));
+      parts.push({ lang, ids: ids.slice(0, n), words: words.subarray(0, n * WORDS), sets: data.sets || {}, colors, learned: Math.max(0, n - start) });
       postMessage({ type: "progress", lang, state: "ready", count: n });
     } catch (e) {
       postMessage({ type: "progress", lang, state: "error", error: String(e?.message || e) });
@@ -35,8 +41,9 @@ async function loadIndex(langs) {
   const count = parts.reduce((s, p) => s + p.ids.length, 0);
   const words = new Uint32Array(count * WORDS);
   const localNum = new Int32Array(count), total = new Int32Array(count);
-  const keys = new Array(count), langOf = new Array(count);
+  const keys = new Array(count), langOf = new Array(count), colors = new Array(count);
   const perLang = {};
+  let learned = 0;
   let o = 0;
   for (const p of parts) {
     words.set(p.words, o * WORDS);
@@ -46,12 +53,14 @@ async function loadIndex(langs) {
       langOf[o + j] = p.lang;
       localNum[o + j] = localNumber(sp.localId);
       total[o + j] = Number(p.sets[sp.setId]) || 0;
+      colors[o + j] = p.colors[j] || "";
     });
     perLang[p.lang] = p.ids.length;
+    learned += p.learned;
     o += p.ids.length;
   }
-  Object.assign(idx, { keys, langs: langOf, localNum, total, words, count, perLang });
-  return { count, perLang };
+  Object.assign(idx, { keys, langs: langOf, localNum, total, words, colors, count, perLang, learned });
+  return { count, perLang, learned };
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +120,17 @@ async function analyse(msg) {
   const det = detectCard(small, { x0: g.x0 / 2, y0: g.y0 / 2, x1: g.x1 / 2, y1: g.y1 / 2 });
   const corners = det.corners.map(([x, y]) => [x * 2, y * 2]);
   const tDetect = performance.now();
-  if (!idx.count) return { type: "result", ms: performance.now() - t0, found: det.found, corners, sharpness: det.sharpness, empty: true };
+  if (!idx.count) return { type: "result", reqId: msg.reqId, ms: performance.now() - t0, found: det.found, corners, sharpness: det.sharpness, empty: true };
 
-  const probe = cardHashes(normalizeCard(frame, corners));
-  const matches = topMatches(probe, idx.words, idx.count, 14);
+  const card = normalizeCard(frame, corners);
+  const glare = glareRatio(card);
+  const probe = cardHashes(card);
+  const color = colorSignature(msg.data instanceof ArrayBuffer ? new Uint8ClampedArray(msg.data) : msg.data, msg.w, msg.h, corners);
+  // Farb-Abgleich: gelernte Zeilen tragen eine Farb-Signatur – stark abweichende Farben bekommen einen Zuschlag
+  const matches = topMatches(probe, idx.words, idx.count, 18)
+    .map((m) => (idx.colors[m.i] ? { ...m, score: m.score + colorPenalty(colorDistance(color, idx.colors[m.i])) } : m))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 14);
   const tMatch = performance.now();
 
   // Kartennummer nur lesen, wenn der Hash allein nicht eindeutig ist (spart Zeit bei klaren Treffern)
@@ -122,20 +138,27 @@ async function analyse(msg) {
   if (msg.ocr && (matches[0]?.score ?? 99) > SCORE_STRONG) {
     const H = homography(corners);
     for (const box of NUMBER_STRIPS) {
-      const strip = warp(frame, H, 252, 72, box);
+      // Kontrast normalisieren: Spiegelungen und dunkle Räume stören die Ziffern-Erkennung sonst stark
+      const strip = normalizeContrast(warp(frame, H, 252, 72, box));
       ocr = (await platformOcr(strip)) || (glyphs?.length ? readNumber(strip, glyphs) : null);
       if (ocr) { ocr.strip = box.key; break; }
     }
   }
   const meta = { localNum: (i) => idx.localNum[i], total: (i) => idx.total[i] };
   const d = decide(matches, idx.words, meta, ocr);
+  // Gelernte Zeilen derselben Karte nicht doppelt melden
+  const seen = new Set();
+  const group = d.group.map((i) => ({ key: idx.keys[i], lang: idx.langs[i] })).filter((g) => (seen.has(g.key) ? false : seen.add(g.key)));
   return {
-    type: "result",
+    type: "result", reqId: msg.reqId,
     ms: performance.now() - t0, msDetect: tDetect - t0, msMatch: tMatch - tDetect,
     found: det.found, confidence: det.confidence, sharpness: det.sharpness, corners,
     accepted: d.accepted, byNumber: d.byNumber, score: d.score, margin: d.margin,
     best: d.best >= 0 ? idx.keys[d.best] : null,
-    group: d.group.map((i) => ({ key: idx.keys[i], lang: idx.langs[i] })),
+    group,
+    glare: Math.round(glare * 1000) / 1000, glareHigh: glare > GLARE_HIGH,
+    // Fingerabdruck dieses Bildes – wird beim Übernehmen an den lernenden Index geschickt
+    probe: { artP: wordsToHex(probe[0], probe[1]), artD: wordsToHex(probe[2], probe[3]), fullP: wordsToHex(probe[4], probe[5]), color },
     candidates: matches.slice(0, 6).map((m) => ({ key: idx.keys[m.i], lang: idx.langs[m.i], score: Math.round(m.score) })),
     ocr: ocr ? { num: ocr.num, total: ocr.total, text: ocr.text, conf: Math.round((ocr.conf || 0) * 100) / 100, via: ocr.via || "templates" } : null,
   };
@@ -151,10 +174,10 @@ self.onmessage = async (e) => {
     return;
   }
   if (msg.type === "frame") {
-    if (busy) return;
+    if (busy && !msg.reqId) return; // Einzelbilder (Foto-Scan) nie verwerfen
     busy = true;
     try { postMessage(await analyse(msg)); }
-    catch (err) { postMessage({ type: "result", error: String(err?.message || err) }); }
+    catch (err) { postMessage({ type: "result", reqId: msg.reqId, error: String(err?.message || err) }); }
     finally { busy = false; }
   }
 };
