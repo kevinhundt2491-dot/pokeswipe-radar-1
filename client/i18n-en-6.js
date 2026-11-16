@@ -112,4 +112,7 @@ export default [
   ["Kein Kanal erreichbar", "No channel reachable"],
   ["Kanäle: {channels}", "Channels: {channels}"],
   ["Bitte ADMIN_EMAILS, RESEND_API_KEY/MAIL_FROM oder ALERT_WEBHOOK_URL prüfen.", "Please check ADMIN_EMAILS, RESEND_API_KEY/MAIL_FROM or ALERT_WEBHOOK_URL."],
+  ["📄 Analyse-Bericht (PDF) herunterladen", "📄 Download analysis report (PDF)"],
+  ["Interner Bericht zu App, Geschäftsmodell und Konkurrenz – nur für Admins sichtbar.", "Internal report on the app, business model and competitors – visible to admins only."],
+  ["Kein Bericht hinterlegt.", "No report stored."],
 ];
