@@ -29,7 +29,7 @@ async function openSeller() {
   if (!requireLogin()) return;
   modal("ps-seller", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Verkäuferkonto …</p>`);
   try {
-    const [s, m] = await Promise.all([api("/api/market/seller"), meta()]);
+    const [s, m] = await Promise.all([api("/api/connect/status"), meta()]);
     mk.seller = s;
     const fee = s.fee || { bps: 650, allBps: m.feeBps };
     const feeTable = `<div class="grid grid-cols-3 gap-2 text-center text-[11px]">${[["free", "Free"], ["premium", "Premium"], ["pro", "Pro-Pass"]].map(([k, l]) =>
@@ -43,6 +43,10 @@ async function openSeller() {
         <li>• Provision je Tarif (nur bei Verkauf, mindestens 0,49 €):</li>
       </ul>
       ${feeTable}
+      ${psttgBox(s.psttg)}
+      ${s.connected ? `<div class="grid grid-cols-3 gap-2 text-center text-[11px]">${[
+        ["Angaben", s.detailsSubmitted], ["Zahlungen", s.chargesEnabled || s.ready], ["Auszahlungen", s.payoutsEnabled],
+      ].map(([l, ok]) => `<div class="rounded-xl p-2 ${ok ? "bg-emerald-500/15 text-emerald-200" : "bg-slate-950 text-slate-400"}"><p class="font-black">${ok ? "✅" : "⏳"}</p><p>${l}</p></div>`).join("")}</div>` : ""}
       ${!s.enabled ? `<p class="text-xs text-amber-300">Zahlungen sind auf dieser Seite noch nicht eingerichtet.</p>`
         : s.ready ? `<p class="text-sm font-black text-emerald-300">✅ Dein Verkäuferkonto ist verifiziert. Beim Inserieren kannst du „Sofort-Kauf mit Käuferschutz“ aktivieren.</p>
             ${btn("📊 Auszahlungen & Kontodaten (Stripe)", "PS.sellerDashboard()", "w-full bg-slate-800 text-white")}
@@ -55,16 +59,54 @@ async function openSeller() {
   } catch (e) { closeModalEl("ps-seller"); handleError(e); }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 10: PStTG-Hinweis (ab 25 Verkäufen / 1.700 € Vorwarnung, ab 30 / 2.000 € meldepflichtig)
+// ---------------------------------------------------------------------------
+function psttgText(n) {
+  if (!n || n.taxInfoComplete) return "";
+  const stats = `${Number(n.transactions)} Verkäufe, ${cents(n.netCents)} Umsatz ${Number(n.year)}`;
+  return n.stage === "reporting"
+    ? `<strong>Meldepflicht nach PStTG erreicht</strong> (${stats}). Bitte hinterlege Steuer-ID, Geburtsdatum und Anschrift – sonst werden neue Verkäufe mit Käuferschutz gesperrt.`
+    : `<strong>Bald meldepflichtig</strong> (${stats}). Ab ${Number(n.report.transactions)} Verkäufen oder ${cents(n.report.grossCents)} im Jahr müssen wir dich an das Bundeszentralamt für Steuern melden. Hinterlege jetzt Steuer-ID und Anschrift.`;
+}
+function psttgBox(n) {
+  const t = psttgText(n);
+  if (!t) return "";
+  const red = n.stage === "reporting";
+  return `<div class="${red ? "bg-rose-500/15 border-rose-400/40 text-rose-100" : "bg-amber-500/15 border-amber-400/40 text-amber-100"} border rounded-2xl px-3 py-2 text-xs space-y-2">
+    <p>🧾 ${t}</p><button type="button" onclick="PS.openTaxInfo()" class="${red ? "bg-rose-400" : "bg-amber-400"} text-slate-950 font-black px-3 py-1.5 rounded-xl">Steuerdaten hinterlegen</button></div>`;
+}
+/** Banner unter dem Kopfbereich – erscheint nur bei Verkäufern ab der Vorwarnschwelle ohne vollständige Steuerdaten. */
+export function renderPsttgBanner() {
+  const n = state.me?.psttg;
+  const key = n ? `ps-psttg-hide-${n.year}-${n.stage}` : "";
+  let el = $("ps-psttg-banner");
+  if (!n || n.taxInfoComplete || sessionStorage.getItem(key)) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "ps-psttg-banner";
+    el.className = "relative z-30 max-w-7xl w-full mx-auto px-3 sm:px-6 mt-2";
+    document.querySelector("header")?.after(el);
+  }
+  const red = n.stage === "reporting";
+  el.innerHTML = `<div class="${red ? "bg-rose-500/15 border-rose-400/40" : "bg-amber-500/15 border-amber-400/40"} border rounded-2xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs" role="status">
+    <p class="${red ? "text-rose-100" : "text-amber-100"}">🧾 ${psttgText(n)}</p>
+    <div class="flex gap-1.5">
+      <button type="button" onclick="PS.openTaxInfo()" class="${red ? "bg-rose-400" : "bg-amber-400"} text-slate-950 font-black px-3 py-1.5 rounded-xl">Steuerdaten hinterlegen</button>
+      ${red ? "" : `<button type="button" onclick="sessionStorage.setItem('${key}','1');document.getElementById('ps-psttg-banner')?.remove()" class="text-amber-200 font-bold px-2" aria-label="Hinweis ausblenden">✕</button>`}
+    </div></div>`;
+}
+
 async function sellerOnboard() {
   const box = $("ps-sel-terms");
   if (box && !box.checked) { const m = $("ps-sel-msg"); if (m) m.textContent = "Bitte bestätige die Bedingungen."; return; }
   try {
-    const r = await api("/api/market/seller/onboard", { method: "POST", body: { acceptTerms: true } });
+    const r = await api("/api/connect/onboard", { method: "POST", body: { acceptTerms: true } });
     location.href = r.url;
   } catch (e) { handleError(e); }
 }
 async function sellerDashboard() {
-  try { const r = await api("/api/market/seller/dashboard", { method: "POST", body: {} }); window.open(r.url, "_blank", "noopener"); } catch (e) { handleError(e); }
+  try { const r = await api("/api/connect/dashboard-link", { method: "POST", body: {} }); window.open(r.url, "_blank", "noopener"); } catch (e) { handleError(e); }
 }
 
 // ---------------------------------------------------------------------------
@@ -421,7 +463,8 @@ export async function routeMarket() {
     clean(); openOrders(); window.PS?.loadListings?.();
   } else if (q.get("orders") === "1") { clean(); if (state.user) openOrders(); }
   else if (q.get("seller")) {
+    const which = q.get("seller");
     clean();
-    if (state.user) { await window.PS?.refreshMe?.(); openSeller(); }
+    if (state.user) { await window.PS?.refreshMe?.(); if (which === "taxinfo" && window.PS?.openTaxInfo) window.PS.openTaxInfo(); else openSeller(); }
   }
 }

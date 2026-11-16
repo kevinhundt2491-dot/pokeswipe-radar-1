@@ -86,6 +86,7 @@ function cartView(lines: CartLine[]) {
 // Reservierungen
 // ---------------------------------------------------------------------------
 async function releaseReservations(checkoutId: number) {
+  await db.update(cartItems).set({ reservedAt: null, reservedUntil: null, reservedCheckoutId: null }).where(eq(cartItems.reservedCheckoutId, checkoutId));
   const its = await db.select({ listingId: orderItems.listingId, quantity: orderItems.quantity }).from(orderItems).where(eq(orderItems.checkoutId, checkoutId));
   for (const i of its) {
     if (!i.listingId) continue;
@@ -384,9 +385,9 @@ export function registerCart(app: any, hlp: Hlp) {
     if (!existing) {
       const [n] = rows(await db.execute(sql`SELECT count(*)::int AS n FROM cart_items WHERE user_id = ${user.id}`));
       if (Number(n?.n || 0) >= CART_MAX_LINES) return c.json({ error: `Höchstens ${CART_MAX_LINES} verschiedene Artikel im Warenkorb.` }, 409);
-      await db.insert(cartItems).values({ userId: user.id, listingId, quantity: want, priceCentsAtAdd: unitCents }).onConflictDoNothing();
+      await db.insert(cartItems).values({ userId: user.id, listingId, sellerId: String(l.user_id), quantity: want, priceCentsAtAdd: unitCents }).onConflictDoNothing();
     } else {
-      await db.update(cartItems).set({ quantity: want, priceCentsAtAdd: unitCents }).where(eq(cartItems.id, existing.id));
+      await db.update(cartItems).set({ quantity: want, priceCentsAtAdd: unitCents, sellerId: String(l.user_id) }).where(eq(cartItems.id, existing.id));
     }
     return c.json(cartView(await cartLines(user.id)), existing ? 200 : 201);
   });
@@ -444,8 +445,8 @@ export function registerCart(app: any, hlp: Hlp) {
     for (const listingId of touched) {
       const o = p.offers.find((x) => x.listingId === listingId)!;
       const quantity = Math.min(CART_MAX_QTY, desired.get(listingId)!);
-      await db.insert(cartItems).values({ userId: user.id, listingId, quantity, priceCentsAtAdd: o.unitCents })
-        .onConflictDoUpdate({ target: [cartItems.userId, cartItems.listingId], set: { quantity, priceCentsAtAdd: o.unitCents } });
+      await db.insert(cartItems).values({ userId: user.id, listingId, sellerId: o.sellerId, quantity, priceCentsAtAdd: o.unitCents })
+        .onConflictDoUpdate({ target: [cartItems.userId, cartItems.listingId], set: { quantity, priceCentsAtAdd: o.unitCents, sellerId: o.sellerId } });
     }
     const drop = p.ok.filter((l) => changed.has(String(l.cartItemId)) && !desired.has(l.listingId)).map((l) => l.cartItemId);
     if (drop.length) await db.delete(cartItems).where(and(eq(cartItems.userId, user.id), inArray(cartItems.id, drop)));
@@ -542,6 +543,9 @@ export function registerCart(app: any, hlp: Hlp) {
         cancel_url: `${o}/?cart=1`,
       }, { idempotencyKey: `cart-checkout-${co.id}` });
       await db.update(orders).set({ stripeSessionId: session.id, updatedAt: new Date() }).where(eq(orders.id, co.id));
+      // Reservierung auch an den Warenkorb-Positionen vermerken (sichtbar im Warenkorb, freigegeben bei Ablauf/Abbruch)
+      await db.update(cartItems).set({ reservedAt: new Date(), reservedUntil: new Date(expiresAt.getTime() + RESERVATION_GRACE_MIN * 60_000), reservedCheckoutId: co.id })
+        .where(and(eq(cartItems.userId, user.id), inArray(cartItems.listingId, reserved.map((r) => r.listingId))));
       return c.json({ url: session.url, checkoutId: co.id }, 201);
     } catch (e: any) {
       log.error("cart", "Checkout konnte nicht gestartet werden", { checkoutId, err: e });

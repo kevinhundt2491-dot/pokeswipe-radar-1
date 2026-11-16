@@ -7,7 +7,7 @@
 // nach erfolgreicher Zahlung. Provision je Tarif des Verkäufers, mit Rabatt für Pro-Pass-Inhaber.
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type Stripe from "stripe";
-import { db, profiles, listings, marketOrders, reviews, moderationLog, orderItems, sellerPayouts } from "../db/index.ts";
+import { db, profiles, listings, marketOrders, reviews, moderationLog, orderItems, sellerPayouts, sellerAccounts, sellerTaxInfo } from "../db/index.ts";
 import { isAdmin, type AuthUser } from "./auth.ts";
 import { stripe } from "./billing.ts";
 import { effectivePlan, type PlanId } from "./plans.ts";
@@ -15,10 +15,11 @@ import { LEGAL_VERSION } from "./legal.ts";
 import { notify } from "./prices.ts";
 import { isBlockedBetween, forgetTrust, trustFor } from "./community.ts";
 import { checkEscrowLimit } from "./community-logic.ts";
-import { registerDac7, recordDac7Release, recordDac7Refund, dac7SellerBlock, runDac7Reminders } from "./dac7.ts";
+import { registerDac7, recordDac7Release, recordDac7Refund, dac7SellerBlock, runDac7Reminders, psttgNotice } from "./dac7.ts";
+import { taxInfoComplete } from "./dac7-logic.ts";
 import { withdrawalOpen, withdrawalDeadline } from "./cart-logic.ts";
 import {
-  feeFor, nextStatus, validOffer, validTracking, trackingUrl, MARKET_FEE_BPS, MARKET_MIN_PRICE_CENTS, MARKET_MAX_PRICE_CENTS,
+  feeFor, nextStatus, escrowPhase, validOffer, validTracking, trackingUrl, MARKET_FEE_BPS, MARKET_MIN_PRICE_CENTS, MARKET_MAX_PRICE_CENTS,
   PAY_WINDOW_HOURS, SHIP_WINDOW_DAYS, AUTO_RELEASE_DAYS, OFFER_TTL_HOURS, SHIP_COUNTRIES, CARRIERS, CONDITIONS,
   type OrderStatus, type OrderRole, type OrderAction,
 } from "./market-logic.ts";
@@ -41,12 +42,33 @@ function accountReady(a: Stripe.Account) {
   return Boolean(a.details_submitted && a.payouts_enabled && a.capabilities?.transfers === "active");
 }
 
+/** Verifizierungsstufe für seller_accounts aus dem Stripe-Konto. */
+function verificationStatus(a: Stripe.Account) {
+  if (a.requirements?.disabled_reason && !a.payouts_enabled) return "disabled";
+  if (accountReady(a)) return (a.requirements?.currently_due?.length || a.requirements?.past_due?.length) ? "restricted" : "verified";
+  return a.details_submitted ? "restricted" : "pending";
+}
+
+/** Phase 10: Stripe-Status des Express-Kontos in seller_accounts spiegeln (Onboarding, Auszahlungen, PStTG-Steuerdaten). */
+async function saveSellerAccount(userId: string, a: Stripe.Account) {
+  const [tax] = await db.select().from(sellerTaxInfo).where(eq(sellerTaxInfo.userId, userId)).limit(1);
+  const now = new Date();
+  const v = {
+    stripeConnectAccountId: a.id, chargesEnabled: Boolean(a.charges_enabled), payoutsEnabled: Boolean(a.payouts_enabled),
+    detailsSubmitted: Boolean(a.details_submitted), transfersActive: a.capabilities?.transfers === "active",
+    verificationStatus: verificationStatus(a), requirementsDue: (a.requirements?.currently_due || []).slice(0, 20),
+    disabledReason: a.requirements?.disabled_reason || null, psttgTaxDataComplete: taxInfoComplete(tax ?? null), lastSyncedAt: now, updatedAt: now,
+  };
+  await db.insert(sellerAccounts).values({ userId, ...v }).onConflictDoUpdate({ target: sellerAccounts.userId, set: v });
+}
+
 /** Liest den Status des Express-Kontos bei Stripe und speichert „verifiziert ja/nein“. */
 export async function syncSellerAccount(p: Profile) {
   const s = stripe();
   if (!s || !p.stripeAccountId) return { connected: false, ready: false, requirements: [] as string[] };
   const acct = await s.accounts.retrieve(p.stripeAccountId);
   const ready = accountReady(acct);
+  await saveSellerAccount(p.userId, acct).catch((e) => log.warn("market", "seller_accounts", { userId: p.userId, err: e }));
   if (ready !== p.stripeAccountReady) {
     await db.update(profiles).set({ stripeAccountReady: ready }).where(eq(profiles.userId, p.userId));
     // Ohne verifiziertes Konto keine Sofort-Kauf-Inserate
@@ -54,7 +76,8 @@ export async function syncSellerAccount(p: Profile) {
     forgetTrust(p.userId);
   }
   return {
-    connected: true, ready, payoutsEnabled: Boolean(acct.payouts_enabled), detailsSubmitted: Boolean(acct.details_submitted),
+    connected: true, ready, chargesEnabled: Boolean(acct.charges_enabled), payoutsEnabled: Boolean(acct.payouts_enabled), detailsSubmitted: Boolean(acct.details_submitted),
+    verificationStatus: verificationStatus(acct),
     requirements: (acct.requirements?.currently_due || []).slice(0, 10), disabledReason: acct.requirements?.disabled_reason || null,
   };
 }
@@ -420,6 +443,61 @@ async function disputeClosedFor(d: DisputeLike, o: Order, won: boolean, lost: bo
 }
 
 /** charge.dispute.updated – Endstatus wie „closed“ behandeln, sonst sicherstellen, dass eingefroren ist. */
+// ---------------------------------------------------------------------------
+// Phase 10: Erstattungen, die NICHT über die App ausgelöst wurden (z. B. direkt im Stripe-Dashboard)
+// ---------------------------------------------------------------------------
+type ChargeLike = { id: string; amount: number; amount_refunded: number; refunded: boolean; payment_intent?: string | { id: string } | null; refunds?: { data?: { id: string }[] } | null };
+
+/**
+ * charge.refunded: Treuhand-Bestellungen zur Zahlung abgleichen. Erstattungen aus der App setzen den Status schon selbst
+ * (dann ist hier nichts mehr offen). Bei einer vollständigen Erstattung außerhalb der App werden noch offene
+ * Teilbestellungen als erstattet geschlossen und die automatische Auszahlung damit verhindert. Bereits ausgezahlte
+ * Bestellungen oder Teil-Erstattungen eines Warenkorbs ohne Zuordnung gehen zur Prüfung an die Admins.
+ */
+export async function handleChargeRefunded(ch: ChargeLike) {
+  const piId = idOf(ch.payment_intent);
+  const list = await db.select().from(marketOrders).where(or(eq(marketOrders.chargeId, ch.id), piId ? eq(marketOrders.paymentIntentId, piId) : sql`false`))
+    .orderBy(marketOrders.id).limit(50);
+  if (!list.length) return { kind: "platform" as const }; // Abo/Boost – kein Treuhand-Vorgang
+  // Erstattungen aus der App tragen metadata.orderId – diese Bestellungen schließt refundOrder selbst
+  const s = stripe();
+  const refunds = s ? (await s.refunds.list({ charge: ch.id, limit: 100 })).data : [];
+  const appOrderIds = new Set(refunds.map((r) => Number(r.metadata?.orderId)).filter(Boolean));
+  const appRefunded = refunds.filter((r) => r.metadata?.orderId && r.status !== "failed" && r.status !== "canceled").reduce((sum, r) => sum + r.amount, 0);
+  const external = refunds.find((r) => !r.metadata?.orderId);
+  const refundId = external?.id || ch.refunds?.data?.[0]?.id || null;
+  const open = list.filter((o) => ["paid", "shipped", "disputed", "withdrawn"].includes(o.status) && !o.frozen && !appOrderIds.has(o.id));
+  const result = { kind: "market" as const, closed: 0, review: 0 };
+  if (!external && s) return result; // nur App-Erstattungen – nichts abzugleichen
+  if (ch.refunded) {
+    for (const o of open) {
+      const [done] = await db.update(marketOrders).set({ status: "refunded", refundId: o.refundId || refundId, releaseAfter: null, updatedAt: new Date(),
+        disputeReason: o.disputeReason || "Erstattung über Stripe (außerhalb der App)." })
+        .where(and(eq(marketOrders.id, o.id), eq(marketOrders.status, o.status))).returning();
+      if (!done) continue;
+      result.closed++;
+      if (o.status === "paid") await restockOrder(o);
+      if (o.transferId) await recordDac7Refund(o).catch((e) => log.error("market", "DAC7-Zähler (Erstattung)", { orderId: o.id, err: e }));
+      await notify(o.buyerId, "↩️ Geld erstattet", `${eur(o.priceCents + o.shippingCents)} für „${o.title}“ wurden erstattet (je nach Bank 5–10 Tage).`, "/?orders=1");
+      await notify(o.sellerId, "↩️ Bestellung erstattet", `„${o.title}“ wurde dem Käufer erstattet – es erfolgt keine Auszahlung.`, "/?orders=1");
+    }
+  } else if (ch.amount_refunded > appRefunded) {
+    // Teil-Erstattung, die keiner Teilbestellung zugeordnet ist: Auszahlungen anhalten, bis ein Admin entscheidet
+    for (const o of open.filter((x) => x.status !== "disputed")) {
+      const [held] = await db.update(marketOrders).set({ status: "disputed", releaseAfter: null, updatedAt: new Date(),
+        disputeReason: `Teil-Erstattung über Stripe (${eur(ch.amount_refunded)}) – bitte prüfen.` })
+        .where(and(eq(marketOrders.id, o.id), eq(marketOrders.status, o.status))).returning();
+      if (held) result.review++;
+    }
+  }
+  const releasedUnreversed = list.filter((o) => o.status === "released" && o.transferId && !o.transferReversalId && !appOrderIds.has(o.id));
+  if (ch.refunded && releasedUnreversed.length) result.review += releasedUnreversed.length;
+  if (result.review) {
+    await notifyAdmins("⚠️ Erstattung außerhalb der App", `Zahlung ${ch.id}: ${eur(ch.amount_refunded)} erstattet. ${releasedUnreversed.length ? `${releasedUnreversed.length} Bestellung(en) waren schon ausgezahlt – Transfer ggf. zurückholen. ` : ""}Offene Teilbestellungen sind pausiert.`);
+  }
+  return result;
+}
+
 export async function handleDisputeUpdated(d: DisputeLike) {
   if (WON.includes(d.status) || d.status === "lost") return handleDisputeClosed(d);
   return handleDisputeCreated(d);
@@ -477,7 +555,7 @@ function orderView(o: any, userId: string, admin = false, items: any[] = []) {
   let address: any = null;
   if (showAddress && o.shipping_address) { try { address = JSON.parse(o.shipping_address); } catch {} }
   return {
-    id: Number(o.id), listingId: o.listing_id, title: o.title, image: o.image, status: o.status, role,
+    id: Number(o.id), listingId: o.listing_id, title: o.title, image: o.image, status: o.status, escrowStatus: escrowPhase(o.status), role,
     priceCents: o.price_cents, shippingCents: o.shipping_cents, totalCents: o.price_cents + o.shipping_cents,
     feeCents: role === "buyer" ? undefined : o.fee_cents, payoutCents: role === "buyer" ? undefined : o.price_cents + o.shipping_cents - o.fee_cents,
     message: o.message, carrier: o.carrier, carrierLabel: CARRIERS[o.carrier] || o.carrier, trackingNumber: o.tracking_number,
@@ -560,19 +638,24 @@ export function registerMarket(app: any, hlp: Hlp) {
   const { auth, adminOnly, body } = hlp;
 
   // ---------------- Verkäuferkonto ----------------
-  app.get("/api/market/seller", auth, async (c: any) => {
+  // Verkäuferkonto-Status (auch unter /api/connect/status)
+  const sellerStatus = async (c: any) => {
     const p: Profile = c.get("profile"), plan: PlanId = c.get("plan");
     const fee = { bps: MARKET_FEE_BPS[plan], allBps: MARKET_FEE_BPS };
-    if (!stripe()) return c.json({ enabled: false, connected: false, ready: false, fee });
+    const psttg = await psttgNotice(p.userId).catch(() => null);
+    if (!stripe()) return c.json({ enabled: false, connected: false, ready: false, fee, psttg });
     try {
-      return c.json({ enabled: true, ...(await syncSellerAccount(p)), fee, termsAccepted: Boolean(p.sellerTermsAt) });
+      return c.json({ enabled: true, ...(await syncSellerAccount(p)), fee, termsAccepted: Boolean(p.sellerTermsAt), psttg });
     } catch (e: any) {
       console.warn("Connect-Status", e?.message);
-      return c.json({ enabled: true, connected: Boolean(p.stripeAccountId), ready: p.stripeAccountReady, fee, error: "Stripe Connect ist im Stripe-Konto noch nicht aktiviert oder nicht erreichbar." });
+      return c.json({ enabled: true, connected: Boolean(p.stripeAccountId), ready: p.stripeAccountReady, fee, psttg, error: "Stripe Connect ist im Stripe-Konto noch nicht aktiviert oder nicht erreichbar." });
     }
-  });
+  };
+  app.get("/api/market/seller", auth, sellerStatus);
+  app.get("/api/connect/status", auth, sellerStatus);
 
-  app.post("/api/market/seller/onboard", auth, async (c: any) => {
+  // Express-Konto (DE) anlegen und Onboarding-Link erzeugen (auch unter /api/connect/onboard)
+  const sellerOnboard = async (c: any) => {
     const s = stripe();
     if (!s) return c.json({ error: "Zahlungen sind noch nicht eingerichtet." }, 503);
     const user: AuthUser = c.get("user"), p: Profile = c.get("profile");
@@ -601,14 +684,26 @@ export function registerMarket(app: any, hlp: Hlp) {
       log.error("market", "Connect-Onboarding", { err: e });
       return c.json({ error: /connect/i.test(String(e?.message)) ? "Stripe Connect ist im Stripe-Konto der Plattform noch nicht aktiviert (Dashboard → Connect)." : "Verkäuferkonto konnte nicht angelegt werden." }, 502);
     }
-  });
+  };
+  app.post("/api/market/seller/onboard", auth, sellerOnboard);
+  app.post("/api/connect/onboard", auth, sellerOnboard);
 
-  app.post("/api/market/seller/dashboard", auth, async (c: any) => {
+  // Login-Link ins Stripe-Express-Dashboard (Auszahlungen, Bankkonto) – auch unter /api/connect/dashboard-link
+  const sellerDashboard = async (c: any) => {
     const s = stripe(), p: Profile = c.get("profile");
     if (!s || !p.stripeAccountId) return c.json({ error: "Kein Verkäuferkonto." }, 404);
-    const link = await s.accounts.createLoginLink(p.stripeAccountId);
-    return c.json({ url: link.url });
-  });
+    try {
+      const link = await s.accounts.createLoginLink(p.stripeAccountId);
+      return c.json({ url: link.url });
+    } catch (e: any) {
+      // Onboarding noch nicht abgeschlossen → Login-Link gibt es erst danach; stattdessen Onboarding fortsetzen
+      log.warn("market", "Connect-Dashboard-Link", { userId: p.userId, err: e });
+      return c.json({ error: "Das Stripe-Dashboard ist erst nach abgeschlossener Verifizierung verfügbar – bitte die Verifizierung fortsetzen.", needsOnboarding: true }, 409);
+    }
+  };
+  app.post("/api/market/seller/dashboard", auth, sellerDashboard);
+  app.post("/api/connect/dashboard-link", auth, sellerDashboard);
+  app.get("/api/connect/dashboard-link", auth, sellerDashboard);
 
   app.get("/api/market/meta", (c: any) => c.json({ conditions: CONDITIONS, carriers: CARRIERS, feeBps: MARKET_FEE_BPS, autoReleaseDays: AUTO_RELEASE_DAYS, shipWindowDays: SHIP_WINDOW_DAYS, payWindowHours: PAY_WINDOW_HOURS, countries: SHIP_COUNTRIES, enabled: Boolean(stripe()) }));
 

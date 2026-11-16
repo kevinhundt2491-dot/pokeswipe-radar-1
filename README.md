@@ -107,6 +107,19 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
     `node scripts/build-scan-seed.ts`); der Job `scan-hash-index` übernimmt sie beim ersten Lauf für jede Katalogkarte mit
     identischem Bild, „Index jetzt erweitern“ stößt das sofort an
 
+- **Phase 10 – Direktkauf: Connect, Treuhand & PStTG**
+  - *Verkäuferkonto* – `/api/connect/onboard` (Express-Konto, Land DE, Account-Link), `/api/connect/status`,
+    `/api/connect/dashboard-link`; Stripe-Status gespiegelt in `seller_accounts` (`charges_enabled`, `payouts_enabled`,
+    Verifizierung, offene Anforderungen, PStTG-Steuerdaten vollständig)
+  - *Warenkorb* – `cart_items` speichert Verkäufer und Reservierung (`reserved_at`, `reserved_until`, `reserved_checkout_id`)
+    während eines laufenden Checkouts; Bestellungen liefern zusätzlich `escrowStatus`
+    (`pending_payment`, `paid_in_escrow`, `shipped`, `delivered`, `released_to_seller`, `disputed`, `refunded`)
+  - *PStTG* – Vorwarnung ab 25 Verkäufen oder 1.700 € (einmalige Mitteilung + Banner), `reporting_required` ab 30 / 2.000 €;
+    Jahresübersicht als Sicht `psttg_annual_metrics` über `seller_dac7_stats`
+  - *Webhook* – zusätzlich `payment_intent.succeeded` (Sicherheitsnetz) und `charge.refunded` (Erstattung im Stripe-Dashboard
+    schließt bzw. pausiert die Treuhand-Bestellung); „Stripe-Webhook einrichten“ legt auch einen Connect-Endpunkt für
+    `account.updated` an
+
 ## Echte Karten & Preise
 
 Swipe-Arena, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten

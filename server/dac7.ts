@@ -4,12 +4,12 @@
 // Die Zähler (seller_dac7_stats) werden bei jeder Auszahlung (releaseOrder) fortgeschrieben und bei einer
 // Rückbuchung/Erstattung nach der Auszahlung korrigiert. Die reinen Schwellen-/Prüfregeln stehen in dac7-logic.ts.
 import { and, eq, gte, sql } from "drizzle-orm";
-import { db, marketOrders, sellerDac7Stats, sellerTaxInfo, moderationLog } from "../db/index.ts";
+import { db, marketOrders, sellerDac7Stats, sellerTaxInfo, sellerAccounts, moderationLog } from "../db/index.ts";
 import { notify } from "./prices.ts";
 import { str, int, rows, rateLimit } from "./util.ts";
 import {
   dac7Reportable, dac7ReminderDue, dac7Blocked, commercialReasons, netConsiderationCents, validateTaxInfo, taxInfoComplete,
-  csvRow, csvEuro, DAC7_MAX_REMINDERS, DAC7_REMINDER_INTERVAL_DAYS, DAC7_TX_THRESHOLD, DAC7_GROSS_THRESHOLD_CENTS,
+  csvRow, csvEuro, psttgStage, PSTTG_WARN_TX, PSTTG_WARN_GROSS_CENTS, DAC7_MAX_REMINDERS, DAC7_REMINDER_INTERVAL_DAYS, DAC7_TX_THRESHOLD, DAC7_GROSS_THRESHOLD_CENTS,
 } from "./dac7-logic.ts";
 
 type Hlp = { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> };
@@ -47,6 +47,58 @@ export async function recordDac7Release(order: Pick<Order, "sellerId" | "priceCe
       updatedAt: new Date(),
     },
   });
+  await refreshPsttgFlags(order.sellerId, year);
+}
+
+/**
+ * Phase 10: PStTG-Stufen nach jeder Änderung des Jahreszählers fortschreiben.
+ *  – ab 25 Verkäufen oder 1.700 €: einmalige Vorwarnung (Mitteilung + Banner), sofern Steuerdaten fehlen
+ *  – ab 30 Verkäufen oder 2.000 €: reporting_required = true → Datensatz erscheint im PStTG-Export
+ * Fällt der Umsatz durch Erstattungen wieder unter die Grenze, wird die Markierung zurückgenommen.
+ */
+export async function refreshPsttgFlags(userId: string, year: number) {
+  const [row] = await db.select().from(sellerDac7Stats).where(and(eq(sellerDac7Stats.userId, userId), eq(sellerDac7Stats.year, year))).limit(1);
+  if (!row) return null;
+  const stage = psttgStage(row);
+  const reporting = stage === "reporting";
+  if (reporting !== row.reportingRequired) {
+    await db.update(sellerDac7Stats).set({ reportingRequired: reporting, updatedAt: new Date() }).where(eq(sellerDac7Stats.id, row.id));
+  }
+  if (stage !== "none" && !row.thresholdWarningSent) {
+    // Genau einmal je Verkäufer und Jahr (parallele Auszahlungen)
+    const [claimed] = await db.update(sellerDac7Stats).set({ thresholdWarningSent: true, thresholdWarningAt: new Date() })
+      .where(and(eq(sellerDac7Stats.id, row.id), eq(sellerDac7Stats.thresholdWarningSent, false))).returning({ id: sellerDac7Stats.id });
+    if (claimed && !taxInfoComplete(await taxInfoOf(userId))) {
+      await notify(userId, reporting ? "🧾 PStTG-Meldegrenze erreicht" : "🧾 Bald meldepflichtig: Steuerdaten hinterlegen",
+        reporting
+          ? `Du hast ${year} ${DAC7_TX_THRESHOLD} Verkäufe oder ${DAC7_GROSS_THRESHOLD_CENTS / 100} € Umsatz erreicht. Nach dem Plattformen-Steuertransparenzgesetz müssen wir Name, Anschrift, Geburtsdatum, Steuer-ID und IBAN an das Bundeszentralamt für Steuern melden. Bitte trage sie im Verkäuferkonto unter „Steuerdaten (DAC7)“ ein.`
+          : `Du hast ${year} bereits ${row.transactions} Verkäufe bzw. ${(netConsiderationCents(row) / 100).toLocaleString("de-DE", { style: "currency", currency: "EUR" })} Umsatz. Ab ${DAC7_TX_THRESHOLD} Verkäufen oder ${DAC7_GROSS_THRESHOLD_CENTS / 100} € im Jahr sind wir gesetzlich zur Meldung verpflichtet (PStTG). Hinterlege jetzt Steuer-ID und Anschrift, damit dein Verkaufen nicht unterbrochen wird.`,
+        "/?seller=taxinfo").catch(() => {});
+    }
+  }
+  return { stage, reportingRequired: reporting };
+}
+
+/** Banner-Stand für den Verkäufer im laufenden Jahr (für /api/me, Verkäuferkonto und Steuerdaten-Dialog). */
+export async function psttgNotice(userId: string) {
+  const { year } = berlinYearQuarter();
+  const [row] = await db.select().from(sellerDac7Stats).where(and(eq(sellerDac7Stats.userId, userId), eq(sellerDac7Stats.year, year))).limit(1);
+  if (!row) return null;
+  const stage = psttgStage(row);
+  if (stage === "none") return null;
+  const complete = taxInfoComplete(await taxInfoOf(userId));
+  return {
+    year, stage, taxInfoComplete: complete, transactions: row.transactions, netCents: netConsiderationCents(row),
+    warn: { transactions: PSTTG_WARN_TX, grossCents: PSTTG_WARN_GROSS_CENTS },
+    report: { transactions: DAC7_TX_THRESHOLD, grossCents: DAC7_GROSS_THRESHOLD_CENTS },
+  };
+}
+
+/** Steuerdaten-Status im Verkäuferkonto-Spiegel (seller_accounts) nachziehen. */
+export async function syncPsttgTaxFlag(userId: string) {
+  const complete = taxInfoComplete(await taxInfoOf(userId));
+  await db.update(sellerAccounts).set({ psttgTaxDataComplete: complete, updatedAt: new Date() }).where(eq(sellerAccounts.userId, userId));
+  return complete;
 }
 
 /**
@@ -65,6 +117,7 @@ export async function recordDac7Refund(order: Pick<Order, "sellerId" | "priceCen
     [quarterKey(quarter)]: sql`GREATEST(0, ${col} - ${gross})`,
     updatedAt: new Date(),
   }).where(and(eq(sellerDac7Stats.userId, order.sellerId), eq(sellerDac7Stats.year, year)));
+  await refreshPsttgFlags(order.sellerId, year);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +256,8 @@ export function registerDac7(app: any, hlp: Hlp) {
       complete, reportable, required: reportable && !complete, blocked: Boolean(await dac7SellerBlock(userId)),
       year: { year, transactions: cur?.transactions ?? 0, netCents: cur ? netConsiderationCents(cur) : 0 },
       thresholds: { transactions: DAC7_TX_THRESHOLD, grossCents: DAC7_GROSS_THRESHOLD_CENTS },
+      warnThresholds: { transactions: PSTTG_WARN_TX, grossCents: PSTTG_WARN_GROSS_CENTS },
+      notice: await psttgNotice(userId),
     });
   });
 
@@ -215,6 +270,7 @@ export function registerDac7(app: any, hlp: Hlp) {
     const now = new Date();
     const [saved] = await db.insert(sellerTaxInfo).values({ userId, ...v, collectedAt: now, updatedAt: now })
       .onConflictDoUpdate({ target: sellerTaxInfo.userId, set: { ...v, updatedAt: now } }).returning();
+    await syncPsttgTaxFlag(userId).catch(() => {});
     return c.json({ ok: true, complete: taxInfoComplete(saved), updatedAt: saved.updatedAt });
   });
 
@@ -225,11 +281,12 @@ export function registerDac7(app: any, hlp: Hlp) {
     for (const r of list) {
       const e = evaluate(r);
       if (e.commercial !== Boolean(r.commercial_flag)) await db.update(sellerDac7Stats).set({ commercialFlag: e.commercial }).where(eq(sellerDac7Stats.id, Number(r.id)));
+      if (e.reportable !== Boolean(r.reporting_required)) await db.update(sellerDac7Stats).set({ reportingRequired: e.reportable }).where(eq(sellerDac7Stats.id, Number(r.id)));
       sellers.push({
         userId: r.user_id, displayName: r.display_name, email: r.email, flagged: Boolean(r.flagged_at),
         transactions: e.stats.transactions, grossCents: e.stats.grossCents, refundedCents: e.stats.refundedCents, netCents: netConsiderationCents(e.stats),
         feeCents: Number(r.fee_cents), quarters: [Number(r.q1_cents), Number(r.q2_cents), Number(r.q3_cents), Number(r.q4_cents)],
-        reportable: e.reportable, commercial: e.commercial, commercialReasons: e.commercialReasons,
+        reportable: e.reportable, stage: psttgStage(e.stats), warningSent: Boolean(r.threshold_warning_sent), commercial: e.commercial, commercialReasons: e.commercialReasons,
         taxInfo: e.tax ? { complete: e.taxComplete, sellerType: e.tax.sellerType, legalName: e.tax.legalName, country: e.tax.country, taxId: mask(e.tax.taxId, 3), iban: mask(e.tax.iban) } : null,
         remindersSent: Number(r.reminders_sent), lastReminderAt: r.last_reminder_at,
         blocked: e.reportable && !e.taxComplete && dac7Blocked({ reportable: true, hasTaxInfo: false, remindersSent: Number(r.reminders_sent), lastReminderAt: r.last_reminder_at ? new Date(r.last_reminder_at) : null }),

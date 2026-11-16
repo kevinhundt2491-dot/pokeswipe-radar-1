@@ -1,5 +1,6 @@
+import { sql } from "drizzle-orm";
 import {
-  pgTable, serial, text, timestamp, integer, numeric, boolean, date, index, uniqueIndex, jsonb, doublePrecision,
+  pgTable, pgView, serial, text, timestamp, integer, numeric, boolean, date, index, uniqueIndex, jsonb, doublePrecision,
 } from "drizzle-orm/pg-core";
 
 // Nutzerprofil – user_id ist die Netlify-Identity-ID
@@ -1139,8 +1140,45 @@ export const sellerDac7Stats = pgTable("seller_dac7_stats", {
   remindersSent: integer("reminders_sent").notNull().default(0),
   lastReminderAt: timestamp("last_reminder_at", { withTimezone: true }),
   commercialFlag: boolean("commercial_flag").notNull().default(false),
+  // Phase 10: Vorwarnung ab 25 Verkäufen oder 1.700 € (einmal je Jahr) und Markierung für den PStTG-Export ab 30 / 2.000 €
+  thresholdWarningSent: boolean("threshold_warning_sent").notNull().default(false),
+  thresholdWarningAt: timestamp("threshold_warning_at", { withTimezone: true }),
+  reportingRequired: boolean("reporting_required").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("seller_dac7_user_year").on(t.userId, t.year), index("seller_dac7_year").on(t.year, t.grossCents)]);
+
+// PStTG-Jahresübersicht je Verkäufer (Sicht auf seller_dac7_stats – eine Quelle, keine doppelte Zählung)
+export const psttgAnnualMetrics = pgView("psttg_annual_metrics", {
+  sellerId: text("seller_id").notNull(),
+  year: integer().notNull(),
+  completedSalesCount: integer("completed_sales_count").notNull(),
+  totalGrossEurCents: integer("total_gross_eur_cents").notNull(),
+  refundedEurCents: integer("refunded_eur_cents").notNull(),
+  platformFeeEurCents: integer("platform_fee_eur_cents").notNull(),
+  thresholdWarningSent: boolean("threshold_warning_sent").notNull(),
+  reportingRequired: boolean("reporting_required").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}).as(sql`SELECT user_id AS seller_id, year, transactions AS completed_sales_count,
+  greatest(gross_cents - refunded_cents, 0) AS total_gross_eur_cents, refunded_cents AS refunded_eur_cents,
+  fee_cents AS platform_fee_eur_cents, threshold_warning_sent, reporting_required, updated_at
+  FROM seller_dac7_stats`);
+
+// Phase 10: Stripe-Connect-Express-Verkäuferkonto (Spiegel des Stripe-Status, aktualisiert per account.updated und Abgleich)
+export const sellerAccounts = pgTable("seller_accounts", {
+  userId: text("user_id").primaryKey().references(() => profiles.userId, { onDelete: "cascade" }),
+  stripeConnectAccountId: text("stripe_connect_account_id").notNull(),
+  chargesEnabled: boolean("charges_enabled").notNull().default(false),
+  payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
+  detailsSubmitted: boolean("details_submitted").notNull().default(false),
+  transfersActive: boolean("transfers_active").notNull().default(false),
+  verificationStatus: text("verification_status").notNull().default("pending"), // pending | verified | restricted | disabled
+  requirementsDue: jsonb("requirements_due").notNull().default([]),
+  disabledReason: text("disabled_reason"),
+  psttgTaxDataComplete: boolean("psttg_tax_data_complete").notNull().default(false),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("seller_accounts_stripe").on(t.stripeConnectAccountId), index("seller_accounts_status").on(t.verificationStatus)]);
 
 // Verteiltes Rate-Limiting (gilt instanzübergreifend)
 export const rateLimits = pgTable("rate_limits", {
@@ -1187,8 +1225,13 @@ export const cartItems = pgTable("cart_items", {
   listingId: integer("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
   quantity: integer().notNull().default(1),
   priceCentsAtAdd: integer("price_cents_at_add").notNull(),
+  // Phase 10: Verkäufer der Position und Reservierung während eines laufenden Checkouts (Schutz vor Doppelverkauf)
+  sellerId: text("seller_id").references(() => profiles.userId, { onDelete: "cascade" }),
+  reservedAt: timestamp("reserved_at", { withTimezone: true }),
+  reservedUntil: timestamp("reserved_until", { withTimezone: true }),
+  reservedCheckoutId: integer("reserved_checkout_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("cart_items_user_listing").on(t.userId, t.listingId)]);
+}, (t) => [uniqueIndex("cart_items_user_listing").on(t.userId, t.listingId), index("cart_items_seller").on(t.sellerId)]);
 
 // Ein Checkout = eine Stripe-Zahlung; je Verkäufer entsteht eine Teilbestellung in market_orders (checkout_id)
 export const orders = pgTable("orders", {
