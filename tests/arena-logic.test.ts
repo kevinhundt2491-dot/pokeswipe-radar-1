@@ -147,3 +147,70 @@ test("Scanner-Basis-Index ist vollständig hinterlegt", () => {
   assert.match(glurak!.artP, /^[0-9a-f]{16}$/);
   assert.equal(glurak!.path, "de/sv/sv03.5/199");
 });
+
+// ---------------------------------------------------------------------------
+// Phase 6: echtes Swipe-Trading (Match-Erkennung, Wertvergleich, Tausch-Schritte)
+// ---------------------------------------------------------------------------
+import {
+  orderPair, tradeBalance, suggestCash, parseCash, tradeTransition, bestCounterpart, type TradeState,
+} from "../server/trading-logic.ts";
+
+test("Swipe-Match: Paar ist unabhängig von der Reihenfolge", () => {
+  assert.deepEqual(orderPair("b", "a"), { userA: "a", userB: "b", swapped: true });
+  assert.deepEqual(orderPair("a", "b"), { userA: "a", userB: "b", swapped: false });
+});
+
+test("Swipe-Match: gegenseitiger Like schlägt Wunschlisten-Treffer, danach zählt der Wert", () => {
+  const best = bestCounterpart([
+    { reason: "wishlist", listingId: 1, portfolioItemId: null, valueCents: 90_000 },
+    { reason: "like", listingId: 2, portfolioItemId: null, valueCents: 500 },
+    { reason: "like", listingId: 3, portfolioItemId: null, valueCents: 2_000 },
+  ]);
+  assert.equal(best?.listingId, 3);
+  assert.equal(bestCounterpart([]), null);
+  assert.equal(bestCounterpart([{ reason: "wishlist", listingId: null, portfolioItemId: 7, valueCents: 1 }])?.portfolioItemId, 7);
+});
+
+test("Tausch: Marktwert-Vergleich inkl. Wertausgleich", () => {
+  const b = tradeBalance([{ valueCents: 4000, quantity: 1 }], [{ valueCents: 5000, quantity: 1 }], 1000, "from");
+  assert.equal(b.fromGives, 5000);
+  assert.equal(b.toGives, 5000);
+  assert.equal(b.verdict, "fair");
+  assert.equal(tradeBalance([{ valueCents: 1000, quantity: 2 }], [{ valueCents: 10_000, quantity: 1 }]).verdict, "to_overpays");
+  assert.deepEqual(suggestCash(4000, 5000), { cashCents: 1000, payer: "from" });
+  assert.deepEqual(suggestCash(5000, 5050), { cashCents: 0, payer: "" });
+  assert.deepEqual(parseCash(0, ""), { cashCents: 0, payer: "" });
+  assert.ok("error" in parseCash(500, ""));
+  assert.ok("error" in parseCash(-1, "from"));
+  assert.ok("error" in parseCash(600_000, "from"));
+});
+
+const base: TradeState = { status: "pending", hasItems: true, fromConfirmed: false, toConfirmed: false, fromShippedAt: null, toShippedAt: null, fromReceivedAt: null, toReceivedAt: null };
+
+test("Tausch-Schritte: annehmen → beide versenden → beide erhalten → abgeschlossen", () => {
+  assert.equal(tradeTransition(base, "sender", { action: "accept" }).ok, false); // nur der Partner nimmt an
+  const acc = tradeTransition(base, "receiver", { action: "accept" });
+  assert.ok(acc.ok && acc.updates.status === "accepted");
+  const t1: TradeState = { ...base, status: "accepted" };
+  assert.equal(tradeTransition(t1, "sender", { action: "ship", carrier: "dhl", tracking: "x" }).ok, false); // ungültige Sendungsnummer
+  const s1 = tradeTransition(t1, "sender", { action: "ship", carrier: "dhl", tracking: "00340434161094042557" });
+  assert.ok(s1.ok && s1.updates.status === "shipping" && s1.updates.fromTracking === "00340434161094042557");
+  const t2: TradeState = { ...t1, status: "shipping", fromShippedAt: new Date() };
+  assert.equal(tradeTransition(t2, "sender", { action: "cancel" }).ok, false); // nach Versand kein Abbruch
+  assert.equal(tradeTransition(t2, "sender", { action: "received" }).ok, false); // Partner hat noch nicht versendet
+  const r1 = tradeTransition(t2, "receiver", { action: "received" });
+  assert.ok(r1.ok && !r1.completed && r1.updates.fromReceivedAt);
+  const t3: TradeState = { ...t2, toShippedAt: new Date(), fromReceivedAt: new Date() };
+  const r2 = tradeTransition(t3, "sender", { action: "received" });
+  assert.ok(r2.ok && r2.completed && r2.updates.status === "completed");
+});
+
+test("Tausch-Schritte: alte Freitext-Tausche behalten die beidseitige Bestätigung", () => {
+  const legacy: TradeState = { ...base, status: "accepted", hasItems: false };
+  const a = tradeTransition(legacy, "sender", { action: "complete" });
+  assert.ok(a.ok && !a.completed);
+  const b = tradeTransition({ ...legacy, fromConfirmed: true }, "receiver", { action: "complete" });
+  assert.ok(b.ok && b.completed);
+  assert.equal(tradeTransition(legacy, "sender", { action: "ship", carrier: "dhl", tracking: "ABC123456" }).ok, false);
+  assert.equal(tradeTransition(legacy, "sender", { action: "hack" }).ok, false);
+});

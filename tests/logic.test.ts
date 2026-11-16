@@ -76,7 +76,7 @@ test("Wochen-Report: Text mit Veränderung und Top-Mover", () => {
 test("CSV: Cardmarket-ähnlicher Export mit Semikolon und Komma-Preisen", () => {
   const rows = csvToRows('﻿Name;Expansion;Number;Count;Purchase Price\n"Glurak ex";"151";"199/165";2;"89,90 €"\nPikachu;Basis;58;1;\n');
   assert.equal(rows.length, 2);
-  assert.deepEqual(rows[0], { name: "Glurak ex", number: "199/165", set: "151", quantity: 2, purchasePrice: 89.9 });
+  assert.deepEqual(rows[0], { name: "Glurak ex", number: "199/165", set: "151", quantity: 2, purchasePrice: 89.9, variant: "normal", condition: "NM", lang: "de" });
   assert.equal(rows[1].purchasePrice, null);
 });
 

@@ -12,14 +12,13 @@ import { profileSlug, trustLevel, valueTier, moderateText } from "./community-lo
 import { lowJpegUrl } from "./scan-index.ts";
 import { composeCardFan, encodeJpeg, decodeJpeg, type Rgba } from "./og-image.ts";
 import { str, int, rows, rateLimit, clientIp, euro } from "./util.ts";
+import { publicCache } from "./cache.ts";
 
 type Hlp = { auth: any; body: (c: any) => Promise<Record<string, any>> };
 const SLUG_RE = /^[\p{L}\p{N}_.\-]{2,24}$/u;
 
-const cacheHeaders = (c: any, maxAge = 300, cdn = 900) => {
-  c.header("Cache-Control", `public, max-age=${maxAge}`);
-  c.header("Netlify-CDN-Cache-Control", `public, s-maxage=${cdn}, stale-while-revalidate=3600`);
-};
+/** Öffentliche Seiten ohne Nutzerbezug; kurze CDN-Zeiten, damit „Profil privat“/gelöschte Beiträge schnell greifen. */
+const cacheHeaders = (c: any, sMaxAge: number, swr: number) => publicCache(c, "page", { sMaxAge, swr });
 const absImage = (img: string, w = 1200) => (img ? `${SITE()}${cdnImage(img, w, "jpg")}` : "");
 
 async function profileBySlug(slug: string) {
@@ -158,7 +157,7 @@ export function registerProfiles(app: any, hlp: Hlp) {
   const { auth, body } = hlp;
 
   app.get("/api/u/:slug", async (c: any) => {
-    if (!rateLimit(`prof:${clientIp(c)}`, 60, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`prof:${clientIp(c)}`, 60, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const p = await profileBySlug(decodeURIComponent(c.req.param("slug")));
     const viewer = await verifyIdentityToken(c);
     if (!p || (!p.publicProfile && viewer?.id !== p.userId)) return c.json({ error: "Dieses Profil ist privat oder existiert nicht." }, 404);
@@ -169,7 +168,7 @@ export function registerProfiles(app: any, hlp: Hlp) {
   app.get("/u/:slug", async (c: any) => {
     const p = await profileBySlug(decodeURIComponent(c.req.param("slug")));
     if (!p || !p.publicProfile) return notFoundPage(c, "Dieses Sammler-Profil ist privat oder existiert nicht.");
-    cacheHeaders(c, 60, 300); // kurz, damit „Profil privat schalten“ schnell greift
+    cacheHeaders(c, 300, 600); // kurz, damit „Profil privat schalten“ schnell greift
     return c.html(profilePage(await publicProfile(p, null)));
   });
 
@@ -182,8 +181,8 @@ export function registerProfiles(app: any, hlp: Hlp) {
       WHERE i.user_id = ${p.userId} AND coalesce(nullif(i.image, ''), c.image, '') <> ''
       ORDER BY coalesce(c.trend, c.avg, c.low, i.manual_value, 0) DESC NULLS LAST LIMIT 5`)).map((r: any) => String(r.image));
     const jpg = await ogJpeg(imgKey(`u-${p.userId}`, imgs), imgs);
-    c.header("Netlify-CDN-Cache-Control", "public, s-maxage=86400, stale-while-revalidate=604800");
-    return c.body(jpg, 200, { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600" });
+    publicCache(c, "og", { sMaxAge: 3600, swr: 86_400 }); // kürzer als andere Vorschaubilder (Profil kann privat werden)
+    return c.body(jpg, 200, { "Content-Type": "image/jpeg" });
   });
 
   // Teilbarer Pull-Wall-Beitrag mit Vorschaubild
@@ -193,7 +192,7 @@ export function registerProfiles(app: any, hlp: Hlp) {
     if (!post || post.pending) return notFoundPage(c, "Dieser Beitrag wurde entfernt oder existiert nicht.");
     const url = `${SITE()}/p/${id}`;
     const title = `${post.author.name}: ${post.caption}`.slice(0, 90);
-    cacheHeaders(c, 120, 300);
+    cacheHeaders(c, 300, 600);
     return c.html(pageShell({
       title: `${title} – PokeSwipe Pull-Wall`, description: `❤️ ${post.likes} · 💬 ${post.commentCount} – Pokémon-Pull von ${post.author.name} in der PokeSwipe-Community. Jetzt ansehen und eigene Hits teilen!`,
       canonical: url, image: post.image ? `${SITE()}/api/og/p/${id}.jpg` : undefined,
@@ -213,8 +212,8 @@ export function registerProfiles(app: any, hlp: Hlp) {
     const [r] = rows(await db.execute(sql`SELECT image FROM community_posts WHERE id = ${id} AND status = 'visible'`));
     if (!r?.image) return c.notFound();
     const jpg = await ogJpeg(imgKey(`p-${id}`, [String(r.image)]), [String(r.image)], [236, 72, 153]);
-    c.header("Netlify-CDN-Cache-Control", "public, s-maxage=86400, stale-while-revalidate=604800");
-    return c.body(jpg, 200, { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600" });
+    publicCache(c, "og", { sMaxAge: 3600, swr: 86_400 });
+    return c.body(jpg, 200, { "Content-Type": "image/jpeg" });
   });
 
   // Teil-Sitemap öffentlicher Profile (nur mit Zustimmung und mit mindestens einer Karte)
@@ -223,7 +222,7 @@ export function registerProfiles(app: any, hlp: Hlp) {
       SELECT p.display_name, p.created_at FROM profiles p
       WHERE p.public_profile AND NOT p.banned AND EXISTS (SELECT 1 FROM portfolio_items i WHERE i.user_id = p.user_id)
       ORDER BY p.created_at DESC LIMIT 20000`));
-    cacheHeaders(c, 3600, 3600);
+    publicCache(c, "sitemap");
     c.header("Content-Type", "application/xml; charset=utf-8");
     return c.body(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${list.map((p: any) =>
       `<url><loc>${h(`${SITE()}/u/${encodeURIComponent(profileSlug(p.display_name))}`)}</loc><changefreq>weekly</changefreq></url>`).join("")}</urlset>`);

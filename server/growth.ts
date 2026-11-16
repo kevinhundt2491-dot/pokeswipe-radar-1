@@ -15,6 +15,9 @@ import { searchTcgdex, fetchSet, normNum, pool, reserveScan } from "./features.t
 import { BADGES, earnedBadges, berlinDay, nextStreak, weeklySummary, type BadgeStats } from "./logic.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
 import { scanLimit } from "./viral.ts";
+import { checkMatchesAfterWishlist } from "./trading.ts";
+import { parseVariant, normalizeVariant, normalizeCondition, availableVariants, variantPrice, VARIANT_LABELS } from "./variant-logic.ts";
+import { publicCache } from "./cache.ts";
 
 type Profile = typeof profiles.$inferSelect;
 
@@ -67,7 +70,7 @@ export async function notifyWishlistListing(row: typeof listings.$inferSelect, s
 // ---------------------------------------------------------------------------
 export async function recordShopView(c: any, ownerId: string) {
   try {
-    if (!rateLimit(`shopview:${clientIp(c)}:${ownerId}`, 1, 30 * 60_000)) return;
+    if (!(await rateLimit(`shopview:${clientIp(c)}:${ownerId}`, 1, 30 * 60_000))) return;
     const viewer = await verifyIdentityToken(c);
     if (viewer?.id === ownerId) return;
     await db.execute(sql`
@@ -155,14 +158,14 @@ ${(Array.isArray(o.jsonLd) ? o.jsonLd : o.jsonLd ? [o.jsonLd] : []).map((j) => `
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
 <div class="top"><a class="logo" href="/">Poke<span>Swipe</span> &amp; Radar</a><a class="btn y" href="/">App öffnen</a></div>
 ${o.body}
-<footer>Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link (eBay Partner Network): Wir erhalten ggf. eine Provision, für dich ohne Mehrkosten. Pokémon und alle Namen sind Marken ihrer Inhaber; PokeSwipe &amp; Radar ist ein unabhängiges Fanprojekt.<br><a href="/rechtliches#impressum">Impressum</a> · <a href="/?legal=1">Datenschutz</a> · <a href="/rechtliches#agb">AGB</a> · <a href="/rechtliches#widerruf">Widerruf</a> · <a href="/sets">Alle Sets</a> · <a href="/pokemon">Pokémon A–Z</a> · <a href="/sealed">Displays &amp; ETBs</a> · <a href="/trends">Preis-Trends</a> · <a href="/kuendigen"><b>Verträge hier kündigen</b></a></footer>
+<footer>Preise: Cardmarket über TCGdex, täglich aktualisiert. *Affiliate-Link (eBay Partner Network): Wir erhalten ggf. eine Provision, für dich ohne Mehrkosten. Pokémon und alle Namen sind Marken ihrer Inhaber; PokeSwipe &amp; Radar ist ein unabhängiges Fanprojekt.<br><a href="/rechtliches#impressum">Impressum</a> · <a href="/datenschutz">Datenschutz</a> · <a href="/rechtliches#agb">AGB</a> · <a href="/rechtliches#widerruf">Widerruf</a> · <a href="/sets">Alle Sets</a> · <a href="/pokemon">Pokémon A–Z</a> · <a href="/sealed">Displays &amp; ETBs</a> · <a href="/trends">Preis-Trends</a> · <a href="/kuendigen"><b>Verträge hier kündigen</b></a></footer>
 </div></body></html>`;
 }
 
 async function cardPage(c: any) {
   const id = String(c.req.param("id") || "");
   if (!CARD_ID_RE.test(id)) return c.html(pageShell({ title: "Karte nicht gefunden", description: "", canonical: SITE(), body: `<div class="card"><h1>Karte nicht gefunden</h1></div>` }), 404);
-  if (!rateLimit(`cardpage:${clientIp(c)}`, 40, 60_000)) return c.text("Zu viele Anfragen", 429);
+  if (!(await rateLimit(`cardpage:${clientIp(c)}`, 40, 60_000))) return c.text("Zu viele Anfragen", 429);
   const card = await getCard(id, 12 * 3600_000);
   if (!card) {
     return c.html(pageShell({ title: "Karte nicht gefunden | PokeSwipe & Radar", description: "", canonical: SITE(),
@@ -176,13 +179,18 @@ async function cardPage(c: any) {
     .where(eq(priceHistory.cardId, id)).orderBy(desc(priceHistory.day)).limit(90);
   const series = hist.reverse().map((x) => Number(x.trend));
   const offers = rows(await db.execute(sql`
-    SELECT l.price::float AS price, l.city, l.created_at, p.display_name
+    SELECT l.price::float AS price, l.city, l.created_at, p.display_name, l.variant, l.condition
     FROM listings l JOIN profiles p ON p.user_id = l.user_id
     WHERE l.card_id = ${id} AND l.status = 'active' AND NOT p.banned
     ORDER BY l.price ASC LIMIT 10
   `));
   const [wishers] = rows(await db.execute(sql`SELECT count(*)::int AS n FROM wishlist_items WHERE card_id = ${id}`));
   const avg30 = Number(card.avg30 ?? 0);
+  // Phase 6: Varianten-Preise (Reverse Holo eigene Cardmarket-Reihe, sonst Basispreis)
+  const variantRows = availableVariants(card.variants).map((v) => {
+    const vp = variantPrice(card, v);
+    return { label: VARIANT_LABELS[v], price: vp.price, exact: vp.exact };
+  });
   const ch30 = price && avg30 ? ((price - avg30) / avg30) * 100 : null;
   const slug = slugify(card.name);
   const canonical = `${SITE()}/karte/${encodeURIComponent(card.id)}/${slug}`;
@@ -208,6 +216,9 @@ async function cardPage(c: any) {
         <div class="stat">Ø 30 Tage<b>${card.avg30 ? h(euro(Number(card.avg30))) : "–"}</b></div>
         <div class="stat">Ab<b>${card.low ? h(euro(Number(card.low))) : "–"}</b></div>
       </div>
+      ${variantRows.length > 1 ? `<h2 style="font-size:15px;margin:14px 0 6px">Preise je Variante (Near Mint)</h2><div class="stats">${variantRows.map((v) =>
+        `<div class="stat">${h(v.label)}<b>${v.price ? h(euro(v.price)) : "–"}</b>${v.exact ? "" : `<span class="muted" style="font-size:10px">Basispreis</span>`}</div>`).join("")}</div>
+        <p class="muted" style="font-size:12px">Zustand: Excellent ≈ 85 %, Good ≈ 70 %, Light Played ≈ 60 %, Played ≈ 45 % des Near-Mint-Preises (Referenzwerte).</p>` : ""}
       ${chartSvg(series)}
       <div class="btns">
         <a class="btn y" href="${h(appLink())}">🎯 Preisalarm setzen</a>
@@ -222,7 +233,7 @@ async function cardPage(c: any) {
     </div></div></div>
   <h2>🤝 Angebote aus der Community</h2>
   ${offers.length ? `<div class="list">${offers.map((o: any) => `<a class="row" href="${h(appLink("&tab=map"))}" style="text-decoration:none">
-      <span><b>${h(euro(o.price))}</b> <span class="muted">• ${h(o.city)} • ${h(o.display_name)}</span></span>${badge(o.price)}</a>`).join("")}</div>`
+      <span><b>${h(euro(o.price))}</b> <span class="muted">${o.variant && o.variant !== "normal" ? `• ${h(VARIANT_LABELS[normalizeVariant(o.variant)])} ` : ""}• ${h(o.city)} • ${h(o.display_name)}</span></span>${badge(o.price)}</a>`).join("")}</div>`
     : `<p class="muted">Gerade keine Angebote. Setz die Karte auf deine Wunschliste – wir melden uns, sobald sie jemand anbietet.</p>`}`;
   const jsonLd: any = {
     "@context": "https://schema.org", "@type": "Product", name: card.name, sku: card.id,
@@ -232,8 +243,7 @@ async function cardPage(c: any) {
     ...(offers.length ? { offers: { "@type": "AggregateOffer", priceCurrency: "EUR", offerCount: offers.length,
       lowPrice: Math.min(...offers.map((o: any) => o.price)).toFixed(2), highPrice: Math.max(...offers.map((o: any) => o.price)).toFixed(2) } } : {}),
   };
-  c.header("Cache-Control", "public, max-age=300");
-  c.header("Netlify-CDN-Cache-Control", "public, s-maxage=1800, stale-while-revalidate=86400");
+  publicCache(c, "page");
   return c.html(pageShell({ title, description, canonical, image: ogImage, body, jsonLd }));
 }
 
@@ -358,7 +368,7 @@ export function registerGrowth(app: any, hlp: {
     const userId = c.get("user").id;
     const items = await db.select({
       id: wishlistItems.id, cardId: wishlistItems.cardId, maxPrice: wishlistItems.maxPrice, createdAt: wishlistItems.createdAt,
-      name: cards.name, image: cards.image, setName: cards.setName, trend: cards.trend, avg: cards.avg, low: cards.low,
+      variant: wishlistItems.variant, name: cards.name, image: cards.image, setName: cards.setName, trend: cards.trend, avg: cards.avg, low: cards.low,
     }).from(wishlistItems).innerJoin(cards, eq(cards.id, wishlistItems.cardId))
       .where(eq(wishlistItems.userId, userId)).orderBy(desc(wishlistItems.createdAt));
     const offers = rows(await db.execute(sql`
@@ -366,7 +376,7 @@ export function registerGrowth(app: any, hlp: {
         (p.plan = 'pro' AND p.plan_until > now()) AS verified
       FROM listings l JOIN profiles p ON p.user_id = l.user_id
       JOIN wishlist_items w ON w.card_id = l.card_id AND w.user_id = ${userId}
-      WHERE l.status = 'active' AND NOT p.banned AND l.user_id <> ${userId}
+      WHERE l.status = 'active' AND NOT p.banned AND l.user_id <> ${userId} AND (w.variant = '' OR w.variant = l.variant)
         AND (w.max_price IS NULL OR l.price <= w.max_price * 1.15)
       ORDER BY l.price ASC LIMIT 60
     `));
@@ -408,14 +418,18 @@ export function registerGrowth(app: any, hlp: {
     const card = await getCard(cardId);
     if (!card) return c.json({ error: "Karte nicht gefunden" }, 404);
     const maxPrice = b.maxPrice === null || b.maxPrice === "" || b.maxPrice === undefined ? null : money(b.maxPrice);
-    const [item] = await db.insert(wishlistItems).values({ userId: user.id, cardId: card.id, maxPrice })
-      .onConflictDoUpdate({ target: [wishlistItems.userId, wishlistItems.cardId], set: { maxPrice } }).returning();
+    // Phase 6: gewünschte Variante ("" = jede Variante)
+    const variant = b.variant === undefined || b.variant === null || b.variant === "" ? "" : parseVariant(b.variant);
+    if (variant === null) return c.json({ error: "Unbekannte Kartenvariante." }, 400);
+    const [item] = await db.insert(wishlistItems).values({ userId: user.id, cardId: card.id, maxPrice, variant })
+      .onConflictDoUpdate({ target: [wishlistItems.userId, wishlistItems.cardId], set: { maxPrice, variant } }).returning();
+    const matches = await checkMatchesAfterWishlist(user.id, card.id);
     // Gibt es schon passende Angebote?
     const [offer] = rows(await db.execute(sql`
       SELECT count(*)::int AS n, min(price)::float AS min FROM listings
       WHERE card_id = ${card.id} AND status = 'active' AND user_id <> ${user.id} AND (${maxPrice}::numeric IS NULL OR price <= ${maxPrice}::numeric)
     `));
-    return c.json({ item, offers: Number(offer?.n ?? 0), minPrice: offer?.min ?? null }, 201);
+    return c.json({ item, offers: Number(offer?.n ?? 0), minPrice: offer?.min ?? null, matches }, 201);
   });
 
   app.delete("/api/wishlist/:id", auth, async (c: any) => {
@@ -473,7 +487,7 @@ export function registerGrowth(app: any, hlp: {
             WHERE p.leaderboard_opt_in AND NOT p.banned AND t.n > 0 ORDER BY t.n DESC LIMIT 50`
         : sql`SELECT p.display_name, p.city, p.best_streak::float AS score FROM profiles p
             WHERE p.leaderboard_opt_in AND NOT p.banned AND p.best_streak > 0 ORDER BY p.best_streak DESC LIMIT 50`;
-    c.header("Cache-Control", "public, max-age=120");
+    publicCache(c, "data", { sMaxAge: 120, swr: 600, varyQuery: ["type"] });
     return c.json({ type, entries: rows(await db.execute(query)) });
   });
 
@@ -496,7 +510,7 @@ export function registerGrowth(app: any, hlp: {
     const b = await body(c);
     const kind = b.kind === "release" ? "release" : "event";
     if (kind === "release" && !isAdmin(user)) return c.json({ error: "Releases trägt das Team ein." }, 403);
-    if (!rateLimit(`event:${user.id}`, 5, 3600_000)) return c.json({ error: "Bitte später weitere Events eintragen." }, 429);
+    if (!(await rateLimit(`event:${user.id}`, 5, 3600_000))) return c.json({ error: "Bitte später weitere Events eintragen." }, 429);
     const title = str(b.title, 120);
     const day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? String(b.day) : "";
     const t = day ? Date.parse(`${day}T12:00:00Z`) : NaN;
@@ -533,7 +547,7 @@ export function registerGrowth(app: any, hlp: {
   // ---------------------------- Shop-Statistik -----------------------------
   app.post("/api/listings/:id/view", async (c: any) => {
     const id = idParam(c);
-    if (!id || !rateLimit(`lview:${clientIp(c)}:${id}`, 1, 30 * 60_000)) return c.json({ ok: true });
+    if (!id || !(await rateLimit(`lview:${clientIp(c)}:${id}`, 1, 30 * 60_000))) return c.json({ ok: true });
     const [l] = await db.select({ userId: listings.userId }).from(listings).where(eq(listings.id, id)).limit(1);
     const viewer = await verifyIdentityToken(c);
     if (l && viewer?.id !== l.userId) {
@@ -571,11 +585,13 @@ export function registerGrowth(app: any, hlp: {
   // ------------------------------ CSV-Import -------------------------------
   app.post("/api/portfolio/import-rows", auth, async (c: any) => {
     const user = c.get("user"), plan: PlanId = c.get("plan");
-    if (!rateLimit(`import:${user.id}`, 30, 600_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`import:${user.id}`, 30, 600_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const b = await body(c);
     const input = (Array.isArray(b.rows) ? b.rows : []).slice(0, 40).map((r: any) => ({
       name: str(r?.name, 120), number: str(r?.number, 16), set: str(r?.set, 120),
       quantity: int(r?.quantity, 1, 999, 1), purchasePrice: money(r?.purchasePrice),
+      variant: normalizeVariant(r?.variant), condition: normalizeCondition(r?.condition),
+      lang: ["de", "en", "ja"].includes(String(r?.lang)) ? String(r.lang) : "de",
     })).filter((r: any) => r.name);
     const [cnt] = await db.select({ n: sql<number>`count(*)::int` }).from(portfolioItems).where(eq(portfolioItems.userId, user.id));
     const room = Math.max(0, PLANS[plan].portfolio - Number(cnt?.n ?? 0));
@@ -589,7 +605,7 @@ export function registerGrowth(app: any, hlp: {
       const card = hit ? await getCard(String(hit.id)) : null;
       await db.insert(portfolioItems).values({
         userId: user.id, cardId: card?.id ?? null, name: card?.name || r.name, image: card?.image || "",
-        quantity: r.quantity, purchasePrice: r.purchasePrice,
+        quantity: r.quantity, purchasePrice: r.purchasePrice, variant: r.variant, condition: r.condition, lang: r.lang,
       });
       if (card) matched++; else unmatched.push(r.name);
       done.add(i);
@@ -622,7 +638,7 @@ export function registerGrowth(app: any, hlp: {
   // ------------------------- KI-Zustandscheck (Grading) --------------------
   app.post("/api/scan/condition", auth, async (c: any) => {
     const user = c.get("user"), plan: PlanId = c.get("plan");
-    if (!rateLimit(`scan:${user.id}`, 6, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`scan:${user.id}`, 6, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const limit = await scanLimit(user.id, plan);
     const limitMsg = `Tageslimit erreicht: ${limit} Scans heute (Tarif ${PLANS[plan].label}${limit > PLANS[plan].scansPerDay ? " + Teilen-Bonus" : ""}). Tipp: Teile eine Karte – jeder neue Besucher bringt dir heute +1 Scan.`;
     if ((await scansToday(user.id)) >= limit) {
@@ -668,7 +684,7 @@ export function registerGrowth(app: any, hlp: {
   /** DSGVO-Auskunft: alle eigenen Daten als JSON-Datei. */
   app.get("/api/me/export", auth, async (c: any) => {
     const userId = c.get("user").id, profile: Profile = c.get("profile");
-    if (!rateLimit(`export:${userId}`, 5, 3600_000)) return c.json({ error: "Bitte später erneut versuchen." }, 429);
+    if (!(await rateLimit(`export:${userId}`, 5, 3600_000))) return c.json({ error: "Bitte später erneut versuchen." }, 429);
     const { stripeCustomerId, stripeSubscriptionId, ...p } = profile;
     const data = {
       exportedAt: new Date().toISOString(),
@@ -713,7 +729,7 @@ export function registerGrowth(app: any, hlp: {
   app.get("/api/prices", async (c: any) => {
     const ids = [...new Set(String(c.req.query("ids") || "").split(",").map((x) => x.trim()).filter((x) => CARD_ID_RE.test(x)))].slice(0, 40);
     if (!ids.length) return c.json({ prices: {} });
-    if (!rateLimit(`prices:${clientIp(c)}`, 20, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`prices:${clientIp(c)}`, 20, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const prices: Record<string, { trend: number | null; low: number | null; avg30: number | null; updated: string | null }> = {};
     await pool(ids, 4, async (id: string) => {
       const card = await getCard(id, 6 * 3600_000);
@@ -721,8 +737,8 @@ export function registerGrowth(app: any, hlp: {
       const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
       prices[id] = { trend: n(card.trend ?? card.avg), low: n(card.low), avg30: n(card.avg30), updated: card.priceUpdatedAt ? new Date(card.priceUpdatedAt).toISOString() : null };
     }, Date.now() + 15_000);
-    c.header("Cache-Control", "public, max-age=900");
-    c.header("Netlify-CDN-Cache-Control", "public, s-maxage=1800, stale-while-revalidate=86400");
+    // Nur Karten-IDs aus der Abfrage bestimmen das Ergebnis – kein Nutzerbezug
+    publicCache(c, "data", { sMaxAge: 900, swr: 86_400, varyQuery: ["ids"] });
     return c.json({ prices });
   });
 

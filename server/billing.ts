@@ -31,6 +31,38 @@ export async function getOrCreateCustomer(s: Stripe, profile: Profile) {
   return p.id;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 6: Checkout mit Stripe Tax (Umsatzsteuer je Land des Kunden, Abo & Boost = Plattform-Umsatz)
+// ---------------------------------------------------------------------------
+/** Fehler, die nur bedeuten „Stripe Tax ist im Dashboard (noch) nicht eingerichtet“ – dann ohne automatic_tax weiter. */
+export function taxNotActivated(e: any): boolean {
+  const msg = String(e?.raw?.message || e?.message || "");
+  const param = String(e?.raw?.param || e?.param || "");
+  if (e?.type && e.type !== "StripeInvalidRequestError") return false;
+  return param.startsWith("automatic_tax") || /automatic[_ ]tax|stripe tax|tax (settings|registration)|head office|origin address|not (been )?activated.*tax/i.test(msg);
+}
+
+/**
+ * Legt eine Checkout-Session mit automatischer Steuerberechnung an. Bestehende Kunden bekommen die im Checkout
+ * erfasste Rechnungsadresse gespeichert (Pflicht für Stripe Tax mit `customer`). Ist Stripe Tax nicht aktiviert,
+ * wird einmal ohne automatic_tax wiederholt und protokolliert – der Checkout bricht dadurch nie ab.
+ */
+export async function createTaxedCheckout(s: Stripe, params: Stripe.Checkout.SessionCreateParams) {
+  const taxed: Stripe.Checkout.SessionCreateParams = {
+    ...params,
+    automatic_tax: { enabled: true },
+    billing_address_collection: "required",
+    ...(params.customer ? { customer_update: { ...(params.customer_update || {}), address: "auto" } } : {}),
+  };
+  try {
+    return await s.checkout.sessions.create(taxed);
+  } catch (e: any) {
+    if (!taxNotActivated(e)) throw e;
+    console.warn("Stripe Tax nicht aktiviert – Checkout ohne automatische Steuerberechnung", e?.raw?.message || e?.message);
+    return s.checkout.sessions.create(params);
+  }
+}
+
 function periodEnd(sub: Stripe.Subscription): Date | null {
   const raw = (sub as any).current_period_end ?? sub.items?.data?.[0]?.current_period_end;
   return typeof raw === "number" ? new Date(raw * 1000) : null;

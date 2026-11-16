@@ -15,6 +15,8 @@ import {
   GRADE_COMPANIES, SUBMISSION_STATUS, type Availability,
 } from "./drops-logic.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
+import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
+import { shopCircuit } from "./resilience-logic.ts";
 
 const TAGS = () => ({
   amazon: str(process.env.AMAZON_PARTNER_TAG, 40),
@@ -76,11 +78,12 @@ async function readLimited(res: Response, maxBytes: number) {
 
 async function fetchProductPage(url: string) {
   if (!shopForUrl(url)) throw new Error("Shop nicht erlaubt");
-  const signal = AbortSignal.timeout(8000);
+  const signal = AbortSignal.timeout(10_000);
   let current = url;
   // Weiterleitungen manuell folgen: jedes Ziel muss wieder ein erlaubter Shop sein (kein SSRF über offene Redirects)
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const res = await fetch(current, {
+    // Circuit je Shop-Host: ein ausgefallener Shop sperrt nur sich selbst, nicht die übrigen Shops
+    const res = await resilientFetch(shopCircuit(current), current, {
       redirect: "manual",
       signal,
       headers: {
@@ -88,7 +91,7 @@ async function fetchProductPage(url: string) {
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": "de-DE,de;q=0.9",
       },
-    });
+    }, { timeoutMs: 8000, attempts: 2, totalMs: 10_000, threshold: 4 });
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
       try { await res.body?.cancel(); } catch {}
@@ -117,6 +120,8 @@ async function checkWatch(w: typeof restockWatches.$inferSelect) {
   try {
     result = await fetchProductPage(w.url);
   } catch (e: any) {
+    // Shop gerade gesperrt (Circuit offen): nicht als Fehler dieses Produkts zählen, im nächsten Lauf erneut
+    if (e instanceof CircuitOpenError) return { id: w.id, skipped: true };
     await db.update(restockWatches).set({ lastCheckedAt: new Date(), failCount: w.failCount + 1 }).where(eq(restockWatches.id, w.id));
     return { id: w.id, error: String(e?.message || e) };
   }
@@ -161,7 +166,7 @@ async function sendDrop(drop: typeof restockDrops.$inferSelect, subs: Sub[], dea
   const body = `${shop}${drop.city ? ` (${drop.city})` : ""} • ${priceText}`;
   let sent = 0;
   for (let i = 0; i < subs.length; i += 25) {
-    if (Date.now() > deadline) break;
+    if (Date.now() > deadline) { markPartial(`Zeitbudget: Alarm ${drop.id} nicht an alle ${subs.length} Abonnenten`); break; }
     await Promise.all(subs.slice(i, i + 25).map((s) => notify(s.userId, title, body, `/?tab=flip&sub=drops&drop=${drop.id}`).catch(() => {})));
     sent += Math.min(25, subs.length - i);
   }
@@ -222,11 +227,11 @@ export async function runRestockJobs({ deadlineMs = 20_000 } = {}) {
   )).orderBy(sql`${restockWatches.lastCheckedAt} ASC NULLS FIRST`).limit(30);
   const checks: any[] = [];
   for (let i = 0; i < due.length; i += 6) {
-    if (Date.now() > deadline - 8000) break;
+    if (Date.now() > deadline - 8000) { markPartial(`Zeitbudget: ${due.length - i} Produktseiten im nächsten Lauf`); break; }
     checks.push(...(await Promise.all(due.slice(i, i + 6).map(checkWatch))));
   }
   const sent = await dispatchDrops(deadline);
-  return { checked: checks.length, drops: checks.filter((c) => c.drop).length, errors: checks.filter((c) => c.error).length, ...sent };
+  return { checked: checks.length, drops: checks.filter((c) => c.drop).length, errors: checks.filter((c) => c.error).length, skippedOpenCircuit: checks.filter((c) => c.skipped).length, ...sent };
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +348,7 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
   // Community-Meldung: „Hier gibt es gerade UVP-Ware“
   app.post("/api/restock/report", auth, async (c: any) => {
     const b = await body(c), user = c.get("user"), profile = c.get("profile");
-    if (!rateLimit(`restock-report:${user.id}`, 5, 3600_000)) return c.json({ error: "Maximal 5 Meldungen pro Stunde." }, 429);
+    if (!(await rateLimit(`restock-report:${user.id}`, 5, 3600_000))) return c.json({ error: "Maximal 5 Meldungen pro Stunde." }, 429);
     const title = str(b.title, 100);
     if (title.length < 4) return c.json({ error: "Bitte gib an, welches Produkt es gibt (z. B. „151 Display“)." }, 400);
     const rawUrl = str(b.url, 500);
@@ -395,7 +400,7 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
       const min = Math.ceil((new Date(d.liveAt).getTime() + delay * 60_000 - Date.now()) / 60_000);
       return c.json({ error: `Dieser Drop ist für Premium schon offen – im Free-Tarif in ${min} Min.`, upgrade: true }, 402);
     }
-    if (rateLimit(`go:${clientIp(c)}`, 30, 60_000)) {
+    if ((await rateLimit(`go:${clientIp(c)}`, 30, 60_000))) {
       try { await db.insert(affiliateClicks).values({ partner: `restock-${d.shop}`, userId: viewer.userId }); } catch {}
     }
     const target = affiliateUrl(d.url, TAGS());
@@ -408,7 +413,7 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
     if (!w || !w.active) return c.redirect("/?tab=flip&sub=drops", 302);
     const viewer = await viewerPlan(c);
     if (watchLocked(w, PLANS[viewer.plan].restockDelayMin, viewer.admin)) return c.redirect("/?tab=flip&sub=drops", 302);
-    if (rateLimit(`go:${clientIp(c)}`, 30, 60_000)) {
+    if ((await rateLimit(`go:${clientIp(c)}`, 30, 60_000))) {
       try {
         await db.insert(affiliateClicks).values({ partner: `preorder-${w.shop}`, userId: viewer.userId });
       } catch {}
@@ -590,7 +595,7 @@ export function registerDrops(app: any, hlp: { auth: any; adminOnly: any; body: 
 
   app.post("/api/scan/fake", auth, async (c: any) => {
     const user = c.get("user"), plan: PlanId = c.get("plan");
-    if (!rateLimit(`fake:${user.id}`, 4, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`fake:${user.id}`, 4, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const limit = PLANS[plan].fakeChecksPerMonth;
     if ((await fakeChecksUsed(user.id)) >= limit) {
       return c.json({ error: `Du hast deine ${limit} Fake-Check${limit > 1 ? "s" : ""} für diesen Monat genutzt (Tarif ${PLANS[plan].label}).`, upgrade: true }, 402);

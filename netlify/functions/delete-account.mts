@@ -4,6 +4,7 @@ import { getStore } from "@netlify/blobs";
 import { eq, sql } from "drizzle-orm";
 import Stripe from "stripe";
 import { db, profiles, listings } from "../../db/index.ts";
+import { log } from "../../server/log.ts";
 
 // Konto löschen (DSGVO Art. 17): Abo sofort beenden, alle Daten entfernen, Login löschen.
 // Läuft als Netlify Function, weil nur hier das Löschen des Identity-Logins möglich ist.
@@ -50,33 +51,90 @@ export default async (req: Request) => {
   if (openCount > 0) {
     return Response.json({ error: `Du hast noch ${openCount} laufende Käufe/Verkäufe mit Käuferschutz. Bitte schließe sie ab (Erhalt bestätigen oder Erstattung), dann kannst du dein Konto löschen.` }, { status: 409 });
   }
-  if (profile?.stripeSubscriptionId && process.env.STRIPE_SECRET_KEY) {
+  // Jeder Schritt einzeln und fehlertolerant; das Ergebnis zeigt, was erledigt wurde (idempotent wiederholbar)
+  const steps: Record<string, "ok" | "skipped" | "failed"> = {};
+  const step = async (name: string, fn: () => Promise<"ok" | "skipped">) => {
+    try { steps[name] = await fn(); } catch (e) { steps[name] = "failed"; log.error("delete-account", `Schritt ${name} fehlgeschlagen`, { userId: user.id, err: e }); }
+  };
+  const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+  const notFound = (e: any) => e?.code === "resource_missing" || e?.statusCode === 404;
+
+  // 1. Stripe: Abo sofort beenden, danach den Kunden löschen (entfernt gespeicherte Zahlungsmethoden; Rechnungen bleiben
+  //    bei Stripe wegen der gesetzlichen Aufbewahrungspflicht erhalten)
+  await step("stripeSubscription", async () => {
+    if (!stripe || !profile?.stripeSubscriptionId) return "skipped";
+    try { await stripe.subscriptions.cancel(profile.stripeSubscriptionId); } catch (e) { if (!notFound(e)) throw e; }
+    return "ok";
+  });
+  await step("stripeCustomer", async () => {
+    if (!stripe || !profile?.stripeCustomerId) return "skipped";
+    try { await stripe.customers.del(profile.stripeCustomerId); } catch (e) { if (!notFound(e)) throw e; }
+    return "ok";
+  });
+  // 2. Stripe Connect: Verkäuferkonto löschen. Mit Restguthaben lehnt Stripe das ab – dann Auszahlungen stoppen
+  //    (Konto bleibt bei Stripe gesperrt bestehen, bis der Saldo ausgeglichen ist) und protokollieren.
+  await step("stripeConnect", async () => {
+    if (!stripe || !profile?.stripeAccountId) return "skipped";
     try {
-      await new Stripe(process.env.STRIPE_SECRET_KEY).subscriptions.cancel(profile.stripeSubscriptionId);
-    } catch (e) {
-      console.warn("Abo beim Löschen nicht gekündigt", e);
+      await stripe.accounts.del(profile.stripeAccountId);
+    } catch (e: any) {
+      if (notFound(e)) return "ok";
+      await stripe.accounts.update(profile.stripeAccountId, { metadata: { deleted_user: "true", deleted_at: new Date().toISOString() } }).catch(() => {});
+      throw e;
     }
-  }
-  if (profile) {
-    // Hochgeladene Inserat-Fotos entfernen
+    return "ok";
+  });
+  // 3. Firebase Realtime Database: Online-Anzeige (presence/<anonyme Firebase-UID>). Der Browser entfernt seinen Eintrag
+  //    vor dem Aufruf selbst; serverseitig zusätzlich per REST, wenn ein Datenbank-Schlüssel hinterlegt ist.
+  await step("firebasePresence", async () => {
+    const fbUid = typeof body?.firebaseUid === "string" && /^[A-Za-z0-9]{10,64}$/.test(body.firebaseUid) ? body.firebaseUid : "";
+    const secret = String(process.env.FIREBASE_DATABASE_SECRET || "").trim();
+    const dbUrl = String(process.env.FIREBASE_DATABASE_URL || "https://pokeswiperadar-default-rtdb.europe-west1.firebasedatabase.app").replace(/\/+$/, "");
+    if (!fbUid) return "skipped";
+    if (!secret) return body?.firebaseCleared === true ? "ok" : "skipped";
+    const res = await fetch(`${dbUrl}/pokeswipe_radar/presence/${fbUid}.json?auth=${encodeURIComponent(secret)}`, { method: "DELETE", signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`Firebase ${res.status}`);
+    return "ok";
+  });
+  // 4. Netlify Blobs: hochgeladene Inserat- und Pull-Wall-Fotos, Vorschaubilder von Profil, Shop und Beiträgen
+  await step("blobs", async () => {
+    if (!profile) return "skipped";
     const own = await db.select({ image: listings.image }).from(listings).where(eq(listings.userId, user.id));
-    const store = getStore("listing-images");
-    // Pull-Wall-Fotos (Phase 4) liegen im selben Speicher
-    const posts = (await db.execute(sql`SELECT image FROM community_posts WHERE user_id = ${user.id}`)) as any;
+    const posts = (await db.execute(sql`SELECT id, image FROM community_posts WHERE user_id = ${user.id}`)) as any;
     const postRows: any[] = Array.isArray(posts) ? posts : posts?.rows ?? [];
+    const images = getStore("listing-images");
     for (const l of [...own, ...postRows]) {
       const key = /^\/api\/images\/([a-f0-9-]{36})$/.exec(String(l.image || ""))?.[1];
-      if (key) await store.delete(key).catch(() => {});
+      if (key) await images.delete(key);
     }
-    await db.delete(profiles).where(eq(profiles.userId, user.id)); // alle verknüpften Daten folgen per Cascade
+    const og = getStore("og-images");
+    const prefixes = [`u-${user.id}-`, `shop-${user.id}-`, ...postRows.map((p) => `p-${p.id}-`)];
+    for (const prefix of prefixes) {
+      const { blobs } = await og.list({ prefix });
+      for (const b of blobs) await og.delete(b.key);
+    }
+    return "ok";
+  });
+  // 5. Datenbank: Profil löschen – alle verknüpften Zeilen (Portfolio, Inserate, Tausche, Matches, Steuerdaten,
+  //    DAC7-Zähler, Likes …) folgen per ON DELETE CASCADE
+  await step("database", async () => {
+    if (!profile) return "skipped";
+    await db.delete(profiles).where(eq(profiles.userId, user.id));
+    return "ok";
+  });
+  if (steps.database === "failed") {
+    return Response.json({ error: "Löschen fehlgeschlagen. Bitte versuche es erneut oder wende dich an den Support.", steps }, { status: 500 });
   }
   try {
     await admin.deleteUser(user.id);
   } catch (e) {
-    console.error("Identity-Nutzer nicht gelöscht", e);
-    return Response.json({ ok: true, partial: true, message: "Deine Daten sind gelöscht. Der Login wird vom Team manuell entfernt." });
+    log.error("delete-account", "Identity-Nutzer nicht gelöscht", { userId: user.id, err: e });
+    return Response.json({ ok: true, partial: true, steps, message: "Deine Daten sind gelöscht. Der Login wird vom Team manuell entfernt." });
   }
-  return Response.json({ ok: true });
+  steps.identity = "ok";
+  const partial = Object.values(steps).includes("failed");
+  if (partial) log.warn("delete-account", "Konto gelöscht, einzelne Schritte fehlgeschlagen", { userId: user.id, steps });
+  return Response.json({ ok: true, partial, steps });
 };
 
 export const config: Config = {

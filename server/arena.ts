@@ -137,7 +137,7 @@ const layoutFor = (lang: string) => (lang === "ja" ? PACK_LAYOUTS.ja : PACK_LAYO
 export function registerArena(app: any, { auth, body }: Hlp) {
   app.post("/api/swipe/feedback", auth, async (c: any) => {
     const userId = c.get("user").id;
-    if (!rateLimit(`swfb:${userId}`, 30, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`swfb:${userId}`, 30, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const b = await body(c);
     const events = (Array.isArray(b.events) ? b.events : []).slice(0, 50).map(validEvent).filter(Boolean) as SwipeEvent[];
     let current = await loadPrefs(userId);
@@ -161,7 +161,7 @@ export function registerArena(app: any, { auth, body }: Hlp) {
 
   // Öffnet 1–36 Booster eines Sets (36 = ganzes Display). Kein Schreibzugriff – die Bilanz führt der Browser.
   app.get("/api/booster/open", async (c: any) => {
-    if (!rateLimit(`boost:${clientIp(c)}`, 40, 60_000)) return c.json({ error: "Bitte kurz warten – zu viele Booster auf einmal." }, 429);
+    if (!(await rateLimit(`boost:${clientIp(c)}`, 40, 60_000))) return c.json({ error: "Bitte kurz warten – zu viele Booster auf einmal." }, 429);
     const set = parseSet(c.req.query("set"));
     if (!set) return c.json({ error: "Unbekanntes Set" }, 400);
     const count = int(c.req.query("packs"), 1, 36, 1);
@@ -180,7 +180,7 @@ export function registerArena(app: any, { auth, body }: Hlp) {
 
   // Erwartungswert je Booster und Display mit den Zieh-Quoten je Slot (für „Rip or Keep“ und die Simulator-Anzeige)
   app.get("/api/booster/ev", async (c: any) => {
-    if (!rateLimit(`boostev:${clientIp(c)}`, 60, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`boostev:${clientIp(c)}`, 60, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const set = parseSet(c.req.query("set"));
     if (!set) return c.json({ error: "Unbekanntes Set" }, 400);
     const entry = await loadPool(set.lang, set.id);

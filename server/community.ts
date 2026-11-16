@@ -85,11 +85,11 @@ export async function guardWrite(c: any, kind: "chat" | "post" | "comment" | "de
   }
   const trust = (await trustFor([user.id])).get(user.id)?.score ?? 0;
   const lim = writeLimits(trust, kind);
-  if (!rateLimit(`cw:${kind}:${user.id}`, lim.perMinute, 60_000)) return { error: "Bitte nicht so schnell – kurz warten.", status: 429 };
+  if (!(await rateLimit(`cw:${kind}:${user.id}`, lim.perMinute, 60_000))) return { error: "Bitte nicht so schnell – kurz warten.", status: 429 };
   // Radar: ein Pin pro Konto (wird überschrieben) – dort zählt nur die Zeit-Bremse, keine Tabellen-Zählung
   let recent: string[] = [];
   if (kind === "radar") {
-    if (!rateLimit(`cw:radar-h:${user.id}`, lim.perHour, 3600_000)) return { error: `Stündliches Limit erreicht (${lim.perHour} Änderungen am Radar-Pin).`, status: 429 };
+    if (!(await rateLimit(`cw:radar-h:${user.id}`, lim.perHour, 3600_000))) return { error: `Stündliches Limit erreicht (${lim.perHour} Änderungen am Radar-Pin).`, status: 429 };
   } else {
     const table = kind === "chat" ? sql`chat_messages` : kind === "post" ? sql`community_posts` : kind === "deal" ? sql`community_deals` : sql`community_comments`;
     const [cnt] = rows(await db.execute(sql`
@@ -172,9 +172,20 @@ export async function afterCommunityReport(targetType: string, targetId: string)
     const t: any = contentTable(targetType);
     const [row] = await db.update(t).set({ status: "hidden", flagReason: `${AUTO_HIDE_REPORTS}+ Meldungen` })
       .where(and(eq(t.id, id), eq(t.status, "visible"))).returning({ userId: t.userId });
-    if (row) await db.insert(moderationLog).values({ action: "auto_hide", targetType, targetId: String(id), userId: String(row.userId), reason: `${Number(r.n)} Meldungen` });
+    if (row) {
+      await db.insert(moderationLog).values({ action: "auto_hide", targetType, targetId: String(id), userId: String(row.userId), reason: `${Number(r.n)} Meldungen` });
+      await notify(String(row.userId), "🛡️ Inhalt vorläufig ausgeblendet", statementOfReasons({ targetType, decision: "bis zur Prüfung ausgeblendet", reason: `${Number(r.n)} Meldungen anderer Nutzer`, automated: true }), SOR_LINK);
+    }
   }
 }
+
+// Phase 6: Begründung nach Art. 17 DSA (Entscheidung, Grund, Rechtsbehelfe) – kurz genug für Mitteilung & Push
+const TARGET_LABEL: Record<string, string> = { post: "Pull-Wall-Beitrag", comment: "Kommentar", chat: "Chat-Nachricht", deal: "Community-Deal", radar: "Radar-Pin", user: "Konto" };
+export function statementOfReasons(o: { targetType: string; decision: string; reason: string; automated?: boolean }) {
+  const ground = o.reason ? o.reason.slice(0, 85) : "Verstoß gegen die Community-Regeln";
+  return `${TARGET_LABEL[o.targetType] || "Inhalt"}: ${o.decision}. Begründung: ${ground} (§ 8 AGB, ${o.automated ? "automatisch nach Meldungen" : "Prüfung durch das Team"}). Widerspruch: binnen 6 Monaten kostenlos per E-Mail an die Adresse im Impressum – ein Mensch prüft erneut (Art. 20 DSA). Außergerichtliche Streitbeilegung möglich (Art. 21 DSA, § 8b AGB).`;
+}
+const SOR_LINK = "/rechtliches#agb";
 
 /** Wendet eine Moderations-Aktion an (auch aus der allgemeinen Meldungs-Liste der Admin-Zentrale). */
 export async function applyModeration(o: {
@@ -195,14 +206,18 @@ export async function applyModeration(o: {
       const status = o.action === "restore" ? "visible" : o.action === "hide" ? "hidden" : "removed";
       if (!(await setContentStatus(o.targetType, contentId, status, o.action === "restore" ? null : reason || "Moderation"))) return { ok: false, error: "Nicht gefunden" };
       await log(o.action);
-      if (o.action === "remove") await notify(userId, "🛡️ Beitrag entfernt", reason || "Ein Beitrag von dir verstieß gegen die Community-Regeln.");
+      if (o.action !== "restore") {
+        await notify(userId, o.action === "remove" ? "🛡️ Inhalt entfernt" : "🛡️ Inhalt ausgeblendet",
+          statementOfReasons({ targetType: o.targetType, decision: o.action === "remove" ? "entfernt" : "ausgeblendet", reason }), SOR_LINK);
+      }
       break;
     }
     case "mute": {
       const days = Math.min(90, Math.max(1, Math.round(Number(o.days) || 1)));
       await db.update(profiles).set({ mutedUntil: new Date(Date.now() + days * 86400_000) }).where(eq(profiles.userId, userId));
       await log("mute");
-      await notify(userId, `🔇 ${days} Tag${days > 1 ? "e" : ""} stummgeschaltet`, reason || "Du kannst vorübergehend nicht in der Community schreiben.");
+      await notify(userId, `🔇 ${days} Tag${days > 1 ? "e" : ""} stummgeschaltet`,
+        statementOfReasons({ targetType: "user", decision: `${days} Tag${days > 1 ? "e" : ""} keine Community-Beiträge möglich`, reason }), SOR_LINK);
       break;
     }
     case "unmute":
@@ -217,6 +232,7 @@ export async function applyModeration(o: {
       }
       await db.execute(sql`UPDATE listings SET status = 'removed' WHERE user_id = ${userId} AND status = 'active'`);
       await log("ban");
+      await notify(userId, "⛔ Konto gesperrt", statementOfReasons({ targetType: "user", decision: "gesperrt, Inhalte ausgeblendet und Inserate entfernt", reason }), SOR_LINK);
       break;
     case "unban":
       await db.update(profiles).set({ banned: false }).where(eq(profiles.userId, userId));
@@ -284,7 +300,7 @@ export function registerCommunity(app: any, hlp: Hlp) {
 
   // ---------------- Pull-Wall / Social Feed ----------------
   app.get("/api/community/feed", async (c: any) => {
-    if (!rateLimit(`feed:${clientIp(c)}`, 120, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`feed:${clientIp(c)}`, 120, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const u = await viewer(c);
     const posts = await loadPosts({
       viewerId: u?.id, before: int(c.req.query("before"), 0, 2 ** 31 - 1, 0) || undefined,
@@ -347,7 +363,7 @@ export function registerCommunity(app: any, hlp: Hlp) {
   app.post("/api/community/posts/:id/like", auth, async (c: any) => {
     const user: AuthUser = c.get("user");
     const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
-    if (!rateLimit(`like:${user.id}`, 60, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`like:${user.id}`, 60, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const [post] = await db.select({ id: communityPosts.id, userId: communityPosts.userId }).from(communityPosts)
       .where(and(eq(communityPosts.id, id), eq(communityPosts.status, "visible"))).limit(1);
     if (!post) return c.json({ error: "Beitrag nicht gefunden" }, 404);
@@ -398,7 +414,7 @@ export function registerCommunity(app: any, hlp: Hlp) {
 
   // ---------------- Live-Chat (Abfrage alle paar Sekunden) ----------------
   app.get("/api/community/chat", async (c: any) => {
-    if (!rateLimit(`chatr:${clientIp(c)}`, 90, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`chatr:${clientIp(c)}`, 90, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const u = await viewer(c);
     const after = int(c.req.query("after"), 0, 2 ** 31 - 1, 0);
     const blocked = await blockedIds(u?.id);
@@ -469,7 +485,7 @@ export function registerCommunity(app: any, hlp: Hlp) {
     const user: AuthUser = c.get("user");
     const target = str(c.req.param("id"), 80);
     if (!target || target === user.id) return c.json({ error: "Du kannst dir nicht selbst folgen." }, 400);
-    if (!rateLimit(`follow:${user.id}`, 30, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`follow:${user.id}`, 30, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const [p] = await db.select({ id: profiles.userId, banned: profiles.banned }).from(profiles).where(eq(profiles.userId, target)).limit(1);
     if (!p || p.banned) return c.json({ error: "Nutzer nicht gefunden" }, 404);
     if (await isBlockedBetween(user.id, target)) return c.json({ error: "Nicht möglich." }, 403);

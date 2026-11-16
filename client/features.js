@@ -4,7 +4,7 @@ import {
   $, esc, jsArg, safeUrl, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart,
 } from "./core.js";
-import { liveScanPanelHtml, liveScanApi, onLiveScanShown, initLiveScanner } from "./scanner/live-scanner.js";
+import { liveScanPlaceholderHtml, lazyLiveScanApi, onLiveScanShownLazy } from "./lazy.js";
 import { showSet, renderSetDetail, getCurrentSet, quickSetsHtml, dupesPanelHtml, collectorApi } from "./collector.js";
 import {
   injectGrowthPanels, afterAuthGrowth, routeGrowth, growthApi, loadWishlist, loadCalendar, loadRanks, adminGrowthHtml,
@@ -185,7 +185,7 @@ export function openPhotoScanner() {
 
 /** „Karte scannen“: öffnet den Live-Scanner auf dem Gerät und startet die Kamera. */
 export function openScanner() {
-  liveScanApi.openLiveScanner();
+  lazyLiveScanApi.openLiveScanner();
 }
 
 // ===========================================================================
@@ -752,7 +752,7 @@ const subLoaders = {
   "portfolio:sets": () => { loadTrackedSets(); loadSetList(); },
   "portfolio:grading": () => loadPartners(),
   "scan:camera": () => renderScanLeft(),
-  "scan:live": () => onLiveScanShown(),
+  "scan:live": () => onLiveScanShownLazy(),
   "scan:fake": () => loadFakeLeft(),
   "portfolio:graded": () => loadGraded(),
   "flip:drops": () => loadDrops(),
@@ -825,7 +825,7 @@ function injectPanels() {
     tmp.innerHTML = html;
     section[where](tmp.firstElementChild);
   };
-  if (!$("ps-live-scan")) add("scan", liveScanPanelHtml(), "prepend");
+  if (!$("ps-live-scan")) add("scan", liveScanPlaceholderHtml(), "prepend");
   if (!$("ps-sealed")) add("flip", sealedPanelHtml());
   if (!$("ps-shops")) add("map", shopsPanelHtml());
   if (!$("ps-dupes") && $("portfolio-list")) {
@@ -883,7 +883,7 @@ function tidyLayout() {
 // ===========================================================================
 export const featureApi = {
   enablePush, disablePush, openScanner, openPhotoScanner, scanFile: (file) => handleScan(file), openSet, trackSet, untrackSet,
-  ...liveScanApi,
+  ...lazyLiveScanApi,
   ...collectorApi,
   sealedKind: (k) => { sealedKind = k; renderSealed(); },
   openSealed, createSealedAlert, deleteSealedAlert, listSealed, openShop, openShopSettings, saveShop, saveShopBranding, shopAccentPick, shareLink,
@@ -900,7 +900,6 @@ export function initFeatures() {
   injectGrowthPanels();
   injectDropsPanels();
   buildSubtabs();
-  initLiveScanner();
   injectInviteButton();
   window.enableBrowserPush = () => (state.user ? enablePush() : requireLogin());
 }

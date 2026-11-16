@@ -284,6 +284,8 @@ async function publish(list) {
     price: d.unit ? Number(d.unit).toFixed(2) : "",
     want: "Verkauf • Preis pro Stück • Near Mint",
     city: state.me?.city || "",
+    variant: d.variant || "normal",
+    ...(d.itemId ? { portfolioItemId: d.itemId } : {}),
   })).filter((i) => i.price);
   if (!items.length) return toast("Kein Preis", "Für diese Karten gibt es noch keinen Marktpreis – bitte manuell inserieren.");
   let created = 0, skipped = 0;

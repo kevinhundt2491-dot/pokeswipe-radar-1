@@ -8,7 +8,7 @@
     "db:generate": "drizzle-kit generate",
     "test": "node --test \"tests/*.test.ts\"",
     "build:css": "tailwindcss -i client/tailwind.css -o public/assets/tailwind.css --minify",
-    "build:js": "esbuild client/main.js --bundle --minify --format=esm --target=es2020 --outfile=public/assets/app.js",
+    "build:js": "esbuild client/main.js --bundle --splitting --minify --format=esm --target=es2020 --outdir=public/assets --entry-names=app --chunk-names=chunks/[name]-[hash]",
     "build:worker": "esbuild client/scanner/scan-worker.js --bundle --minify --format=iife --target=es2020 --outfile=public/assets/scan-worker.js",
     "cap:add": "npx cap add ios && npx cap add android && node scripts/cap-native-setup.mjs && npx cap sync",
     "cap:sync": "npx cap sync && node scripts/cap-native-setup.mjs",

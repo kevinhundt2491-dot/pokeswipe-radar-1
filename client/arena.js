@@ -172,6 +172,9 @@ function toDeckItem(it) {
     printId: it.printId || null,
     cardId: it.cardId || null,
     listingId: it.listingId || null,
+    variant: it.variant || "normal",
+    condition: it.condition || "",
+    liked: Boolean(it.liked),
     title,
     setTag: it.setName || "",
     setFull: isListing ? `${setFull}${it.setName ? "" : "Tausch-Hub"}` : setFull,
@@ -252,12 +255,29 @@ async function loadMore() {
   } catch { /* Stapel bleibt, beim nächsten Wischen erneut versuchen */ }
 }
 
+// Rechts-Wisch auf ein Tausch-Inserat = verbindlicher Like. Der Server prüft sofort auf gegenseitiges Interesse
+// und liefert bei einem Match den vorausgefüllten Tauschvorschlag.
+async function likeListing(item) {
+  if (!state.user) { toast("🔐 Anmelden zum Tauschen", "Mit Konto wird dein Like gespeichert – bei gegenseitigem Interesse gibt es ein Match."); return; }
+  try {
+    const r = await api("/api/swipe/like", { method: "POST", body: { listingId: item.listingId } });
+    if (r?.match?.created && r.proposal) window.PS?.openMatchProposal?.(r.proposal);
+    else if (r?.match) toast("🔥 Ihr habt schon ein Match", "Öffne „Meine Matches“, um den Tausch vorzuschlagen.");
+    else if (r?.new) toast("💚 Gemerkt", `${item.seller || "Der Sammler"} sieht dein Interesse, sobald er auch etwas von dir sucht.`);
+  } catch (e) {
+    if (e.status === 404) toast("Inserat", "Dieses Inserat ist nicht mehr verfügbar.");
+    else handleError(e);
+  }
+}
+
 // Rechts-Wisch („Merken“): mit Konto zusätzlich auf die Wunschliste (deutsche/englische Karten)
 async function onMatch(item) {
-  if (!state.user || !item?.cardId || item.kind === "listing") return;
+  if (item?.kind === "listing" && item.listingId) return likeListing(item);
+  if (!state.user || !item?.cardId) return;
   try {
     const r = await api("/api/wishlist", { method: "POST", body: { cardId: item.cardId } });
-    if (r?.offers) toast("💛 Auf der Wunschliste", `${item.title}: ${r.offers} passende${r.offers === 1 ? "s" : ""} Angebot${r.offers === 1 ? "" : "e"} im Tausch-Hub!`);
+    if (r?.matches) toast("🔥 It's a Match!", "Ein Sammler, der diese Karte anbietet, möchte auch etwas von dir. Schau in „Meine Matches“.");
+    else if (r?.offers) toast("💛 Auf der Wunschliste", `${item.title}: ${r.offers} passende${r.offers === 1 ? "s" : ""} Angebot${r.offers === 1 ? "" : "e"} im Tausch-Hub!`);
   } catch (e) {
     if (e.upgrade) toast("💛 Wunschliste voll", e.message);
   }

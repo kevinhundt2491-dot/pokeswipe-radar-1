@@ -276,7 +276,7 @@ export function registerFeatures(app: any, h: {
   });
 
   app.post("/api/push/test", auth, async (c: any) => {
-    if (!rateLimit(`pushtest:${c.get("user").id}`, 3, 600_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`pushtest:${c.get("user").id}`, 3, 600_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     await sendPush(c.get("user").id, { title: "⚡ PokeSwipe Push funktioniert!", body: "Du bekommst Preisalarme und Tausch-Nachrichten jetzt auch bei geschlossener App.", url: "/" });
     return c.json({ ok: true });
   });
@@ -284,7 +284,7 @@ export function registerFeatures(app: any, h: {
   // ---------------------------- Kamera-Scan (KI) ---------------------------
   app.post("/api/scan", auth, async (c: any) => {
     const user = c.get("user"), plan: PlanId = c.get("plan");
-    if (!rateLimit(`scan:${user.id}`, 6, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`scan:${user.id}`, 6, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const limit = await scanLimit(user.id, plan);
     const limitMsg = `Tageslimit erreicht: ${limit} Scans heute (Tarif ${PLANS[plan].label}${limit > PLANS[plan].scansPerDay ? " + Teilen-Bonus" : ""}). Tipp: Teile eine Karte – jeder neue Besucher bringt dir heute +1 Scan.`;
     if ((await scansToday(user.id)) >= limit) {
@@ -542,7 +542,7 @@ export function registerFeatures(app: any, h: {
   app.get("/api/go/:partner", async (c: any) => {
     const p = PARTNERS.find((x) => x.id === c.req.param("partner"));
     if (!p) return c.redirect("/", 302);
-    if (rateLimit(`go:${clientIp(c)}`, 30, 60_000)) {
+    if ((await rateLimit(`go:${clientIp(c)}`, 30, 60_000))) {
       try {
         const u = await verifyIdentityToken(c);
         await db.insert(affiliateClicks).values({ partner: p.id, userId: u?.id ?? null });

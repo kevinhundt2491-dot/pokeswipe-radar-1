@@ -13,6 +13,7 @@ import { SITE, h, cdnImage, pageShell, recordShopView } from "./growth.ts";
 import { ogJpeg, imgKey } from "./profiles.ts";
 import { blockedIds } from "./community.ts";
 import { str, rows, rateLimit, clientIp, euro } from "./util.ts";
+import { publicCache } from "./cache.ts";
 
 type Hlp = {
   auth: any; body: (c: any) => Promise<Record<string, any>>;
@@ -164,11 +165,12 @@ export function registerShops(app: any, { auth, body, storeDataUrlImage, ratingO
       FROM profiles p
       WHERE p.shop_slug IS NOT NULL AND p.plan = 'pro' AND p.plan_until > now() AND NOT p.banned
       ORDER BY rating_count DESC, listing_count DESC LIMIT 60`));
+    publicCache(c, "data", { sMaxAge: 300, swr: 3600 });
     return c.json({ shops: list.map((s: any) => ({ ...s, shop_logo: safeOwnImage(s.shop_logo), shop_banner: safeOwnImage(s.shop_banner), shop_accent: accentOf(s.shop_accent) })) });
   });
 
   app.get("/api/shops/:slug", async (c: any) => {
-    if (!rateLimit(`shopapi:${clientIp(c)}`, 90, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`shopapi:${clientIp(c)}`, 90, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const d = await shopDetails(str(c.req.param("slug"), 30).toLowerCase(), ratingOf, String(c.req.query("lang") || ""));
     if (!d) return c.json({ error: "Shop nicht gefunden" }, 404);
     const viewer = await verifyIdentityToken(c).catch(() => null);
@@ -181,7 +183,7 @@ export function registerShops(app: any, { auth, body, storeDataUrlImage, ratingO
   app.put("/api/shop/branding", auth, async (c: any) => {
     const user = c.get("user"), plan = c.get("plan") as PlanId;
     if (!PLANS[plan].shop) return c.json({ error: "Shop-Branding ist im Pro-Trader-Tarif enthalten.", upgrade: true }, 402);
-    if (!rateLimit(`shopbrand:${user.id}`, 10, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`shopbrand:${user.id}`, 10, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const b = await body(c);
     const updates: Record<string, string> = {};
     for (const [field, col] of [["banner", "shopBanner"], ["logo", "shopLogo"]] as const) {
@@ -201,7 +203,7 @@ export function registerShops(app: any, { auth, body, storeDataUrlImage, ratingO
   // Öffentliche Shop-Seite (Google, WhatsApp-/Instagram-Vorschau); die App öffnet den Shop über /?shop=<name>
   app.get("/shop/:slug", async (c: any) => {
     const slug = str(c.req.param("slug"), 30).toLowerCase();
-    if (!rateLimit(`shoppage:${clientIp(c)}`, 60, 60_000)) return c.text("Zu viele Anfragen", 429);
+    if (!(await rateLimit(`shoppage:${clientIp(c)}`, 60, 60_000))) return c.text("Zu viele Anfragen", 429);
     const d = await shopDetails(slug, ratingOf, String(c.req.query("lang") || ""));
     if (!d) {
       return c.html(pageShell({
@@ -210,8 +212,8 @@ export function registerShops(app: any, { auth, body, storeDataUrlImage, ratingO
       }), 404);
     }
     await recordShopView(c, d.profile.userId);
-    c.header("Cache-Control", "public, max-age=60");
-    c.header("Netlify-CDN-Cache-Control", "public, s-maxage=120, stale-while-revalidate=600");
+    // Seite ist nicht personalisiert; kurze CDN-Zeit, damit Inventar und Aufrufzähler aktuell bleiben
+    publicCache(c, "page", { sMaxAge: 120, swr: 600, varyQuery: ["lang"] });
     return c.html(shopPage(d));
   });
 
@@ -225,8 +227,8 @@ export function registerShops(app: any, { auth, body, storeDataUrlImage, ratingO
       ORDER BY l.price DESC LIMIT 5`)).map((r: any) => String(r.image));
     const accent = SHOP_ACCENTS[accentOf(p.shopAccent)];
     const jpg = await ogJpeg(imgKey(`shop-${p.userId}-${accentOf(p.shopAccent)}`, imgs), imgs, accent);
-    c.header("Netlify-CDN-Cache-Control", "public, s-maxage=21600, stale-while-revalidate=86400");
-    return c.body(jpg, 200, { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600" });
+    publicCache(c, "og", { sMaxAge: 21_600, swr: 86_400 });
+    return c.body(jpg, 200, { "Content-Type": "image/jpeg" });
   });
 }
 

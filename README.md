@@ -265,3 +265,26 @@ Make-Felder `caption`, `title`, `hashtags`, `hashtags_json`, `meta` und `caption
 Dafür erlauben `X-Frame-Options: SAMEORIGIN` und `frame-ancestors 'self'` das Einbetten nur vom eigenen Ursprung.
 
 Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorgabe nur in diesem Browser.
+
+## Phase 6 – Varianten, echtes Swipe-Trading, Suche, Plattform-Pflichten, Härtung
+
+- **Varianten-Ebene** – Normal, Reverse Holo, Holo, 1st Edition, Shadowless, Promo als eigene Einheit in Portfolio, Inseraten,
+  Wunschliste, CSV-Import und Tausch. Reverse-Holo-Preise von Cardmarket getrennt gespeichert (`cards.reverse_*`, `price_history.reverse_*`),
+  TCGplayer-Variantenpreise je Druck (`card_prints.variant_prices`), Zustandsfaktoren (EX 85 %, GD 70 %, LP 60 %, PL 45 %, PO 30 %).
+  Logik: `server/variant-logic.ts`
+- **Echtes Swipe-Trading** – Rechts-Swipe auf ein Inserat = `swipe_likes`; gegenseitiges Interesse (Like oder Wunschliste) erzeugt
+  sofort ein `trade_matches`-Match mit Push und vorausgefülltem Tauschvorschlag. Tausche bestehen aus `trade_items` (Karten aus der Sammlung)
+  plus optionalem Wertausgleich und laufen über Annahme → Versand je Seite (Sendungsnummer) → Erhalt je Seite → Abschluss (Karten wechseln
+  die Sammlung). `server/trading.ts`, `server/trading-logic.ts`, `client/trading.js`
+- **Kartensuche** – `GET /api/search` über den eigenen Katalog (DE + EN/JA), `pg_trgm`-Indizes, Nummern („4/102“), Set-Kürzel, Sprache,
+  Variante, Seltenheit, Preis; CDN-gecacht. Eine zentrale Client-Funktion (`client/search.js`)
+- **Stripe** – Kundenportal (`POST /api/billing/portal`), Stripe Tax im Abo-Checkout (fällt ohne Einrichtung automatisch zurück),
+  Rückbuchungen (`charge.dispute.*`): Bestellung einfrieren, Auszahlung zurückholen, Konto markieren
+- **Betrugsschutz & Pflichten** – Treuhand-Wertgrenzen je Vertrauensstufe, DAC7-Zähler, Steuerdaten-Formular, Admin-Auswertung und
+  BZSt-Export (`server/dac7.ts`), DSA-Melde- und Abhilfeverfahren (AGB § 8b) mit Begründung bei jeder Moderationsentscheidung,
+  Set-Vollständigkeits-Report, vollständige Kontolöschung (Stripe-Kunde, Connect-Konto, Firebase-Präsenz, Blobs)
+- **Datenschutzerklärung** – eigenständig unter `/datenschutz` (`server/privacy.ts`)
+- **Härtung** – verteiltes Rate-Limiting (`rate_limits`), Token-Vorprüfung + Cache, strukturiertes Logging (`server/log.ts`, `error_log`),
+  Circuit-Breaker/Backoff/Zeitbudget für alle geplanten Jobs (`server/resilience.ts`, `job_runs`, `job_circuits`), CDN-Cache für öffentliche
+  Seiten (`server/cache.ts`), strikte CSP ohne `'unsafe-inline'` in `script-src` (Inline-Skripte ausgelagert nach `public/js/`,
+  on…-Attribute über `public/js/csp-handlers.js`), Code-Splitting (Reel-Studio, Auto-Reels, Live-Scanner, Booster als eigene Chunks)

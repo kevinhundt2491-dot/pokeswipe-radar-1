@@ -1,4 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { createHash } from "node:crypto";
 
 /** Begrenzt Text auf eine Länge und entfernt Steuerzeichen. */
 export function str(v: unknown, max: number): string {
@@ -21,18 +22,67 @@ export function int(v: unknown, min: number, max: number, fallback: number) {
 
 export const rows = <T = any>(result: any): T[] => (Array.isArray(result) ? result : result?.rows ?? []);
 
-/** Einfache Bremse gegen Spam pro Instanz (zusätzlich zu den Datenbank-Limits). */
-const buckets = new Map<string, { count: number; reset: number }>();
-export function rateLimit(key: string, max: number, windowMs: number) {
-  const now = Date.now();
-  const b = buckets.get(key);
+/**
+ * Verteiltes Rate-Limiting (Phase 6): gilt instanzübergreifend über die Tabelle rate_limits (atomarer Upsert je Schlüssel).
+ * • Ein kleiner lokaler Vorfilter weist Anfragen, die schon auf dieser Instanz über dem Limit liegen, ohne DB-Zugriff ab.
+ * • Ist die Datenbank kurz nicht erreichbar, greift das lokale Limit (fail-safe statt fail-open ohne Grenze).
+ * • Abgelaufene Zeilen räumt der stündliche Job (netlify/functions/growth-jobs.mts) auf.
+ * Schlüssel enthalten Nutzer-ID oder IP; sie werden vor dem Speichern gehasht (keine Klar-IPs in der Datenbank).
+ */
+type Bucket = { count: number; reset: number };
+const LOCAL_MAX = 20_000;
+const buckets = new Map<string, Bucket>();
+
+function localHit(key: string, windowMs: number, now: number): Bucket {
+  let b = buckets.get(key);
   if (!b || b.reset < now) {
-    if (buckets.size > 20_000) buckets.clear();
-    buckets.set(key, { count: 1, reset: now + windowMs });
-    return true;
+    if (buckets.size >= LOCAL_MAX) {
+      // abgelaufene Einträge entfernen; reicht das nicht, die ältesten 10 % verdrängen (nie alles auf einmal)
+      for (const [k, v] of buckets) if (v.reset < now) buckets.delete(k);
+      if (buckets.size >= LOCAL_MAX) {
+        let drop = Math.ceil(LOCAL_MAX / 10);
+        for (const k of buckets.keys()) { if (drop-- <= 0) break; buckets.delete(k); }
+      }
+    }
+    b = { count: 0, reset: now + windowMs };
+    buckets.set(key, b);
   }
   b.count++;
-  return b.count <= max;
+  return b;
+}
+
+/** Nur lokal, synchron – für Hot-Paths ohne Missbrauchsrisiko (z. B. Zählwerke). */
+export function rateLimitLocal(key: string, max: number, windowMs: number) {
+  return localHit(key, windowMs, Date.now()).count <= max;
+}
+
+let dbModule: Promise<typeof import("../db/index.ts")> | null = null;
+const loadDb = () => (dbModule ??= import("../db/index.ts"));
+const keyHash = (key: string) => createHash("sha256").update(key).digest("base64url").slice(0, 32);
+
+/** true = Anfrage erlaubt. max Anfragen je windowMs, instanzübergreifend. */
+export async function rateLimit(key: string, max: number, windowMs: number): Promise<boolean> {
+  const now = Date.now();
+  const local = localHit(key, windowMs, now);
+  if (local.count > max) return false;
+  try {
+    const { db } = await loadDb();
+    const { sql } = await import("drizzle-orm");
+    const k = `${key.split(":")[0]}:${keyHash(key)}`;
+    const reset = new Date(now + windowMs);
+    const res: any = await db.execute(sql`
+      INSERT INTO rate_limits (key, count, reset_at) VALUES (${k}, 1, ${reset})
+      ON CONFLICT (key) DO UPDATE SET
+        count = CASE WHEN rate_limits.reset_at < now() THEN 1 ELSE rate_limits.count + 1 END,
+        reset_at = CASE WHEN rate_limits.reset_at < now() THEN EXCLUDED.reset_at ELSE rate_limits.reset_at END
+      RETURNING count`);
+    const count = Number(rows(res)[0]?.count ?? 1);
+    // lokalen Zähler angleichen, damit weitere Anfragen auf dieser Instanz ohne DB abgewiesen werden
+    if (count > local.count) local.count = count;
+    return count <= max;
+  } catch {
+    return local.count <= max;
+  }
 }
 
 export function clientIp(c: Context) {

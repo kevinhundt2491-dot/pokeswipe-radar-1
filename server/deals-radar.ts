@@ -101,7 +101,7 @@ export function registerDealsRadar(app: any, { auth, body }: Hlp) {
 
   // ---------------- Community-Deals (Flip-Radar) ----------------
   app.get("/api/flip/community-deals", async (c: any) => {
-    if (!rateLimit(`cdeals:${clientIp(c)}`, 90, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`cdeals:${clientIp(c)}`, 90, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const u = await viewer(c);
     c.header("Cache-Control", "private, no-store");
     return c.json({ deals: await listCommunityDeals(u?.id ?? null, { cat: c.req.query("cat") }) });
@@ -136,7 +136,7 @@ export function registerDealsRadar(app: any, { auth, body }: Hlp) {
   app.post("/api/flip/community-deals/:id/vote", auth, async (c: any) => {
     const user: AuthUser = c.get("user");
     const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
-    if (!rateLimit(`dvote:${user.id}`, 40, 60_000)) return c.json({ error: "Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`dvote:${user.id}`, 40, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
     const vote = Number((await body(c)).vote) === -1 ? -1 : 1;
     const [deal] = await db.select({ id: communityDeals.id, userId: communityDeals.userId }).from(communityDeals)
       .where(and(eq(communityDeals.id, id), eq(communityDeals.status, "visible"), sql`${communityDeals.expiresAt} > now()`)).limit(1);
@@ -169,7 +169,7 @@ export function registerDealsRadar(app: any, { auth, body }: Hlp) {
 
   // ---------------- Sammler-Radar ----------------
   app.get("/api/radar", async (c: any) => {
-    if (!rateLimit(`radar:${clientIp(c)}`, 60, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`radar:${clientIp(c)}`, 60, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const u = await viewer(c);
     c.header("Cache-Control", "private, no-store");
     return c.json({ pins: await listRadarPins(u?.id ?? null) });

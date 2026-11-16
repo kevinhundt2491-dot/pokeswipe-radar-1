@@ -4,6 +4,7 @@
 //   Marketplace Insights API (item_sales/search): echte Verkäufe – nur, wenn eBay die App dafür freigeschaltet hat;
 //   sonst merkt sich das Modul die Ablehnung und nutzt beendete Auktionen als Verkaufsdaten.
 import { EPN_CAMPAIGN_ID } from "./flip-logic.ts";
+import { resilientFetch } from "./resilience.ts";
 
 const OAUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token";
 const BROWSE_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search";
@@ -37,12 +38,12 @@ async function token(scope: string): Promise<string | null> {
   const cached = tokens[scope];
   if (cached && cached.expiresAt - 120_000 > Date.now()) return cached.value;
   const basic = Buffer.from(`${env("EBAY_CLIENT_ID")}:${env("EBAY_CLIENT_SECRET")}`).toString("base64");
-  const res = await fetch(OAUTH_URL, {
+  // Token-Abruf ist idempotent und darf daher wiederholt werden
+  const res = await resilientFetch("ebay", OAUTH_URL, {
     method: "POST",
     headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: "client_credentials", scope }).toString(),
-    signal: AbortSignal.timeout(8000),
-  });
+  }, { timeoutMs: 8000, attempts: 2 });
   const data: any = await res.json().catch(() => ({}));
   if (!res.ok || !data?.access_token) {
     const err = new Error(`eBay OAuth ${res.status}${data?.error ? ` ${String(data.error).slice(0, 40)}` : ""}`);
@@ -104,7 +105,7 @@ export async function browseSearch(q: string, { category = EBAY_CATEGORY_SINGLES
     filter: "buyingOptions:{FIXED_PRICE|AUCTION},deliveryCountry:DE,price:[1..],priceCurrency:EUR",
   });
   if (category) params.set("category_ids", category);
-  const res = await fetch(`${BROWSE_URL}?${params}`, {
+  const res = await resilientFetch("ebay", `${BROWSE_URL}?${params}`, {
     headers: {
       Authorization: `Bearer ${t}`,
       "X-EBAY-C-MARKETPLACE-ID": "EBAY_DE",
@@ -113,8 +114,7 @@ export async function browseSearch(q: string, { category = EBAY_CATEGORY_SINGLES
       "Accept-Language": "de-DE",
       Accept: "application/json",
     },
-    signal: AbortSignal.timeout(9000),
-  });
+  }, { timeoutMs: 9000, attempts: 2 });
   if (res.status === 401) tokens[SCOPE_BASE] = undefined;
   if (!res.ok) throw new Error(`eBay Browse ${res.status}`);
   const data: any = await res.json();
@@ -137,10 +137,9 @@ export async function insightsSearch(q: string, { category = EBAY_CATEGORY_SINGL
   if (!t) return null;
   const params = new URLSearchParams({ q: q.slice(0, 100), limit: String(Math.min(200, Math.max(1, limit))) });
   if (category) params.set("category_ids", category);
-  const res = await fetch(`${INSIGHTS_URL}?${params}`, {
+  const res = await resilientFetch("ebay", `${INSIGHTS_URL}?${params}`, {
     headers: { Authorization: `Bearer ${t}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_DE", Accept: "application/json" },
-    signal: AbortSignal.timeout(9000),
-  });
+  }, { timeoutMs: 9000, attempts: 2 });
   if (res.status === 401 || res.status === 403) { insightsDeniedUntil = Date.now() + 12 * 3600_000; return null; }
   if (!res.ok) throw new Error(`eBay Insights ${res.status}`);
   const data: any = await res.json();

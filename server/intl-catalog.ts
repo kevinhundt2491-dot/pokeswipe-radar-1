@@ -7,9 +7,12 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db, cardPrints, cardPrintPrices, printSets, fxRates } from "../db/index.ts";
 import { verifyIdentityToken } from "./auth.ts";
+import { printVariantPrices } from "./variant-logic.ts";
 import { deckPrefs, prefFactorSql } from "./arena.ts";
 import type { PrefProfile } from "./arena-logic.ts";
 import { str, int, rows, rateLimit, clientIp } from "./util.ts";
+import { publicCache } from "./cache.ts";
+import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
 import {
   PRINT_LANGS, PRINT_ID_RE, TCGDEX_ID_RE, SET_ID_RE, LANG_LABEL, LANG_FLAG, RARITY_SQL, RARITY_LABEL, RARITY_BUCKETS, DEAL_MIN_PCT, DEAL_MIN_PRICE, HIT_MIN_PRICE_WITHOUT_RARITY,
   FX_FALLBACK, printId, splitPrintId, displayNumber, pickCardmarket, pickTcgplayer, choosePrice, parseEcbXml, parseDeckQuery,
@@ -37,7 +40,7 @@ const tcgdexAsset = (v: unknown) => {
 };
 
 async function tcgdex(lang: PrintLang, path: string, timeoutMs = 9000) {
-  const res = await fetch(`${TCGDEX}/${lang}${path}`, { signal: AbortSignal.timeout(timeoutMs), headers: { Accept: "application/json" } });
+  const res = await resilientFetch("tcgdex", `${TCGDEX}/${lang}${path}`, { headers: { Accept: "application/json" } }, { timeoutMs, attempts: 3 });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`TCGdex ${lang} ${res.status}`);
   return res.json();
@@ -51,7 +54,7 @@ let fxCache: { fx: Fx; at: number } | null = null;
 export async function refreshFx(force = false) {
   const [usd] = await db.select().from(fxRates).where(eq(fxRates.currency, "USD")).limit(1);
   if (!force && usd && Date.now() - usd.updatedAt.getTime() < FX_MAX_AGE_MS) return false;
-  const res = await fetch(ECB_URL, { signal: AbortSignal.timeout(8000) });
+  const res = await resilientFetch("ecb", ECB_URL, {}, { timeoutMs: 8000, attempts: 3 });
   if (!res.ok) throw new Error(`EZB ${res.status}`);
   const parsed = parseEcbXml(await res.text());
   if (!parsed.day) throw new Error("EZB-Kurse unvollständig");
@@ -214,6 +217,8 @@ export async function refreshPrint(id: string) {
     cmTrend: money2(cm.trend), cmLow: money2(cm.low), cmAvg7: money2(cm.avg7), cmAvg30: money2(cm.avg30), cmUpdatedAt: cm.updated,
     tcgMarketUsd: money2(tcg.market), tcgLowUsd: money2(tcg.low), tcgVariant: tcg.variant, tcgUpdatedAt: tcg.updated,
     priceEur: money2(chosen.priceEur), lowEur: money2(chosen.lowEur), priceSource: chosen.source,
+    // Phase 6: Preise je Variante (TCGplayer, in EUR umgerechnet) + Reverse-Holo-Reihe von Cardmarket
+    variantPrices: printVariantPrices(data.pricing, fx.USD),
     checkedAt: new Date(),
   };
   const { id: _id, lang: _l, tcgdexId: _t, ...updates } = row;
@@ -257,7 +262,7 @@ export async function runIntlCatalogImport({ deadlineMs = 22_000, maxSetsPerLang
   try { result.fx = await refreshFx(); } catch (e) { result.errors++; console.warn("Katalog intl: EZB-Kurse nicht geladen", e); }
 
   for (const lang of PRINT_LANGS) {
-    if (Date.now() > deadline - 8000) break;
+    if (Date.now() > deadline - 8000) { markPartial(`Zeitbudget: Sprache ${lang} im nächsten Lauf`); break; }
     const [state] = rows(await db.execute(sql`SELECT count(*)::int AS n, max(updated_at) AS last FROM print_sets WHERE lang = ${lang}`));
     if (!Number(state?.n) || !state?.last || Date.now() - new Date(state.last).getTime() > SET_LIST_MAX_AGE_MS) {
       try { await syncPrintSetList(lang); result.setLists.push(lang); } catch (e) { result.errors++; console.warn("Katalog intl: Set-Liste", lang, e); }
@@ -268,7 +273,7 @@ export async function runIntlCatalogImport({ deadlineMs = 22_000, maxSetsPerLang
       .orderBy(sql`${printSets.cardsImportedAt} IS NOT NULL`, desc(printSets.priority), sql`${printSets.releaseDate} DESC NULLS LAST`, asc(printSets.id))
       .limit(maxSetsPerLang);
     for (const s of due) {
-      if (Date.now() > deadline - 7000) break;
+      if (Date.now() > deadline - 7000) { markPartial("Zeitbudget: weitere Sets im nächsten Lauf"); break; }
       try { await importPrintSet(lang, s.id); result.setsImported.push(`${lang}:${s.id}`); } catch (e) { result.errors++; console.warn("Katalog intl: Set", lang, s.id, e); }
     }
   }
@@ -290,9 +295,10 @@ export async function runIntlCatalogImport({ deadlineMs = 22_000, maxSetsPerLang
   await Promise.all(Array.from({ length: 4 }, async () => {
     while (i < stale.length && Date.now() < deadline - 2500) {
       const id = String(stale[i++].id);
-      try { await refreshPrint(id); result.prices++; } catch { result.errors++; }
+      try { await refreshPrint(id); result.prices++; } catch (e) { result.errors++; if (e instanceof CircuitOpenError) break; }
     }
   }));
+  if (i < stale.length) markPartial(`Zeitbudget/Quelle: ${stale.length - i} Preise offen`);
 
   try {
     result.linked = await linkBaseCards();
@@ -375,7 +381,10 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
     const exL = opts.exclude.filter((e) => e.startsWith("l")).map((e) => Number(e.slice(1))).filter((n) => n > 0);
     listingRows = rows(await db.execute(sql`
       SELECT l.id, l.card_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.boosted_until > now() AS boosted,
-        p.display_name AS seller, c.rarity, c.set_name, c.image AS card_image, COALESCE(c.trend, c.avg)::float AS market
+        l.variant, l.condition, l.lang AS listing_lang,
+        p.display_name AS seller, c.rarity, c.set_name, c.image AS card_image,
+        (CASE WHEN l.variant = 'reverse_holo' THEN COALESCE(c.reverse_trend, c.reverse_avg, c.trend, c.avg) ELSE COALESCE(c.trend, c.avg) END)::float AS market,
+        ${userId ? sql`EXISTS (SELECT 1 FROM swipe_likes s WHERE s.user_id = ${userId} AND s.listing_id = l.id)` : sql`false`} AS liked
       FROM listings l JOIN profiles p ON p.user_id = l.user_id LEFT JOIN cards c ON c.id = l.card_id
       WHERE l.status = 'active' AND NOT p.banned
         ${userId ? sql` AND l.user_id <> ${userId}` : sql``}
@@ -418,8 +427,11 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
     ...listingRows.map((l: any) => ({
       kind: "listing" as const,
       key: `l${l.id}`,
-      lang: "de" as CatalogLang,
+      lang: (["de", "en", "ja"].includes(String(l.listing_lang)) ? String(l.listing_lang) : "de") as CatalogLang,
       listingId: Number(l.id),
+      variant: String(l.variant || "normal"),
+      condition: String(l.condition || ""),
+      liked: Boolean(l.liked),
       printId: l.card_id ? String(l.card_id) : null,
       cardId: l.card_id ? String(l.card_id) : null,
       name: String(l.card_name),
@@ -478,7 +490,7 @@ export function registerIntlCatalog(app: any, { auth, adminOnly }: { auth: any; 
       SELECT 'de' AS lang, count(*)::int AS priced FROM cards WHERE image <> '' AND COALESCE(trend, avg, low) IS NOT NULL
       UNION ALL SELECT lang, count(*)::int FROM card_prints WHERE image <> '' AND price_eur IS NOT NULL GROUP BY lang`));
     const fx = await getFx();
-    c.header("Cache-Control", "public, max-age=600");
+    publicCache(c, "data", { sMaxAge: 600, swr: 3600 });
     return c.json({
       langs: (["de", "en", "ja"] as CatalogLang[]).map((l) => ({
         lang: l, label: LANG_LABEL[l], flag: LANG_FLAG[l], priced: Number(counts.find((r: any) => r.lang === l)?.priced ?? 0),
@@ -492,9 +504,9 @@ export function registerIntlCatalog(app: any, { auth, adminOnly }: { auth: any; 
   // Sets je Sprache mit Anzahl bepreister Karten (für den Set-Filter der Arena; /api/catalog/sets ist der deutsche Katalog)
   app.get("/api/swipe/sets", async (c: any) => {
     const lang = normLang(c.req.query("lang")) || "de";
-    if (!rateLimit(`csets:${clientIp(c)}`, 60, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`csets:${clientIp(c)}`, 60, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const list = await setOptions(lang);
-    c.header("Cache-Control", "public, max-age=900");
+    publicCache(c, "data", { sMaxAge: 900, swr: 3600, varyQuery: ["lang"] });
     return c.json({
       lang,
       sets: list.map((s: any) => ({ id: String(s.id), name: String(s.name), code: String(s.code || ""), releaseDate: s.release_date ? String(s.release_date).slice(0, 10) : null, priced: Number(s.priced || 0) })),
@@ -503,7 +515,7 @@ export function registerIntlCatalog(app: any, { auth, adminOnly }: { auth: any; 
 
   // Dynamischer Swipe-Stapel (öffentlich; mit Login zusätzlich Wunschlisten-Treffer)
   app.get("/api/swipe/deck", async (c: any) => {
-    if (!rateLimit(`deck:${clientIp(c)}`, 40, 60_000)) return c.json({ error: "Zu viele Anfragen. Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`deck:${clientIp(c)}`, 40, 60_000))) return c.json({ error: "Zu viele Anfragen. Bitte kurz warten." }, 429);
     const opts = parseDeckQuery(c.req.query());
     const user = await verifyIdentityToken(c).catch(() => null);
     if (opts.wishlist && !user) return c.json({ error: "Für den Wunschlisten-Filter bitte anmelden.", login: true }, 401);
@@ -518,7 +530,7 @@ export function registerIntlCatalog(app: any, { auth, adminOnly }: { auth: any; 
   app.get("/api/prints/:id", async (c: any) => {
     const id = str(c.req.param("id"), 50);
     if (!PRINT_ID_RE.test(id)) return c.json({ error: "Ungültige Karten-ID" }, 400);
-    if (!rateLimit(`print:${clientIp(c)}`, 60, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`print:${clientIp(c)}`, 60, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const print = await getPrint(id);
     if (!print) return c.json({ error: "Karte nicht gefunden" }, 404);
     const fx = await getFx();
@@ -537,7 +549,7 @@ export function registerIntlCatalog(app: any, { auth, adminOnly }: { auth: any; 
     const usdEur = toEur(Number(print.tcgMarketUsd) || null, fx.USD);
     const [species] = print.lang === "ja" && print.dexId
       ? rows(await db.execute(sql`SELECT name_de, slug FROM pokemon_species WHERE dex_id = ${print.dexId} LIMIT 1`)) : [];
-    c.header("Cache-Control", "public, max-age=300");
+    publicCache(c, "data");
     return c.json({
       print: {
         ...print, langLabel: LANG_LABEL[print.lang as CatalogLang], flag: LANG_FLAG[print.lang as CatalogLang], tcgMarketEur: usdEur,

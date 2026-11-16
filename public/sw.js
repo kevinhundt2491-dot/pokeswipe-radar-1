@@ -1,11 +1,11 @@
 // PokeSwipe & Radar – Service Worker: echte Web-Push-Nachrichten (auch bei geschlossener App)
 // und Offline-Modus (App, Sammlung und Bilder bleiben auf Messen & Börsen ohne Netz verfügbar).
-const VERSION = "v8";
+const VERSION = "v9"; // Phase 6: ausgelagerte Skripte (/js/*), Code-Splitting (/assets/chunks/*), strikte CSP
 const STATIC = `ps-static-${VERSION}`;
 const API = "ps-api";
 const IMG = "ps-img";
 const PAGES = "ps-pages";
-const SHELL = ["/", "/assets/app.js", "/assets/scan-worker.js", "/assets/tailwind.css", "/theme.css", "/fonts/fonts.css", "/icon.svg", "/manifest.json", "/icons/icon-192.png", "/icons/badge-96.png", "/card-fallback.svg"];
+const SHELL = ["/", "/js/csp-handlers.js", "/js/legacy-app.js", "/js/legacy-addons.js", "/assets/app.js", "/assets/scan-worker.js", "/assets/tailwind.css", "/theme.css", "/fonts/fonts.css", "/icon.svg", "/manifest.json", "/icons/icon-192.png", "/icons/badge-96.png", "/card-fallback.svg"];
 // Nur diese Daten werden für den Offline-Modus zwischengespeichert (beim Abmelden gelöscht)
 // Phase 4: zusätzlich Offline-Katalog (Sets, Swipe-Stapel), Community-Feed, Bestellungen und öffentliche Profile
 const OFFLINE_API = /^\/api\/(me|portfolio|wishlist|alerts|calendar|badges|listings|sets\/tracked|sealed|scan\/index|catalog\/(meta|sets)|swipe\/(sets|deck)|community\/(feed|me)|orders|market\/meta|me\/public-profile|u\/[^/?]+|radar|flip\/community-deals|booster\/ev)(\?|$)/;
@@ -77,7 +77,7 @@ self.addEventListener("fetch", (event) => {
     } else if (url.pathname.startsWith("/fonts/") || url.pathname.startsWith("/vendor/")) {
       // Lokal gehostete Schriften & Leaflet: ändern sich praktisch nie
       event.respondWith(staleWhileRevalidate(event, req, STATIC));
-    } else if (url.pathname.startsWith("/assets/") || SHELL.includes(url.pathname)) {
+    } else if (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/js/") || SHELL.includes(url.pathname)) {
       // Immer zuerst frisch laden (passt nach einem Update sofort zur Seite), offline aus dem Speicher
       event.respondWith(networkFirst(req, STATIC));
     }

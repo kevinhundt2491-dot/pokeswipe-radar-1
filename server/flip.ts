@@ -18,6 +18,7 @@ import { effectivePlan } from "./plans.ts";
 import { notify, evaluateSealedAlerts, CARD_ID_RE } from "./prices.ts";
 import { str, rows, rateLimit, clientIp, int } from "./util.ts";
 import { browseSearch, insightsSearch, ebayConfigured, insightsAvailable, EBAY_CATEGORY_SINGLES, type EbayOffer } from "./ebay.ts";
+import { markPartial, CircuitOpenError } from "./resilience.ts";
 import {
   GRADE_KEYS, GRADE_LABEL, FLIP_DEAL_MIN_PCT, SNIPER_MIN_PCT, FLIP_MIN_REF_EUR, GRADING_PRESETS, SEALED_SOURCE_LABEL,
   parseGrade, rawCondition, titleLang, isJunkTitle, titleMatchesCard, titleMatchesSealed, evaluateDeal, chooseRef,
@@ -337,6 +338,8 @@ export async function runFlipSync({ deadlineMs = 22_000, maxTargets = 18, concur
           newDeals.push(...r.newDealIds);
         } catch (e: any) {
           errors.push(`${t.kind}:${t.id} ${String(e?.message || e).slice(0, 60)}`);
+          // eBay gerade gesperrt (Circuit offen): Lauf beenden, Ziel nicht als fehlerhaft zählen
+          if (e instanceof CircuitOpenError) { queue.length = 0; break; }
           await db.execute(sql`
             INSERT INTO flip_targets (id, target_kind, target_id, query, last_synced_at, errors) VALUES (${targetKey(t.kind, t.id)}, ${t.kind}, ${t.id}, '', now(), 1)
             ON CONFLICT (id) DO UPDATE SET errors = flip_targets.errors + 1, last_synced_at = now()`);
@@ -346,6 +349,7 @@ export async function runFlipSync({ deadlineMs = 22_000, maxTargets = 18, concur
       }
     };
     await Promise.all(Array.from({ length: concurrency }, worker));
+    if (queue.length) markPartial(`Zeitbudget: ${queue.length} Ziele im nächsten Lauf`);
     totals.notified = await notifyWishlistDeals(newDeals).catch(() => 0);
   } catch (e: any) {
     errors.push(String(e?.message || e).slice(0, 120));
@@ -366,8 +370,8 @@ export async function runSealedPrices({ deadlineMs = 22_000, max = 20 } = {}) {
   let queries = 0, offersN = 0, updated = 0, comps = 0;
   const errors: string[] = [];
   const runStart = new Date();
-  for (const p of products) {
-    if (Date.now() - started > deadlineMs - 3000) break;
+  for (const [n, p] of products.entries()) {
+    if (Date.now() - started > deadlineMs - 3000) { markPartial(`Zeitbudget: ${products.length - n} Produkte im nächsten Lauf`); break; }
     try {
       const t: Target & { sealedKind: string } = {
         kind: "sealed", id: String(p.id), name: p.name, nameEn: "", localId: "", total: null, lang: "de",
@@ -413,6 +417,7 @@ export async function runSealedPrices({ deadlineMs = 22_000, max = 20 } = {}) {
       if (est && !p.priceLocked) { await evaluateSealedAlerts(p.id, est.price); updated++; }
     } catch (e: any) {
       errors.push(`${p.id} ${String(e?.message || e).slice(0, 60)}`);
+      if (e instanceof CircuitOpenError) break;
       await db.update(sealedProducts).set({ autoPriceAt: new Date() }).where(eq(sealedProducts.id, p.id));
       if (/ 429| 401| 403|OAuth/.test(String(e?.message))) break;
     }
@@ -641,7 +646,7 @@ export async function flipAdminStatus() {
 export function registerFlip(app: any, { auth, adminOnly, body }: { auth: any; adminOnly: any; body: (c: any) => Promise<any> }) {
   // Deal-Feed (öffentlich; Sniper-Deals ≥ 25 % nur für Abonnenten vollständig)
   app.get("/api/flip/deals", async (c: any) => {
-    if (!rateLimit(`flip:${clientIp(c)}`, 40, 60_000)) return c.json({ error: "Zu viele Anfragen. Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`flip:${clientIp(c)}`, 40, 60_000))) return c.json({ error: "Zu viele Anfragen. Bitte kurz warten." }, 429);
     const f = parseDealQuery(c.req.query());
     const viewer = await viewerOf(c);
     const live = ebayConfigured();
@@ -656,7 +661,7 @@ export function registerFlip(app: any, { auth, adminOnly, body }: { auth: any; a
 
   // Verkaufspreise, PSA-Werte, Charts, aktive Angebote eines Ziels: /api/flip/comps/card:sv03.5-199 | print:ja:SV2a-201 | sealed:12
   app.get("/api/flip/comps/:key", async (c: any) => {
-    if (!rateLimit(`comps:${clientIp(c)}`, 60, 60_000)) return c.json({ error: "Zu viele Anfragen." }, 429);
+    if (!(await rateLimit(`comps:${clientIp(c)}`, 60, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const parsed = parseTargetKey(str(c.req.param("key"), 70));
     if (!parsed) return c.json({ error: "Ungültige Karte" }, 400);
     const ok = parsed.kind === "card" ? CARD_ID_RE.test(parsed.id) : parsed.kind === "print" ? PRINT_ID_RE.test(parsed.id) : /^\d{1,9}$/.test(parsed.id);
@@ -675,7 +680,7 @@ export function registerFlip(app: any, { auth, adminOnly, body }: { auth: any; a
     if (!(parsed.kind === "card" ? CARD_ID_RE.test(parsed.id) : PRINT_ID_RE.test(parsed.id))) return c.json({ error: "Ungültige Karte" }, 400);
     if (!ebayConfigured()) return c.json({ error: "Die eBay-Anbindung ist noch nicht aktiv.", demo: true }, 503);
     const user = c.get("user");
-    if (!rateLimit(`flipref:${user.id}`, 6, 60 * 60_000)) return c.json({ error: "Bitte später erneut versuchen (max. 6 Abgleiche pro Stunde)." }, 429);
+    if (!(await rateLimit(`flipref:${user.id}`, 6, 60 * 60_000))) return c.json({ error: "Bitte später erneut versuchen (max. 6 Abgleiche pro Stunde)." }, 429);
     const [st] = await db.select().from(flipTargets).where(eq(flipTargets.id, targetKey(parsed.kind, parsed.id))).limit(1);
     if (st?.lastSyncedAt && Date.now() - st.lastSyncedAt.getTime() < 30 * 60_000) return c.json({ ok: true, fresh: true });
     const t = await loadTarget(parsed.kind, parsed.id);

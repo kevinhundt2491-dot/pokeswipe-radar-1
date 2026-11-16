@@ -163,6 +163,43 @@ export function writeLimits(score: number, kind: "chat" | "post" | "comment" | "
   return { perMinute, perHour };
 }
 
+// ---------------------------------------------------------------------------
+// Phase 6: Wertgrenzen für Treuhand-Käufe/-Verkäufe je Vertrauensstufe (Betrugsschutz)
+// ---------------------------------------------------------------------------
+/** Höchstwert je Kauf (Preis + Versand) bzw. je Sofort-Kauf-Inserat (Preis) in Cent. */
+export const ESCROW_LIMITS: Record<TrustLevel["key"], { buyCents: number; sellCents: number }> = {
+  new: { buyCents: 15_000, sellCents: 25_000 },
+  known: { buyCents: 50_000, sellCents: 75_000 },
+  trusted: { buyCents: 200_000, sellCents: 250_000 },
+  top: { buyCents: 500_000, sellCents: 500_000 },
+};
+
+const centsLabel = (c: number) => `${(c / 100).toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} €`;
+
+export type EscrowLimitCheck = { ok: true; limitCents: number } | { ok: false; limitCents: number; error: string };
+
+/**
+ * Prüft einen Treuhand-Kauf (kind "buy", Betrag = Preis + Versand) oder ein Sofort-Kauf-Inserat (kind "sell",
+ * Betrag = Preis) gegen die Grenze der Vertrauensstufe. Markierte Konten (z. B. nach einer Rückbuchung) dürfen
+ * gar nicht über die Treuhand kaufen oder verkaufen.
+ */
+export function checkEscrowLimit(kind: "buy" | "sell", trust: number, flagged: boolean, amountCents: number): EscrowLimitCheck {
+  const level = trustLevel(trust);
+  const limitCents = ESCROW_LIMITS[level.key][kind === "buy" ? "buyCents" : "sellCents"];
+  if (flagged) {
+    return { ok: false, limitCents: 0, error: kind === "buy"
+      ? "Dein Konto ist nach einer Rückbuchung oder Prüfung vorübergehend für Käufe mit Käuferschutz gesperrt. Bitte wende dich an den Support."
+      : "Dein Konto ist nach einer Rückbuchung oder Prüfung vorübergehend für Verkäufe mit Käuferschutz gesperrt. Bitte wende dich an den Support." };
+  }
+  const amount = Math.max(0, Math.round(Number(amountCents) || 0));
+  if (amount > limitCents) {
+    return { ok: false, limitCents, error: kind === "buy"
+      ? `Mit der Vertrauensstufe „${level.label}“ kannst du per Käuferschutz bis ${centsLabel(limitCents)} pro Kauf (inkl. Versand) bezahlen. Abgeschlossene Käufe, gute Bewertungen und eine bestätigte E-Mail-Adresse erhöhen die Grenze.`
+      : `Mit der Vertrauensstufe „${level.label}“ kannst du Sofort-Kauf-Inserate bis ${centsLabel(limitCents)} anbieten. Abgeschlossene Verkäufe und gute Bewertungen erhöhen die Grenze – teurere Karten kannst du als Tausch-Inserat einstellen.` };
+  }
+  return { ok: true, limitCents };
+}
+
 /** Ab so vielen Meldungen verschiedener Nutzer wird ein Inhalt automatisch ausgeblendet (bis ein Admin entscheidet). */
 export const AUTO_HIDE_REPORTS = 3;
 

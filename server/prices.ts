@@ -1,11 +1,12 @@
 import { and, eq, isNull, lt, or, sql, lte, gte } from "drizzle-orm";
 import { db, cards, priceHistory, priceAlerts, notifications, sealedProducts, sealedAlerts } from "../db/index.ts";
 import { sendPush } from "./push.ts";
+import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
+import { splitCardmarketPricing, CONDITION_FACTOR_SQL } from "./variant-logic.ts";
 
 const TCGDEX = "https://api.tcgdex.net/v2/de";
 export const CARD_ID_RE = /^[a-zA-Z0-9.\-_]{2,40}$/;
 
-const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v.toFixed(2) : null);
 /** Cardmarket-Partnerkennung aus der Netlify-Variable CARDMARKET_PARTNER_ID (leer, wenn nicht gesetzt). */
 export const cardmarketPartnerId = () => {
   const id = String(process.env.CARDMARKET_PARTNER_ID || "").trim();
@@ -49,21 +50,29 @@ export function cardDetails(data: any) {
 /** Holt eine Karte inkl. Cardmarket-Preis von TCGdex und speichert sie. */
 export async function refreshCard(cardId: string) {
   if (!CARD_ID_RE.test(cardId)) throw new Error("Ungültige Karten-ID");
-  const res = await fetch(`${TCGDEX}/cards/${encodeURIComponent(cardId)}`, { signal: AbortSignal.timeout(8000) });
+  const res = await resilientFetch("tcgdex", `${TCGDEX}/cards/${encodeURIComponent(cardId)}`, {}, { timeoutMs: 8000, attempts: 2 });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`TCGdex ${res.status}`);
   const data: any = await res.json();
   const cm = data?.pricing?.cardmarket || {};
+  // Basis- und Reverse-Holo-Reihe getrennt (siehe server/variant-logic.ts)
+  const split = splitCardmarketPricing(cm, data?.variants && typeof data.variants === "object" ? data.variants : undefined);
+  const fix = (v: number | null) => (v ? v.toFixed(2) : null);
   const row = {
     id: String(data.id),
     name: String(data.name || cardId).slice(0, 120),
     setName: String(data.set?.name || "").slice(0, 120),
     image: data.image ? `${data.image}/high.webp` : "",
-    trend: num(cm.trend) ?? num(cm["trend-holo"]),
-    avg: num(cm.avg) ?? num(cm["avg-holo"]),
-    low: num(cm.low) ?? num(cm["low-holo"]),
-    avg7: num(cm.avg7) ?? num(cm["avg7-holo"]),
-    avg30: num(cm.avg30) ?? num(cm["avg30-holo"]),
+    trend: fix(split.base.trend),
+    avg: fix(split.base.avg),
+    low: fix(split.base.low),
+    avg7: fix(split.base.avg7),
+    avg30: fix(split.base.avg30),
+    reverseTrend: fix(split.reverse.trend),
+    reverseAvg: fix(split.reverse.avg),
+    reverseLow: fix(split.reverse.low),
+    reverseAvg7: fix(split.reverse.avg7),
+    reverseAvg30: fix(split.reverse.avg30),
     priceUpdatedAt: cm.updated ? new Date(cm.updated) : null,
     checkedAt: new Date(),
     // Katalog-Felder für Set-Seiten & SEO
@@ -84,10 +93,10 @@ export async function refreshCard(cardId: string) {
   if (row.trend || row.avg || row.low) {
     await db
       .insert(priceHistory)
-      .values({ cardId: row.id, day: today(), trend: row.trend, avg: row.avg, low: row.low })
+      .values({ cardId: row.id, day: today(), trend: row.trend, avg: row.avg, low: row.low, reverseTrend: row.reverseTrend, reverseAvg: row.reverseAvg, reverseLow: row.reverseLow })
       .onConflictDoUpdate({
         target: [priceHistory.cardId, priceHistory.day],
-        set: { trend: row.trend, avg: row.avg, low: row.low },
+        set: { trend: row.trend, avg: row.avg, low: row.low, reverseTrend: row.reverseTrend, reverseAvg: row.reverseAvg, reverseLow: row.reverseLow },
       });
   }
   return saved;
@@ -103,6 +112,16 @@ export async function getCard(cardId: string, maxAgeMs = 6 * 3600_000) {
     return existing ?? null;
   }
 }
+
+/**
+ * Stückpreis je Variante in SQL (Aliase: p = portfolio_items, c = cards, cp = card_prints).
+ * Reverse Holo → eigene Cardmarket-Reihe; 1st Edition/Shadowless/Holo → TCGplayer-Variante des Drucks; sonst Basispreis.
+ */
+export const PORTFOLIO_VARIANT_PRICE_SQL = `CASE
+  WHEN p.variant = 'reverse_holo' THEN COALESCE(c.reverse_trend, c.reverse_avg, c.reverse_low, NULLIF(cp.variant_prices->'reverse_holo'->>'price', '')::numeric, c.trend, c.avg, c.low)
+  WHEN p.variant IN ('first_edition', 'shadowless', 'holo') THEN COALESCE(NULLIF(cp.variant_prices->p.variant->>'price', '')::numeric, c.trend, c.avg, c.low)
+  ELSE COALESCE(c.trend, c.avg, c.low)
+END`;
 
 export const cardPrice = (c: { trend: string | null; avg: string | null; low: string | null } | null | undefined) =>
   c ? Number(c.trend ?? c.avg ?? c.low ?? 0) : 0;
@@ -139,7 +158,8 @@ export async function evaluateAlerts(cardId: string) {
 }
 
 /** Stündlicher Tracker-Lauf: veraltete beobachtete Karten aktualisieren, Alarme prüfen, Portfolio-Snapshots schreiben. */
-export async function runTracker({ maxCards = 150 } = {}) {
+export async function runTracker({ maxCards = 150, deadlineMs = Infinity } = {}) {
+  const deadline = Date.now() + deadlineMs;
   const staleBefore = new Date(Date.now() - 55 * 60_000);
   const watched = await db.execute(sql`
     SELECT DISTINCT c.id FROM cards c
@@ -152,14 +172,17 @@ export async function runTracker({ maxCards = 150 } = {}) {
   `);
   const ids: string[] = ((watched as any).rows ?? watched).map((r: any) => r.id);
 
-  let refreshed = 0, alerts = 0;
-  for (const id of ids) {
+  let refreshed = 0, alerts = 0, skipped = 0;
+  for (const [n, id] of ids.entries()) {
+    // Zeitbudget: übrige Karten (nach ID sortiert, weiterhin veraltet) übernimmt der nächste Lauf
+    if (Date.now() > deadline - 5000) { skipped = ids.length - n; markPartial(`Zeitbudget: ${skipped} Karten offen`); break; }
     try {
       await refreshCard(id);
       refreshed++;
       alerts += await evaluateAlerts(id);
     } catch (e) {
       console.warn("Tracker: Karte konnte nicht aktualisiert werden", id, e);
+      if (e instanceof CircuitOpenError) { skipped = ids.length - n - 1; break; }
     }
   }
 
@@ -167,14 +190,16 @@ export async function runTracker({ maxCards = 150 } = {}) {
   await db.execute(sql`
     INSERT INTO portfolio_snapshots (user_id, day, value)
     SELECT p.user_id, CURRENT_DATE,
-      COALESCE(SUM(p.quantity * COALESCE(c.trend, c.avg, c.low, p.manual_value, 0)), 0)
-    FROM portfolio_items p LEFT JOIN cards c ON c.id = p.card_id
+      COALESCE(SUM(p.quantity * COALESCE(
+        (${sql.raw(PORTFOLIO_VARIANT_PRICE_SQL)}) * (${sql.raw(CONDITION_FACTOR_SQL)}),
+        p.manual_value, 0)), 0)
+    FROM portfolio_items p LEFT JOIN cards c ON c.id = p.card_id LEFT JOIN card_prints cp ON cp.id = p.print_id
     GROUP BY p.user_id
     ON CONFLICT (user_id, day) DO UPDATE SET value = EXCLUDED.value
   `);
 
   alerts += await snapshotSealed();
-  return { refreshed, alerts };
+  return { refreshed, alerts, skipped };
 }
 
 /** Effektiver Sealed-Preis: Admin-Referenzpreis, sonst Durchschnitt der Community-Inserate. */

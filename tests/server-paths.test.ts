@@ -20,3 +20,11 @@ test("Server-Pfade: alle öffentlichen Server-Seiten sind weitergeleitet", () =>
     assert.ok(entry.includes(`"${p}"`), `${p} fehlt`);
   }
 });
+
+test("Server-Pfade: Datenschutzerklärung /datenschutz ist an den Server geleitet", () => {
+  const toml = read("../netlify.toml");
+  const tomlPaths = quoted(/\[server\][\s\S]*?path\s*=\s*\[([\s\S]*?)\]/.exec(toml)?.[1] || "");
+  assert.ok(tomlPaths.includes("/datenschutz"), "/datenschutz fehlt in netlify.toml [server].path");
+  assert.ok(read("../netlify/server/index.ts").includes('"/datenschutz"'), "/datenschutz fehlt in netlify/server/index.ts");
+  assert.ok(read("../server/legal.ts").includes('app.get("/datenschutz"'), "Route /datenschutz fehlt");
+});

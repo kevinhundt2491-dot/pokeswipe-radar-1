@@ -13,3 +13,4 @@
 .env*.local
 .netlify
 .scan-seed-cache
+/public/assets/chunks
