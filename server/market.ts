@@ -7,7 +7,7 @@
 // nach erfolgreicher Zahlung. Provision je Tarif des Verkäufers, mit Rabatt für Pro-Pass-Inhaber.
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type Stripe from "stripe";
-import { db, profiles, listings, marketOrders, reviews, moderationLog } from "../db/index.ts";
+import { db, profiles, listings, marketOrders, reviews, moderationLog, orderItems, sellerPayouts } from "../db/index.ts";
 import { isAdmin, type AuthUser } from "./auth.ts";
 import { stripe } from "./billing.ts";
 import { effectivePlan, type PlanId } from "./plans.ts";
@@ -16,6 +16,7 @@ import { notify } from "./prices.ts";
 import { isBlockedBetween, forgetTrust, trustFor } from "./community.ts";
 import { checkEscrowLimit } from "./community-logic.ts";
 import { registerDac7, recordDac7Release, recordDac7Refund, dac7SellerBlock, runDac7Reminders } from "./dac7.ts";
+import { withdrawalOpen, withdrawalDeadline } from "./cart-logic.ts";
 import {
   feeFor, nextStatus, validOffer, validTracking, trackingUrl, MARKET_FEE_BPS, MARKET_MIN_PRICE_CENTS, MARKET_MAX_PRICE_CENTS,
   PAY_WINDOW_HOURS, SHIP_WINDOW_DAYS, AUTO_RELEASE_DAYS, OFFER_TTL_HOURS, SHIP_COUNTRIES, CARRIERS, CONDITIONS,
@@ -88,21 +89,25 @@ export async function fulfillOrderSession(session: Stripe.Checkout.Session, expe
   }).where(and(eq(marketOrders.id, orderId), eq(marketOrders.status, "awaiting_payment"))).returning();
   if (!paid) return { ok: true, kind: "order", orderId, alreadyProcessed: true };
 
-  // Doppelverkauf verhindern: ist das Inserat schon an jemand anderen bezahlt verkauft, sofort erstatten
+  // Doppelverkauf verhindern: Bestand atomar um 1 verringern (Phase 7: Inserate mit Menge). Klappt das nicht,
+  // ist die Karte zeitgleich verkauft (oder im Warenkorb-Checkout eines anderen Käufers reserviert) → sofort erstatten.
   if (paid.listingId) {
-    const [other] = rows(await db.execute(sql`
-      SELECT id FROM market_orders WHERE listing_id = ${paid.listingId} AND id <> ${paid.id}
-        AND status IN ('paid', 'shipped', 'disputed', 'releasing', 'released') LIMIT 1`));
-    if (other) {
+    const [taken] = rows(await db.execute(sql`
+      UPDATE listings SET quantity = quantity - 1, updated_at = now(),
+        status = CASE WHEN quantity - 1 <= 0 THEN 'sold' ELSE status END
+      WHERE id = ${paid.listingId} AND status = 'active' AND quantity - reserved >= 1
+      RETURNING quantity, status`));
+    if (!taken) {
       await refundOrder(paid, "system", "Die Karte wurde zeitgleich an einen anderen Käufer verkauft.");
       return { ok: true, kind: "order", orderId, refunded: true };
     }
-    await db.update(listings).set({ status: "sold" }).where(eq(listings.id, paid.listingId));
-    // Andere offene Angebote/Bestellungen für dieses Inserat schließen
-    const others = await db.update(marketOrders).set({ status: "cancelled", updatedAt: new Date() })
-      .where(and(eq(marketOrders.listingId, paid.listingId), inArray(marketOrders.status, ["offered", "awaiting_payment"]), sql`${marketOrders.id} <> ${paid.id}`))
-      .returning({ buyerId: marketOrders.buyerId });
-    for (const o of others) await notify(o.buyerId, "ℹ️ Karte verkauft", `„${paid.title}“ wurde an einen anderen Käufer verkauft. Dein Angebot ist erloschen.`, "/?orders=1");
+    if (taken.status === "sold") {
+      // Ausverkauft: andere offene Angebote/Bestellungen für dieses Inserat schließen
+      const others = await db.update(marketOrders).set({ status: "cancelled", updatedAt: new Date() })
+        .where(and(eq(marketOrders.listingId, paid.listingId), inArray(marketOrders.status, ["offered", "awaiting_payment"]), sql`${marketOrders.id} <> ${paid.id}`))
+        .returning({ buyerId: marketOrders.buyerId });
+      for (const o of others) await notify(o.buyerId, "ℹ️ Karte verkauft", `„${paid.title}“ wurde an einen anderen Käufer verkauft. Dein Angebot ist erloschen.`, "/?orders=1");
+    }
   }
   await notify(paid.sellerId, "💶 Bezahlt – bitte versenden", `„${paid.title}“ für ${eur(paid.priceCents + paid.shippingCents)} ist bezahlt. Das Geld liegt sicher in der Treuhand. Bitte innerhalb von ${SHIP_WINDOW_DAYS} Tagen versenden und die Sendungsnummer eintragen.`, "/?orders=1");
   await notify(paid.buyerId, "✅ Zahlung eingegangen", `„${paid.title}“: Der Verkäufer wurde benachrichtigt. Das Geld wird erst ausgezahlt, wenn du den Erhalt bestätigst.`, "/?orders=1");
@@ -141,6 +146,7 @@ export async function releaseOrder(order: Order, actor: OrderRole, note = "") {
       return null;
     }
     await recordDac7Release(order, releasedAt).catch((e) => log.error("market", "DAC7-Zähler (Auszahlung)", { orderId: order.id, err: e }));
+    await recordPayout(order, transfer.id, amount);
     await notify(order.sellerId, "💸 Auszahlung freigegeben", `${eur(amount)} für „${order.title}“ sind unterwegs auf dein Konto (Provision ${eur(order.feeCents)}).${note ? ` ${note}` : ""}`, "/?orders=1");
     if (actor !== "buyer") await notify(order.buyerId, "✅ Kauf abgeschlossen", `„${order.title}“ ist abgeschlossen. Bitte bewerte den Verkäufer.`, "/?orders=1");
     else await notify(order.buyerId, "⭐ Danke! Bitte bewerten", `Wie lief der Kauf von „${order.title}“?`, "/?orders=1");
@@ -152,22 +158,54 @@ export async function releaseOrder(order: Order, actor: OrderRole, note = "") {
   }
 }
 
-export async function refundOrder(order: Order, actor: OrderRole, reason: string) {
+/** Auszahlung protokollieren (seller_payouts) – idempotent über die Transfer-ID. */
+async function recordPayout(order: Order, transferId: string, amountCents: number) {
+  await db.insert(sellerPayouts).values({ marketOrderId: order.id, sellerId: order.sellerId, amountCents, feeCents: order.feeCents, stripeTransferId: transferId })
+    .onConflictDoNothing().catch((e) => log.error("market", "Auszahlungsprotokoll", { orderId: order.id, err: e }));
+}
+
+/**
+ * Bestand zurücklegen, wenn eine nicht versendete Bestellung erstattet wird oder ausfällt (Karte ist noch beim Verkäufer).
+ * Warenkorb-Bestellungen: alle Positionen; Einzelkauf: das eine Inserat. Gelöschte Inserate bleiben gelöscht.
+ */
+export async function restockOrder(order: Pick<Order, "id" | "listingId" | "checkoutId">) {
+  const lines = order.checkoutId
+    ? await db.select({ listingId: orderItems.listingId, quantity: orderItems.quantity }).from(orderItems).where(eq(orderItems.marketOrderId, order.id))
+    : order.listingId ? [{ listingId: order.listingId, quantity: 1 }] : [];
+  for (const l of lines) {
+    if (!l.listingId) continue;
+    await db.execute(sql`UPDATE listings SET quantity = quantity + ${l.quantity}, status = 'active', updated_at = now()
+      WHERE id = ${l.listingId} AND status IN ('active', 'sold')`);
+  }
+}
+
+export async function refundOrder(order: Order, actor: OrderRole, reason: string, opts: { restock?: boolean } = {}) {
   const s = stripe();
   if (!s) throw new Error("Zahlungen sind nicht eingerichtet.");
   if (!order.paymentIntentId) throw new Error("Keine Zahlung gefunden.");
   const [fresh] = await db.select({ frozen: marketOrders.frozen }).from(marketOrders).where(eq(marketOrders.id, order.id)).limit(1);
   if (fresh?.frozen) throw Object.assign(new Error("Die Bestellung ist wegen einer Rückbuchung eingefroren."), { status: 409 });
-  const refund = await s.refunds.create({ payment_intent: order.paymentIntentId, reason: "requested_by_customer", metadata: { orderId: String(order.id), actor } },
-    { idempotencyKey: `refund-order-${order.id}` });
-  const [done] = await db.update(marketOrders).set({ status: "refunded", refundId: refund.id, disputeReason: reason || order.disputeReason, updatedAt: new Date() })
-    .where(and(eq(marketOrders.id, order.id), inArray(marketOrders.status, ["paid", "shipped", "disputed"]))).returning();
-  if (done && order.listingId) {
-    // Inserat wieder freigeben, falls es durch diese Bestellung als verkauft markiert wurde
-    const [still] = rows(await db.execute(sql`SELECT 1 AS x FROM market_orders WHERE listing_id = ${order.listingId} AND id <> ${order.id} AND status IN ('paid','shipped','disputed','releasing','released') LIMIT 1`));
-    if (!still) await db.update(listings).set({ status: "active" }).where(and(eq(listings.id, order.listingId), eq(listings.status, "sold")));
+  const amount = order.priceCents + order.shippingCents;
+  // Widerruf nach bereits erfolgter Auszahlung (gewerblicher Händler): Auszahlung zuerst vom Verkäuferkonto zurückholen
+  if (order.transferId && !order.transferReversalId) {
+    const reversal = await s.transfers.createReversal(order.transferId, {
+      amount: order.priceCents + order.shippingCents - order.feeCents,
+      description: `Widerruf/Erstattung Bestellung #${order.id}`.slice(0, 200), metadata: { orderId: String(order.id), actor },
+    }, { idempotencyKey: `refund-reversal-${order.id}` });
+    await db.update(marketOrders).set({ transferReversalId: reversal.id, updatedAt: new Date() }).where(eq(marketOrders.id, order.id));
+    await db.update(sellerPayouts).set({ status: "reversed", reversalId: reversal.id }).where(eq(sellerPayouts.stripeTransferId, order.transferId));
   }
-  await notify(order.buyerId, "↩️ Geld erstattet", `${eur(order.priceCents + order.shippingCents)} für „${order.title}“ werden zurückgebucht (je nach Bank 5–10 Tage). ${reason}`.trim(), "/?orders=1");
+  // Warenkorb-Checkout: eine Zahlung für mehrere Verkäufer → nur den Anteil dieser Teilbestellung erstatten
+  const refund = await s.refunds.create({
+    payment_intent: order.paymentIntentId, reason: "requested_by_customer", metadata: { orderId: String(order.id), actor },
+    ...(order.checkoutId ? { amount } : {}),
+  }, { idempotencyKey: `refund-order-${order.id}` });
+  const [done] = await db.update(marketOrders).set({ status: "refunded", refundId: refund.id, disputeReason: reason || order.disputeReason, updatedAt: new Date() })
+    .where(and(eq(marketOrders.id, order.id), inArray(marketOrders.status, ["paid", "shipped", "disputed", "withdrawn"]))).returning();
+  // Nicht versendet → Karte(n) wieder verfügbar machen
+  if (done && order.status === "paid" && opts.restock !== false) await restockOrder(order);
+  if (done && order.transferId) await recordDac7Refund(order).catch((e) => log.error("market", "DAC7-Zähler (Erstattung)", { orderId: order.id, err: e }));
+  await notify(order.buyerId, "↩️ Geld erstattet", `${eur(amount)} für „${order.title}“ werden zurückgebucht (je nach Bank 5–10 Tage). ${reason}`.trim(), "/?orders=1");
   await notify(order.sellerId, "↩️ Bestellung erstattet", `„${order.title}“ wurde dem Käufer erstattet. ${reason}`.trim(), "/?orders=1");
   return done;
 }
@@ -222,15 +260,17 @@ const DISPUTE_REASONS: Record<string, string> = {
 };
 const reasonText = (d: DisputeLike) => DISPUTE_REASONS[String(d.reason)] || "sonstiger Grund";
 
-async function orderForDispute(d: DisputeLike): Promise<Order | null> {
+/** Alle Bestellungen zur zurückgebuchten Zahlung – beim Warenkorb-Checkout eine je Verkäufer. */
+async function ordersForDispute(d: DisputeLike): Promise<Order[]> {
   const chargeId = idOf(d.charge), piId = idOf(d.payment_intent);
-  if (!chargeId && !piId) return null;
-  const [o] = await db.select().from(marketOrders).where(or(
+  if (!chargeId && !piId) return [];
+  return db.select().from(marketOrders).where(or(
     chargeId ? eq(marketOrders.chargeId, chargeId) : sql`false`,
     piId ? eq(marketOrders.paymentIntentId, piId) : sql`false`,
-  )).limit(1);
-  return o ?? null;
+  )).orderBy(marketOrders.id).limit(50);
 }
+/** Idempotency-Key je Dispute – bei Warenkorb-Bestellungen zusätzlich je Teilbestellung (mehrere Transfers je Zahlung). */
+const disputeKey = (prefix: string, disputeId: string, o: Pick<Order, "id" | "checkoutId">) => `${prefix}-${disputeId}${o.checkoutId ? `-${o.id}` : ""}`;
 
 /** Markiert ein Konto nach einer Rückbuchung (genau einmal je Dispute, nachvollziehbar im Moderationsprotokoll). */
 async function flagForChargeback(userId: string, disputeId: string, targetType: "order" | "subscription", reason: string) {
@@ -253,8 +293,9 @@ async function reverseForDispute(o: Order): Promise<Order> {
   const reversal = await s.transfers.createReversal(o.transferId, {
     description: `Rückbuchung (Chargeback) Bestellung #${o.id}`.slice(0, 200),
     metadata: { orderId: String(o.id), disputeId: o.stripeDisputeId || "" },
-  }, { idempotencyKey: `dispute-reversal-${o.stripeDisputeId || `order-${o.id}`}` });
+  }, { idempotencyKey: o.stripeDisputeId ? disputeKey("dispute-reversal", o.stripeDisputeId, o) : `dispute-reversal-order-${o.id}` });
   const [u] = await db.update(marketOrders).set({ transferReversalId: reversal.id, updatedAt: new Date() }).where(eq(marketOrders.id, o.id)).returning();
+  await db.update(sellerPayouts).set({ status: "reversed", reversalId: reversal.id }).where(eq(sellerPayouts.stripeTransferId, o.transferId));
   await notify(o.sellerId, "⚠️ Rückbuchung: Auszahlung zurückgeholt",
     `Der Käufer von „${o.title}“ hat die Zahlung bei seiner Bank zurückgebucht (Chargeback). ${eur(amount)} wurden von deinem Verkäuferkonto zurückgeholt, bis die Bank entscheidet. Wir legen mit Sendungsverfolgung und Chatverlauf Widerspruch ein – gewinnen wir, bekommst du den Betrag automatisch zurück.`, "/?orders=1");
   return u ?? o;
@@ -274,10 +315,16 @@ async function flagPlatformDispute(d: DisputeLike) {
   return { kind: "platform" as const, userId: p.userId, flagged };
 }
 
-/** charge.dispute.created – Bestellung einfrieren (idempotent), Auszahlung sperren bzw. zurückholen, Käufer markieren. */
+/** charge.dispute.created – Bestellung(en) einfrieren (idempotent), Auszahlung sperren bzw. zurückholen, Käufer markieren. */
 export async function handleDisputeCreated(d: DisputeLike) {
-  let o = await orderForDispute(d);
-  if (!o) return flagPlatformDispute(d);
+  const list = await ordersForDispute(d);
+  if (!list.length) return flagPlatformDispute(d);
+  const results = [];
+  for (const o of list) results.push(await disputeCreatedFor(d, o));
+  return results.length === 1 ? results[0] : { kind: "order" as const, orders: results };
+}
+
+async function disputeCreatedFor(d: DisputeLike, o: Order) {
   let first = false;
   for (let attempt = 0; attempt < 3 && !o.frozen && !o.disputeStatus; attempt++) {
     const [claimed] = await db.update(marketOrders).set({
@@ -306,14 +353,20 @@ export async function handleDisputeCreated(d: DisputeLike) {
 export async function handleDisputeClosed(d: DisputeLike) {
   const won = WON.includes(d.status), lost = d.status === "lost";
   if (!won && !lost) return handleDisputeCreated(d);
-  let o = await orderForDispute(d);
-  if (!o) {
+  const list = await ordersForDispute(d);
+  if (!list.length) {
     // Plattform-Zahlung: Markierung bleibt bestehen (Prüfung durch das Team), bei Verlust zusätzlich Hinweis
     if (lost) await notifyAdmins("🚩 Rückbuchung verloren (Abo/Plattform)", `Stripe ${d.id}: ${reasonText(d)}.`, "/?admin=1");
     return { kind: "platform" as const, status: d.status };
   }
+  const results = [];
+  for (const o of list) results.push(await disputeClosedFor(d, o, won, lost));
+  return results.length === 1 ? results[0] : { kind: "order" as const, orders: results };
+}
+
+async function disputeClosedFor(d: DisputeLike, o: Order, won: boolean, lost: boolean) {
   if (!o.stripeDisputeId) {
-    await handleDisputeCreated(d); // „created“ wurde verpasst – erst einfrieren
+    await disputeCreatedFor(d, o); // „created“ wurde verpasst – erst einfrieren
     const [fresh] = await db.select().from(marketOrders).where(eq(marketOrders.id, o.id)).limit(1);
     if (!fresh) return { kind: "order" as const, orderId: o.id, missing: true };
     o = fresh;
@@ -331,8 +384,9 @@ export async function handleDisputeClosed(d: DisputeLike) {
         amount: o.priceCents + o.shippingCents - o.feeCents, currency: "eur", destination: seller.stripeAccountId, transfer_group: `order_${o.id}`,
         description: `PokeSwipe Verkauf #${o.id} (Rückbuchung abgewiesen): ${o.title}`.slice(0, 200),
         metadata: { orderId: String(o.id), disputeId: d.id, kind: "dispute_won" },
-      }, { idempotencyKey: `dispute-won-${d.id}` });
+      }, { idempotencyKey: disputeKey("dispute-won", d.id, o) });
       transferId = t.id;
+      await recordPayout(o, t.id, o.priceCents + o.shippingCents - o.feeCents);
     }
     const before = o.statusBeforeDispute;
     const restore = o.transferId ? "released" : before === "releasing" ? "disputed" : before || "released";
@@ -352,10 +406,8 @@ export async function handleDisputeClosed(d: DisputeLike) {
     .where(and(eq(marketOrders.id, o.id), eq(marketOrders.disputeStatus, "open"))).returning();
   if (!u) return { kind: "order" as const, orderId: o.id, alreadyProcessed: true };
   if (o.transferId) await recordDac7Refund(o).catch((e) => log.error("market", "DAC7-Zähler (Rückbuchung)", { orderId: o!.id, err: e }));
-  // Nicht versendet → Karte ist noch beim Verkäufer, Inserat wieder freigeben
-  if (o.listingId && o.statusBeforeDispute === "paid") {
-    await db.update(listings).set({ status: "active" }).where(and(eq(listings.id, o.listingId), eq(listings.status, "sold")));
-  }
+  // Nicht versendet → Karte ist noch beim Verkäufer, Bestand wieder freigeben
+  if (o.statusBeforeDispute === "paid") await restockOrder(o);
   await notify(o.sellerId, "❌ Rückbuchung verloren",
     `Die Bank hat bei „${o.title}“ zugunsten des Käufers entschieden. ${o.transferId ? "Die zurückgeholte Auszahlung" : "Die Auszahlung"} entfällt. Falls du die Karte versendet hast, wende dich mit Sendungsnachweis an unser Team – wir prüfen den Fall und das Käuferkonto bleibt gesperrt.`, "/?orders=1");
   await notify(o.buyerId, "ℹ️ Rückbuchung abgeschlossen", `Deine Bank hat die Rückbuchung für „${o.title}“ zu deinen Gunsten entschieden. Dein Konto bleibt bis zur Prüfung durch unser Team für Käufe mit Käuferschutz gesperrt.`, "/?orders=1");
@@ -375,9 +427,10 @@ export async function handleDisputeUpdated(d: DisputeLike) {
 export async function runEscrowJobs() {
   const result = { released: 0, expired: 0, refunded: 0, errors: 0, dac7Reminders: 0 };
   // 1. Angebote ohne Antwort und unbezahlte Bestellungen verfallen
-  const expired = await db.update(marketOrders).set({ status: "cancelled", updatedAt: new Date() }).where(sql`
+  // Warenkorb-Teilbestellungen (checkout_id) verfallen über runCartJobs (server/cart.ts), damit Reservierungen freikommen
+  const expired = await db.update(marketOrders).set({ status: "cancelled", updatedAt: new Date() }).where(sql`${marketOrders.checkoutId} IS NULL AND (
     (${marketOrders.status} = 'offered' AND ${marketOrders.createdAt} < now() - make_interval(hours => ${OFFER_TTL_HOURS}::int))
-    OR (${marketOrders.status} = 'awaiting_payment' AND ${marketOrders.payBy} < now())`).returning();
+    OR (${marketOrders.status} = 'awaiting_payment' AND ${marketOrders.payBy} < now()))`).returning();
   for (const o of expired) {
     result.expired++;
     await notify(o.buyerId, "⌛ Bestellung verfallen", `„${o.title}“: ${o.payBy ? "Die Zahlungsfrist ist abgelaufen" : "Der Verkäufer hat nicht auf dein Angebot reagiert"} – es wurde nichts berechnet.`, "/?orders=1");
@@ -411,8 +464,9 @@ export async function runEscrowJobs() {
 // ---------------------------------------------------------------------------
 // Ansicht einer Bestellung für Käufer/Verkäufer (Adresse nur für Verkäufer und erst nach Zahlung)
 // ---------------------------------------------------------------------------
-function orderView(o: any, userId: string, admin = false) {
+function orderView(o: any, userId: string, admin = false, items: any[] = []) {
   const role = o.buyer_id === userId ? "buyer" : o.seller_id === userId ? "seller" : "admin";
+  const business = o.seller_type === "business";
   const showAddress = (role === "seller" || admin) && ["paid", "shipped", "disputed"].includes(o.status);
   let address: any = null;
   if (showAddress && o.shipping_address) { try { address = JSON.parse(o.shipping_address); } catch {} }
@@ -425,6 +479,13 @@ function orderView(o: any, userId: string, admin = false) {
     payBy: o.pay_by, paidAt: o.paid_at, shippedAt: o.shipped_at, releaseAfter: o.release_after, releasedAt: o.released_at, createdAt: o.created_at,
     buyer: { id: o.buyer_id, name: o.buyer_name }, seller: { id: o.seller_id, name: o.seller_name },
     address, reviewed: Boolean(o.reviewed), frozen: Boolean(o.frozen), disputeStatus: o.dispute_status || "",
+    // Phase 7: Warenkorb-Teilbestellung, Verkäufertyp und Widerruf
+    checkoutId: o.checkout_id ? Number(o.checkout_id) : null, itemCount: Number(o.item_count || 1),
+    items: items.map((i: any) => ({ title: i.title, image: i.image, variant: i.variant, condition: i.condition, lang: i.lang, quantity: Number(i.quantity), unitCents: Number(i.unit_cents), listingId: i.listing_id })),
+    sellerType: business ? "business" : "private",
+    sellerBusiness: business ? { name: o.business_name || "", address: o.business_address || "", email: o.business_email || "", phone: o.business_phone || "", vatId: o.business_vat_id || "", register: o.business_register || "" } : null,
+    withdrawalUntil: o.withdrawal_until || null, withdrawnAt: o.withdrawn_at || null, withdrawalNote: o.withdrawal_note || "", returnTracking: o.return_tracking || "",
+    canWithdraw: role === "buyer" && withdrawalOpen({ sellerType: o.seller_type, status: o.status, withdrawalUntil: o.withdrawal_until, frozen: o.frozen }),
     ...(admin ? {
       stripeDisputeId: o.stripe_dispute_id || null, statusBeforeDispute: o.status_before_dispute || "", transferId: o.transfer_id || null,
       transferReversalId: o.transfer_reversal_id || null, chargeId: o.charge_id || null, paymentIntentId: o.payment_intent_id || null,
@@ -434,8 +495,19 @@ function orderView(o: any, userId: string, admin = false) {
 
 const ORDER_SELECT = (userId: string) => sql`
   SELECT o.*, pb.display_name AS buyer_name, ps.display_name AS seller_name,
+    ps.business_name, ps.business_address, ps.business_email, ps.business_phone, ps.business_vat_id, ps.business_register,
     EXISTS (SELECT 1 FROM reviews r WHERE r.order_id = o.id AND r.reviewer_id = ${userId}) AS reviewed
   FROM market_orders o JOIN profiles pb ON pb.user_id = o.buyer_id JOIN profiles ps ON ps.user_id = o.seller_id`;
+
+/** Positionen der Warenkorb-Teilbestellungen in einer Abfrage laden. */
+async function itemsFor(list: any[]): Promise<Map<number, any[]>> {
+  const ids = list.filter((o) => o.checkout_id).map((o) => Number(o.id));
+  const map = new Map<number, any[]>();
+  if (!ids.length) return map;
+  const its = rows(await db.execute(sql`SELECT * FROM order_items WHERE market_order_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) ORDER BY id`));
+  for (const i of its) map.set(Number(i.market_order_id), [...(map.get(Number(i.market_order_id)) || []), i]);
+  return map;
+}
 
 async function loadOrderFor(id: number, user: AuthUser) {
   const admin = isAdmin(user);
@@ -538,7 +610,8 @@ export function registerMarket(app: any, hlp: Hlp) {
   app.get("/api/orders", auth, async (c: any) => {
     const user: AuthUser = c.get("user");
     const list = rows(await db.execute(sql`${ORDER_SELECT(user.id)} WHERE o.buyer_id = ${user.id} OR o.seller_id = ${user.id} ORDER BY o.updated_at DESC LIMIT 100`));
-    return c.json({ orders: list.map((o: any) => orderView(o, user.id)) });
+    const items = await itemsFor(list);
+    return c.json({ orders: list.map((o: any) => orderView(o, user.id, false, items.get(Number(o.id)))) });
   });
 
   /** Kaufen (Sofort-Kauf zum Inseratspreis) oder verbindliches Preisangebot abgeben */
@@ -551,9 +624,10 @@ export function registerMarket(app: any, hlp: Hlp) {
     if (b.acceptTerms !== true) return c.json({ error: "Bitte bestätige die Kaufbedingungen.", needsConsent: true }, 428);
     const listingId = int(b.listingId, 1, 2 ** 31 - 1, 0);
     const [l] = rows(await db.execute(sql`
-      SELECT l.*, p.stripe_account_ready, p.stripe_account_id, p.plan, p.plan_until, p.bonus_until, p.bonus_plan, p.banned, p.display_name, p.flagged_at
+      SELECT l.*, p.stripe_account_ready, p.stripe_account_id, p.plan, p.plan_until, p.bonus_until, p.bonus_plan, p.banned, p.display_name, p.flagged_at, p.seller_type
       FROM listings l JOIN profiles p ON p.user_id = l.user_id WHERE l.id = ${listingId} AND l.status = 'active'`));
     if (!l) return c.json({ error: "Inserat nicht mehr verfügbar." }, 404);
+    if (Number(l.quantity) - Number(l.reserved) < 1) return c.json({ error: "Gerade nicht verfügbar – die Karte liegt im Checkout eines anderen Käufers. Bitte versuche es in einer Stunde erneut." }, 409);
     if (l.user_id === user.id) return c.json({ error: "Das ist dein eigenes Inserat." }, 400);
     if (!l.buy_now || !l.stripe_account_ready || !l.stripe_account_id || l.banned) return c.json({ error: "Dieses Inserat ist nicht für den Kauf mit Käuferschutz freigeschaltet – nutze die Tauschanfrage." }, 409);
     if (await isBlockedBetween(user.id, l.user_id)) return c.json({ error: "Kauf nicht möglich." }, 403);
@@ -585,7 +659,7 @@ export function registerMarket(app: any, hlp: Hlp) {
       const [created] = await db.insert(marketOrders).values({
         listingId, buyerId: user.id, sellerId: l.user_id, title: String(l.card_name).slice(0, 160), image: l.image || "",
         status: offer !== null ? "offered" : "awaiting_payment", priceCents: price, shippingCents: Number(l.shipping_cents) || 0,
-        feeCents: fee.feeCents, feeBps: fee.bps, message,
+        feeCents: fee.feeCents, feeBps: fee.bps, message, sellerType: l.seller_type === "business" ? "business" : "private",
         payBy: offer !== null ? null : new Date(Date.now() + PAY_WINDOW_HOURS * 3600_000),
       }).returning();
       order = created;
@@ -611,9 +685,10 @@ export function registerMarket(app: any, hlp: Hlp) {
     if (order.payBy && new Date(order.payBy) < new Date()) return c.json({ error: "Die Zahlungsfrist ist abgelaufen." }, 409);
     const gate = await escrowBuyGate(c.get("profile"), order.priceCents + order.shippingCents);
     if (gate) return c.json({ error: gate }, 403);
+    if (order.checkoutId) return c.json({ error: "Warenkorb-Bestellungen bezahlst du über den Warenkorb." }, 409);
     if (order.listingId) {
-      const [l] = await db.select({ status: listings.status }).from(listings).where(eq(listings.id, order.listingId)).limit(1);
-      if (!l || l.status !== "active") return c.json({ error: "Die Karte ist nicht mehr verfügbar." }, 409);
+      const [l] = await db.select({ status: listings.status, quantity: listings.quantity, reserved: listings.reserved }).from(listings).where(eq(listings.id, order.listingId)).limit(1);
+      if (!l || l.status !== "active" || l.quantity - l.reserved < 1) return c.json({ error: "Die Karte ist nicht mehr verfügbar." }, 409);
     }
     try { return c.json({ url: await checkoutForOrder(c, order, c.get("profile")) }); }
     catch (e: any) { return c.json({ error: e.message || "Bezahlung konnte nicht gestartet werden." }, e.status || 502); }
@@ -648,7 +723,27 @@ export function registerMarket(app: any, hlp: Hlp) {
     try {
       if (action === "confirm") {
         const done = await releaseOrder(order, "buyer");
+        if (done && order.sellerType === "business") {
+          // Erhalt bestätigt → Widerrufsfrist läuft ab jetzt 14 Tage (nie kürzer als schon zugesagt)
+          await db.update(marketOrders).set({ withdrawalUntil: withdrawalDeadline("received", now, AUTO_RELEASE_DAYS, order.withdrawalUntil) }).where(eq(marketOrders.id, order.id));
+        }
         return done ? c.json({ ok: true, status: "released" }) : c.json({ error: "Status hat sich geändert – bitte neu laden." }, 409);
+      }
+      if (action === "withdraw") {
+        // Widerruf (§ 355 BGB) – nur bei gewerblichen Händlern und innerhalb der Frist
+        if (!withdrawalOpen(order)) return c.json({ error: order.sellerType === "business" ? "Die Widerrufsfrist ist abgelaufen." : "Bei Privatverkäufen besteht kein gesetzliches Widerrufsrecht. Bei Problemen nutze „Problem melden“." }, 409);
+        const note = str(b.reason, 500), returnTracking = str(b.returnTracking, 40).replace(/\s+/g, "");
+        if (returnTracking && !validTracking(returnTracking)) return c.json({ error: "Bitte eine gültige Sendungsnummer für die Rücksendung eintragen (6–40 Zeichen)." }, 400);
+        const [u] = await db.update(marketOrders).set({ status: "withdrawn", withdrawnAt: now, withdrawalNote: note, returnTracking, releaseAfter: null, updatedAt: now })
+          .where(and(eq(marketOrders.id, id), eq(marketOrders.status, order.status))).returning();
+        if (!u) return c.json({ error: "Status hat sich geändert – bitte neu laden." }, 409);
+        await notify(order.sellerId, "↩️ Widerruf erklärt", `${name} hat den Kauf „${order.title}“ widerrufen.${returnTracking ? ` Rücksendung: ${returnTracking}.` : " Die Rücksendung folgt."} Bitte nach Erhalt der Ware „Rücksendung erhalten – erstatten“ wählen (spätestens 14 Tage nach dem Widerruf, § 357 BGB).`, "/?orders=1");
+        await notifyAdmins("↩️ Widerruf (gewerblicher Händler)", `Bestellung #${id}: ${order.title}`);
+        return c.json({ ok: true, status: "withdrawn" });
+      }
+      if (action === "accept_return") {
+        const done = await refundOrder(order, "seller", "Widerruf: Rücksendung beim Händler eingegangen.");
+        return done ? c.json({ ok: true, status: "refunded" }) : c.json({ error: "Status hat sich geändert – bitte neu laden." }, 409);
       }
       if (action === "refund") {
         const done = await refundOrder(order, "seller", `Vom Verkäufer storniert.${b.reason ? ` ${str(b.reason, 200)}` : ""}`);
@@ -668,7 +763,8 @@ export function registerMarket(app: any, hlp: Hlp) {
         const carrier = CARRIERS[str(b.carrier, 20)] ? str(b.carrier, 20) : "other";
         const tracking = str(b.trackingNumber, 40).replace(/\s+/g, "");
         if (!validTracking(tracking)) return c.json({ error: "Bitte eine gültige Sendungsnummer eintragen (6–40 Zeichen)." }, 400);
-        Object.assign(updates, { carrier, trackingNumber: tracking, shippedAt: now, releaseAfter: new Date(Date.now() + AUTO_RELEASE_DAYS * 86400_000) });
+        Object.assign(updates, { carrier, trackingNumber: tracking, shippedAt: now, releaseAfter: new Date(Date.now() + AUTO_RELEASE_DAYS * 86400_000),
+          ...(order.sellerType === "business" ? { withdrawalUntil: withdrawalDeadline("shipped", now, AUTO_RELEASE_DAYS) } : {}) });
         msg = ["📦 Versendet", `„${order.title}“ ist mit ${CARRIERS[carrier]} unterwegs (${tracking}). Bitte bestätige den Erhalt, sobald die Karte da ist – sonst wird ${AUTO_RELEASE_DAYS} Tage nach Versand automatisch ausgezahlt.`];
       } else if (action === "dispute") {
         const reason = str(b.reason, 500);
@@ -709,8 +805,8 @@ export function registerMarket(app: any, hlp: Hlp) {
     const user: AuthUser = c.get("user");
     const status = str(c.req.query("status"), 20);
     const list = rows(await db.execute(sql`${ORDER_SELECT(user.id)}
-      WHERE ${status ? sql`o.status = ${status}` : sql`(o.status IN ('disputed', 'paid', 'shipped', 'releasing', 'chargeback') OR (o.frozen AND o.dispute_status = 'open'))`}
-      ORDER BY (o.status IN ('disputed', 'chargeback')) DESC, o.updated_at DESC LIMIT 100`));
+      WHERE ${status ? sql`o.status = ${status}` : sql`(o.status IN ('disputed', 'paid', 'shipped', 'releasing', 'chargeback', 'withdrawn') OR (o.frozen AND o.dispute_status = 'open'))`}
+      ORDER BY (o.status IN ('disputed', 'chargeback', 'withdrawn')) DESC, o.updated_at DESC LIMIT 100`));
     const [stats] = rows(await db.execute(sql`
       SELECT count(*) FILTER (WHERE status = 'disputed')::int AS disputed,
         count(*) FILTER (WHERE status IN ('paid', 'shipped'))::int AS in_escrow,
@@ -720,7 +816,8 @@ export function registerMarket(app: any, hlp: Hlp) {
         coalesce(sum(fee_cents) FILTER (WHERE status = 'released' AND released_at > date_trunc('month', now())), 0)::int AS fees_month_cents,
         coalesce(sum(price_cents + shipping_cents) FILTER (WHERE status = 'released' AND released_at > date_trunc('month', now())), 0)::int AS gmv_month_cents
       FROM market_orders`));
-    return c.json({ orders: list.map((o: any) => orderView(o, user.id, true)), stats });
+    const items = await itemsFor(list);
+    return c.json({ orders: list.map((o: any) => orderView(o, user.id, true, items.get(Number(o.id)))), stats });
   });
 
   app.post("/api/admin/orders/:id/resolve", auth, adminOnly, async (c: any) => {
@@ -733,6 +830,14 @@ export function registerMarket(app: any, hlp: Hlp) {
     if (!action || !nextStatus("admin", action, order.status as OrderStatus)) return c.json({ error: "Aktion nicht möglich." }, 409);
     const note = str(b.note, 300);
     try {
+      // Widerruf nach bereits erfolgter Auszahlung abgelehnt: kein zweiter Transfer, nur Status zurücksetzen
+      if (action === "release" && order.status === "withdrawn" && order.transferId) {
+        const [u] = await db.update(marketOrders).set({ status: "released", updatedAt: new Date() }).where(and(eq(marketOrders.id, id), eq(marketOrders.status, "withdrawn"))).returning();
+        if (!u) return c.json({ error: "Status hat sich geändert – bitte neu laden." }, 409);
+        await notify(order.buyerId, "ℹ️ Widerruf geprüft", `Bestellung „${order.title}“: ${note || "Der Widerruf wurde nach Prüfung nicht anerkannt."}`, "/?orders=1");
+        await db.insert(moderationLog).values({ actorId: c.get("user").id, action: "order_release", targetType: "order", targetId: String(id), userId: order.sellerId, reason: note });
+        return c.json({ ok: true, status: "released" });
+      }
       const done = action === "release" ? await releaseOrder(order, "admin", note) : await refundOrder(order, "admin", note || "Entscheidung des PokeSwipe-Teams.");
       if (!done) return c.json({ error: "Status hat sich geändert – bitte neu laden." }, 409);
       await db.insert(moderationLog).values({ actorId: c.get("user").id, action: action === "release" ? "order_release" : "order_refund", targetType: "order", targetId: String(id), userId: order.sellerId, reason: note });

@@ -4,6 +4,7 @@
 //  – nicht versendete Käufe nach 7 Tagen automatisch erstatten, Versand-Erinnerungen
 import type { Config } from "@netlify/functions";
 import { runEscrowJobs } from "../../server/market.ts";
+import { runCartJobs } from "../../server/cart.ts";
 import { stripe } from "../../server/billing.ts";
 import { runJob } from "../../server/resilience.ts";
 
@@ -11,7 +12,10 @@ import { runJob } from "../../server/resilience.ts";
 export default async () => {
   const run = await runJob("market-escrow", 25_000, async (job) => {
     if (!stripe()) { job.skip("Stripe nicht eingerichtet"); return null; }
-    return runEscrowJobs();
+    const escrow = await runEscrowJobs();
+    // Phase 7: abgelaufene Warenkorb-Checkouts freigeben, Verkäuferkonten abgleichen
+    const cart = await runCartJobs();
+    return { ...escrow, cartExpired: cart.expired, cartCompleted: cart.completed, sellersSynced: cart.sellersSynced, errors: escrow.errors + cart.errors };
   });
   return Response.json({ status: run.status, ...(run.result || {}), ...(run.error ? { error: run.error } : {}) });
 };

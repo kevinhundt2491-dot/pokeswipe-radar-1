@@ -875,7 +875,7 @@
 
       batchRows.forEach(r => {
         if (r.card && r.card.trim()) {
-          const p = parseInt(r.price, 10);
+          const p = parseEuroPrice(r.price);
           if (publishSingleMarketObject(r.card, p, r.want || defaultWant, city, r.img)) count++;
         }
       });
@@ -883,7 +883,20 @@
       if (count === 0) return alert("Bitte mindestens eine Karte in den Zeilen eintragen!");
       batchRows = [{ card: "", price: "", want: "", img: "" }, { card: "", price: "", want: "", img: "" }];
       renderBatchRows();
-      triggerSmartPush("🚀 Stapel-Inserat live!", `${count} Karten wurden gleichzeitig im Tausch-Hub veröffentlicht!`);
+      triggerSmartPush("⏳ Stapel-Inserat wird gesendet", `${count} Karte(n) werden veröffentlicht – das Ergebnis siehst du gleich.`);
+    }
+
+    // Preis aus Eingaben wie „12,50“, „12.50“, „1.234,50 €“ oder „1,234.50“ – vorher wurden alle Nicht-Ziffern
+    // entfernt („12,50“ → 1250 €) bzw. per parseInt die Cents abgeschnitten.
+    function parseEuroPrice(raw) {
+      let s = String(raw ?? "").replace(/[€\s]/g, "").replace(/eur$/i, "");
+      if (!s) return NaN;
+      const lastComma = s.lastIndexOf(","), lastDot = s.lastIndexOf(".");
+      if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
+      else s = s.replace(/,/g, "");
+      if (!/^\d+(\.\d{1,2})?$/.test(s)) return NaN;
+      const n = Math.round(parseFloat(s) * 100) / 100;
+      return Number.isFinite(n) && n >= 0 ? n : NaN;
     }
 
     function submitBulkTextListings() {
@@ -898,14 +911,14 @@
         if (!line.trim()) return;
         const parts = line.split(/[;|]/).map(s => s.trim());
         const cardName = parts[0];
-        const priceVal = parts[1] ? parseInt(parts[1].replace(/[^\d]/g, ""), 10) : NaN;
+        const priceVal = parts[1] ? parseEuroPrice(parts[1]) : NaN;
         const wantVal = parts[2] || defaultWant;
         if (publishSingleMarketObject(cardName, priceVal, wantVal, city)) count++;
       });
 
       if (count > 0) {
         document.getElementById("batch-textarea").value = "";
-        triggerSmartPush("⚡ Massen-Import erfolgreich!", `${count} Karten wurden auf einen Schlag veröffentlicht!`);
+        triggerSmartPush("⏳ Massen-Import wird gesendet", `${count} Karte(n) werden veröffentlicht – das Ergebnis siehst du gleich.`);
       }
     }
 

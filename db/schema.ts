@@ -55,6 +55,17 @@ export const profiles = pgTable("profiles", {
   flaggedAt: timestamp("flagged_at", { withTimezone: true }),
   flagReason: text("flag_reason").notNull().default(""),
   chargebacks: integer().notNull().default(0),
+  // Phase 7: Direktkauf – privater oder gewerblicher Verkäufer (Art. 246d EGBGB, Widerrufsrecht) und Anbieterangaben
+  sellerType: text("seller_type").notNull().default("private"), // private | business
+  businessName: text("business_name").notNull().default(""),
+  businessAddress: text("business_address").notNull().default(""),
+  businessEmail: text("business_email").notNull().default(""),
+  businessPhone: text("business_phone").notNull().default(""),
+  businessVatId: text("business_vat_id").notNull().default(""),
+  businessRegister: text("business_register").notNull().default(""),
+  businessUpdatedAt: timestamp("business_updated_at", { withTimezone: true }),
+  // Vom Admin freigegebenes Inserate-Limit für Händler mit großem Bestand (überschreibt das Tarif-Limit, wenn höher)
+  listingLimitOverride: integer("listing_limit_override"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("profiles_display_name_lower").on(t.displayName),
@@ -307,8 +318,20 @@ export const listings = pgTable("listings", {
   // Phase 6: Kartenvariante (siehe portfolio_items.variant) und Herkunft aus dem Portfolio
   variant: text().notNull().default("normal"),
   portfolioItemId: integer("portfolio_item_id"),
+  // Phase 7: Bestand (Händler), Reservierung während des Checkouts, Herkunft (Bulk-Import) und Druck (EN/JA)
+  quantity: integer().notNull().default(1),
+  reserved: integer().notNull().default(0),
+  externalSku: text("external_sku"),
+  source: text().notNull().default("manual"), // manual | csv
+  importId: integer("import_id"),
+  printId: text("print_id"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("listings_status").on(t.status, t.createdAt), index("listings_user").on(t.userId)]);
+}, (t) => [
+  index("listings_status").on(t.status, t.createdAt), index("listings_user").on(t.userId),
+  uniqueIndex("listings_user_sku").on(t.userId, t.externalSku),
+  index("listings_card_buy").on(t.cardId, t.status, t.buyNow),
+]);
 
 export const trades = pgTable("trades", {
   id: serial().primaryKey(),
@@ -648,6 +671,9 @@ export const cancellations = pgTable("cancellations", {
   status: text().notNull().default("received"), // received | applied | no_contract | review
   effectiveAt: timestamp("effective_at", { withTimezone: true }),
   verified: boolean().notNull().default(false), // true = beim Absenden angemeldet
+  // Ohne Anmeldung: Kündigung wird erst nach Klick auf den Bestätigungslink an die Konto-E-Mail bei Stripe angewendet
+  confirmTokenHash: text("confirm_token_hash"),
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("cancellations_reference").on(t.reference), index("cancellations_email").on(t.email), index("cancellations_user").on(t.userId)]);
 
@@ -913,9 +939,19 @@ export const marketOrders = pgTable("market_orders", {
   shippedAt: timestamp("shipped_at", { withTimezone: true }),
   releaseAfter: timestamp("release_after", { withTimezone: true }),
   releasedAt: timestamp("released_at", { withTimezone: true }),
+  // Phase 7: Teilbestellung eines Warenkorb-Checkouts (eine Zahlung, je Verkäufer eine market_orders-Zeile)
+  checkoutId: integer("checkout_id"),
+  itemCount: integer("item_count").notNull().default(1),
+  // Verkäufertyp zum Kaufzeitpunkt – gewerblich: 14 Tage Widerrufsrecht für Verbraucher
+  sellerType: text("seller_type").notNull().default("private"),
+  withdrawalUntil: timestamp("withdrawal_until", { withTimezone: true }),
+  withdrawnAt: timestamp("withdrawn_at", { withTimezone: true }),
+  withdrawalNote: text("withdrawal_note").notNull().default(""),
+  returnTracking: text("return_tracking").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
+  index("market_orders_checkout").on(t.checkoutId),
   index("market_orders_buyer").on(t.buyerId, t.createdAt),
   index("market_orders_seller").on(t.sellerId, t.createdAt),
   index("market_orders_status").on(t.status, t.releaseAfter),
@@ -1114,3 +1150,95 @@ export const errorLog = pgTable("error_log", {
   context: jsonb(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("error_log_created").on(t.createdAt), index("error_log_scope").on(t.scope, t.createdAt)]);
+
+// ---------------------------------------------------------------------------
+// Phase 7: Direktkauf – Warenkorb, Checkout über mehrere Verkäufer, Auszahlungen, Händler-Bestands-Import
+// ---------------------------------------------------------------------------
+export const cartItems = pgTable("cart_items", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  listingId: integer("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
+  quantity: integer().notNull().default(1),
+  priceCentsAtAdd: integer("price_cents_at_add").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("cart_items_user_listing").on(t.userId, t.listingId)]);
+
+// Ein Checkout = eine Stripe-Zahlung; je Verkäufer entsteht eine Teilbestellung in market_orders (checkout_id)
+export const orders = pgTable("orders", {
+  id: serial().primaryKey(),
+  buyerId: text("buyer_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  status: text().notNull().default("awaiting_payment"), // awaiting_payment | paid | cancelled
+  itemsCents: integer("items_cents").notNull(),
+  shippingCents: integer("shipping_cents").notNull().default(0),
+  totalCents: integer("total_cents").notNull(),
+  sellerCount: integer("seller_count").notNull().default(1),
+  stripeSessionId: text("stripe_session_id"),
+  paymentIntentId: text("payment_intent_id"),
+  chargeId: text("charge_id"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("orders_session").on(t.stripeSessionId), index("orders_buyer").on(t.buyerId, t.createdAt), index("orders_status").on(t.status, t.expiresAt)]);
+
+// Positionen einer Teilbestellung (Snapshot zum Kaufzeitpunkt)
+export const orderItems = pgTable("order_items", {
+  id: serial().primaryKey(),
+  marketOrderId: integer("market_order_id").notNull().references(() => marketOrders.id, { onDelete: "cascade" }),
+  checkoutId: integer("checkout_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  listingId: integer("listing_id").references(() => listings.id, { onDelete: "set null" }),
+  cardId: text("card_id"),
+  title: text().notNull(),
+  image: text().notNull().default(""),
+  variant: text().notNull().default("normal"),
+  condition: text().notNull().default(""),
+  lang: text().notNull().default("de"),
+  quantity: integer().notNull(),
+  unitCents: integer("unit_cents").notNull(),
+}, (t) => [index("order_items_order").on(t.marketOrderId), index("order_items_checkout").on(t.checkoutId)]);
+
+// Auszahlungsprotokoll je Teilbestellung (Transfer an das Connect-Konto, ggf. Rückholung)
+export const sellerPayouts = pgTable("seller_payouts", {
+  id: serial().primaryKey(),
+  marketOrderId: integer("market_order_id").notNull().references(() => marketOrders.id, { onDelete: "cascade" }),
+  sellerId: text("seller_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  amountCents: integer("amount_cents").notNull(),
+  feeCents: integer("fee_cents").notNull().default(0),
+  stripeTransferId: text("stripe_transfer_id").notNull(),
+  reversalId: text("reversal_id"),
+  status: text().notNull().default("paid"), // paid | reversed
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("seller_payouts_transfer").on(t.stripeTransferId), index("seller_payouts_seller").on(t.sellerId, t.createdAt)]);
+
+// Händler-Bestands-Import (CSV im Cardmarket-, TCGplayer- oder freien Format) – verarbeitet in einer Background Function
+export const sellerImports = pgTable("seller_imports", {
+  id: serial().primaryKey(),
+  sellerId: text("seller_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  filename: text().notNull().default(""),
+  format: text().notNull().default("generic"), // cardmarket | tcgplayer | generic
+  blobKey: text("blob_key").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  status: text().notNull().default("queued"), // queued | running | done | failed
+  options: jsonb().notNull().default({}),
+  totalRows: integer("total_rows").notNull().default(0),
+  processedRows: integer("processed_rows").notNull().default(0),
+  createdRows: integer("created_rows").notNull().default(0),
+  updatedRows: integer("updated_rows").notNull().default(0),
+  reviewRows: integer("review_rows").notNull().default(0),
+  errorRows: integer("error_rows").notNull().default(0),
+  message: text().notNull().default(""),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("seller_imports_seller").on(t.sellerId, t.createdAt)]);
+
+export const sellerImportRows = pgTable("seller_import_rows", {
+  id: serial().primaryKey(),
+  importId: integer("import_id").notNull().references(() => sellerImports.id, { onDelete: "cascade" }),
+  rowNo: integer("row_no").notNull(),
+  raw: jsonb().notNull(),
+  status: text().notNull(), // created | updated | review | error | skipped | resolved
+  listingId: integer("listing_id"),
+  candidates: jsonb(),
+  message: text().notNull().default(""),
+}, (t) => [index("seller_import_rows_import").on(t.importId, t.status)]);

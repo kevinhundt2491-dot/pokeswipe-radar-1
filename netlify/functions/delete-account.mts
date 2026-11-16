@@ -46,7 +46,7 @@ export default async (req: Request) => {
   const [profile] = await db.select().from(profiles).where(eq(profiles.userId, user.id)).limit(1);
   // Laufende Treuhand-Käufe/-Verkäufe zuerst abschließen – sonst ginge Geld der Gegenseite verloren
   const [open] = (await db.execute(sql`SELECT count(*)::int AS n FROM market_orders
-    WHERE (buyer_id = ${user.id} OR seller_id = ${user.id}) AND status IN ('paid', 'shipped', 'disputed', 'releasing')`)) as any;
+    WHERE (buyer_id = ${user.id} OR seller_id = ${user.id}) AND status IN ('paid', 'shipped', 'disputed', 'releasing', 'withdrawn')`)) as any;
   const openCount = Number((open?.rows?.[0] ?? open)?.n ?? 0);
   if (openCount > 0) {
     return Response.json({ error: `Du hast noch ${openCount} laufende Käufe/Verkäufe mit Käuferschutz. Bitte schließe sie ab (Erhalt bestätigen oder Erstattung), dann kannst du dein Konto löschen.` }, { status: 409 });

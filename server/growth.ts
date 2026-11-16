@@ -179,10 +179,11 @@ async function cardPage(c: any) {
     .where(eq(priceHistory.cardId, id)).orderBy(desc(priceHistory.day)).limit(90);
   const series = hist.reverse().map((x) => Number(x.trend));
   const offers = rows(await db.execute(sql`
-    SELECT l.price::float AS price, l.city, l.created_at, p.display_name, l.variant, l.condition
+    SELECT l.id, l.price::float AS price, l.shipping_cents, l.city, l.created_at, p.display_name, l.variant, l.condition, p.seller_type,
+      (l.buy_now AND p.stripe_account_ready AND l.quantity - l.reserved > 0) AS buyable, greatest(l.quantity - l.reserved, 0) AS available
     FROM listings l JOIN profiles p ON p.user_id = l.user_id
     WHERE l.card_id = ${id} AND l.status = 'active' AND NOT p.banned
-    ORDER BY l.price ASC LIMIT 10
+    ORDER BY (l.buy_now AND p.stripe_account_ready AND l.quantity - l.reserved > 0) DESC, (l.price * 100 + l.shipping_cents) ASC LIMIT 12
   `));
   const [wishers] = rows(await db.execute(sql`SELECT count(*)::int AS n FROM wishlist_items WHERE card_id = ${id}`));
   const avg30 = Number(card.avg30 ?? 0);
@@ -231,9 +232,11 @@ async function cardPage(c: any) {
       ${facts.length ? `<p class="muted">${facts.join(" • ")}</p>` : ""}
       ${species ? `<p style="margin-top:10px"><a class="btn s" href="/pokemon/${h(species.slug)}">📚 Alle ${Number(species.card_count)} ${h(species.name_de)}-Karten mit Preisen</a></p>` : ""}
     </div></div></div>
-  <h2>🤝 Angebote aus der Community</h2>
-  ${offers.length ? `<div class="list">${offers.map((o: any) => `<a class="row" href="${h(appLink("&tab=map"))}" style="text-decoration:none">
-      <span><b>${h(euro(o.price))}</b> <span class="muted">${o.variant && o.variant !== "normal" ? `• ${h(VARIANT_LABELS[normalizeVariant(o.variant)])} ` : ""}• ${h(o.city)} • ${h(o.display_name)}</span></span>${badge(o.price)}</a>`).join("")}</div>`
+  <h2>🛒 Jetzt kaufen &amp; Angebote</h2>
+  ${offers.length ? `<div class="list">${offers.map((o: any) => `<a class="row" href="${o.buyable ? `/?buy=${Number(o.id)}` : h(appLink("&tab=map"))}" style="text-decoration:none">
+      <span><b>${h(euro(o.price))}</b>${o.buyable ? ` <span class="muted">+ ${Number(o.shipping_cents) ? h(euro(Number(o.shipping_cents) / 100)) : "0 €"} Versand</span>` : ""} <span class="muted">${o.variant && o.variant !== "normal" ? `• ${h(VARIANT_LABELS[normalizeVariant(o.variant)])} ` : ""}${o.condition ? `• ${h(String(o.condition).toUpperCase())} ` : ""}• ${h(o.display_name)} (${o.seller_type === "business" ? "gewerblich" : "privat"})${Number(o.available) > 1 ? ` • ${Number(o.available)} Stück` : ""}</span></span>
+      ${o.buyable ? `<span class="pill fair">🛒 In den Warenkorb</span>` : badge(o.price)}</a>`).join("")}</div>
+    <p class="muted" style="font-size:12px">🛒 = Kauf mit Käuferschutz direkt in der App: Das Geld wird erst ausgezahlt, wenn du den Erhalt bestätigst. Bei gewerblichen Händlern gilt ein 14-tägiges Widerrufsrecht.</p>`
     : `<p class="muted">Gerade keine Angebote. Setz die Karte auf deine Wunschliste – wir melden uns, sobald sie jemand anbietet.</p>`}`;
   const jsonLd: any = {
     "@context": "https://schema.org", "@type": "Product", name: card.name, sku: card.id,

@@ -32,9 +32,11 @@ export function feeFor(plan: PlanId, priceCents: number, shippingCents = 0) {
 
 export type OrderStatus = "offered" | "awaiting_payment" | "paid" | "shipped" | "disputed" | "releasing" | "released" | "refunded" | "cancelled" | "declined"
   // Phase 6: Rückbuchung (Stripe-Dispute) offen bzw. verloren – eingefroren, keine Übergänge möglich
-  | "chargeback" | "chargeback_lost";
+  | "chargeback" | "chargeback_lost"
+  // Phase 7: Käufer hat bei einem gewerblichen Händler widerrufen – Auszahlung pausiert bis zur Rücksendung
+  | "withdrawn";
 export type OrderRole = "buyer" | "seller" | "admin" | "system";
-export type OrderAction = "accept" | "decline" | "pay" | "cancel" | "ship" | "confirm" | "dispute" | "refund" | "release" | "expire";
+export type OrderAction = "accept" | "decline" | "pay" | "cancel" | "ship" | "confirm" | "dispute" | "refund" | "release" | "expire" | "withdraw" | "accept_return";
 
 /** Erlaubte Zustandsübergänge: [Rolle, Aktion, von] → nach */
 const TRANSITIONS: [OrderRole, OrderAction, OrderStatus[], OrderStatus][] = [
@@ -46,8 +48,11 @@ const TRANSITIONS: [OrderRole, OrderAction, OrderStatus[], OrderStatus][] = [
   ["seller", "ship", ["paid"], "shipped"],
   ["buyer", "confirm", ["paid", "shipped"], "released"],
   ["buyer", "dispute", ["paid", "shipped"], "disputed"],
-  ["admin", "refund", ["paid", "shipped", "disputed"], "refunded"],
-  ["admin", "release", ["paid", "shipped", "disputed"], "released"],
+  ["admin", "refund", ["paid", "shipped", "disputed", "withdrawn"], "refunded"],
+  ["admin", "release", ["paid", "shipped", "disputed", "withdrawn"], "released"],
+  // Phase 7: Widerruf (nur gewerbliche Händler; Frist und Verkäufertyp prüft die Route) und Rücknahme durch den Händler
+  ["buyer", "withdraw", ["shipped", "released"], "withdrawn"],
+  ["seller", "accept_return", ["withdrawn"], "refunded"],
   ["system", "expire", ["offered", "awaiting_payment"], "cancelled"],
   ["system", "release", ["shipped"], "released"],
   ["system", "refund", ["paid"], "refunded"],

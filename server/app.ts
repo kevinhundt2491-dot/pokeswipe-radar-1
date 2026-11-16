@@ -7,7 +7,7 @@ import {
   listings, trades, tradeMessages, reviews, reports, payments, freeBoostUsage, calendarEvents, cardPrints,
 } from "../db/index.ts";
 import { verifyIdentityToken, ensureProfile, isAdmin, type AuthUser } from "./auth.ts";
-import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, effectivePlan, type PlanId } from "./plans.ts";
+import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, effectivePlan, listingLimit, type PlanId } from "./plans.ts";
 import { registerFeatures, ensureReferralCode, extraMe, applyShopUpdates, activeAlertCount, findSealed, notifySealedListing, trialDays } from "./features.ts";
 import { registerGrowth, notifyWishlistListing } from "./growth.ts";
 import { registerCollector } from "./collector.ts";
@@ -23,8 +23,10 @@ import { registerFlip } from "./flip.ts";
 import { registerScanIndex } from "./scan-index.ts";
 import { registerCommunity, afterCommunityReport, applyModeration, isBlockedBetween, COMMUNITY_TARGETS } from "./community.ts";
 import { registerProfiles } from "./profiles.ts";
-import { registerMarket, fulfillOrderSession, buyNowListingGate, handleDisputeCreated, handleDisputeUpdated, handleDisputeClosed } from "./market.ts";
+import { registerMarket, syncSellerAccount, fulfillOrderSession, buyNowListingGate, handleDisputeCreated, handleDisputeUpdated, handleDisputeClosed } from "./market.ts";
 import { registerArena } from "./arena.ts";
+import { registerCart, fulfillCartSession, expireCheckout } from "./cart.ts";
+import { registerSellerImport } from "./seller-import.ts";
 import { registerTrading } from "./trading.ts";
 import { registerSearch } from "./search.ts";
 import { registerDealsRadar } from "./deals-radar.ts";
@@ -526,12 +528,15 @@ app.get("/api/listings", async (c) => {
 app.post("/api/listings", auth, async (c) => {
   const user = c.get("user"), plan = c.get("plan"), profile = c.get("profile");
   const b = await body(c);
-  const input: any[] = Array.isArray(b.items) ? b.items.slice(0, 20) : [b];
+  // Höchstens 20 Inserate pro Anfrage – mehr wird mit 413 abgelehnt statt stillschweigend abgeschnitten
+  if (Array.isArray(b.items) && b.items.length > 20) return c.json({ error: "Höchstens 20 Inserate pro Anfrage – bitte in kleineren Blöcken senden oder den Bestands-Import nutzen.", max: 20 }, 413);
+  const input: any[] = Array.isArray(b.items) ? b.items : [b];
   const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(listings)
     .where(and(eq(listings.userId, user.id), eq(listings.status, "active")));
-  const room = PLANS[plan].listings - Number(r?.n ?? 0);
+  const limit = listingLimit(plan, profile.listingLimitOverride);
+  const room = limit - Number(r?.n ?? 0);
   if (room <= 0) {
-    return c.json({ error: `Limit erreicht: ${PLANS[plan].listings} aktive Inserate im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+    return c.json({ error: `Limit erreicht: ${limit} aktive Inserate im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
   }
   // Phase 6: Wertgrenze je Vertrauensstufe, Sperre nach Rückbuchung und DAC7-Sperre für Sofort-Kauf-Inserate
   const sellGate = await buyNowListingGate(profile, input.slice(0, room));
@@ -819,6 +824,7 @@ async function fulfillSession(sessionId: string, expectedUserId?: string) {
   const session = await s.checkout.sessions.retrieve(sessionId, { expand: ["subscription"] });
   // Marktplatz-Käufe (Treuhand) laufen getrennt und zählen nicht als Plattform-Umsatz
   if (session.metadata?.kind === "order") return fulfillOrderSession(session, expectedUserId);
+  if (session.metadata?.kind === "cart") return fulfillCartSession(session, expectedUserId);
   const userId = session.metadata?.userId;
   if (!userId || session.client_reference_id !== userId) return { ok: false, reason: "invalid" };
   if (expectedUserId && userId !== expectedUserId) return { ok: false, reason: "foreign" };
@@ -919,6 +925,15 @@ const stripeWebhook = async (c: any) => {
   try {
     if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
       await fulfillSession((event.data.object as any).id);
+    } else if (event.type === "checkout.session.expired") {
+      // Phase 7: Warenkorb-Checkout nicht bezahlt → Reservierungen sofort freigeben
+      const so = event.data.object as any;
+      if (so.metadata?.kind === "cart" && Number(so.metadata?.checkoutId)) await expireCheckout(Number(so.metadata.checkoutId));
+    } else if (event.type === "account.updated") {
+      // Phase 7: Status eines Connect-Kontos übernehmen (kommt nur bei einem Connect-Endpunkt an; sonst gleicht runCartJobs regelmäßig ab)
+      const acct = event.data.object as any;
+      const [p] = await db.select().from(profiles).where(eq(profiles.stripeAccountId, String(acct.id))).limit(1);
+      if (p) await syncSellerAccount(p);
     } else if (event.type.startsWith("customer.subscription.")) {
       const sub = event.data.object as any;
       const p = await profileForSubscription(sub);
@@ -1035,6 +1050,9 @@ registerSearch(app); // Phase 6: /api/search über den eigenen Katalog (pg_trgm)
 registerDealsRadar(app, { auth, body }); // Phase 5: geteilte Community-Deals & Sammler-Radar mit Login-Pflicht
 registerProfiles(app, { auth, body }); // ebenfalls vor registerCatalog (/sitemaps/profiles.xml)
 registerMarket(app, { auth, adminOnly, body });
+// Phase 7: Warenkorb & Checkout über mehrere Verkäufer, Händler-Bestands-Import
+registerCart(app, { auth, adminOnly, body });
+registerSellerImport(app, { auth, adminOnly, body });
 registerNative(app, { auth, body });
 registerCatalog(app, { auth, adminOnly, body });
 registerViral(app, { auth, body, ensureCode: ensureReferralCode });
