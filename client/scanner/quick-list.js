@@ -4,6 +4,7 @@
 import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl } from "../core.js";
 import { VARIANT_LABEL, VARIANT_KEYS } from "../variants.js";
 import { haptic } from "../native.js";
+import { priceTagHtml } from "../price-tag.js";
 
 const FLAG = { de: "🇩🇪", en: "🇬🇧", ja: "🇯🇵" };
 const CONDS = { mint: "Mint", nm: "Near Mint", ex: "Excellent", gd: "Good", lp: "Light Played", pl: "Played", po: "Poor" };
@@ -49,6 +50,8 @@ export function openQuickList(infos) {
   readPrefs();
   ql.rows = list.map((info) => ({
     uid: `q${++ql.seq}`, info, condition: ql.condition, variant: "normal", price: null, touched: false, sug: null, loading: true, status: "",
+    // Echtes Scan-Foto standardmäßig anhängen – Käufer sehen im Swipe-Radar die tatsächliche Karte und ihren Zustand
+    usePhoto: Boolean(info.photo),
   }));
   render();
   loadSuggestions(ql.rows);
@@ -88,7 +91,10 @@ function rowHtml(r) {
   const i = r.info, u = jsArg(r.uid);
   return `<div id="ql-${r.uid}" class="bg-slate-950 border border-slate-800 rounded-2xl p-2 space-y-1.5">
     <div class="flex gap-2 items-start">
-      <img src="${esc(cdn(i.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" class="w-11 object-contain rounded bg-slate-900 shrink-0" style="height:3.75rem" />
+      <div class="relative shrink-0 w-14">
+        <img id="ql-img-${r.uid}" src="${esc(r.usePhoto && i.photo ? i.photo : cdn(i.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" class="w-14 ${r.usePhoto && i.photo ? "object-cover" : "object-contain"} rounded bg-slate-900" style="height:4.75rem" />
+        <div id="ql-tag-${r.uid}" class="absolute -bottom-1.5 -left-1 ps-price-tag-tilt"></div>
+      </div>
       <div class="min-w-0 flex-1">
         <p class="text-xs font-black text-white leading-tight truncate">${FLAG[i.lang] || ""} ${esc(i.name)} <span class="text-slate-400 font-bold">${esc(i.number || "")}</span></p>
         <p class="text-[10px] text-slate-400 truncate">${esc(i.setName || "")}${i.rarity ? ` · ${esc(i.rarity)}` : ""}</p>
@@ -108,6 +114,7 @@ function rowHtml(r) {
         <button onclick="PS.quickListRemove(${u})" class="mt-1 text-[10px] text-slate-500 hover:text-rose-300 underline">entfernen</button>
       </div>
     </div>
+    ${i.photo ? `<label class="flex items-center gap-1.5 text-[10px] text-slate-300"><input type="checkbox" ${r.usePhoto ? "checked" : ""} onchange="PS.quickListPhoto(${u}, this.checked)" class="accent-cyan-400" /> 📷 Mein Scan-Foto im Inserat zeigen (Käufer sehen den echten Zustand)</label>` : ""}
     <div id="ql-hint-${r.uid}" class="text-[10px]"></div>
   </div>`;
 }
@@ -149,6 +156,13 @@ function paintRow(r) {
   if (inp && document.activeElement !== inp) inp.value = fmtInput(r.price);
   const box = $(`ql-${r.uid}`);
   if (box) box.classList.toggle("opacity-50", r.status === "done");
+  paintTag(r);
+}
+
+/** Etikett auf dem Vorschaubild – genau so erscheint die Karte im Swipe-Radar */
+function paintTag(r) {
+  const t = $(`ql-tag-${r.uid}`);
+  if (t) t.innerHTML = r.price ? priceTagHtml({ price: r.price, condition: r.condition }, "sm") : "";
 }
 
 function paintSummary() {
@@ -220,6 +234,7 @@ function setPrice(uid, value) {
   r.touched = true;
   const h = $(`ql-hint-${r.uid}`);
   if (h) h.innerHTML = hintHtml(r);
+  paintTag(r);
   paintSummary();
 }
 
@@ -270,7 +285,8 @@ function itemFor(r, extra) {
   const i = r.info;
   const name = `${i.name}${i.number ? ` ${i.number}` : ""}`.slice(0, 120);
   const ref = i.kind === "print" ? { printId: i.id } : { cardId: i.id };
-  return { ...ref, card: name, price: r.price.toFixed(2), condition: r.condition, variant: r.variant, lang: i.lang || "de", ...extra };
+  const photo = r.usePhoto && typeof i.photo === "string" && i.photo.startsWith("data:image/") ? { img: i.photo } : {};
+  return { ...ref, card: name, price: r.price.toFixed(2), condition: r.condition, variant: r.variant, lang: i.lang || "de", source: "scan", ...photo, ...extra };
 }
 
 async function submit() {
@@ -301,14 +317,42 @@ async function submit() {
     window.PS?.loadListings?.(); window.PS?.refreshMe?.();
   }
   const rest = ql.rows.filter((r) => r.status !== "done");
-  if (!rest.length) { closeModalEl(MODAL_ID); return; }
+  if (!rest.length) { if (created) showDone(created); else closeModalEl(MODAL_ID); return; }
   // Erledigte ausblenden, Rest bleibt zum Nachbessern stehen
   ql.rows.filter((r) => r.status === "done").forEach((r) => $(`ql-${r.uid}`)?.remove());
   ql.rows = rest;
   paintSummary();
 }
 
+/** Erfolg: direkt in den Swipe-Radar springen und die eigenen Etiketten so sehen wie Käufer */
+function showDone(n) {
+  modal(MODAL_ID, `<div class="space-y-3 text-center py-2">
+    <p class="text-4xl" aria-hidden="true">🚀</p>
+    <h3 class="text-base font-black text-white">${n} Karte${n === 1 ? " ist" : "n sind"} live</h3>
+    <p class="text-xs text-slate-300">Deine Karten erscheinen jetzt mit Preis-Etikett, Zustand und Foto im Swipe-Radar. Käufer wischen mit ❌ weiter, tippen auf 🛒 Kaufen oder merken sie mit ❤️ – du wirst benachrichtigt.</p>
+    <div class="grid grid-cols-2 gap-2">
+      <button onclick="PS.quickListGo('swipe')" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black text-xs py-2.5 rounded-xl">🃏 Marktplatz durchswipen</button>
+      <button onclick="PS.quickListGo('scan')" class="bg-slate-800 text-white font-black text-xs py-2.5 rounded-xl">📷 Weiter scannen</button>
+    </div>
+  </div>`);
+}
+
 export const quickListApi = {
+  quickListGo: (where) => {
+    closeModalEl(MODAL_ID);
+    if (where === "swipe") window.PS?.arenaMarket?.();
+    else if (where === "scan") window.PS?.openLiveScanner?.();
+  },
+  quickListPhoto: (uid, on) => {
+    const r = rowOf(uid);
+    if (!r?.info.photo) return;
+    r.usePhoto = Boolean(on);
+    const img = $(`ql-img-${r.uid}`);
+    if (img) {
+      img.src = r.usePhoto ? r.info.photo : cdn(r.info.image || FALLBACK_IMG, 120);
+      img.classList.toggle("object-cover", r.usePhoto); img.classList.toggle("object-contain", !r.usePhoto);
+    }
+  },
   quickListSet: setField,
   quickListPrice: setPrice,
   quickListUse: usePrice,

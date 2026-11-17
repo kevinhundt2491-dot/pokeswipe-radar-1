@@ -351,7 +351,7 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
   const excludeWhere = exclude.length ? sql` AND x.print_id NOT IN (${sql.join(exclude.map((e) => sql`${e}`), sql`, `)})` : sql``;
 
   const parts = [];
-  if (hasDe) parts.push(sql`
+  if (hasDe && !opts.market) parts.push(sql`
     SELECT 'de'::text AS lang, c.id AS print_id, c.id AS card_id, c.name, c.set_id, c.set_name,
       COALESCE(NULLIF(s.abbreviation, ''), c.set_id, '') AS set_code, c.local_id,
       CASE WHEN c.local_id ~ '^[0-9]+$' AND s.card_count_official > 0 THEN c.local_id || '/' || lpad(s.card_count_official::text, GREATEST(length(c.local_id), length(s.card_count_official::text)), '0') ELSE COALESCE(c.local_id, '') END AS number,
@@ -359,7 +359,7 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
       'cardmarket'::text AS source, NULL::float AS usd, NULL::text AS alt_name
     FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id
     WHERE c.image <> '' AND COALESCE(c.trend, c.avg, c.low) IS NOT NULL`);
-  if (printLangs.length) parts.push(sql`
+  if (printLangs.length && !opts.market) parts.push(sql`
     SELECT p.lang, p.id AS print_id, p.base_card_id AS card_id, p.name, p.set_id, p.set_name, p.set_code, p.local_id, p.number,
       p.image, p.rarity, p.price_eur::float AS price, p.low_eur::float AS low, p.cm_avg30::float AS avg30,
       p.price_source AS source, p.tcg_market_usd::float AS usd,
@@ -367,7 +367,7 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
     FROM card_prints p LEFT JOIN pokemon_species ps ON ps.dex_id = p.dex_id
     WHERE p.lang IN (${sql.join(printLangs.map((l) => sql`${l}`), sql`, `)}) AND p.image <> '' AND p.price_eur IS NOT NULL`);
 
-  const want = opts.listings && !opts.set ? Math.ceil(opts.limit * 0.75) : opts.limit;
+  const want = opts.market ? 0 : opts.listings && !opts.set ? Math.ceil(opts.limit * 0.75) : opts.limit;
   const cards = parts.length ? rows(await db.execute(sql`
     SELECT * FROM (${sql.join(parts, sql` UNION ALL `)}) x
     WHERE TRUE ${setWhere}${priceWhere}${dealWhere}${wishWhere}${excludeWhere}${rarityWhere(opts)}
@@ -377,25 +377,30 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
 
   // Tausch-Inserate (deutscher Markt) als eigene Karten im Stapel – mit Marktpreis-Vergleich
   let listingRows: any[] = [];
-  if (opts.listings && !opts.set && (hasDe || langs.includes("en"))) {
+  if (opts.market || (opts.listings && !opts.set && (hasDe || langs.includes("en")))) {
     const exL = opts.exclude.filter((e) => e.startsWith("l")).map((e) => Number(e.slice(1))).filter((n) => n > 0);
     listingRows = rows(await db.execute(sql`
       SELECT l.id, l.card_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.boosted_until > now() AS boosted,
-        l.variant, l.condition, l.lang AS listing_lang,
+        l.variant, l.condition, l.lang AS listing_lang, l.buy_now, l.shipping_cents, l.source,
+        l.created_at > now() - interval '3 days' AS fresh, p.stripe_account_ready AS seller_ready,
         p.display_name AS seller, c.rarity, c.set_name, c.image AS card_image,
         (CASE WHEN l.variant = 'reverse_holo' THEN COALESCE(c.reverse_trend, c.reverse_avg, c.trend, c.avg) ELSE COALESCE(c.trend, c.avg) END)::float AS market,
         ${userId ? sql`EXISTS (SELECT 1 FROM swipe_likes s WHERE s.user_id = ${userId} AND s.listing_id = l.id)` : sql`false`} AS liked
       FROM listings l JOIN profiles p ON p.user_id = l.user_id LEFT JOIN cards c ON c.id = l.card_id
-      WHERE l.status = 'active' AND NOT p.banned
+      WHERE l.status = 'active' AND NOT p.banned AND (NOT l.buy_now OR l.quantity > l.reserved)
         ${userId ? sql` AND l.user_id <> ${userId}` : sql``}
+        ${opts.market ? sql` AND l.lang IN (${sql.join(langs.map((l) => sql`${l}`), sql`, `)})` : sql``}
         ${opts.min !== null && opts.min > 0 ? sql` AND l.price >= ${opts.min}` : sql``}
         ${opts.max !== null ? sql` AND l.price <= ${opts.max}` : sql``}
         ${opts.deals ? sql` AND c.trend >= ${DEAL_MIN_PRICE} AND l.price > 0 AND l.price <= c.trend * ${(100 - DEAL_MIN_PCT) / 100}` : sql``}
         ${opts.wishlist ? sql` AND l.card_id IN (SELECT card_id FROM wishlist_items WHERE user_id = ${userId})` : sql``}
         ${opts.rarity && opts.rarity !== "hits" && !opts.anyRarity ? rarityWhere(opts, sql`c.rarity`, sql`COALESCE(c.trend, c.avg)`) : sql``}
         ${exL.length ? sql` AND l.id NOT IN (${sql.join(exL.map((n) => sql`${n}`), sql`, `)})` : sql``}
-      ORDER BY (l.boosted_until > now()) DESC NULLS LAST, random()
-      LIMIT ${opts.limit - cards.length > 0 ? Math.max(3, opts.limit - cards.length) : Math.ceil(opts.limit / 4)}
+      ORDER BY (l.boosted_until > now()) DESC NULLS LAST,
+        -- frisch gescannte Karten mit echtem Foto zuerst, danach Sofort-Kauf vor reinem Tausch
+        (l.source = 'scan' AND l.created_at > now() - interval '3 days') DESC,
+        random() * (CASE WHEN l.buy_now THEN 0.6 ELSE 1 END)
+      LIMIT ${opts.market ? opts.limit : opts.limit - cards.length > 0 ? Math.max(3, opts.limit - cards.length) : Math.ceil(opts.limit / 4)}
     `));
   }
 
@@ -447,6 +452,14 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
       city: String(l.city || ""),
       want: String(l.want || ""),
       boosted: !!l.boosted,
+      // Kaufen direkt aus dem Stapel: Sofort-Kauf mit Käuferschutz (Warenkorb) oder Tauschanfrage
+      buyNow: Boolean(l.buy_now && l.seller_ready),
+      shippingCents: Number(l.shipping_cents) || 0,
+      // Echtes Foto des Verkäufers (z. B. aus dem Live-Scanner) – das Katalogbild bleibt zum Vergleich
+      photo: String(l.image || "").startsWith("/api/images/"),
+      catalogImage: String(l.card_image || ""),
+      scanned: String(l.source || "") === "scan",
+      fresh: Boolean(l.fresh),
       source: "listing",
       dealPct: dealPct(l.market, l.price),
       wish: wishIds.includes(String(l.card_id || "")),

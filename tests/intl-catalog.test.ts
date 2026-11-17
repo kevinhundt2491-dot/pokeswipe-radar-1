@@ -93,6 +93,14 @@ test("Swipe-Filter werden begrenzt und bereinigt", () => {
   assert.equal(parseDeckQuery({}).rarity, "hits");
 });
 
+test("Marktplatz-Modus der Swipe-Arena: nur Inserate, auch wenn Inserate sonst ausgeblendet sind", () => {
+  assert.equal(parseDeckQuery({}).market, false);
+  const m = parseDeckQuery({ market: "1", listings: "0" });
+  assert.equal(m.market, true);
+  assert.equal(m.listings, true);
+  assert.equal(parseDeckQuery({ market: "yes" }).market, false);
+});
+
 test("Import-Reihenfolge: neue Serien zuerst, echtes Datum ersetzt die Schätzung", () => {
   assert.ok(estimatedPriority("me", 0) > estimatedPriority("sv", 30));
   assert.ok(estimatedPriority("SV", 3) > estimatedPriority("SM", 50));

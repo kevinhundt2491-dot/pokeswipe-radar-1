@@ -1,3 +1,16 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Preis-Etikett (client/price-tag.js): Anhänger-Form mit Loch, leicht schräg wie ein echtes Preisschild */
+@layer components {
+  .ps-price-tag-body {
+    clip-path: polygon(10px 0, 100% 0, 100% 100%, 10px 100%, 0 50%);
+    border-radius: 0 0.5rem 0.5rem 0;
+  }
+  .ps-price-tag-hole {
+    position: absolute; left: 6px; top: 50%; width: 5px; height: 5px; margin-top: -2.5px;
+    border-radius: 9999px; background: rgb(2 6 23 / 0.75);
+  }
+  .ps-price-tag-tilt { transform: rotate(-4deg); transform-origin: left center; }
+}

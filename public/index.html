@@ -312,6 +312,9 @@
                      class="relative z-10 max-h-full max-w-full object-contain rounded-xl shadow-2xl border-2 border-yellow-400/50 transition duration-300 hover:scale-105 cursor-grab" />
                 <span id="swipe-hint-left" class="absolute left-0 top-1/2 -translate-y-1/2 z-20 bg-slate-800/90 text-white text-xs font-black px-2.5 py-1 rounded-lg opacity-0 transition">❌ Weiter</span>
                 <span id="swipe-hint-right" class="absolute right-0 top-1/2 -translate-y-1/2 z-20 bg-emerald-400 text-slate-950 text-xs font-black px-2.5 py-1 rounded-lg opacity-0 transition">💚 Merken</span>
+                <!-- Preis-Etikett (Preis, Zustand, Preis-Ampel) und Foto-Umschalter – befüllt von client/arena.js -->
+                <div id="swipe-tag" class="absolute -bottom-2 -left-3 z-20 pointer-events-none ps-price-tag-tilt transition-opacity"></div>
+                <button id="swipe-photo-toggle" type="button" onclick="PS.arenaPhotoToggle()" class="hidden absolute top-1 -right-2 z-20 bg-slate-950/90 border border-cyan-400/60 text-cyan-200 text-[10px] font-black px-2 py-1 rounded-lg shadow"></button>
               </div>
 
               <div class="text-center mt-3">
@@ -344,11 +347,13 @@
               </div>
             </div>
 
-            <!-- Swipe-Steuerung -->
-            <div class="grid grid-cols-3 gap-2.5 mt-4">
-              <button onclick="nextSwipeCard('skip')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold py-3 rounded-xl text-xs sm:text-sm">❌ Weiter</button>
-              <button onclick="addCurrentSwipeToPortfolio()" class="bg-purple-600 hover:bg-purple-500 text-white font-extrabold py-3 rounded-xl text-xs sm:text-sm">💼 + Portfolio</button>
-              <button onclick="nextSwipeCard('match')" class="bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 font-black py-3 rounded-xl text-xs sm:text-sm shadow-lg">💚 Merken & Deal</button>
+            <!-- Swipe-Steuerung: ❌ Weiter · 🛒 Kaufen · ❤️ Merken (client/arena.js passt Kauf-Knopf je Karte/Inserat an) -->
+            <div id="swipe-actions" class="mt-4 space-y-2">
+              <div class="grid grid-cols-3 gap-2.5">
+                <button onclick="nextSwipeCard('skip')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold py-3 rounded-xl text-xs sm:text-sm">❌ Weiter</button>
+                <button onclick="addCurrentSwipeToPortfolio()" class="bg-purple-600 hover:bg-purple-500 text-white font-extrabold py-3 rounded-xl text-xs sm:text-sm">💼 + Portfolio</button>
+                <button onclick="nextSwipeCard('match')" class="bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 font-black py-3 rounded-xl text-xs sm:text-sm shadow-lg">💚 Merken & Deal</button>
+              </div>
             </div>
 
             <!-- Monetarisierungs-Leiste direkt unter jeder Karte -->

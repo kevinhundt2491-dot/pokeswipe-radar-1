@@ -598,6 +598,8 @@ app.post("/api/listings", auth, async (c) => {
     }
     const [row] = await db.insert(listings).values({
       userId: user.id, cardId, sealedProductId, printId, cardName, image, price, buyNow, shippingCents, condition, lang, variant, portfolioItemId,
+      // Herkunft „scan“: aus dem Live-Scanner inseriert (Swipe-Radar zeigt sie als „Frisch gescannt“)
+      ...(it.source === "scan" ? { source: "scan" } : {}),
       want: str(it.want, 120) || "Tausch / Gebot",
       city: str(it.city, 60) || profile.city || "Deutschland",
     }).returning();

@@ -481,11 +481,20 @@
         }
         if (typeof window.psArenaMatch === "function") { try { window.psArenaMatch(item); } catch (e) {} }
       }
-      // Preference-Learning (client/arena.js): Rechts- und Links-Swipes gewichten den weiteren Stapel
-      if (typeof window.psArenaSwipe === "function") { try { window.psArenaSwipe(item, mode === "match" ? "right" : "left"); } catch (e) {} }
+      // Preference-Learning (client/arena.js): Rechts- und Links-Swipes gewichten den weiteren Stapel (Kauf zählt wie Rechts)
+      if (typeof window.psArenaSwipe === "function") { try { window.psArenaSwipe(item, mode === "match" || mode === "buy" ? "right" : "left"); } catch (e) {} }
       swipeIdx = (swipeIdx + 1) % activeDeck.length;
       renderSwipeCard();
     }
+
+    // Letzte Karte zurückholen (versehentlich weggewischt)
+    function prevSwipeCard() {
+      if (!activeDeck.length || swipeIdx === 0) return false;
+      swipeIdx = (swipeIdx - 1 + activeDeck.length) % activeDeck.length;
+      renderSwipeCard();
+      return true;
+    }
+    window.prevSwipeCard = prevSwipeCard;
 
     // Profi-Werte für Einsteiger einzeln aufklappen (Progressive Disclosure)
     function psToggleReveal(group, btn) {

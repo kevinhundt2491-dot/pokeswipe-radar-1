@@ -32,13 +32,15 @@ export async function refreshCartBadge() {
 // ---------------------------------------------------------------------------
 // In den Warenkorb
 // ---------------------------------------------------------------------------
+/** Liefert true bei Erfolg (z. B. für den Kauf-Knopf im Swipe-Radar, der danach zur Kasse führt). */
 async function addToCart(listingId, quantity = 1) {
-  if (!requireLogin()) return;
+  if (!requireLogin()) return false;
   try {
     ct.cart = await api("/api/cart/items", { method: "POST", body: { listingId: Number(listingId), quantity: Number(quantity) || 1 } });
     setBadge(ct.cart.count);
     toast("🛒 Im Warenkorb", `${ct.cart.count} Artikel • ${cents(ct.cart.totalCents)} inkl. Versand`);
-  } catch (e) { handleError(e); }
+    return true;
+  } catch (e) { handleError(e); return false; }
 }
 
 const SELLER_BADGE = (t) => t === "business"

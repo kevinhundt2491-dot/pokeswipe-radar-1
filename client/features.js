@@ -231,7 +231,9 @@ async function scanSell(key, source) {
     const { items } = await api(`/api/scan/lookup?keys=${encodeURIComponent(key)}`);
     // Noch nicht im eigenen Katalog: Detailansicht lädt die Karte nach und bietet dort „Inserieren“ an
     if (!items?.length) { scanPick(key, source); return; }
-    lazyLiveScanApi.liveScanQuickList(items);
+    // Das hochgeladene Foto als echtes Kartenfoto anbieten (Server nimmt bis ca. 600 KB an)
+    const photo = typeof lastScanImage === "string" && lastScanImage.startsWith("data:image/") && lastScanImage.length < 780_000 ? lastScanImage : null;
+    lazyLiveScanApi.liveScanQuickList(photo ? items.map((it, idx) => (idx === 0 ? { ...it, photo } : it)) : items);
   } catch (e) { handleError(e); }
 }
 
