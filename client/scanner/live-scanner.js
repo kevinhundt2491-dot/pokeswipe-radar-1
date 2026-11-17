@@ -4,6 +4,7 @@ import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, 
 import { SCORE_STRONG } from "../../server/scan-logic.ts";
 import { haptic } from "../native.js";
 import { openQuickList, quickListApi } from "./quick-list.js";
+import { priceTagHtml } from "../price-tag.js";
 
 // Hybrid-Scanner (Phase 9):
 //  Stufe 1 – Erkennung auf dem Gerät (Kanten, Entzerrung, Kontrast-Normalisierung, pHash/dHash + Farb-Signatur, Nummern-OCR)
@@ -56,7 +57,7 @@ export function liveScanPanelHtml() {
       <video id="ps-ls-video" class="absolute inset-0 w-full h-full object-cover hidden" playsinline muted autoplay></video>
       <div id="ps-ls-idle" class="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p class="text-4xl" aria-hidden="true">📷</p>
-        <p class="text-xs text-slate-300">Die Rückkamera wird nur genutzt, solange der Scanner offen ist. Es werden keine Bilder gespeichert oder hochgeladen.</p>
+        <p class="text-xs text-slate-300">Die Rückkamera wird nur genutzt, solange der Scanner offen ist. Fotos bleiben auf deinem Gerät – nur wenn du eine Karte inserierst, kannst du das Scan-Foto ans Inserat hängen.</p>
         <button onclick="PS.liveScanStart()" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">⚡ Kamera starten</button>
       </div>
       <div id="ps-ls-mask" class="absolute pointer-events-none hidden" style="box-shadow:0 0 0 9999px rgba(2,6,23,.55);border-radius:14px"></div>
@@ -330,9 +331,34 @@ async function fetchInfo(keys) {
   return keys.map((k) => sc.info.get(k)).filter(Boolean);
 }
 
+/**
+ * Echtes Foto der erkannten Karte aus dem Kamerabild (Rahmenbereich, Kartenformat, ca. 50 KB JPEG).
+ * Bleibt auf dem Gerät, bis der Nutzer die Karte inseriert und das Foto anhängt.
+ */
+function capturePhoto() {
+  try {
+    const video = $("ps-ls-video"), g = sc.geometry;
+    if (!video?.videoWidth || !g) return null;
+    const gd = g.guide;
+    const vx0 = g.sx0 + gd.x0 / g.k, vy0 = g.sy0 + gd.y0 / g.k;
+    const vw = (gd.x1 - gd.x0) / g.k, vh = (gd.y1 - gd.y0) / g.k;
+    // kleiner Rand, damit die Kartenkanten (Zustand!) mit drauf sind
+    const mx = vw * 0.04, my = vh * 0.04;
+    const x0 = Math.max(0, vx0 - mx), y0 = Math.max(0, vy0 - my);
+    const w = Math.min(video.videoWidth - x0, vw + 2 * mx), h = Math.min(video.videoHeight - y0, vh + 2 * my);
+    if (!(w > 40 && h > 40)) return null;
+    const W = 440, H = Math.round(W * (h / w));
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    cv.getContext("2d").drawImage(video, x0, y0, w, h, 0, 0, W, H);
+    const url = cv.toDataURL("image/jpeg", 0.8);
+    return url.length < 400_000 ? url : cv.toDataURL("image/jpeg", 0.6);
+  } catch { return null; }
+}
+
 async function showHit(group, m) {
   const keys = group.map((g) => g.key).slice(0, 6);
-  sc.current = { key: keys[0], keys, info: null, probe: m.probe || null };
+  sc.current = { key: keys[0], keys, info: null, probe: m.probe || null, photo: capturePhoto() };
   sc.currentAt = Date.now();
   haptic("success");
   hint("✅ Erkannt");
@@ -360,9 +386,14 @@ function renderHud(cur) {
   const i = cur.info;
   const k = jsArg(i.key);
   const canWish = i.kind === "card" || !!i.baseCardId;
+  const photo = cur.photo;
   hud.innerHTML = `<div class="bg-slate-950/92 backdrop-blur rounded-2xl p-2.5 border border-emerald-400/60 shadow-2xl space-y-2">
     <div class="flex gap-2.5 items-start">
-      <img src="${esc(cdn(i.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" class="w-12 h-16 object-contain rounded bg-slate-900 shrink-0" />
+      <div class="relative shrink-0 flex gap-1">
+        ${photo ? `<img src="${esc(photo)}" alt="Dein Scan-Foto" title="Dein Scan-Foto" class="w-12 h-16 object-cover rounded bg-slate-900 border border-cyan-400/60" />` : ""}
+        <img src="${esc(cdn(i.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" class="w-12 h-16 object-contain rounded bg-slate-900" />
+        ${i.price ? `<div class="absolute -bottom-1.5 left-0 ps-price-tag-tilt">${priceTagHtml({ price: i.price }, "sm")}</div>` : ""}
+      </div>
       <div class="min-w-0 flex-1">
         <p class="text-sm font-black text-white leading-tight truncate">${esc(i.name)} <span class="text-slate-400 font-bold">${esc(i.number || "")}</span></p>
         <p class="text-[10px] text-slate-400 truncate">${FLAG[i.lang] || ""} ${esc(LANG_LABEL[i.lang] || i.lang)}${i.altName ? ` · 🇩🇪 ${esc(i.altName)}` : ""} · ${esc(i.setName)}${i.rarity ? ` · ${esc(i.rarity)}` : ""}</p>
@@ -386,7 +417,7 @@ function renderHud(cur) {
 
 function addToSeries(info) {
   if (sc.series[0]?.key === info.key) return;
-  info = { ...info, probe: sc.current?.probe || null };
+  info = { ...info, probe: sc.current?.probe || null, photo: sc.current?.photo || null };
   sc.series = [info, ...sc.series.filter((s) => s.key !== info.key)].slice(0, 60);
   renderSeries();
 }
@@ -404,10 +435,14 @@ function renderSeries() {
     </div>
     <div class="grid grid-cols-3 sm:grid-cols-6 gap-1.5">${sc.series.map((s) => `
       <button onclick="PS.liveScanDetails(${jsArg(s.key)})" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-1.5 text-[10px] text-white text-center">
-        <img src="${esc(cdn(s.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" alt="" class="h-16 mx-auto object-contain" />
-        <span class="block truncate font-bold">${FLAG[s.lang] || ""} ${esc(s.name)}</span><span class="block text-emerald-400 font-black">${priceTxt(s)}</span>
+        <span class="relative block">
+          <img src="${esc(s.photo || cdn(s.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" alt="" class="h-20 mx-auto ${s.photo ? "object-cover rounded" : "object-contain"}" />
+          ${s.photo ? `<span class="absolute top-0 right-0 text-[8px] font-black bg-cyan-400 text-slate-950 px-1 rounded" title="Echtes Scan-Foto">📷</span>` : ""}
+          ${s.price ? `<span class="absolute -bottom-1 left-0 ps-price-tag-tilt">${priceTagHtml({ price: s.price }, "sm")}</span>` : ""}
+        </span>
+        <span class="block truncate font-bold mt-1">${FLAG[s.lang] || ""} ${esc(s.name)}</span>
       </button>`).join("")}</div>
-    <p class="text-[10px] text-slate-500">Tipp: Karten einfach nacheinander vor die Kamera halten – jede erkannte Karte landet hier. Danach mit „Alle inserieren“ alle auf einmal mit fairem Preis veröffentlichen.</p>`;
+    <p class="text-[10px] text-slate-500">Tipp: Karten einfach nacheinander vor die Kamera halten – jede erkannte Karte landet hier mit Preis-Etikett und echtem Scan-Foto. Mit „Alle inserieren“ erscheinen sie im Swipe-Radar, wo Käufer mit ❌, 🛒 Kaufen oder ❤️ reagieren.</p>`;
 }
 
 /** KI-Knopf hervorheben, wenn die Erkennung auf dem Gerät unsicher ist (Stufe 3 nur bei Bedarf). */
@@ -527,7 +562,9 @@ function sellOne(key) {
   const i = infoOf(key);
   if (!i || !requireLogin()) return;
   learn(key, probeFor(key));
-  openQuickList([i]);
+  // Scan-Foto mitgeben (Serie bzw. aktueller Treffer), damit Käufer im Swipe-Radar die echte Karte sehen
+  const photo = sc.series.find((s) => s.key === key)?.photo || (sc.current?.key === key ? sc.current.photo : null) || null;
+  openQuickList([{ ...i, photo }]);
 }
 
 /** Alle Karten der Scan-Serie auf einmal inserieren */
@@ -604,7 +641,8 @@ export const liveScanApi = {
     if (!v) return;
     sc.current.info = v; sc.current.key = v.key;
     haptic("select");
-    sc.series = sc.series.map((s, idx) => (idx === 0 && sc.current.variants.some((x) => x.key === s.key) ? v : s));
+    // Scan-Foto und Fingerabdruck gehören zur fotografierten Karte, nicht zur Sprachvariante
+    sc.series = sc.series.map((s, idx) => (idx === 0 && sc.current.variants.some((x) => x.key === s.key) ? { ...v, probe: s.probe, photo: s.photo } : s));
     renderHud(sc.current); renderSeries();
   },
   liveScanClear: () => { sc.series = []; renderSeries(); },

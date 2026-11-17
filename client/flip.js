@@ -44,7 +44,9 @@ function panelHtml() {
         <h3 class="text-sm font-black text-white">📡 Live-Angebote unter Marktwert</h3>
         <p id="ps-flip-status" class="text-[11px] text-slate-400">Lade Angebote …</p>
       </div>
-      <div class="flex gap-1.5">
+      <div class="flex flex-wrap gap-1.5">
+        <button onclick="PS.arenaMarket('deals')" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl" title="Deals unter Marktwert im Swipe-Radar: ❌ weiter, 🛒 kaufen, ❤️ merken">🃏 Deals durchswipen</button>
+        <button onclick="PS.arenaMarket()" class="bg-cyan-400 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl" title="Inserate anderer Sammler mit Foto, Preis-Etikett und Zustand">🛒 Sammler-Angebote swipen</button>
         <button onclick="PS.flipReload()" class="bg-slate-800 text-white font-bold text-xs px-3 py-1.5 rounded-xl" aria-label="Neu laden">🔄</button>
       </div>
     </div>

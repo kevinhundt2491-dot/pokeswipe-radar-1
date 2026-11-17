@@ -235,7 +235,9 @@ export function parseDeckQuery(q: Record<string, string | undefined>) {
     min, max: max && max > 0 ? max : null,
     wishlist: q.wish === "1",
     deals: q.deals === "1",
-    listings: q.listings !== "0",
+    listings: q.listings !== "0" || q.market === "1",
+    // Marktplatz-Modus: nur Inserate (z. B. frisch gescannte Karten) mit Foto, Preis, Zustand und Kauf-Knopf
+    market: q.market === "1",
     exclude,
     limit,
   };

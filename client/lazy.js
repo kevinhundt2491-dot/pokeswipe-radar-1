@@ -60,7 +60,7 @@ const LIVE_SCAN_KEYS = [
   "liveScanStart", "liveScanStop", "liveScanTorch", "liveScanLang", "liveScanAdd", "liveScanAddAll", "liveScanWish", "liveScanFlip",
   "liveScanDetails", "liveScanPhoto", "liveScanDismiss", "liveScanVariant", "liveScanClear", "liveScanAdminRun", "openLiveScanner",
   "liveScanRecognize", "liveScanLearn", "liveScanSell", "liveScanSellAll", "liveScanQuickList",
-  "quickListSet", "quickListPrice", "quickListUse", "quickListStrategy", "quickListConditionAll", "quickListRemove", "quickListSubmit",
+  "quickListSet", "quickListPhoto", "quickListGo", "quickListPrice", "quickListUse", "quickListStrategy", "quickListConditionAll", "quickListRemove", "quickListSubmit",
 ];
 
 /** Platzhalter mit derselben ID – die Unter-Reiter-Navigation findet den Bereich sofort, der Inhalt kommt beim Öffnen. */
