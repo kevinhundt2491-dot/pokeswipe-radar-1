@@ -42,7 +42,8 @@ import {
 } from "./variant-logic.ts";
 import { CONDITIONS, MARKET_MAX_SHIPPING_CENTS } from "./market-logic.ts";
 import { CARD_ID_RE, getCard, cardPrice, evaluateAlerts, notify, runTracker, cardmarketPartnerId } from "./prices.ts";
-import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan, createTaxedCheckout } from "./billing.ts";
+import { stripe, getOrCreateCustomer, applySubscription, syncProfilePlan, createTaxedCheckout, customerSubscriptions, reconcileCustomer, reconcileSubscriptions } from "./billing.ts";
+import { hadTrial } from "./billing-logic.ts";
 import { publicCache } from "./cache.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
 import { log } from "./log.ts";
@@ -774,8 +775,20 @@ app.post("/api/billing/checkout", auth, async (c) => {
   if (c.get("plan") === plan && !profile.cancelAtPeriodEnd && (profile.planInterval === "year") === yearly) {
     return c.json({ error: "Dieser Tarif ist bereits aktiv." }, 409);
   }
-  const trial = await trialDays(profile);
   const customer = await getOrCreateCustomer(s, profile);
+  // Sperre direkt bei Stripe (nicht nur in der App-Datenbank): läuft schon ein Abo, wird es verknüpft,
+  // doppelte Abos werden beendet, und es gibt weder ein zweites gleiches Abo noch eine zweite Testphase.
+  const existing = await customerSubscriptions(s, customer);
+  let trial = await trialDays(profile);
+  if (hadTrial(existing.all) || existing.live.length) trial = 0;
+  if (existing.live.length) {
+    const r = await reconcileCustomer(s, customer, { allSubs: existing.all });
+    const kept = existing.live.find((x) => x.id === r.kept);
+    const keptInterval = kept?.items?.data?.[0]?.price?.recurring?.interval === "year";
+    if (kept && kept.metadata?.plan === plan && keptInterval === yearly && !kept.cancel_at_period_end) {
+      return c.json({ error: "Dieses Abo ist bei dir bereits aktiv. Melde dich ab und wieder an, falls es noch nicht angezeigt wird.", relinked: true }, 409);
+    }
+  }
   const origin = appOrigin(c);
   // Phase 6: Stripe Tax (automatische Umsatzsteuer), Rückfall ohne Steuerberechnung, falls im Dashboard nicht aktiv
   const session = await createTaxedCheckout(s, {
@@ -1109,6 +1122,11 @@ app.post("/api/admin/reports/:id", auth, adminOnly, async (c) => {
 });
 
 // Wird vom geplanten Tracker aufgerufen (und manuell von Admins)
+// Abo-Abgleich Stripe → App manuell starten (?dryRun=1 zeigt nur, was passieren würde)
+app.post("/api/admin/billing/reconcile", auth, adminOnly, async (c) => {
+  const dryRun = c.req.query("dryRun") === "1";
+  return c.json(await reconcileSubscriptions({ dryRun, deadlineAt: Date.now() + 25_000 }));
+});
 app.post("/api/admin/run-tracker", auth, adminOnly, async (c) => c.json(await runTracker({ maxCards: 40 })));
 
 registerShops(app, { auth, body, storeDataUrlImage, ratingOf }); // Phase 5: Händler-Shops mit Branding & OG-Seite (vor registerFeatures)
