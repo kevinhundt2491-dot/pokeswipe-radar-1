@@ -837,10 +837,10 @@ async function generatePro(list) {
     states[tpl.key] = "on"; renderPro(states); setBusy(true);
     try {
       const script = proScript(tpl, variant);
-      let voice = null, speed = 1, voiceFailed = null;
+      let voice = null, speed = 1, voiceFailed = null, voiceSec = 0;
       if (voiceOn) {
         setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
-        try { ({ take: voice, speed } = await loadProNarration(script.say, ac, proCfg.tone)); }
+        try { ({ take: voice, speed, seconds: voiceSec } = await loadProNarration(script.say, ac, proCfg.tone)); }
         catch (e) {
           // Kein Abbruch: das Video wird mit Musik (ohne Sprecherin) aufgenommen und heruntergeladen,
           // aber NICHT automatisch an Make.com gesendet. Der genaue Fehler steht unter der Karte.
@@ -852,7 +852,7 @@ async function generatePro(list) {
           setStatus(`⚠️ ${tpl.label}: Voiceover fehlgeschlagen (${voiceFailed}) – nehme ohne Sprecherin auf …`, "err");
         }
         if (voice) {
-          const sec = voice.duration + 0.85;
+          const sec = voiceSec; // exakte Videolänge: Vorlauf + gemessene Sprechdauer + 0,8 s Ausblenden
           setStatus(`🎙️ Stimme fertig: ${sec.toFixed(1).replace(".", ",")} s (Tempo ${speed.toFixed(2).replace(".", ",")})${sec < PRO_MIN_S || sec > PRO_MAX_S ? " – außerhalb 20–30 s, Tempo-Spielraum ausgeschöpft" : ""} – lade die Live-Website …`);
         }
       }
@@ -875,7 +875,7 @@ async function generatePro(list) {
       const thumb = res.thumb?.size ? res.thumb : await renderCoverThumb(tpl, script, look, coverCard);
       const cap = proCaption(tpl, variant, res.facts);
       const ep = { n: 100 + n, key: `pro-${tpl.key}`, title: tpl.label, pro: { n, fps: proCfg.fps } };
-      const txt = captionFile(ep, cap, { voiceover: res.lines.join(" "), recorded: new Date().toLocaleString("de-DE"), mode: `Pro-Video, ${res.fps} FPS, ${res.mbit} Mbit/s` });
+      const txt = captionFile(ep, cap, { voiceover: res.lines.join(" "), recorded: new Date().toLocaleString("de-DE"), mode: `Pro-Video, ${res.fps} FPS, ${res.mbit} Mbit/s${res.exact ? ", frame-genau (WebCodecs)" : ""}` });
       const mb = (res.blob.size / MB).toFixed(1);
       const name = `${fileBase(ep)}.${res.ext}`;
       thumb.name = `${fileBase(ep)} - Cover.jpg`;

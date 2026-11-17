@@ -92,7 +92,33 @@ function provider(): Provider | null {
 }
 
 type Mark = { start: number; end: number };
-type Narration = { audio: string; duration: number; marks: Mark[]; speed: number };
+type Narration = { audio: string; duration: number; marks: Mark[]; speed: number; words?: Mark[][] };
+
+/**
+ * Wort-Zeitstempel je Satz aus dem ElevenLabs-Alignment (Start des ersten bis Ende des letzten Zeichens
+ * jedes Wortes). Damit laufen die Untertitel Wort für Wort exakt mit der Stimme. null = Alignment passt nicht.
+ */
+export function wordsFromAlignment(lines: string[], al: any): Mark[][] | null {
+  const text = lines.join(" ");
+  const starts: number[] = al?.character_start_times_seconds || [];
+  const ends: number[] = al?.character_end_times_seconds || [];
+  if (!Array.isArray(al?.characters) || al.characters.length !== text.length || starts.length !== text.length || ends.length !== text.length) return null;
+  const out: Mark[][] = [];
+  let pos = 0;
+  for (const l of lines) {
+    const words: Mark[] = [];
+    const re = /\S+/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(l))) {
+      const a = pos + m.index, b = a + m[0].length - 1;
+      const start = Number(starts[a]) || 0, end = Number(ends[b]) || start;
+      words.push({ start: Math.round(start * 1000) / 1000, end: Math.round(Math.max(start, end) * 1000) / 1000 });
+    }
+    out.push(words);
+    pos += l.length + 1;
+  }
+  return out;
+}
 
 /**
  * Satz-Zeitstempel aus dem ElevenLabs-Alignment ableiten. offsets = Startindex jedes Satzes im Gesamttext.
@@ -151,8 +177,10 @@ async function narrate(key: string, lines: string[], speed: number, settings = V
       if (!res.ok) throw await elevenError(res);
       const j: any = await res.json();
       if (!j?.audio_base64) throw new Error("Leere Sprachdatei erhalten");
-      const { marks, duration } = marksFromAlignment(lines, j.alignment || j.normalized_alignment);
-      return { audio: j.audio_base64, duration, marks, speed };
+      const al = j.alignment || j.normalized_alignment;
+      const { marks, duration } = marksFromAlignment(lines, al);
+      const words = wordsFromAlignment(lines, al);
+      return { audio: j.audio_base64, duration, marks, speed, ...(words ? { words } : {}) };
     } catch (e: any) {
       const transient = e?.retry || e?.name === "TypeError"; // TypeError = Netzwerkfehler von fetch
       if (attempt >= 2 || !transient) throw e;

@@ -20,6 +20,10 @@ export const PRO_FPS = [30, 60];
 export const AUDIO_KBPS = 192;
 export const DOMAIN = "pokeswipe-radar.de";
 export const CTA_TEXT = "Jetzt kostenlos testen auf pokeswipe-radar.de";
+/** Vorlauf vor dem ersten Wort und sanftes Ausblenden nach dem letzten Wort (s). */
+export const PRO_LEAD = 0.35, END_FADE = 0.8;
+/** Gesamtpolster um die reine Sprechzeit. */
+export const PRO_PAD = PRO_LEAD + END_FADE;
 
 const CTA_LINE = { say: "Jetzt kostenlos testen auf PokeSwipe Radar Punkt de!", show: "Jetzt kostenlos testen auf pokeswipe-radar.de!" };
 
@@ -183,16 +187,41 @@ export function checkProScript(lines) {
 }
 
 /**
- * Szenengrenzen aus den Satz-Zeitstempeln: Szene i beginnt kurz vor Satz i (Bild vor dem Wort),
- * das Cover steht mindestens 1,6 s und höchstens 2,4 s. Liefert [{ key, start, end }].
+ * Szenengrenzen aus den Satz-Zeitstempeln: Szene i beginnt kurz vor Satz i (Bild vor dem Wort), aber nie,
+ * bevor Satz i−1 zu Ende gesprochen ist (Grenze liegt dann in der Sprechpause). So spricht die Sprecherin
+ * in jeder Szene genau das, was gerade im Bild passiert. Liefert [{ key, start, end }].
  */
 export function sceneTimes(marks, D) {
-  const PRE = 0.2;
-  const s = PRO_SCENES.map((_, i) => (i === 0 ? 0 : Math.max(0, (marks[i]?.start ?? (D * i) / 5) - PRE)));
-  s[1] = Math.min(2.4, Math.max(1.6, s[1]));
-  for (let i = 2; i < s.length; i++) s[i] = Math.max(s[i], s[i - 1] + 1.2);
-  s[4] = Math.min(s[4], Math.max(s[3] + 1.2, D - 2.2)); // Endscreen mindestens ≈ 2,2 s
+  const PRE = 0.2, MIN = 1.0;
+  const s = [0];
+  for (let i = 1; i < PRO_SCENES.length; i++) {
+    const m = marks[i], prev = marks[i - 1];
+    let b = m ? m.start - PRE : (D * i) / PRO_SCENES.length;
+    if (m && prev) b = Math.max(b, Math.min(m.start, (prev.end + m.start) / 2));
+    s.push(Math.max(0, b));
+  }
+  s[1] = Math.max(1.2, s[1]); // Cover steht mindestens 1,2 s
+  for (let i = 2; i < s.length; i++) s[i] = Math.max(s[i], s[i - 1] + MIN);
+  s[4] = Math.min(s[4], Math.max(s[3] + MIN, D - 1.5)); // Endscreen mindestens 1,5 s
   return PRO_SCENES.map((key, i) => ({ key, start: s[i], end: i < 4 ? s[i + 1] : D }));
+}
+
+/**
+ * Exakte Sprechdauer aus den dekodierten PCM-Samples: Position (s) des letzten hörbaren Samples
+ * (über ≈ −50 dBFS) plus 40 ms Ausklang. channels = Float32Array je Kanal.
+ */
+export function audibleEnd(channels, sampleRate, threshold = 0.0032) {
+  const len = channels[0]?.length || 0;
+  for (let i = len - 1; i >= 0; i--) {
+    for (const ch of channels) if (Math.abs(ch[i]) > threshold) return Math.min(len, i + Math.round(sampleRate * 0.04)) / sampleRate;
+  }
+  return len / sampleRate;
+}
+
+/** Videolänge exakt auf das Frame-Raster runden: N Frames → D = N / fps (Ton wird auf dieselbe Länge gerendert). */
+export function frameGrid(seconds, fps) {
+  const frames = Math.max(1, Math.ceil(seconds * fps - 1e-6));
+  return { frames, duration: frames / fps };
 }
 
 /**
@@ -225,7 +254,7 @@ export const estimateMb = (seconds, mbit) => ((mbit + AUDIO_KBPS / 1000) * secon
 
 /** Sprechtempo für die Ziellänge: Dauer bei Tempo 1 → Tempo im erlaubten Bereich (0,9–1,12). */
 export function speedFor(duration, speed) {
-  const total = duration + 0.85; // Vorlauf + Ausklang
+  const total = duration + PRO_PAD; // Vorlauf + Ausblenden
   if (total > PRO_MAX_S) return Math.min(1.12, Math.round(speed * (total / (PRO_MAX_S - 0.5)) * 100) / 100);
   if (total < PRO_MIN_S) return Math.max(0.9, Math.round(speed * (total / (PRO_MIN_S + 0.5)) * 100) / 100);
   return speed;
@@ -235,19 +264,26 @@ export function speedFor(duration, speed) {
  * Untertitel: Wörter jedes Satzes zeitlich nach Zeichenlänge auf dessen Zeitspanne verteilen und in
  * gut lesbare Häppchen (max. 4 Wörter / 26 Zeichen) gruppieren. Liefert [{ start, end, words:[{w,start,end}] }].
  */
-export function captionChunks(show, marks) {
+export function captionChunks(show, marks, wordMarks = null) {
   const out = [];
   show.forEach((line, i) => {
     const m = marks[i]; if (!m) return;
     const words = String(line).split(/\s+/).filter(Boolean);
-    const weight = words.map((w) => w.replace(/[^\p{L}\p{N}]/gu, "").length + 2);
-    const total = weight.reduce((a, b) => a + b, 0) || 1;
-    let acc = 0;
-    const timed = words.map((w, k) => {
-      const start = m.start + (acc / total) * (m.end - m.start);
-      acc += weight[k];
-      return { w, start, end: m.start + (acc / total) * (m.end - m.start) };
-    });
+    // Echte Wort-Zeitstempel der Sprecherin, wenn Untertitel und gesprochener Text gleich viele Wörter haben
+    const real = wordMarks?.[i];
+    let timed;
+    if (Array.isArray(real) && real.length === words.length && real.every((x) => x && x.end >= x.start)) {
+      timed = words.map((w, k) => ({ w, start: real[k].start, end: real[k].end }));
+    } else {
+      const weight = words.map((w) => w.replace(/[^\p{L}\p{N}]/gu, "").length + 2);
+      const total = weight.reduce((a, b) => a + b, 0) || 1;
+      let acc = 0;
+      timed = words.map((w, k) => {
+        const start = m.start + (acc / total) * (m.end - m.start);
+        acc += weight[k];
+        return { w, start, end: m.start + (acc / total) * (m.end - m.start) };
+      });
+    }
     let cur = [];
     const flush = () => { if (cur.length) out.push({ start: cur[0].start, end: cur[cur.length - 1].end, words: cur }); cur = []; };
     for (const t of timed) {

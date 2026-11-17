@@ -72,23 +72,57 @@ const PROGRESSIONS = [
  * @returns {{ track: MediaStreamTrack, t0: number, voiceEnded: Promise<number>|null, stop: () => void }}
  *   t0 = AudioContext-Zeit von Sekunde 0; voiceEnded = Videozeit (s), zu der die Sprecherin fertig ist (onended)
  */
-export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
+export function startSoundtrack(ac, D, cues = [], seed = 1, voice = [], opts = {}) {
   const dest = ac.createMediaStreamDestination();
+  const T0 = ac.currentTime + 0.05;
+  const mix = buildMix(ac, dest, T0, D, cues, seed, voice, opts);
+  // Ende der Sprecherin: Promise, das beim onended-Event des LETZTEN Sprecher-Clips erfüllt wird
+  // (danach stoppt die Aufnahme mit kurzem Ausklang – nie über einen festen Timer).
+  const voiceEnded = mix.voiceSources.length
+    ? Promise.all(mix.voiceSources.map((src) => new Promise((resolve) => { src.onended = () => resolve(ac.currentTime - T0); })))
+      .then((ts) => Math.max(...ts))
+    : null;
+  const out = dest.stream.getAudioTracks()[0];
+  return {
+    track: out,
+    t0: T0,
+    voiceEnded,
+    stop() { mix.stop(); out.stop(); },
+  };
+}
+
+/**
+ * Komplette Tonspur (Musik, Effekte, Sprecherin) sample-genau OFFLINE rendern – exakt `frames` Samples lang.
+ * Das Ergebnis liegt auf derselben Zeitbasis wie die Video-Frames (Sample 0 = Frame 0), es gibt also
+ * keinen Versatz und keinen Drift zwischen Bild und Ton.
+ * @returns {Promise<AudioBuffer>}
+ */
+export async function renderSoundtrack(D, cues = [], seed = 1, voice = [], { sampleRate = 48000, fadeOut = 1.2 } = {}) {
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC) throw new Error("Dieser Browser kann die Tonspur nicht offline rendern");
+  const length = Math.round(D * sampleRate);
+  const ac = new OAC({ numberOfChannels: 2, length, sampleRate });
+  buildMix(ac, ac.destination, 0, D, cues, seed, voice, { fadeOut });
+  return ac.startRendering();
+}
+
+/** Musik + Effekte + Sprecherin in `out` aufbauen (live oder offline). T0 = Kontextzeit von Videosekunde 0. */
+function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2 } = {}) {
   // Schutz-Limiter am Ausgang: verhindert Übersteuern (Knistern), greift bei normalem Pegel nicht ein
   const limiter = ac.createDynamicsCompressor();
   limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.12;
-  limiter.connect(dest);
+  limiter.connect(out);
   // Musik + Effekte laufen über einen eigenen Bus-Kompressor; die Stimme NICHT – so bleibt sie unverfälscht
   const comp = ac.createDynamicsCompressor();
   comp.threshold.value = -14; comp.knee.value = 8; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
   const master = ac.createGain();
   master.connect(comp); comp.connect(limiter);
 
-  const T0 = ac.currentTime + 0.05;
+  const fadeAt = T0 + Math.max(0.3, D - fadeOut);
   // Ein-/Ausblenden
   master.gain.setValueAtTime(0.0001, T0);
   master.gain.exponentialRampToValueAtTime(0.9, T0 + 0.25);
-  master.gain.setValueAtTime(0.9, T0 + Math.max(0.3, D - 1.2));
+  master.gain.setValueAtTime(0.9, fadeAt);
   master.gain.linearRampToValueAtTime(0.0001, T0 + D);
 
   const music = ac.createGain(); music.gain.value = 0.55; music.connect(master);
@@ -200,6 +234,7 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
     const presence = ac.createBiquadFilter(); presence.type = "peaking"; presence.frequency.value = 3500; presence.Q.value = 0.8; presence.gain.value = 1.5;
     const vg = ac.createGain(); vg.gain.value = 0.95;
     hp.connect(presence); presence.connect(vg); vg.connect(limiter);
+    vg.gain.setValueAtTime(0.95, fadeAt); vg.gain.linearRampToValueAtTime(0.0001, T0 + D); // sauberes Ende ohne Knacken
     const duck = (g, base, low) => {
       voice.forEach(({ start, buffer }) => {
         const a = T0 + start, b = a + buffer.duration;
@@ -218,22 +253,11 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = []) {
       src.start(T0 + start);
     });
   }
-  // Ende der Sprecherin: Promise, das beim onended-Event des LETZTEN Sprecher-Clips erfüllt wird
-  // (danach stoppt die Aufnahme mit kurzem Ausklang – nie über einen festen Timer).
-  const voiceEnded = voiceSources.length
-    ? Promise.all(voiceSources.map((src) => new Promise((resolve) => { src.onended = () => resolve(ac.currentTime - T0); })))
-      .then((ts) => Math.max(...ts))
-    : null;
-
-  const out = dest.stream.getAudioTracks()[0];
   return {
-    track: out,
-    t0: T0,
-    voiceEnded,
+    voiceSources,
     stop() {
       nodes.forEach((n) => { try { n.stop(); } catch { /* schon beendet */ } });
       try { master.disconnect(); comp.disconnect(); limiter.disconnect(); } catch { /* egal */ }
-      out.stop();
     },
   };
 }

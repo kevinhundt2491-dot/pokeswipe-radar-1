@@ -67,7 +67,8 @@ export async function loadNarration(lines, ac, { tone = "calm", speed = 1 } = {}
   const mp3 = new Blob([bytes.slice(0)], { type: "audio/mpeg" });
   const buffer = await ac.decodeAudioData(bytes);
   if (!buffer?.duration) throw new Error("Sprachdatei konnte nicht dekodiert werden");
-  const take = { buffer, marks: res.marks, duration: buffer.duration, words: countWords(lines), mp3 };
+  const wordMarks = Array.isArray(res.words) && res.words.length === lines.length ? res.words : null; // Wort-Zeitstempel (neuere Takes)
+  const take = { buffer, marks: res.marks, wordMarks, duration: buffer.duration, words: countWords(lines), mp3 };
   voiceCache.set(key, take);
   return take;
 }
@@ -90,8 +91,8 @@ function cuesFor(key, marks, D) {
 // Bildquellen
 // ---------------------------------------------------------------------------
 /** Live-DOM-to-Canvas: echte DOM-Snapshots der Stage mit bis zu 30 FPS. */
-export async function domSource(stage, onStatus) {
-  const cap = new DomCapture(stage.win, { width: VIEW_W, height: VIEW_H, outW: OUT_W, outH: OUT_H });
+export async function domSource(stage, onStatus, { outW = OUT_W, outH = OUT_H } = {}) {
+  const cap = new DomCapture(stage.win, { width: VIEW_W, height: VIEW_H, outW, outH });
   onStatus?.("Bereite Live-DOM-Aufnahme vor (Stylesheets, Schriften, Kartenbilder) …");
   await cap.prepare();
   await stage.decodeImages();
@@ -112,7 +113,7 @@ export async function domSource(stage, onStatus) {
   };
   return {
     fps: DOM_FPS,
-    draw(ctx) { ctx.fillStyle = bg; ctx.fillRect(0, 0, OUT_W, OUT_H); ctx.drawImage(latest, 0, 0, OUT_W, OUT_H); },
+    draw(ctx) { ctx.fillStyle = bg; ctx.fillRect(0, 0, outW, outH); ctx.drawImage(latest, 0, 0, outW, outH); },
     start() { if (running) return; running = true; t0 = performance.now(); loop(); },
     stop() { running = false; },
     rate() { return t0 ? frames / Math.max(0.001, (performance.now() - t0) / 1000) : 0; },
