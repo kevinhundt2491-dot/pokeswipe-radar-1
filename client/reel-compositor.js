@@ -23,6 +23,7 @@ const HIGHLIGHT = {
   market: "🛡️ Marktplatz mit Käuferschutz",
   portfolio: "📈 Portfolio-Wertentwicklung live",
   scansell: "📸 Scannen → 💰 Preis → 🚀 Live",
+  quicklist: "⚡ Scannen → Preis steht → Inserat live",
 };
 const XFADE = 0.35; // weicher Übergang (s)
 

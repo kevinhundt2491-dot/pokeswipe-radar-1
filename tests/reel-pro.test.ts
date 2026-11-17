@@ -135,3 +135,20 @@ test("Pro-Video „Scannen & Verkaufen“: 15–20 s, 8 Mbit/s, Promo-Link START
   assert.ok(speedFor(22, 1.04, [15, 20]) > 1.04 && speedFor(22, 1.04, [15, 20]) <= 1.12);
   assert.equal(speedFor(17, 1.04, [15, 20]), 1.04);
 });
+
+test("Pro-Video „Scannen & direkt inserieren“: echte Scan-Choreografie, 20–30 s, Fokus auf Tempo & Einfachheit", () => {
+  const t = templateByKey("quicklist");
+  assert.ok(t);
+  assert.equal(t.choreo, "scansell");
+  assert.equal(t.tab, "scan");
+  assert.deepEqual(secondsFor(t), [20, 30]);
+  for (const v of [0, 1]) {
+    const s = proScript(t, v);
+    assert.ok(checkProScript(s.say).ok);
+    assert.ok(/Abtippen|Sekunden/.test(s.say.join(" ")));
+    assert.ok(s.show[4].includes(DOMAIN));
+  }
+  const c = proCaption(t, 0, { card: "Glurak ex" });
+  assert.ok(c.caption.includes("pokeswipe-radar.de"));
+  assert.ok(c.hashtags.includes("#PokemonVerkaufen"));
+});

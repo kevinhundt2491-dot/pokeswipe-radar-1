@@ -182,6 +182,32 @@ export const PRO_TEMPLATES = [
       "🤝 Freunde einladen = für jeden Freund extra Gratis-Wochen Pro obendrauf!",
     ],
   },
+  {
+    // Inserier-Video: zeigt, wie schnell und unkompliziert Scannen → fairer Preis → Inserat live geht.
+    // Gleiche Live-Choreografie wie „scansell“ (echter Live-Scanner + Schnell-Inserieren im Demo-Modus),
+    // aber Story und Endscreen ganz auf Tempo & Einfachheit ausgelegt (Ziel 20–30 s, Standard-Endscreen).
+    key: "quicklist", label: "Scannen & direkt inserieren (schnell & unkompliziert)", choreo: "scansell", tab: "scan",
+    title: "Pokémon-Karten scannen & direkt inserieren – in Sekunden",
+    accent: "#fb923c",
+    hooks: [
+      { badge: "NEUE FUNKTION", cover: "Scannen & inserieren in unter 10 Sekunden ⚡", say: "Pokémon-Karten inserieren in unter zehn Sekunden? So einfach geht's!" },
+      { badge: "SO EINFACH GEHT'S", cover: "Kein Abtippen mehr: 1 Scan = 1 Inserat 📸", say: "Schluss mit Abtippen: Ein Scan, ein Inserat!" },
+    ],
+    lines: [
+      { say: "Kamera drauf, fertig: Die App erkennt deine Karte in Sekunden und trägt den fairen Marktpreis direkt für dich ein." },
+      { say: "Kein Abtippen, keine Extra-Fotos, kein langes Formular, ein Tipp und dein Inserat ist live." },
+      { say: "Zustand, Versand und Stadt merkt sich die App, und Käufer sehen sofort dein echtes Scan-Foto." },
+    ],
+    highlight: "⚡ Scannen → Preis steht → Inserat live",
+    headings: { benefit: "Ein Tipp – Inserat live 🚀", trust: "Unkompliziert bis zum Schluss 🧠" },
+    stats: [["📸", "1 Scan"], ["💰", "Preis steht"], ["⚡", "1 Tipp live"]],
+    badges: ["📸 Karte in Sekunden erkannt", "💰 Fairer Preis schon eingetragen", "✍️ Kein Abtippen, kein Formular", "🚀 Mit 1 Tipp live"],
+    trust: ["🧠 Merkt sich Zustand, Versand & Stadt", "📷 Echtes Scan-Foto im Inserat", "🔒 Käuferschutz inklusive", "🃏 Sofort im Swipe-Radar sichtbar"],
+    tags: ["#PokemonVerkaufen", "#PokemonKartenVerkaufen", "#PokemonSammler", "#TCGDeutschland"],
+    body: ["📸 Kamera drauf – PokeSwipe Radar erkennt deine Karte in Sekunden und trägt den fairen Marktpreis direkt ein.",
+      "✍️ Kein Abtippen, keine Extra-Fotos, kein langes Formular: Ein Tipp und dein Inserat ist live.",
+      "🧠 Zustand, Versand und Stadt merkt sich die App – das nächste Inserat geht noch schneller."],
+  },
 ];
 
 /**
@@ -348,7 +374,7 @@ const HASH_BASE = ["#PokemonTCG", "#PokemonKarten", "#PokeSwipeRadar", "#Pokemon
 /** Deutscher Social-Media-Text für Make.com: starker Einstieg, Nutzen, CTA zu pokeswipe-radar.de, Hashtags. */
 export function proCaption(tpl, variant = 0, facts = {}) {
   const { cover } = proScript(tpl, variant);
-  const emoji = { overview: "🚀", radar: "📡", swipe: "👆", market: "🛡️", portfolio: "📈", scansell: "" }[tpl.key] ?? "🔥";
+  const emoji = { overview: "🚀", radar: "📡", swipe: "👆", market: "🛡️", portfolio: "📈", scansell: "", quicklist: "⚡" }[tpl.key] ?? "🔥";
   const hook = emoji ? `${cover} ${emoji}` : cover;
   const card = String(facts?.card || "").replace(/\s+/g, " ").trim().slice(0, 40);
   const body = [...tpl.body, ...(card ? [`Im Video live dabei: ${card}.`] : [])];
