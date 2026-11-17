@@ -135,6 +135,23 @@ function renderQuickbar() {
 }
 
 // ---------------------------------------------------------------------------
+// Community & Markt: zwei Bereiche unter einem Navigationspunkt (wiederhergestellt)
+// ---------------------------------------------------------------------------
+function injectMarketSwitch() {
+  for (const view of ["map", "community"]) {
+    const section = $(`view-${view}`);
+    if (!section || section.querySelector("[data-market-switch]")) continue;
+    const bar = document.createElement("div");
+    bar.dataset.marketSwitch = "1";
+    bar.className = "flex bg-slate-950/90 border border-slate-700 rounded-2xl p-1 gap-1 text-xs font-black";
+    bar.setAttribute("role", "tablist");
+    bar.innerHTML = [["map", "🤝 Markt & Tausch"], ["community", "💬 Community & Pull-Wall"]].map(([k, label]) =>
+      `<button type="button" role="tab" aria-selected="${k === view}" onclick="switchTab('${k}')" class="flex-1 py-2 rounded-xl ${k === view ? "bg-yellow-400 text-slate-950 shadow" : "text-slate-300 hover:text-white"}">${label}</button>`).join("");
+    section.prepend(bar);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Onboarding (3 Schritte) + Demo-Modus
 // ---------------------------------------------------------------------------
 const ob = { step: 1, goal: null, langs: ["de"], mode: "simple" };
@@ -352,8 +369,8 @@ function injectHeaderModeSwitch() {
   if (!auth) return;
   const el = document.createElement("div");
   el.id = "ps-mode-header";
-  // Auf dem Handy liegt der Umschalter im Bereich „Profil“ – der Kopf bleibt aufgeräumt
-  el.className = "ps-mode-switch hidden lg:inline-flex items-center gap-0.5 bg-slate-900 border border-slate-600 rounded-xl p-0.5 text-[11px]";
+  // Wiederhergestellt: Umschalter auf allen Geräten im Kopf sichtbar (zusätzlich im Bereich „Profil“)
+  el.className = "ps-mode-switch inline-flex items-center gap-0.5 bg-slate-900 border border-slate-600 rounded-xl p-0.5 text-[11px]";
   el.setAttribute("role", "group");
   el.setAttribute("aria-label", "Ansicht");
   el.innerHTML = `<button type="button" data-mode-btn="simple" onclick="PS.setUiMode('simple')" title="Einsteiger-Ansicht: 4 Kernbereiche" class="px-2 py-1 rounded-lg font-black text-slate-300">🌱<span class="hidden sm:inline"> Einsteiger</span></button>
@@ -412,7 +429,8 @@ function injectArenaEntry() {
 }
 
 export function initShell() {
-  // Markt/Community-Umschalter entfällt: Marktplatz hat eigene Tabs (client/app-nav.js), Community einen eigenen Seitenkopf
+  // Markt/Community-Umschalter (wiederhergestellt) – zusätzlich zu den Marktplatz-Tabs aus client/app-nav.js
+  injectMarketSwitch();
   injectArenaEntry();
   injectHeaderModeSwitch();
   renderQuickbar();

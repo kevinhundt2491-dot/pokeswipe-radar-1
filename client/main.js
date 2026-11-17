@@ -879,9 +879,12 @@ function renderMarket() {
   const box = $("market-list");
   if (!box) return;
   const f = ($("market-search")?.value || "").toLowerCase().trim();
-  // Marktplatz-Tabs: „Marktplatz“ = Sofort-Kauf mit Käuferschutz, „Tausch-Hub“ = alle Inserate
+  // Marktplatz-Tabs: „Marktplatz“ = Sofort-Kauf-Angebote zuerst, „Tausch-Hub“ = alle Inserate in Originalreihenfolge.
+  // Wiederherstellung: Es werden in jedem Modus ALLE Inserate angezeigt – keine Karte wird mehr ausgefiltert.
   const mode = marketMode();
-  const base = mode === "buy" ? state.listings.filter((m) => m.buy_now) : state.listings;
+  const base = mode === "buy"
+    ? [...state.listings.filter((m) => m.buy_now), ...state.listings.filter((m) => !m.buy_now)]
+    : state.listings;
   const list = f ? base.filter((m) => (m.card_name || "").toLowerCase().includes(f) || (m.city || "").toLowerCase().includes(f)) : base;
   if ($("marketTotalBadge")) $("marketTotalBadge").textContent = state.listings.length;
   if ($("statMarketCount")) $("statMarketCount").textContent = state.listings.length;

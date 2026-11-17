@@ -518,6 +518,8 @@
     function renderMatches() {
       document.getElementById("matchCountBadge").textContent = savedMatches.length;
       document.getElementById("statMatches").textContent = savedMatches.length;
+      const pfMatches = document.getElementById("statMatchesPf");
+      if (pfMatches) pfMatches.textContent = savedMatches.length;
       const box = document.getElementById("match-list-box");
       if (!savedMatches.length) {
         box.innerHTML = `<p class="text-slate-500 py-2">Noch keine Karten gemerkt. Klicke beim Swipen auf „💚 Merken & Deal“.</p>`;
@@ -1438,9 +1440,10 @@
 
       document.getElementById(`view-${tab}`).classList.remove("hidden");
       const navKey = NAV_OF[tab] || tab;
-      const activeDesk = document.getElementById(`tab-${navKey}`);
+      // Eigener Reiter (z. B. Sammlung, Community) hat Vorrang, sonst der übergeordnete Hauptbereich
+      const activeDesk = document.getElementById(`tab-${tab}`) || document.getElementById(`tab-${navKey}`);
       if (activeDesk) activeDesk.className = "tab-btn bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow";
-      const activeMob = document.getElementById(`mob-${navKey}`);
+      const activeMob = document.getElementById(`mob-${tab}`) || document.getElementById(`mob-${navKey}`);
       if (activeMob) activeMob.className = "mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center";
 
       if (tab === "map") initOrUpdateMap();
