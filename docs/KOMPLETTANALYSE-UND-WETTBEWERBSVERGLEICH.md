@@ -49,6 +49,9 @@ Der Checkout fragt jetzt vor jedem Kauf direkt bei Stripe nach laufenden Abos, v
 Manuell lässt sich der Abgleich als Admin über `POST /api/admin/billing/reconcile` starten (`?dryRun=1` zeigt nur die geplanten Änderungen).
 Damit der Abgleich vor dem 22.11. greift, muss die Änderung bis dahin live gehen.
 
+**Stand 17.11.2026, abends – erledigt:** Der Abgleich ist live und hat um 20:07 Uhr die drei doppelten Pro-Testabos des Kunden mit vier Abos gekündigt (in der Testphase, also ohne Abbuchung).
+Es laufen noch genau zwei Pro-Testabos, je eines pro Kunde. Beide tragen die App-Nutzer-ID und haben eine Zahlungsmethode hinterlegt. Sie werden auf Wunsch **beibehalten** und gehen am 22.11. regulär in das bezahlte Abo über (je 9,99 €/Monat). Der stündliche Abgleich hält die Verknüpfung mit dem Profil aktuell.
+
 **Ursprünglich empfohlen (Stripe-Dashboard → Kunden → Abonnements), nach dem Deploy nur noch zur Kontrolle:**
 1. Die überzähligen Pro-Testabos sofort kündigen. Pro Kunde darf höchstens eines übrig bleiben. Echte Testkäufe am besten alle kündigen.
 2. Danach in der App einmal ab- und wieder anmelden und prüfen, ob der Tarif stimmt.
@@ -194,11 +197,22 @@ Legende: ✅ vorhanden · 🟡 eingeschränkt · ❌ nicht vorhanden
 **Fazit:** Technisch und funktional ist PokeSwipe Radar für deutschsprachige Pokémon-Sammler die vollständigste Lösung am Markt, und der Betrieb läuft stabil.
 Offen sind keine Technikfehler mehr, sondern Betrieb und Wachstum: Abo-Abgleich vor dem 22.11., Schlüssel setzen, Store-Start und das Füllen des Marktplatzes.
 
+### Marktplatz füllen (umgesetzt am 17.11.2026)
+
+Die größte Schwäche ist die Liquidität. Die Nachfrage ist aber schon da, nämlich auf den Wunschlisten. Diese Nachfrage wird jetzt zu den Sammlern gebracht, die die Karten besitzen:
+
+- **„🔥 Gesucht aus deiner Sammlung“** (Marktplatz → Meine Verkäufe): zeigt die eigenen Karten, die andere auf der Wunschliste haben und die noch nicht inseriert sind, mit Anzahl der Suchenden, höchstem Wunschpreis und einem Preisvorschlag. Einzeln oder alle auf einmal mit einem Tipp ins Schnell-Inserieren übernehmen. Die Suchenden werden beim Inserieren wie bisher sofort benachrichtigt.
+- **Sofort-Hinweis an Besitzer:** Setzt jemand eine Karte auf die Wunschliste, erfahren Sammler, die sie besitzen und nicht anbieten, dass sie gesucht wird (höchstens einmal pro Tag).
+- **Wöchentlicher Hinweis:** „X Karten aus deiner Sammlung werden gesucht“, höchstens einmal pro Woche und Nutzer, als Teil des stündlichen Wachstums-Jobs.
+- **Leer-Zustand ohne Sackgasse:** Ein leerer Marktplatz zeigt jetzt „Was suchen andere?“, „Scannen & verkaufen“ und die meistgesuchten Karten ohne Angebot. Ein Tipp darauf startet das Inserieren.
+
+Die Verkaufsgebühren bleiben unverändert (6,5 % / 5 % / 3 %).
+
 ---
 
 ## 6. Abschluss-Checkliste
 
-- [ ] **Bis 22.11.:** überzählige Pro-Testabos in Stripe kündigen (Kapitel 2.1)
+- [x] **Bis 22.11.:** überzählige Pro-Testabos in Stripe kündigen (Kapitel 2.1) – erledigt durch den Abgleich, die zwei verbleibenden Abos bleiben bestehen
 - [ ] `DATA_ENCRYPTION_KEY` setzen, neu deployen, in der Admin-Zentrale „🔐 Alt-Einträge verschlüsseln“ ausführen
 - [ ] `DHL_TRACKING_API_KEY` setzen, bevor die ersten Marktplatz-Bestellungen kommen
 - [ ] ElevenLabs-Credits aufladen
@@ -215,7 +229,7 @@ Alle Punkte sind Aufgaben in Stripe, bei Netlify, bei ElevenLabs, bei Google ode
 
 | Punkt | Verhalten ohne Schlüssel | So wird es erledigt |
 |---|---|---|
-| Pro-Testabos kündigen | – | Stripe → Abos → überzählige Abos aus Kapitel 2.1 kündigen (bis 22.11.) |
+| Pro-Testabos kündigen | – | ✅ erledigt: 3 Duplikate am 17.11. automatisch gekündigt, 2 Abos (je eins pro Kunde) bleiben bewusst bestehen |
 | `DATA_ENCRYPTION_KEY` | Steuerdaten werden mit dem Notfall-Schlüssel aus Netlify Blobs verschlüsselt | `openssl rand -hex 32` → in Netlify als Variable setzen → neu deployen → in der Admin-Zentrale „🔐 Alt-Einträge verschlüsseln“ |
 | `DHL_TRACKING_API_KEY` | Es wird `DHL_API_KEY` genutzt. Ohne Tracking-Freigabe gibt es keinen Live-Status | Im DHL-Entwicklerportal die Tracking-API freischalten und den Schlüssel setzen |
 | ElevenLabs-Credits | Ohne Guthaben bleibt die Sprachausgabe stumm | Im ElevenLabs-Konto Guthaben aufladen |
@@ -230,7 +244,7 @@ Alle Punkte sind Aufgaben in Stripe, bei Netlify, bei ElevenLabs, bei Google ode
 
 | Prüfung | Ergebnis |
 |---|---|
-| `npm test` | 249 / 249 grün |
+| `npm test` | 268 / 268 grün |
 | TypeScript (`npm run typecheck`) | fehlerfrei |
 | Live-Seiten (16 Pfade) | alle erreichbar. `/impressum` und `/agb` leiten weiter (301), unbekannte Karten liefern korrekt 404 |
 | Live-API (268 Routen ohne Login) | 0 ungeschützte Schreib- oder Privat-Endpunkte |

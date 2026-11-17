@@ -22,6 +22,7 @@ import { refreshDupes } from "./collector.js";
 import { groupDuplicates, surplusBadge } from "./collector-logic.js";
 import { initArena, arenaApi, addSwipeItemToPortfolio, sellBlockHtml } from "./arena.js";
 import { sellApi, loadMyListings, activeListingFor } from "./sell.js";
+import { demandApi, routeDemand, emptyMarketHtml } from "./demand.js";
 import { priceTagHtml } from "./price-tag.js";
 import { initDealsRadar, dealsRadarApi } from "./deals-radar.js";
 import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
@@ -899,7 +900,7 @@ function renderMarket() {
   if (!list.length) {
     box.innerHTML = mode === "buy" && !f && state.listings.length
       ? `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400 space-y-2"><p>Gerade keine Sofort-Kauf-Angebote. Im Tausch-Hub warten ${state.listings.length} Inserate.</p><button type="button" onclick="PS.marketMode('trade')" class="bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-xl">🤝 Zum Tausch-Hub</button></div>`
-      : `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">Noch keine passenden Inserate. Nutze das Stapel-Inserat oder den Scanner!</div>`;
+      : emptyMarketHtml(Boolean(f));
     return;
   }
   box.innerHTML = list.map(listingCard).join("");
@@ -1212,7 +1213,7 @@ async function openNotifications() {
         const nl = String(n.link || "");
         const sub = /^\/\?tab=(\w+)&sub=(\w+)$/.exec(nl);
         const post = /^\/\?tab=community&post=(\d+)$/.exec(nl);
-        const link = nl.startsWith("/?tab=trades") ? `PS.openTrades()` : nl.startsWith("/?tab=map") ? `PS.goMarket()`
+        const link = nl.startsWith("/?tab=trades") ? `PS.openTrades()` : nl.startsWith("/?tab=map&sell=wanted") ? `PS.closeAll(); PS.openDemand()` : nl.startsWith("/?tab=map") ? `PS.goMarket()`
           : nl.startsWith("/?orders=1") ? `PS.closeAll(); PS.openOrders()` : post ? `PS.closeAll(); PS.openPost(${Number(post[1])})`
           : nl.startsWith("/?tab=community") ? `PS.closeAll(); switchTab('community')`
           : sub ? `PS.closeAll(); PS.showSub('${sub[1]}', '${sub[2]}')` : "";
@@ -1326,6 +1327,7 @@ window.PS = {
   ...featureApi,
   ...arenaApi,
   ...sellApi,
+  ...demandApi,
   ...pfSellApi,
   ...dealsRadarApi,
   ...shellApi,
@@ -1395,6 +1397,7 @@ async function boot() {
   routeCommunity();
   routeProfile();
   routeMarket();
+  routeDemand();
   routeTrading();
 
   onAuthChange(async (event, user) => {

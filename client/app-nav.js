@@ -11,6 +11,7 @@
 import { $, esc, state, api, btn } from "./core.js";
 import { langSwitchHtml } from "./i18n.js";
 import { inviteProgressHtml, proStatusText } from "./referral.js";
+import { demandTileHtml } from "./demand.js";
 
 const PAGES = {
   swipe: { title: "Entdecken", sub: "Karten swipen, Live-Deals und Flip-Highlights", icon: "🃏", nav: "swipe" },
@@ -104,9 +105,10 @@ function mySalesHtml() {
       ${tile("🏪", "Händler-Bereich", "Bestands-Import, DHL-Zugang", "PS.openSellerHub()", "text-amber-200")}
       ${tile("📷", "Karte verkaufen", "Scannen & in 1 Tap inserieren", "PS.openScanner()", "text-emerald-200")}
     </div>
+    ${demandTileHtml()}
     <div class="flex items-center justify-between px-1"><h3 class="text-sm font-black text-white">Meine Inserate (${mine.length})</h3></div>
     <div class="space-y-2">${mine.length ? mine.map((l) => window.PS?.listingCard?.(l) || "").join("")
-      : `<div class="poke-glass rounded-2xl p-5 text-center text-xs text-slate-400">Noch keine Inserate. Scanne eine Karte und tippe auf „🏷️ Verkaufen“.</div>`}</div>
+      : `<div class="poke-glass rounded-2xl p-5 text-center text-xs text-slate-400">Noch keine Inserate. Tippe oben auf „🔥 Gesucht aus deiner Sammlung“ oder scanne eine Karte und tippe auf „🏷️ Verkaufen“.</div>`}</div>
   </div>`;
 }
 

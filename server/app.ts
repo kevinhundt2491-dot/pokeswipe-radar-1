@@ -27,6 +27,7 @@ import { registerQuickList } from "./quick-list.ts";
 import { registerCommunity, afterCommunityReport, applyModeration, isBlockedBetween, COMMUNITY_TARGETS } from "./community.ts";
 import { registerProfiles } from "./profiles.ts";
 import { psttgNotice } from "./dac7.ts";
+import { registerDemand, notifyOwnersOfWish } from "./demand.ts";
 import { registerMarket, syncSellerAccount, fulfillOrderSession, buyNowListingGate, handleDisputeCreated, handleChargeRefunded, handleDisputeUpdated, handleDisputeClosed } from "./market.ts";
 import { registerArena } from "./arena.ts";
 import { registerCart, fulfillCartSession, expireCheckout } from "./cart.ts";
@@ -1142,6 +1143,7 @@ registerTrading(app, { auth, body }); // Phase 6: Swipe-Likes, Matches, struktur
 registerSearch(app); // Phase 6: /api/search über den eigenen Katalog (pg_trgm)
 registerDealsRadar(app, { auth, body }); // Phase 5: geteilte Community-Deals & Sammler-Radar mit Login-Pflicht
 registerProfiles(app, { auth, body }); // ebenfalls vor registerCatalog (/sitemaps/profiles.xml)
+registerDemand(app, { auth }); // Marktplatz füllen: Nachfrage aus Wunschlisten → Inserate
 registerMarket(app, { auth, adminOnly, body });
 // Phase 7: Warenkorb & Checkout über mehrere Verkäufer, Händler-Bestands-Import
 registerCart(app, { auth, adminOnly, body });
