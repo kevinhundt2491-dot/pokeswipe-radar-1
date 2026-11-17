@@ -8,6 +8,8 @@ export type BadgeStats = {
   scans: number;
   wishlistCount: number;
   referralsRewarded: number;
+  /** Bestätigte geworbene Freunde (E-Mail verifiziert oder erste Aktion) – gestaffeltes Empfehlungssystem */
+  referralsQualified?: number;
   reviewsAvg: number;
   reviewsCount: number;
 };
@@ -31,6 +33,9 @@ export const BADGES: Badge[] = [
   { id: "wishlist", icon: "❤️", label: "Wunschzettel", description: "5 Karten auf der Wunschliste", test: (s) => s.wishlistCount >= 5 },
   { id: "recruiter", icon: "🎁", label: "Botschafter", description: "Einen Freund geworben, der Premium nutzt", test: (s) => s.referralsRewarded >= 1 },
   { id: "recruiter-5", icon: "📣", label: "Super-Botschafter", description: "5 Freunde geworben, die ein Abo bezahlen", test: (s) => s.referralsRewarded >= 5 },
+  { id: "ref-starter", icon: "🌱", label: "Starter-Werber", description: "Ersten Freund erfolgreich eingeladen", test: (s) => (s.referralsQualified ?? 0) >= 1 },
+  { id: "ref-community", icon: "🏗️", label: "Community-Builder", description: "3 Freunde erfolgreich eingeladen", test: (s) => (s.referralsQualified ?? 0) >= 3 },
+  { id: "ref-vip", icon: "💎", label: "VIP-Sammler", description: "10 Freunde erfolgreich eingeladen", test: (s) => (s.referralsQualified ?? 0) >= 10 },
   { id: "recruiter-25", icon: "👑", label: "Radar-Legende", description: "25 Freunde geworben, die ein Abo bezahlen", test: (s) => s.referralsRewarded >= 25 },
 ];
 

@@ -1,9 +1,14 @@
 // PokeSwipe & Radar – virales Wachstum: verfolgte Teilen-Links (/s/<code>), Einladungsseite (/einladung/<code>),
 // Empfehlungs-Stufen mit Belohnungen, Teilen-Bonus (Extra-KI-Scans) und Werber-Bestenliste.
 import { createHash } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
-import { db, profiles, shareLinks, shareVisits, referralRewards } from "../db/index.ts";
-import { PLANS, PLAN_RANK, REFERRAL_BONUS_DAYS, REFERRAL_MILESTONES, REFERRAL_TRIAL_DAYS, SHARE_SCAN_BONUS_MAX, effectivePlan, type PlanId } from "./plans.ts";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { db, profiles, shareLinks, shareVisits, referralRewards, userBadges, promoCodes, promoRedemptions } from "../db/index.ts";
+import { PLANS, PLAN_RANK, REFERRAL_BONUS_DAYS, REFERRAL_TRIAL_DAYS, SHARE_SCAN_BONUS_MAX, effectivePlan, proExpiresAt, type PlanId } from "./plans.ts";
+import {
+  GROWTH_PLAN, REFERRAL_TIERS, REFERRAL_DAILY_CAP, SHARE_TRIAL_DAYS, tierRewardDays, milestonesReached, nextMilestone,
+  isSelfReferral, referralLink, promoLink, normalizePromoCode, PROMO_RE, promoAvailable, validatePromoInput,
+} from "./referral-logic.ts";
+import { log } from "./log.ts";
 import { stripe } from "./billing.ts";
 import { notify } from "./prices.ts";
 import { berlinDay, validShareTarget } from "./logic.ts";
@@ -85,15 +90,8 @@ export async function rewardReferral(referred: Profile) {
     kind: "paid_referral", reference: referred.userId, plan: "premium", days: REFERRAL_BONUS_DAYS,
     title: "Gratismonat verdient!", text: `${referred.displayName} hat dank dir ein Abo abgeschlossen.`,
   });
-  const [r] = rows(await db.execute(sql`SELECT count(*)::int AS n FROM profiles WHERE referred_by = ${referrerId} AND referral_rewarded`));
-  const paidCount = Number(r?.n ?? 0);
-  for (const m of REFERRAL_MILESTONES) {
-    if (paidCount < m.count) continue;
-    await grantReward(referrerId, {
-      kind: m.kind, plan: m.plan, days: m.days,
-      title: `${m.icon} Stufe ${m.count} erreicht: ${m.label}`, text: `${m.count} deiner Freunde zahlen für PokeSwipe – danke, dass du die Community wachsen lässt!`,
-    });
-  }
+  // Die Werber-Meilensteine zählen seit dem gestaffelten Empfehlungssystem bestätigte Freunde (qualifyReferral) –
+  // der Gratismonat für zahlende Freunde bleibt als Extra-Belohnung erhalten.
 }
 
 /** Ordnet eine Anmeldung einem Teilen-Link zu (zählt nur, wenn der Link dem Werber gehört). */
@@ -103,6 +101,108 @@ export async function attributeSignup(profileId: string, referrerId: string, via
   if (!link || link.userId !== referrerId) return;
   await db.update(profiles).set({ referredVia: link.id }).where(eq(profiles.userId, profileId));
   await db.update(shareLinks).set({ signups: sql`${shareLinks.signups} + 1` }).where(eq(shareLinks.id, link.id));
+}
+
+// ---------------------------------------------------------------------------
+// Gestaffeltes Empfehlungssystem: Freischaltung erst nach E-Mail-Bestätigung oder erster Aktion
+// ---------------------------------------------------------------------------
+/** Bestätigte Freunde eines Werbers. */
+async function qualifiedCount(referrerId: string) {
+  const [r] = rows(await db.execute(sql`SELECT count(*)::int AS n FROM profiles WHERE referred_by = ${referrerId} AND referral_qualified_at IS NOT NULL`));
+  return Number(r?.n ?? 0);
+}
+
+/**
+ * Schaltet die Empfehlung eines geworbenen Freundes frei (genau einmal, atomar):
+ * 1. Freund → Werber und Freund je +30 Tage Pro, ab dem 2. Freund je +14 Tage – auf ein laufendes Ablaufdatum aufaddiert.
+ * Danach Meilensteine (1 / 3 / 10 Freunde) mit Badge und Extra-Bonus-Tagen. Doppelte Gutschriften verhindert referral_rewards (unique).
+ */
+export async function qualifyReferral(friendId: string, reason: "email" | "action") {
+  const now = new Date();
+  const [f] = await db.update(profiles).set({ referralQualifiedAt: now })
+    .where(and(eq(profiles.userId, friendId), isNotNull(profiles.referredBy), isNull(profiles.referralQualifiedAt))).returning();
+  if (!f?.referredBy) return null;
+  const [referrer] = await db.select().from(profiles).where(eq(profiles.userId, f.referredBy)).limit(1);
+  if (!referrer || referrer.banned || f.banned || isSelfReferral(referrer, f)) {
+    // Kein gültiger Werber mehr → Empfehlung lösen, damit sie nicht als bestätigter Freund zählt
+    await db.update(profiles).set({ referredBy: null, referralQualifiedAt: null }).where(eq(profiles.userId, friendId));
+    return null;
+  }
+  // Schutz vor Massen-Fake-Konten: höchstens REFERRAL_DAILY_CAP Freundes-Gutschriften pro Werber und Tag – sonst später erneut
+  const [cap] = rows(await db.execute(sql`
+    SELECT count(*)::int AS n FROM referral_rewards WHERE user_id = ${referrer.userId} AND kind = 'friend_referral' AND created_at > now() - interval '1 day'
+  `));
+  if (Number(cap?.n ?? 0) >= REFERRAL_DAILY_CAP) {
+    await db.update(profiles).set({ referralQualifiedAt: null }).where(eq(profiles.userId, friendId));
+    log.warn("viral", "Empfehlungs-Tageslimit erreicht – Freischaltung vertagt", { referrer: referrer.userId });
+    return null;
+  }
+  // Position dieses Freundes (deterministisch nach Freischaltzeit, dann ID)
+  const [pos] = rows(await db.execute(sql`
+    SELECT count(*)::int AS n FROM profiles WHERE referred_by = ${referrer.userId} AND referral_qualified_at IS NOT NULL
+      AND (referral_qualified_at < ${now} OR (referral_qualified_at = ${now} AND user_id <= ${friendId}))
+  `));
+  const ordinal = Math.max(1, Number(pos?.n ?? 1));
+  const days = tierRewardDays(ordinal);
+  await grantReward(referrer.userId, {
+    kind: "friend_referral", reference: f.userId, plan: GROWTH_PLAN, days: days.referrer,
+    title: ordinal === 1 ? `+${days.referrer} Tage Pro – dein erster Freund ist dabei!` : `+${days.referrer} Tage Pro für Freund Nr. ${ordinal}`,
+    text: `${f.displayName} ist jetzt aktiv auf PokeSwipe.`,
+  });
+  await grantReward(f.userId, {
+    kind: "invited_bonus", reference: referrer.userId, plan: GROWTH_PLAN, days: days.friend,
+    title: `+${days.friend} Tage PokeSwipe Pro geschenkt`, text: `Danke, dass du über die Einladung von ${referrer.displayName} dabei bist.`,
+  });
+  const total = await qualifiedCount(referrer.userId);
+  for (const m of milestonesReached(total)) {
+    await db.insert(userBadges).values({ userId: referrer.userId, badge: m.badge }).onConflictDoNothing();
+    if (m.days > 0) {
+      await grantReward(referrer.userId, {
+        kind: m.kind, plan: GROWTH_PLAN, days: m.days,
+        title: `${m.icon} Meilenstein „${m.label}“ erreicht: +${m.days} Extra-Bonus-Tage`,
+        text: `${m.count} Freunde sind dank dir dabei – dein Badge ist jetzt im Profil und Marktplatz sichtbar.`,
+      });
+    } else {
+      const [entry] = await db.insert(referralRewards).values({ userId: referrer.userId, kind: m.kind, reference: "", plan: GROWTH_PLAN, days: 0 })
+        .onConflictDoNothing().returning();
+      if (entry) await notify(referrer.userId, `${m.icon} Badge „${m.label}“ freigeschaltet`, "Dein erster Freund ist dabei – lade weitere ein für Community-Builder & VIP-Sammler.", "/?tab=profile");
+    }
+  }
+  log.info("viral", "Empfehlung freigeschaltet", { reason, ordinal });
+  return { ordinal, days, total };
+}
+
+/**
+ * Hat das Konto schon einmal Gratis-Pro bekommen bzw. ein Abo/Testphase genutzt?
+ * („App teilen & 14 Tage Pro testen“ gibt es nur ohne bisherigen Gratis-Test.)
+ */
+export async function hadFreeTrial(p: Profile) {
+  if (p.shareTrialAt || p.switchBonusAt || p.usedTrial || p.stripeSubscriptionId || p.appStoreOriginalTxId) return true;
+  if (effectivePlan({ plan: p.plan, planUntil: p.planUntil }) !== "free") return true;
+  const [r] = rows(await db.execute(sql`
+    SELECT EXISTS (SELECT 1 FROM referral_rewards WHERE user_id = ${p.userId} AND kind IN ('invited_bonus', 'promo', 'share_trial'))
+      OR EXISTS (SELECT 1 FROM promo_redemptions WHERE user_id = ${p.userId}) AS had
+  `));
+  return Boolean(r?.had);
+}
+
+/** Kurzinfo für /api/me: Fortschritt, nächster Badge, Pro-Ablauf. */
+export async function referralSummary(p: Profile) {
+  const [r] = rows(await db.execute(sql`
+    SELECT count(*)::int AS invited, count(*) FILTER (WHERE referral_qualified_at IS NOT NULL)::int AS confirmed
+    FROM profiles WHERE referred_by = ${p.userId}
+  `));
+  const confirmed = Number(r?.confirmed ?? 0), invited = Number(r?.invited ?? 0);
+  const next = nextMilestone(confirmed);
+  return {
+    invited, confirmed, pending: Math.max(0, invited - confirmed),
+    next: next ? { count: next.count, label: next.label, icon: next.icon, missing: next.missing, reward: next.reward } : null,
+    badges: milestonesReached(confirmed).map((m) => ({ id: m.badge, label: m.label, icon: m.icon })),
+    proExpiresAt: proExpiresAt(p),
+    shareTrialAvailable: !(await hadFreeTrial(p)),
+    shareTrialDays: SHARE_TRIAL_DAYS,
+    friendPending: Boolean(p.referredBy && !p.referralQualifiedAt),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -126,31 +226,38 @@ async function leaderboard(limit = 10) {
 }
 
 export async function referralDashboard(profile: Profile, code: string) {
-  const [ref] = rows(await db.execute(sql`
-    SELECT count(*)::int AS invited, count(*) FILTER (WHERE referral_rewarded)::int AS paid
-    FROM profiles WHERE referred_by = ${profile.userId}
-  `));
   const [share] = rows(await db.execute(sql`
     SELECT COALESCE(sum(clicks), 0)::int AS clicks, COALESCE(sum(unique_visitors), 0)::int AS visitors, COALESCE(sum(signups), 0)::int AS signups
     FROM share_links WHERE user_id = ${profile.userId}
   `));
+  const [paidRow] = rows(await db.execute(sql`SELECT count(*)::int AS n FROM profiles WHERE referred_by = ${profile.userId} AND referral_rewarded`));
   const top = await db.select({ code: shareLinks.code, kind: shareLinks.kind, title: shareLinks.title, target: shareLinks.target,
     uniqueVisitors: shareLinks.uniqueVisitors, signups: shareLinks.signups })
     .from(shareLinks).where(eq(shareLinks.userId, profile.userId)).orderBy(desc(shareLinks.uniqueVisitors)).limit(5);
   const rewards = await db.select({ kind: referralRewards.kind, plan: referralRewards.plan, days: referralRewards.days, creditCents: referralRewards.creditCents, createdAt: referralRewards.createdAt })
     .from(referralRewards).where(eq(referralRewards.userId, profile.userId)).orderBy(desc(referralRewards.createdAt)).limit(20);
-  const paid = Number(ref?.paid ?? 0);
-  const next = REFERRAL_MILESTONES.find((m) => paid < m.count) || null;
+  // Geworbene Freunde mit Status (nur öffentlicher Sammlername, keine E-Mail)
+  const friends = rows(await db.execute(sql`
+    SELECT p.display_name, p.created_at, p.referral_qualified_at, rr.days
+    FROM profiles p LEFT JOIN referral_rewards rr ON rr.user_id = ${profile.userId} AND rr.kind = 'friend_referral' AND rr.reference = p.user_id
+    WHERE p.referred_by = ${profile.userId} ORDER BY p.created_at DESC LIMIT 50
+  `)).map((f: any) => ({ name: String(f.display_name), joinedAt: f.created_at, status: f.referral_qualified_at ? "confirmed" : "pending", days: f.days != null ? Number(f.days) : null }));
+  const sum = await referralSummary(profile);
   const board = await leaderboard(10);
   return {
     code,
-    link: `${SITE()}/einladung/${code}`,
-    invited: Number(ref?.invited ?? 0), paid,
+    link: referralLink(SITE(), code),
+    invitePage: `${SITE()}/einladung/${code}`,
+    invited: sum.invited, confirmed: sum.confirmed, pending: sum.pending, paid: Number(paidRow?.n ?? 0),
+    friends,
+    proExpiresAt: sum.proExpiresAt,
+    tiers: { firstDays: tierRewardDays(1).referrer, nextDays: tierRewardDays(2).referrer },
     trialDays: REFERRAL_TRIAL_DAYS, rewardDays: REFERRAL_BONUS_DAYS,
-    milestones: REFERRAL_MILESTONES.map((m) => ({ count: m.count, label: m.label, icon: m.icon, reached: paid >= m.count })),
-    next: next ? { count: next.count, label: next.label, icon: next.icon, missing: next.count - paid } : null,
+    milestones: REFERRAL_TIERS.map((m) => ({ count: m.count, label: m.label, icon: m.icon, reward: m.reward, reached: sum.confirmed >= m.count })),
+    next: sum.next,
     share: { clicks: Number(share?.clicks ?? 0), visitors: Number(share?.visitors ?? 0), signups: Number(share?.signups ?? 0), top },
     shareBonus: { today: await shareBonusToday(profile.userId), max: SHARE_SCAN_BONUS_MAX },
+    shareTrialAvailable: sum.shareTrialAvailable, shareTrialDays: SHARE_TRIAL_DAYS,
     rewards,
     leaderboard: board.map((b: any, i: number) => ({ rank: i + 1, name: b.display_name, paid: Number(b.paid), joined: Number(b.joined), me: b.user_id === profile.userId })),
     leaderboardOptIn: profile.leaderboardOptIn,
@@ -160,8 +267,98 @@ export async function referralDashboard(profile: Profile, code: string) {
 // ---------------------------------------------------------------------------
 // Routen
 // ---------------------------------------------------------------------------
-export function registerViral(app: any, hlp: { auth: any; body: (c: any) => Promise<Record<string, any>>; ensureCode: (p: Profile) => Promise<string> }) {
-  const { auth, body, ensureCode } = hlp;
+export function registerViral(app: any, hlp: { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>>; ensureCode: (p: Profile) => Promise<string> }) {
+  const { auth, adminOnly, body, ensureCode } = hlp;
+
+  // ------------------------------------------------------------------------
+  // Video-Promo-Links (?promo=CODE)
+  // ------------------------------------------------------------------------
+  /** Öffentliche Prüfung für das Bonus-Banner (ohne interne Bezeichnung). */
+  app.get("/api/promo/:code", async (c: any) => {
+    const code = normalizePromoCode(c.req.param("code"));
+    if (!(await rateLimit(`promo-check:${clientIp(c)}`, 30, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
+    c.header("Cache-Control", "no-store");
+    if (!PROMO_RE.test(code)) return c.json({ valid: false, reason: "Ungültiger Code" });
+    const [p] = await db.select().from(promoCodes).where(eq(promoCodes.code, code)).limit(1);
+    const a = promoAvailable(p);
+    return c.json({ valid: a.ok, code, days: a.ok ? p!.days : 0, reason: a.reason });
+  });
+
+  /** Promo-Code einlösen – einmal pro Konto und Code, Gutschrift von Pro-Tagen. */
+  app.post("/api/promo/redeem", auth, async (c: any) => {
+    const profile: Profile = c.get("profile");
+    if (!(await rateLimit(`promo:${profile.userId}`, 10, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
+    const code = normalizePromoCode((await body(c)).code);
+    if (!PROMO_RE.test(code)) return c.json({ error: "Ungültiger Promo-Code." }, 400);
+    const [p] = await db.select().from(promoCodes).where(eq(promoCodes.code, code)).limit(1);
+    const a = promoAvailable(p);
+    if (!a.ok || !p) return c.json({ error: a.reason }, p ? 409 : 404);
+    const [redemption] = await db.insert(promoRedemptions).values({ promoId: p.id, userId: profile.userId, days: p.days }).onConflictDoNothing().returning();
+    if (!redemption) return c.json({ ok: true, already: true, error: "Diesen Code hast du schon eingelöst." }, 409);
+    // Kontingent atomar belegen – bei Überbuchung Einlösung zurücknehmen
+    const [counted] = await db.update(promoCodes).set({ redemptions: sql`${promoCodes.redemptions} + 1` })
+      .where(and(eq(promoCodes.id, p.id), eq(promoCodes.active, true), sql`(${promoCodes.maxRedemptions} IS NULL OR ${promoCodes.redemptions} < ${promoCodes.maxRedemptions})`))
+      .returning({ id: promoCodes.id });
+    if (!counted) {
+      await db.delete(promoRedemptions).where(eq(promoRedemptions.id, redemption.id));
+      return c.json({ error: "Dieser Promo-Code ist bereits ausgeschöpft." }, 409);
+    }
+    await grantReward(profile.userId, {
+      kind: "promo", reference: String(p.id), plan: GROWTH_PLAN, days: p.days,
+      title: `🎬 Promo-Code ${code}: ${p.days} Tage PokeSwipe Pro`, text: "Viel Spaß mit allen Pro-Funktionen!",
+    });
+    const [fresh] = await db.select().from(profiles).where(eq(profiles.userId, profile.userId)).limit(1);
+    return c.json({ ok: true, days: p.days, proExpiresAt: proExpiresAt(fresh) });
+  });
+
+  // Admin: Promo-Link-Generator
+  app.get("/api/admin/promo-codes", auth, adminOnly, async (c: any) => {
+    const list = await db.select().from(promoCodes).orderBy(desc(promoCodes.createdAt)).limit(200);
+    return c.json({ codes: list.map((p) => ({ ...p, link: promoLink(SITE(), p.code) })) });
+  });
+  app.post("/api/admin/promo-codes", auth, adminOnly, async (c: any) => {
+    const b = await body(c);
+    const { value, error } = validatePromoInput({ maxRedemptions: null, active: true, ...b });
+    if (error) return c.json({ error }, 400);
+    const [created] = await db.insert(promoCodes).values({
+      code: value.code!, label: value.label ?? "", days: value.days!, maxRedemptions: value.maxRedemptions ?? null,
+      active: value.active ?? true, createdBy: c.get("user").email || "",
+    }).onConflictDoNothing().returning();
+    if (!created) return c.json({ error: "Diesen Code gibt es schon." }, 409);
+    return c.json({ code: { ...created, link: promoLink(SITE(), created.code) } });
+  });
+  app.patch("/api/admin/promo-codes/:id", auth, adminOnly, async (c: any) => {
+    const id = Number(c.req.param("id"));
+    if (!Number.isInteger(id) || id < 1) return c.json({ error: "Ungültige ID" }, 400);
+    const b = await body(c);
+    const { value, error } = validatePromoInput({ label: b.label, days: b.days, maxRedemptions: b.maxRedemptions, active: b.active }, { partial: true });
+    if (error) return c.json({ error }, 400);
+    delete value.code; // Code bleibt fest (Links in Videos sollen gültig bleiben)
+    if (!Object.keys(value).length) return c.json({ error: "Keine Änderungen" }, 400);
+    const [u] = await db.update(promoCodes).set(value).where(eq(promoCodes.id, id)).returning();
+    if (!u) return c.json({ error: "Nicht gefunden" }, 404);
+    return c.json({ code: { ...u, link: promoLink(SITE(), u.code) } });
+  });
+
+  // ------------------------------------------------------------------------
+  // „App teilen & 14 Tage Pro testen“ (einmalig, nur ohne bisherigen Gratis-Test)
+  // ------------------------------------------------------------------------
+  app.post("/api/growth/share-trial", auth, async (c: any) => {
+    const profile: Profile = c.get("profile");
+    if (await hadFreeTrial(profile)) return c.json({ error: "Den Gratis-Test hast du schon genutzt – lade Freunde ein für mehr Pro-Tage." }, 409);
+    // Nachweis: ein eigener Teilen-Link muss existieren (wird beim Teilen angelegt)
+    const [link] = await db.select({ id: shareLinks.id }).from(shareLinks).where(eq(shareLinks.userId, profile.userId)).limit(1);
+    if (!link) return c.json({ error: "Bitte teile zuerst deinen Einladungslink." }, 409);
+    const [claimed] = await db.update(profiles).set({ shareTrialAt: new Date() })
+      .where(and(eq(profiles.userId, profile.userId), isNull(profiles.shareTrialAt))).returning({ id: profiles.userId });
+    if (!claimed) return c.json({ error: "Den Gratis-Test hast du schon genutzt." }, 409);
+    await grantReward(profile.userId, {
+      kind: "share_trial", plan: GROWTH_PLAN, days: SHARE_TRIAL_DAYS,
+      title: `📲 Danke fürs Teilen: ${SHARE_TRIAL_DAYS} Tage Pro gratis`, text: "Teste alle Pro-Funktionen – ganz ohne Abo.",
+    });
+    const [fresh] = await db.select().from(profiles).where(eq(profiles.userId, profile.userId)).limit(1);
+    return c.json({ ok: true, days: SHARE_TRIAL_DAYS, proExpiresAt: proExpiresAt(fresh) });
+  });
 
   /** Verfolgten Kurzlink für eine eigene Seite anlegen (oder vorhandenen zurückgeben). */
   app.post("/api/share", auth, async (c: any) => {

@@ -17,7 +17,8 @@ import { registerMake } from "./make.ts";
 import { registerLegal, LEGAL_VERSION } from "./legal.ts";
 import { registerCatalog } from "./catalog.ts";
 import { registerSeo } from "./seo.ts";
-import { registerViral } from "./viral.ts";
+import { registerViral, qualifyReferral } from "./viral.ts";
+import { isActiveActionPath } from "./referral-logic.ts";
 import { registerIntlCatalog, printForPortfolio } from "./intl-catalog.ts";
 import { registerIntegrations, webhookSecrets, recordWebhook } from "./integrations.ts";
 import { registerFlip } from "./flip.ts";
@@ -64,6 +65,21 @@ app.use("/api/*", bodyLimit({
   onError: (c) => c.json({ error: "Die Anfrage ist zu groß. Bitte weniger oder kleinere Bilder senden." }, 413),
 }));
 
+// Empfehlungs- und Promo-Links (?ref=CODE / ?promo=CODE) auf öffentlichen Seiten (Karten, Pulls, Einladung …) merken,
+// damit der Code auch nach dem Wechsel in die App beim Registrieren ankommt (1st-Party-Cookie, 30 Tage, kein Tracking).
+app.use("*", async (c, next) => {
+  await next();
+  if (c.req.method !== "GET" || c.req.path.startsWith("/api/")) return;
+  const ref = c.req.query("ref"), promo = c.req.query("promo");
+  const cookie = (k: string, v: string) => {
+    c.header("Set-Cookie", `${k}=${encodeURIComponent(v)}; Path=/; Max-Age=2592000; SameSite=Lax; Secure`, { append: true });
+    c.header("Cache-Control", "private, no-store"); // persönliche Antwort nie im CDN zwischenspeichern
+    c.header("Netlify-CDN-Cache-Control", "no-store");
+  };
+  if (ref && /^[A-Za-z0-9]{6,10}$/.test(ref)) cookie("ps_ref", ref.toUpperCase());
+  if (promo && /^[A-Za-z0-9_-]{3,24}$/.test(promo)) cookie("ps_promo", promo.toUpperCase());
+});
+
 app.onError((err, c) => {
   log.error("api", "API-Fehler", { method: c.req.method, path: c.req.path, err });
   return c.json({ error: "Interner Fehler. Bitte später erneut versuchen." }, 500);
@@ -89,7 +105,14 @@ const auth = async (c: any, next: any) => {
   c.set("user", user);
   c.set("profile", profile);
   c.set("plan", effectivePlan(profile));
+  // Gestaffelte Empfehlung: Bonus-Tage für Werber & Freund erst nach bestätigter E-Mail ODER erster aktiver Aktion
+  // (Karte scannen, zur Sammlung hinzufügen, auf die Wunschliste setzen)
+  const pendingReferral = Boolean(profile.referredBy && !profile.referralQualifiedAt && !profile.banned);
+  if (pendingReferral && profile.emailConfirmed) await qualifyReferral(profile.userId, "email").catch((e) => log.warn("viral", "Empfehlung nicht freigeschaltet", { err: e }));
   await next();
+  if (pendingReferral && !profile.emailConfirmed && c.res.status < 300 && isActiveActionPath(c.req.method, c.req.path)) {
+    await qualifyReferral(profile.userId, "action").catch((e) => log.warn("viral", "Empfehlung nicht freigeschaltet", { err: e }));
+  }
 };
 
 const adminOnly = async (c: any, next: any) => {
@@ -516,7 +539,8 @@ app.get("/api/listings", async (c) => {
       l.status, l.sealed_product_id, l.print_id, l.portfolio_item_id, (l.boosted_until > now()) AS boosted, l.boosted_until,
       (l.buy_now AND p.stripe_account_ready) AS buy_now, l.shipping_cents, l.condition, l.variant, l.lang,
       p.display_name AS seller, p.public_profile AS seller_public,
-      (p.plan = 'pro' AND p.plan_until > now()) AS verified,
+      (SELECT b.badge FROM user_badges b WHERE b.user_id = l.user_id AND b.badge IN ('ref-vip', 'ref-community') ORDER BY (b.badge = 'ref-vip') DESC LIMIT 1) AS seller_badge,
+      ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified,
       (CASE WHEN l.variant = 'reverse_holo' THEN COALESCE(c.reverse_trend, c.reverse_avg, c.trend, c.avg) ELSE COALESCE(c.trend, c.avg) END)::float AS market_price,
       (SELECT round(avg(r.stars)::numeric, 1)::float FROM reviews r WHERE r.reviewee_id = l.user_id) AS rating,
       (SELECT count(*)::int FROM reviews r WHERE r.reviewee_id = l.user_id) AS rating_count
@@ -525,7 +549,7 @@ app.get("/api/listings", async (c) => {
     LEFT JOIN cards c ON c.id = l.card_id
     WHERE ${mine ? sql`l.status IN ('active','sold')` : sql`l.status = 'active' AND NOT p.banned`} ${userFilter}
       AND (${q}::text = '' OR lower(l.card_name) LIKE ${like} OR lower(l.city) LIKE ${like})
-    ORDER BY (l.boosted_until > now()) DESC NULLS LAST, (p.plan = 'pro' AND p.plan_until > now()) DESC, l.created_at DESC
+    ORDER BY (l.boosted_until > now()) DESC NULLS LAST, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) DESC, l.created_at DESC
     LIMIT 80
   `));
   c.header("Cache-Control", "no-store");
@@ -1110,7 +1134,7 @@ registerAlerts(app, { auth, adminOnly, body }); // Phase 8: Browser-Fehlerberich
 registerSellerImport(app, { auth, adminOnly, body });
 registerNative(app, { auth, body });
 registerCatalog(app, { auth, adminOnly, body });
-registerViral(app, { auth, body, ensureCode: ensureReferralCode });
+registerViral(app, { auth, adminOnly, body, ensureCode: ensureReferralCode });
 registerIntlCatalog(app, { auth, adminOnly });
 registerFlip(app, { auth, adminOnly, body });
 registerScanIndex(app, { auth, adminOnly });

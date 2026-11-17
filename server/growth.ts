@@ -104,6 +104,7 @@ async function badgeStats(userId: string, bestStreak: number): Promise<BadgeStat
       (SELECT count(*)::int FROM card_scans WHERE user_id = ${userId}) AS scans,
       (SELECT count(*)::int FROM wishlist_items WHERE user_id = ${userId}) AS wishlist_count,
       (SELECT count(*)::int FROM profiles WHERE referred_by = ${userId} AND referral_rewarded) AS referrals,
+      (SELECT count(*)::int FROM profiles WHERE referred_by = ${userId} AND referral_qualified_at IS NOT NULL) AS referrals_qualified,
       (SELECT COALESCE(avg(stars), 0)::float FROM reviews WHERE reviewee_id = ${userId}) AS reviews_avg,
       (SELECT count(*)::int FROM reviews WHERE reviewee_id = ${userId}) AS reviews_count
   `));
@@ -111,6 +112,7 @@ async function badgeStats(userId: string, bestStreak: number): Promise<BadgeStat
     portfolioCount: Number(r?.portfolio_count ?? 0), portfolioValue: Number(r?.portfolio_value ?? 0),
     completedTrades: Number(r?.completed_trades ?? 0), bestStreak, scans: Number(r?.scans ?? 0),
     wishlistCount: Number(r?.wishlist_count ?? 0), referralsRewarded: Number(r?.referrals ?? 0),
+    referralsQualified: Number(r?.referrals_qualified ?? 0),
     reviewsAvg: Number(r?.reviews_avg ?? 0), reviewsCount: Number(r?.reviews_count ?? 0),
   };
 }
@@ -462,7 +464,7 @@ export function registerGrowth(app: any, hlp: {
       .where(eq(wishlistItems.userId, userId)).orderBy(desc(wishlistItems.createdAt));
     const offers = rows(await db.execute(sql`
       SELECT l.id, l.card_id, l.card_name, l.image, l.price::float AS price, l.city, l.user_id, p.display_name AS seller,
-        (p.plan = 'pro' AND p.plan_until > now()) AS verified
+        ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified
       FROM listings l JOIN profiles p ON p.user_id = l.user_id
       JOIN wishlist_items w ON w.card_id = l.card_id AND w.user_id = ${userId}
       WHERE l.status = 'active' AND NOT p.banned AND l.user_id <> ${userId} AND (w.variant = '' OR w.variant = l.variant)

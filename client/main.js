@@ -1,6 +1,7 @@
 // PokeSwipe & Radar – Konto, Abo, Portfolio, Preis-Tracker, sicherer Tausch
 // Wird zu /assets/app.js gebündelt und von index.html geladen.
 // i18n zuerst: setzt window.psLang/<html lang> und startet bei Englisch den DOM-Übersetzer vor dem ersten Rendern
+import { promoAdminHtml } from "./referral.js";
 import { langSwitchHtml } from "./i18n.js";
 // Phase 8: Browser-Fehler an den Betriebs-Wächter melden (so früh wie möglich, damit auch Startfehler ankommen)
 import "./error-report.js";
@@ -59,6 +60,9 @@ async function loadMe() {
   }
   announcePlan();
 }
+
+/** Empfehlungs-Badges der Verkäufer im Marktplatz */
+const REF_BADGE = { "ref-vip": "💎 VIP-Sammler", "ref-community": "🏗️ Community-Builder" };
 
 /** Teilt der Oberfläche den vom Server bestätigten Tarif mit (Swipe-Limit, Sniper-Deals, Pro-Analyse). */
 function announcePlan() {
@@ -909,7 +913,7 @@ function listingCard(l) {
           <h4 class="font-black text-white text-sm truncate">${esc(l.card_name)}</h4>
           <p><span class="font-black text-emerald-400">${eur(l.price)}</span>${l.market_price ? ` <span class="text-slate-500">(Markt ${eur(l.market_price)})</span>` : ""} • <span class="text-slate-400">📍 ${esc(l.city)}</span></p>
           <p class="text-amber-300 truncate">Sucht: ${esc(l.want)}</p>
-          <button onclick="PS.openUser(${jsArg(l.user_id)})" class="text-slate-300 hover:text-white font-bold">${esc(l.seller)} ${l.verified ? `<span class="text-cyan-300">✔ Verifiziert</span>` : ""} ${l.rating_count ? `<span class="text-amber-300">⭐ ${Number(l.rating) || 0} (${Number(l.rating_count) || 0})</span>` : `<span class="text-slate-500">• neu</span>`}</button>
+          <button onclick="PS.openUser(${jsArg(l.user_id)})" class="text-slate-300 hover:text-white font-bold">${esc(l.seller)} ${l.verified ? `<span class="text-cyan-300">✔ Verifiziert</span>` : ""} ${REF_BADGE[l.seller_badge] ? `<span class="text-yellow-300" title="Empfehlungs-Badge">${REF_BADGE[l.seller_badge]}</span>` : ""} ${l.rating_count ? `<span class="text-amber-300">⭐ ${Number(l.rating) || 0} (${Number(l.rating_count) || 0})</span>` : `<span class="text-slate-500">• neu</span>`}</button>
         </div>
       </div>
       <div class="flex flex-wrap gap-1.5 shrink-0 text-xs">
@@ -1245,6 +1249,7 @@ async function openAdmin() {
             ${btn("Verwerfen", `PS.resolveReport(${Number(r.id)}, {dismiss:true})`, "bg-slate-800 text-slate-300")}
           </div></div>`).join("") : `<p class="text-slate-500">Keine offenen Meldungen 🎉</p>`}
       </div>
+      ${await promoAdminHtml()}
       ${await communityAdminHtml()}
       ${await adminExtrasHtml()}
       ${btn("📡 Preis-Tracker jetzt ausführen", "PS.runTracker()", "w-full bg-slate-800 text-white")}`, { wide: true });
@@ -1368,6 +1373,7 @@ async function boot() {
   await confirmCheckoutFromUrl();
   const tab = new URLSearchParams(location.search).get("tab");
   if (tab === "trades") openTrades();
+  else if (tab === "admin") { switchTabSafe("profile"); if (state.me?.isAdmin) openAdmin(); }
   else if (["swipe", "scan", "flip", "community", "map", "portfolio", "profile"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
   routeCart();

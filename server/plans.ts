@@ -1,3 +1,5 @@
+import { REFERRAL_TIERS, GROWTH_PLAN } from "./referral-logic.ts";
+
 export type PlanId = "free" | "premium" | "pro";
 
 export const PLANS: Record<PlanId, {
@@ -30,6 +32,7 @@ export const PLANS: Record<PlanId, {
 export const BOOST_PRICE_CENTS = 199;
 export const BOOST_DAYS = 7;
 export const REFERRAL_TRIAL_DAYS = 30;
+/** Gratismonat (Premium) für den Werber, wenn ein geworbener Freund später ein Abo bezahlt – zusätzlich zu den Pro-Tagen pro Freund. */
 export const REFERRAL_BONUS_DAYS = 30;
 /** Testphase für jedes erste Abo (ohne Empfehlung) */
 export const TRIAL_DAYS = 7;
@@ -39,15 +42,11 @@ export const SWITCH_BONUS_DAYS = 30;
 export const SWITCH_MIN_CARDS = 20;
 
 /**
- * Empfehlungs-Stufen: Belohnung, sobald so viele geworbene Nutzer ein Abo bezahlt haben.
- * Kommt zusätzlich zum Gratismonat pro zahlender Empfehlung (REFERRAL_BONUS_DAYS).
+ * Werber-Meilensteine (gestaffeltes Empfehlungssystem, zählt bestätigte Freunde – siehe referral-logic.ts):
+ * 1 Freund „Starter-Werber“, 3 Freunde „Community-Builder“ (+14 Tage), 10 Freunde „VIP-Sammler“ (+30 Tage).
  */
-export const REFERRAL_MILESTONES: { count: number; kind: string; plan: "premium" | "pro"; days: number; label: string; icon: string }[] = [
-  { count: 3, kind: "milestone_3", plan: "pro", days: 30, label: "1 Monat Pro Trader", icon: "🥉" },
-  { count: 5, kind: "milestone_5", plan: "pro", days: 60, label: "2 Monate Pro Trader + Botschafter-Abzeichen", icon: "🥈" },
-  { count: 10, kind: "milestone_10", plan: "pro", days: 180, label: "6 Monate Pro Trader", icon: "🥇" },
-  { count: 25, kind: "milestone_25", plan: "pro", days: 365, label: "1 Jahr Pro Trader + Legenden-Status", icon: "👑" },
-];
+export const REFERRAL_MILESTONES: { count: number; kind: string; plan: "premium" | "pro"; days: number; label: string; icon: string }[] =
+  REFERRAL_TIERS.map((t) => ({ count: t.count, kind: t.kind, plan: GROWTH_PLAN, days: t.days, label: `${t.label} – ${t.reward}`, icon: t.icon }));
 /** Teilen-Bonus: +1 KI-Scan heute pro neuem Besucher über die eigenen Teilen-Links (max. pro Tag). */
 export const SHARE_SCAN_BONUS_MAX = 10;
 
@@ -58,6 +57,8 @@ export const PLAN_RANK: Record<PlanId, number> = { free: 0, premium: 1, pro: 2 }
  * Bezahlter Tarif gilt, solange das Abo-Ende in der Zukunft liegt (+1 Tag Kulanz).
  * Ein Bonus (Empfehlung, Stufen-Belohnung, Wechsel-Bonus) gilt bis bonusUntil mit bonusPlan (Standard Premium) –
  * liegt der Bonus-Tarif über dem bezahlten (z. B. Pro-Bonus für Premium-Abonnenten), gilt der höhere.
+ * bonusUntil ist das „proExpiresAt“ des Empfehlungs-/Promo-Systems: Pro gilt, solange ENTWEDER ein Abo läuft ODER bonusUntil > jetzt;
+ * danach fällt der Nutzer automatisch auf den bezahlten Tarif bzw. Free zurück.
  */
 export function effectivePlan(
   profile: { plan: string; planUntil: Date | null; bonusUntil?: Date | null; bonusPlan?: string | null } | undefined | null,
@@ -76,3 +77,20 @@ export function listingLimit(plan: PlanId, override?: number | null): number {
   const base = PLANS[plan]?.listings ?? PLANS.free.listings;
   return override && override > base ? override : base;
 }
+
+/** Ablaufdatum des geschenkten Pro-Status (Empfehlung, Promo-Code, Teilen-Test) – null, wenn keiner aktiv ist. */
+export function proExpiresAt(profile: { bonusUntil?: Date | null; bonusPlan?: string | null } | null | undefined): Date | null {
+  if (!profile?.bonusUntil || profile.bonusPlan !== "pro") return null;
+  const d = new Date(profile.bonusUntil);
+  return d.getTime() > Date.now() ? d : null;
+}
+
+/** Woher der aktuelle Tarif kommt: Abo (stripe/apple), Geschenk (bonus) oder free. */
+export function planSource(profile: Parameters<typeof effectivePlan>[0] & { planSource?: string | null }): "subscription" | "bonus" | "free" {
+  if (!profile) return "free";
+  const eff = effectivePlan(profile);
+  if (eff === "free") return "free";
+  const paid = effectivePlan({ plan: profile.plan, planUntil: profile.planUntil });
+  return paid === eff ? "subscription" : "bonus";
+}
+

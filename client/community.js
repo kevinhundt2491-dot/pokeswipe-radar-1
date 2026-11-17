@@ -1,6 +1,7 @@
 // Phase 4: Authentifizierte Community – Pull-Wall als Social Feed, Live-Chat, Melden/Blockieren, Admin-Moderation.
 // Ersetzt die früheren anonymen Firebase-Funktionen der Seite (publishWallPost, sendChatMessage, …) durch die
 // eigene API mit Login-Pflicht (Netlify Identity), serverseitigen Limits, Wort-/Link-Filter und Moderation.
+import { withRef } from "./referral.js";
 import { $, esc, jsArg, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
 
 const cm = {
@@ -229,7 +230,7 @@ async function deleteComment(id) {
 /** Teilen: natives Teilen-Menü (Handy) oder Auswahl mit WhatsApp, Telegram, X, Facebook und Link kopieren. */
 function sharePost(id, afterPublish = false) {
   const p = cm.posts.find((x) => x.id === id);
-  const url = `${location.origin}/p/${id}`;
+  const url = withRef(`${location.origin}/p/${id}`); // persönlicher ?ref=CODE des eingeloggten Nutzers
   const text = p ? `${p.caption || "Mein Pull"} – auf PokeSwipe & Radar` : "Schau dir diesen Pull an!";
   if (!afterPublish && navigator.share) { navigator.share({ title: "PokeSwipe Pull-Wall", text, url }).catch(() => {}); return; }
   const enc = encodeURIComponent;

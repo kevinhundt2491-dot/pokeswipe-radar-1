@@ -465,7 +465,7 @@ export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body
 
   app.get("/sitemaps/pages.xml", async (c: any) => {
     const shops = rows(await db.execute(sql`
-      SELECT shop_slug FROM profiles WHERE shop_slug IS NOT NULL AND plan = 'pro' AND plan_until > now() AND NOT banned LIMIT 2000
+      SELECT shop_slug FROM profiles WHERE shop_slug IS NOT NULL AND ((plan = 'pro' AND plan_until > now()) OR (bonus_plan = 'pro' AND bonus_until > now())) AND NOT banned LIMIT 2000
     `));
     const urls = [loc("/", "<changefreq>daily</changefreq><priority>1.0</priority>")]
       .concat(STATIC_PAGES.map((p) => loc(p, "<changefreq>weekly</changefreq><priority>0.8</priority>")))
@@ -475,7 +475,7 @@ export function registerCatalog(app: any, hlp: { auth: any; adminOnly: any; body
 
   app.get("/sitemaps/en-pages.xml", async (c: any) => {
     const shops = rows(await db.execute(sql`
-      SELECT shop_slug FROM profiles WHERE shop_slug IS NOT NULL AND plan = 'pro' AND plan_until > now() AND NOT banned LIMIT 2000
+      SELECT shop_slug FROM profiles WHERE shop_slug IS NOT NULL AND ((plan = 'pro' AND plan_until > now()) OR (bonus_plan = 'pro' AND bonus_until > now())) AND NOT banned LIMIT 2000
     `));
     const urls = EN_STATIC_PAGES.map((p) => loc(p, "<changefreq>weekly</changefreq><priority>0.7</priority>"))
       .concat(shops.map((s: any) => loc(`/en/shop/${encodeURIComponent(s.shop_slug)}`, "<changefreq>daily</changefreq>")));
