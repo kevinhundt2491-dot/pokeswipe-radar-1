@@ -17,6 +17,7 @@ import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
 import { scanLimit } from "./viral.ts";
 import { taxInfoForExport } from "./dac7.ts";
 import { checkMatchesAfterWishlist } from "./trading.ts";
+import { notifyOwnersOfWish } from "./demand.ts";
 import { parseVariant, normalizeVariant, normalizeCondition, availableVariants, variantPrice, VARIANT_LABELS } from "./variant-logic.ts";
 import { publicCache } from "./cache.ts";
 import { conditionPricesForCard, recentMarketSales, type ConditionPrices } from "./condition-prices.ts";
@@ -515,6 +516,8 @@ export function registerGrowth(app: any, hlp: {
     const [item] = await db.insert(wishlistItems).values({ userId: user.id, cardId: card.id, maxPrice, variant })
       .onConflictDoUpdate({ target: [wishlistItems.userId, wishlistItems.cardId], set: { maxPrice, variant } }).returning();
     const matches = await checkMatchesAfterWishlist(user.id, card.id);
+    // Marktplatz füllen: Besitzer der Karte erfahren, dass sie gesucht wird (max. 1× pro Tag, Fehler blockieren nicht)
+    await notifyOwnersOfWish(user.id, card.id, card.name, variant).catch((e) => console.warn("Nachfrage-Hinweis nicht gesendet", e));
     // Gibt es schon passende Angebote?
     const [offer] = rows(await db.execute(sql`
       SELECT count(*)::int AS n, min(price)::float AS min FROM listings
