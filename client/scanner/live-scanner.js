@@ -564,7 +564,7 @@ async function addWish(key) {
 /** Eine Karte direkt inserieren (Schnell-Inserieren mit fairem Preisvorschlag) */
 function sellOne(key, mode = "") {
   const i = infoOf(key);
-  if (!i || !requireLogin()) return;
+  if (!i || (!IS_STAGE && !requireLogin())) return;
   learn(key, probeFor(key));
   // Scan-Foto mitgeben (Serie bzw. aktueller Treffer), damit Käufer im Swipe-Radar die echte Karte sehen
   const photo = sc.series.find((s) => s.key === key)?.photo || (sc.current?.key === key ? sc.current.photo : null) || null;
@@ -618,7 +618,81 @@ function setLang(l) {
   if (sc.worker) loadIndex();
 }
 
+// ---------------------------------------------------------------------------
+// Demo-Modus NUR für die Pro-Video-Aufnahme (Live-Stage-iframe mit ?reel=1): In der Aufnahme gibt es keine
+// Kamera. Statt des Kamerabilds zeigt der Scanner eine echte Katalogkarte, der Scan-Rahmen fährt mit einem
+// Laser darüber und danach erscheint der ECHTE Treffer (Name, Marktpreis, PSA 10) aus /api/scan/lookup.
+// Außerhalb der Stage ist nichts davon erreichbar.
+// ---------------------------------------------------------------------------
+const IS_STAGE = (() => {
+  try { return window.self !== window.top && new URLSearchParams(location.search).get("reel") === "1"; } catch { return false; }
+})();
+const DEMO_KEYS = ["card:sv03.5-199", "card:sv03.5-006", "card:sv08-238", "card:sv03.5-025", "card:sv04.5-234", "card:sv02-269"];
+
+async function demoInfo() {
+  const good = (list) => list.filter((i) => i?.image && Number(i.price) > 0).sort((a, b) => b.price - a.price);
+  let infos = good(await fetchInfo(DEMO_KEYS));
+  if (!infos.length) {
+    try {
+      const r = await api("/api/admin/reel-cover-cards?n=6");
+      infos = good(await fetchInfo((r?.cards || []).map((c) => `card:${c.id}`).filter((k) => /^card:[a-zA-Z0-9.\-_]{2,40}$/.test(k)).slice(0, 8)));
+    } catch {}
+  }
+  return infos[0] || null;
+}
+
+/** Scanner-Bühne mit Karte und Rahmen aufbauen (vor Frame 0 der Aufnahme). Liefert den Treffer oder null. */
+async function demoPrepare() {
+  if (!IS_STAGE) return null;
+  const stage = $("ps-ls-stage");
+  if (!stage) return null;
+  const info = await demoInfo();
+  if (!info) return null;
+  sc.demo = { info };
+  $("ps-ls-idle")?.classList.add("hidden");
+  $("ps-ls-demo")?.remove();
+  const layer = document.createElement("div");
+  layer.id = "ps-ls-demo";
+  layer.className = "absolute inset-0 overflow-hidden";
+  layer.style.cssText = "background:radial-gradient(circle at 50% 38%,#4a3f63 0%,#1b1730 55%,#070a18 100%)";
+  layer.innerHTML = `<img id="ps-ls-demo-card" src="${esc(cdn(info.image, 500))}" alt="" style="position:absolute;left:50%;top:45%;width:54%;transform:translate(-50%,-50%) rotate(-4deg);border-radius:12px;box-shadow:0 24px 50px rgba(0,0,0,.65)" />
+    <div id="ps-ls-demo-frame" style="position:absolute;left:50%;top:45%;width:62%;aspect-ratio:63/88;transform:translate(-50%,-50%);border:3px solid rgba(255,255,255,.85);border-radius:16px;box-shadow:0 0 0 9999px rgba(2,6,23,.45)">
+      <div id="ps-ls-demo-laser" style="position:absolute;left:-4%;right:-4%;top:0;height:4px;border-radius:4px;background:#22d3ee;box-shadow:0 0 18px 6px rgba(34,211,238,.75)"></div>
+    </div>
+    <p id="ps-ls-demo-hint" style="position:absolute;top:10px;left:0;right:0;text-align:center;font-size:12px;font-weight:900;color:#fff;text-shadow:0 1px 4px #000">📸 Karte in den Rahmen halten</p>`;
+  stage.prepend(layer); // unter HUD und Hinweisen der echten Oberfläche
+  await new Promise((r) => { const img = $("ps-ls-demo-card"); if (!img || img.complete) r(); else { img.onload = r; img.onerror = r; setTimeout(r, 4000); } });
+  return info;
+}
+
+/** Laser-Scan (ms) → „Erkannt“ → echter Treffer im HUD inkl. Marktpreis und Verkaufen-Knöpfen. */
+async function demoScan(ms = 1200) {
+  if (!IS_STAGE || !sc.demo) return false;
+  const laser = $("ps-ls-demo-laser"), frame = $("ps-ls-demo-frame"), hintEl = $("ps-ls-demo-hint");
+  if (hintEl) hintEl.textContent = "⚡ Erkenne Karte …";
+  const t0 = performance.now();
+  await new Promise((resolve) => {
+    const step = () => {
+      const k = Math.min(1, (performance.now() - t0) / ms);
+      const y = (Math.sin(k * Math.PI * 2.5 - Math.PI / 2) + 1) / 2; // 1¼ Durchläufe auf und ab
+      if (laser) laser.style.top = `${(y * 100).toFixed(2)}%`;
+      if (k < 1) requestAnimationFrame(step); else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+  if (laser) laser.style.display = "none";
+  if (frame) { frame.style.borderColor = "#34d399"; frame.style.boxShadow = "0 0 0 9999px rgba(2,6,23,.45),0 0 28px 4px rgba(52,211,153,.8)"; }
+  if (hintEl) hintEl.textContent = "✅ Erkannt";
+  const info = sc.demo.info;
+  sc.current = { key: info.key, keys: [info.key], info, variants: [info], probe: null, photo: null };
+  sc.currentAt = Date.now();
+  addToSeries(info);
+  renderHud(sc.current);
+  return true;
+}
+
 export const liveScanApi = {
+  ...(IS_STAGE ? { liveScanDemoPrepare: demoPrepare, liveScanDemoScan: demoScan } : {}),
   liveScanStart: () => start(),
   liveScanStop: () => stop(),
   liveScanTorch: () => toggleTorch(),

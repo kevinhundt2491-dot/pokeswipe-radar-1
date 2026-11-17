@@ -11,6 +11,10 @@ const CONDS = { mint: "Mint", nm: "Near Mint", ex: "Excellent", gd: "Good", lp: 
 const PREF_KEY = "ps_quicklist_prefs";
 const BATCH = 20;
 const MODAL_ID = "ps-quicklist";
+/** Pro-Video-Aufnahme (Live-Stage-iframe ?reel=1): Ablauf echt zeigen, aber NIE echte Inserate anlegen. */
+const IS_STAGE = (() => {
+  try { return window.self !== window.top && new URLSearchParams(location.search).get("reel") === "1"; } catch { return false; }
+})();
 
 const INSTANT_SECONDS = 4;
 
@@ -58,7 +62,7 @@ function suggested(r) {
  * Jede Berührung (Preis, Zustand, Variante) stoppt den Countdown, damit man an gleicher Stelle noch ändern kann.
  */
 export function openQuickList(infos, opts = {}) {
-  if (!requireLogin()) return;
+  if (!IS_STAGE && !requireLogin()) return;
   const list = (Array.isArray(infos) ? infos : [infos]).filter((i) => i?.key && i?.id);
   if (!list.length) { toast("Keine Karte", "Scanne zuerst eine Karte."); return; }
   readPrefs();
@@ -396,7 +400,9 @@ function itemFor(r, extra) {
 }
 
 async function submit() {
-  if (ql.busy || !requireLogin()) return;
+  if (ql.busy) return;
+  if (IS_STAGE) return demoSubmit();
+  if (!requireLogin()) return;
   stopCountdown(); ql.instant = false;
   const todo = ql.rows.filter((r) => r.status !== "done" && r.price !== null && r.price > 0);
   if (!todo.length) { toast("Preis fehlt", "Trage für mindestens eine Karte einen Preis ein."); return; }
@@ -435,11 +441,29 @@ async function submit() {
   paintSummary();
 }
 
+/** Aufnahme-Modus: gleicher Ablauf und gleiche Erfolgsansicht, aber ohne Anfrage an /api/listings. */
+async function demoSubmit() {
+  stopCountdown(); ql.instant = false;
+  const todo = ql.rows.filter((r) => r.status !== "done" && r.price > 0);
+  if (!todo.length) return;
+  ql.busy = true; paintSummary();
+  await new Promise((r) => setTimeout(r, 450));
+  ql.busy = false;
+  todo.forEach((r) => { r.status = "done"; });
+  showDone(todo.length, { protect: true });
+}
+
 /** Erfolg: direkt in den Swipe-Radar springen und die eigenen Etiketten so sehen wie Käufer */
-function showDone(n) {
+function showDone(n, { protect = false } = {}) {
+  // Sofort-Kauf-Inserate laufen über Stripe-Käuferschutz (Treuhand) und bekommen beim Verkauf automatisch ein DHL-Etikett
+  const safe = protect || Boolean(ql.prefs.buyNow !== false && state.me?.sellerReady);
   modal(MODAL_ID, `<div class="space-y-3 text-center py-2">
     <p class="text-4xl" aria-hidden="true">🚀</p>
     <h3 class="text-base font-black text-white">${n} Karte${n === 1 ? " ist" : "n sind"} live</h3>
+    ${safe ? `<div id="ql-done-protect" class="grid grid-cols-2 gap-2 text-[11px] font-black">
+      <span class="bg-emerald-500/15 border border-emerald-400/60 text-emerald-200 rounded-xl px-2 py-2">🔒 Stripe-Käuferschutz aktiv</span>
+      <span class="bg-yellow-400/15 border border-yellow-400/60 text-yellow-200 rounded-xl px-2 py-2">📦 DHL-Etikett per Klick aus der Bestellung</span>
+    </div>` : ""}
     <p class="text-xs text-slate-300">Deine Karten erscheinen jetzt mit Preis-Etikett, Zustand und Foto im Swipe-Radar. Käufer wischen mit ❌ weiter, tippen auf 🛒 Kaufen oder merken sie mit ❤️ – du wirst benachrichtigt.</p>
     <div class="grid grid-cols-2 gap-2">
       <button onclick="PS.quickListGo('swipe')" class="bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black text-xs py-2.5 rounded-xl">🃏 Marktplatz durchswipen</button>

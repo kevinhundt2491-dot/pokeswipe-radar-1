@@ -62,6 +62,8 @@ const LIVE_SCAN_KEYS = [
   "liveScanRecognize", "liveScanLearn", "liveScanSell", "liveScanSellAll", "liveScanQuickList",
   "quickListSet", "quickListPhoto", "quickListGo", "quickListPrice", "quickListUse", "quickListStrategy", "quickListConditionAll", "quickListRemove", "quickListSubmit",
   "quickListPreview", "quickListCancel", "quickListUndo",
+  // nur in der Pro-Video-Aufnahme (Live-Stage) vorhanden – sonst liefern sie null
+  "liveScanDemoPrepare", "liveScanDemoScan",
 ];
 
 /** Platzhalter mit derselben ID – die Unter-Reiter-Navigation findet den Bereich sofort, der Inhalt kommt beim Öffnen. */
@@ -88,7 +90,7 @@ export const loadScanner = once(async () => {
 });
 
 export const lazyLiveScanApi = Object.fromEntries(LIVE_SCAN_KEYS.map((k) => [k, (...args) =>
-  loadScanner().then((m) => m.liveScanApi[k](...args)).catch(failed("Der Live-Scanner"))]));
+  loadScanner().then((m) => (m.liveScanApi[k] ? m.liveScanApi[k](...args) : null)).catch(failed("Der Live-Scanner"))]));
 
 /** Unter-Reiter „Live-Scanner“ wurde geöffnet */
 export const onLiveScanShownLazy = () => loadScanner().then((m) => m.onLiveScanShown()).catch(failed("Der Live-Scanner"));

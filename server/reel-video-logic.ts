@@ -1,13 +1,14 @@
 // Video-Einstellungen der Pro-Reels (Admin-Zentrale) – reine Logik, testbar.
 // Muss zu client/reel-pro.js passen (Vorlagen-Schlüssel, Bitraten, FPS, 95-MB-Grenze).
 
-export const PRO_TEMPLATE_KEYS = ["overview", "radar", "swipe", "market", "portfolio"] as const;
+export const PRO_TEMPLATE_KEYS = ["overview", "radar", "swipe", "market", "portfolio", "scansell"] as const;
 export const PRO_TEMPLATE_LABELS: Record<string, string> = {
   overview: "Komplett-Überblick (All-in-One-App)",
   radar: "Live-Preis-Radar (Cardmarket € & TCGplayer $)",
   swipe: "PokeSwipe Entdecker-Modus",
   market: "Sicherer P2P-Marktplatz (Käuferschutz, Stripe, DHL)",
   portfolio: "Sammlung, Portfolio & Release-Kalender",
+  scansell: "Karten scannen & in Sekunden verkaufen (15–20 s, Promo START30)",
 };
 export const HOOK_VARIANTS = 2;
 export const SAFE_MB_MAX = 95;

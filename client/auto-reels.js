@@ -12,7 +12,7 @@ import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
 import { recordLive, previewLive, loadNarration, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
 import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
-import { PRO_TEMPLATES, templateByKey, proCaption, proScript, checkProScript, estimateMb, bitrateFor, sceneTimes, SAFE_MB, PRO_MIN_S, PRO_MAX_S } from "./reel-pro.js";
+import { PRO_TEMPLATES, templateByKey, proCaption, proScript, checkProScript, estimateMb, bitrateFor, sceneTimes, secondsFor, SAFE_MB, PRO_MAX_S } from "./reel-pro.js";
 import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
 import { lookFor, cardImageUrl, pickCoverCard } from "./reel-pro.js";
 import { sameOriginImageUrl } from "./dom-capture.js";
@@ -657,6 +657,8 @@ async function generateAll(list = EPISODES) {
         } catch (e) {
           const name = keep(ep, res, cap, txt, { click: true });
           reportDelivery({ ok: false, episode: ep.n, status: e.status, sizeMb: res.blob.size / MB, message: e.message });
+          // Unklarer Ausgang (Upload evtl. angekommen): wie gesendet merken, damit kein zweiter Upload ohne Rückfrage startet
+          if (e.unconfirmed) markSent(tpl, variant, name);
           setStatus(e.unconfirmed
             ? `❔ ${e.message} – kein erneuter Versand (vermeidet Doppel-Posts). ${name} wurde zur Sicherheit zusätzlich heruntergeladen; bitte in Make prüfen, ob es angekommen ist.`
             : `⚠️ Webhook fehlgeschlagen (${e.message}) – ${name} wurde stattdessen heruntergeladen.`, "err");
@@ -705,7 +707,7 @@ const PRO_CSS = `
 `;
 const PRO_HTML = `
   <div class="ar-pro" id="ar-pro">
-    <b class="t">🎬 Pro-Videos · 5 Szenen · 20–30 s</b>
+    <b class="t">🎬 Pro-Videos · 5 Szenen · 15–30 s</b>
     <small id="ar-pro-spec">Lade Video-Einstellungen …</small>
     <div class="ar-bar">
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="next">🔁 Nächstes Pro-Video (Rotation)</button>
@@ -735,7 +737,7 @@ function renderPro(states = {}) {
     const isNext = proNext?.template === tpl.key;
     const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ ${r.name.endsWith(".mp4") ? "MP4" : "Video (WebM)"} herunterladen</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> <a href="${r.txtUrl}" download="${esc(r.txtName)}">⬇ .txt</a> ${r.sent ? "📤 an Make gesendet" : ""}</span></div></div>` : "";
     const notes = (proNotes.get(tpl.key) || []).map((n) => `<small class="ar-note ${n.kind}" role="${n.kind === "err" ? "alert" : "status"}">${n.kind === "err" ? "⚠️ Fehler: " : n.kind === "warn" ? "⚠️ " : "ℹ️ "}${esc(n.text)}</small>`).join("");
-    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${on ? "" : " · in der Admin-Zentrale deaktiviert"}</small></span>
+    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${tpl.seconds ? ` · ${secondsFor(tpl).join("–")} s` : ""}${tpl.mbit ? ` · ${tpl.mbit} Mbit/s` : ""}${proSent()[tpl.key] ? ` · 📤 zuletzt an Make gesendet am ${esc(new Date(proSent()[tpl.key].at).toLocaleString("de-DE"))}` : ""}${on ? "" : " · nicht in der Rotation (Admin-Zentrale)"}</small></span>
       <span class="ar-acts"><button type="button" data-ar="pro" data-pro="one" data-k="${tpl.key}" title="Nur diese Vorlage aufnehmen">⏺</button></span>${notes}${out}</li>`;
   }).join("");
 }
@@ -760,6 +762,12 @@ async function onProClick(btn) {
     renderPro();
   }
 }
+
+// Doppel-Upload-Schutz: welche Vorlage (mit welchem Skript) zuletzt erfolgreich an Make.com ging
+const SENT_KEY = "pokeswipe.pro.sent";
+const proSent = () => { try { return JSON.parse(load(SENT_KEY, "{}")) || {}; } catch { return {}; } };
+const scriptSig = (tpl, variant) => { const t = proScript(tpl, variant).say.join("|"); let h = 0; for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return `${tpl.key}:${variant}:${h}`; };
+const markSent = (tpl, variant, name) => save(SENT_KEY, JSON.stringify({ ...proSent(), [tpl.key]: { sig: scriptSig(tpl, variant), at: new Date().toISOString(), name } }));
 
 const LOOK_KEY = "pokeswipe.pro.look"; // Zähler für Farb-/Layout-Rotation der Startbilder
 const RECENT_KEY = "pokeswipe.pro.recentCards"; // zuletzt genutzte Kartenmotive (max. 40)
@@ -815,6 +823,12 @@ async function generatePro(list) {
   if (hs.error) { ui.hook.focus(); return setStatus(`⚠️ ${hs.error}`, "err"); }
   const hook = hs.url;
   if (hook && !platforms.size) return setStatus("⚠️ Bitte mindestens eine Plattform für Make.com auswählen (oder die Webhook-URL leeren).", "err");
+  // Kein versehentlicher Doppel-Upload: dasselbe Video (gleiche Vorlage + gleiches Skript) wurde schon an Make.com übergeben
+  if (hook) {
+    const sent = proSent();
+    const dup = list.filter(({ tpl, variant }) => sent[tpl.key]?.sig === scriptSig(tpl, variant));
+    if (dup.length && !confirm(`${dup.map(({ tpl }) => `„${tpl.label}“ (${new Date(sent[tpl.key].at).toLocaleString("de-DE")})`).join(", ")} wurde bereits an Make.com gesendet.\n\nNochmal aufnehmen UND erneut senden? (Abbrechen = nichts tun)`)) return;
+  }
   for (const { tpl } of list) proNotes.delete(tpl.key); // alte Hinweise dieser Vorlagen zurücksetzen
   previewToken++;
   if (previewRun) { stage.abort(); try { await previewRun; } catch { /* abgebrochen */ } previewRun = null; }
@@ -840,7 +854,7 @@ async function generatePro(list) {
       let voice = null, speed = 1, voiceFailed = null, voiceSec = 0;
       if (voiceOn) {
         setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
-        try { ({ take: voice, speed, seconds: voiceSec } = await loadProNarration(script.say, ac, proCfg.tone)); }
+        try { ({ take: voice, speed, seconds: voiceSec } = await loadProNarration(script.say, ac, proCfg.tone, secondsFor(tpl))); }
         catch (e) {
           // Kein Abbruch: das Video wird mit Musik (ohne Sprecherin) aufgenommen und heruntergeladen,
           // aber NICHT automatisch an Make.com gesendet. Der genaue Fehler steht unter der Karte.
@@ -853,7 +867,8 @@ async function generatePro(list) {
         }
         if (voice) {
           const sec = voiceSec; // exakte Videolänge: Vorlauf + gemessene Sprechdauer + 0,8 s Ausblenden
-          setStatus(`🎙️ Stimme fertig: ${sec.toFixed(1).replace(".", ",")} s (Tempo ${speed.toFixed(2).replace(".", ",")})${sec < PRO_MIN_S || sec > PRO_MAX_S ? " – außerhalb 20–30 s, Tempo-Spielraum ausgeschöpft" : ""} – lade die Live-Website …`);
+          const [lo, hi] = secondsFor(tpl);
+          setStatus(`🎙️ Stimme fertig: ${sec.toFixed(1).replace(".", ",")} s (Tempo ${speed.toFixed(2).replace(".", ",")})${sec < lo || sec > hi ? ` – außerhalb ${lo}–${hi} s, Tempo-Spielraum ausgeschöpft` : ""} – lade die Live-Website …`);
         }
       }
       let res = null;
@@ -861,7 +876,7 @@ async function generatePro(list) {
         await waitVisible();
         if (!wake || wake.released) { try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; } }
         res = await recordProSafe({
-          stage, tpl, variant, look, coverCard, voice, mbit: proCfg.mbit, fps: proCfg.fps, maxMb, canvas: ui.canvas,
+          stage, tpl, variant, look, coverCard, voice, mbit: tpl.mbit || proCfg.mbit, fps: proCfg.fps, maxMb, canvas: ui.canvas,
           onStatus: (m) => setStatus(`Pro ${n} (${i + 1}/${list.length}): ${m}`),
           onTick: (t, D) => { ui.time.innerHTML = `<span class="ls-rec-dot"></span>Pro ${n} · ${fmt(t, D)}`; ui.bar.style.width = `${((i + t / D) / list.length) * 100}%`; },
         });
@@ -881,7 +896,7 @@ async function generatePro(list) {
       thumb.name = `${fileBase(ep)} - Cover.jpg`;
       const extra = {
         thumbnail: thumb, thumb_offset_ms: 0, cover_headline: res.cover, cover_badge: script.badge, cover_color: look.color, cover_accent: look.accent,
-        cover_layout: look.layout, cover_card_id: pick?.id || "", cover_card_name: pick?.name || "", cover_card_price_eur: pick?.price ?? "", video_mode: "pro", video_template: tpl.key, video_template_label: tpl.label,
+        cover_layout: look.layout, cover_card_id: pick?.id || "", cover_card_name: pick?.name || "", cover_card_price_eur: pick?.price ?? "", video_mode: "pro", video_template: tpl.key, video_template_label: tpl.label, promo_link: tpl.link || "",
         hook_variant: variant, fps: res.fps, video_bitrate_mbit: res.mbit, audio_bitrate_kbps: 192, resolution: "1080x1920", aspect_ratio: "9:16",
         max_mb: maxMb, scenes_json: JSON.stringify(res.scenes.map((s) => ({ key: s.key, start: +s.start.toFixed(2), end: +s.end.toFixed(2) }))),
       };
@@ -909,6 +924,7 @@ async function generatePro(list) {
           setStatus(`📤 „${tpl.label}“ wird an Make.com gesendet (${mb} MB, ${info}) …`);
           await sendWithRetry(hook, ep, res, cap, txt, (p) => { ui.time.textContent = `📤 Pro ${n} · ${Math.round(p * 100)} %`; }, extra);
           r.sent = true; sent++;
+          markSent(tpl, variant, name);
           reportDelivery({ ok: true, episode: ep.n, sizeMb: res.blob.size / MB, message: `${name} angenommen (Pro-Video)` });
           setStatus(`✓ ${name} (${mb} MB, ${info}) heruntergeladen und samt Cover und Beschreibung an Make.com übergeben.`, "ok");
         } catch (e) {
