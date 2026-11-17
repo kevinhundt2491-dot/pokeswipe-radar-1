@@ -9,7 +9,8 @@ test("Startseite lädt ohne JavaScript-Fehler und zeigt die Hauptbereiche", asyn
   await appReady(page);
   await expect(page.locator("html")).toHaveAttribute("lang", "de");
   // Desktop: Tab-Leiste (#tab-*), Mobil: untere Navigation (#mob-*) – je Bereich muss eine Schaltfläche sichtbar sein
-  for (const name of ["swipe", "scan", "portfolio"]) await expect(page.locator(`[onclick="switchTab('${name}')"]:visible`).first()).toBeVisible();
+  // 5 Hauptbereiche: Entdecken · Scanner · Marktplatz · Radar · Profil (+ Sammlung als Schnellzugriff auf „Entdecken“)
+  for (const name of ["swipe", "scan", "map", "flip", "profile", "portfolio"]) await expect(page.locator(`[onclick="switchTab('${name}')"]:visible`).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Karte scannen/ }).first()).toBeVisible();
   expect(errors()).toEqual([]);
 });
@@ -30,6 +31,13 @@ test("Tabs wechseln die Ansicht", async ({ page, baseURL }) => {
   await expect(page.locator("#view-scan")).toBeVisible();
   await tab("swipe").click({ force: true });
   await expect(page.locator("#view-swipe")).toBeVisible();
+  // Profil-Bereich mit Konto, Pro-Pass, Verkaufen und Rechtlichem
+  await tab("profile").click({ force: true });
+  await expect(page.locator("#view-profile")).toBeVisible();
+  await expect(page.locator("#ps-profile-hub")).toContainText("Rechtliches");
+  // Marktplatz-Tabs
+  await tab("map").click({ force: true });
+  await expect(page.locator('#view-map [data-segment="market"]')).toBeVisible();
 });
 
 test("Englische Oberfläche über ?lang=en, gemerkt und zurückschaltbar", async ({ page }) => {

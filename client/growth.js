@@ -778,14 +778,17 @@ function openLegal() {
   (origOpenModal || window.openModal)?.("legal-modal");
   loadImpressum();
 }
-// Feste Anbieterkennzeichnung (§ 5 DDG) – wird angezeigt, falls die API einmal nicht erreichbar ist
-const IMPRESSUM_FALLBACK = "Kevin Hundt\nHähn 10\n51515 Kürten\nDeutschland\n\nKontakt:\nE-Mail: info@pokeswipe-radar.de\nTelefon: +49 174 2182874\n\nKleinunternehmer gemäß § 19 UStG – es wird keine Umsatzsteuer berechnet.\n\nVerantwortlich für den Inhalt nach § 18 Abs. 2 MStV: Kevin Hundt, Hähn 10, 51515 Kürten";
+// Neutraler Hinweis, falls die API einmal nicht erreichbar ist – die Anbieterdaten kommen ausschließlich aus
+// der Admin-Zentrale bzw. den OPERATOR_*-Umgebungsvariablen (keine personenbezogenen Daten im Quellcode)
+const IMPRESSUM_FALLBACK = "Die Anbieterkennzeichnung (§ 5 DDG) konnte gerade nicht geladen werden. Du findest sie jederzeit unter pokeswipe-radar.de/rechtliches#impressum.";
 async function loadImpressum() {
   const box = $("ps-impressum");
   if (!box) return;
   try {
-    const { impressum } = await api("/api/legal");
+    const { impressum, controller } = await api("/api/legal");
     box.textContent = impressum || IMPRESSUM_FALLBACK;
+    const ctl = $("ps-controller");
+    if (ctl && controller) ctl.textContent = controller;
   } catch { box.textContent = IMPRESSUM_FALLBACK; }
 }
 
@@ -793,7 +796,7 @@ const OP_FIELDS = [
   ["name", "Vor- und Nachname *", "Max Mustermann"], ["company", "Firma (optional)", "z. B. Mustermann Collectibles"],
   ["representative", "Vertreten durch (bei Firma)", ""], ["street", "Straße und Hausnummer *", "Musterstraße 1"],
   ["zip", "PLZ *", "12345"], ["city", "Ort *", "Musterstadt"], ["country", "Land", "Deutschland"],
-  ["email", "E-Mail *", "info@pokeswipe-radar.de"], ["phone", "Telefon (empfohlen)", ""],
+  ["email", "E-Mail *", "kontakt@beispiel.de"], ["phone", "Telefon (empfohlen)", ""],
   ["vatId", "USt-IdNr. (falls vorhanden)", "DE…"], ["register", "Registereintrag (falls vorhanden)", "Amtsgericht …, HRB …"],
   ["responsible", "Verantwortlich nach § 18 MStV (falls abweichend)", ""],
 ];
@@ -820,6 +823,9 @@ export async function adminGrowthHtml() {
       <p>${flag(af.grading?.length, `Grading-Partner-Links: ${esc((af.grading || []).join(", "))}`, "Keine Grading-Partner-Links (AFF_PSA_URL …)")}</p>
       <p>${flag(integ.mail, "E-Mail-Versand aktiv (Kündigungsbestätigung per E-Mail)", "E-Mail-Versand nicht eingerichtet (RESEND_API_KEY + MAIL_FROM) – Bestätigung nur auf der Seite, als Datei & im Konto")}</p>
       <p>${flag(integ.legal?.complete, "Impressum vollständig", "Impressum unvollständig – bitte unten ausfüllen")}</p>
+      <p>${flag(integ.security?.dataEncryptionKey, "DATA_ENCRYPTION_KEY gesetzt – Steuer-ID, IBAN & Geburtsdatum mit eigenem Schlüssel verschlüsselt", "DATA_ENCRYPTION_KEY fehlt – Steuerdaten werden mit dem Notfall-Schlüssel (Netlify Blobs) verschlüsselt")}</p>
+      <p>${flag(integ.security?.dhlTracking, "DHL-Sendungsverfolgung aktiv – Treuhand-Auszahlung erst nach Zustellung", "DHL_TRACKING_API_KEY fehlt – Auszahlung 14 Tage nach Versand (ohne Zustellprüfung)")}</p>
+      <p>${flag(integ.security?.ebaySignature, "eBay-Löschendpunkt mit Signaturprüfung aktiv", "eBay-Löschendpunkt: EBAY_VERIFICATION_TOKEN bzw. eBay-Keys fehlen")}</p>
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
       ${btn(st.webhook ? "🔁 Stripe-Webhook prüfen/erneuern" : "⚡ Stripe-Webhook automatisch einrichten", "PS.adminWebhookSetup()", "bg-indigo-600 text-white")}

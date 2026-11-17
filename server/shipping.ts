@@ -6,8 +6,9 @@
 // • DHL_API_KEY: der API-Schlüssel der PokeSwipe-Anwendung im DHL-Entwicklerportal (Plattform-Ebene).
 //   Ohne ihn ist die Funktion abgeschaltet und die Oberfläche zeigt einen Hinweis.
 // • Etikett-PDF: Netlify Blobs (Store "shipping-labels"), nur für den Verkäufer abrufbar.
-// • Nach dem Erstellen wird die Sendungsnummer zurückgegeben; der Verkäufer bestätigt den Versand wie bisher
-//   mit einem Klick (Sendungsnummer und DHL sind vorausgefüllt), damit Treuhand-Fristen und Mitteilungen unverändert greifen.
+// • Treuhand-Härtung: Sobald das Etikett erfolgreich erzeugt wurde, wechselt die Bestellung automatisch auf „versendet“
+//   (Sendungsnummer + Zeitstempel, Käufer wird benachrichtigt – server/tracking.ts). Die Auszahlungsfrist startet erst
+//   mit dem DHL-Zustell-Scan. Solange DHL die Sendung nicht gescannt hat, lässt sich das Etikett stornieren/ersetzen.
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
@@ -19,6 +20,8 @@ import {
 } from "./shipping-logic.ts";
 import { str, int, rateLimit } from "./util.ts";
 import { log } from "./log.ts";
+import { markShippedFromLabel, revertLabelShipment } from "./tracking.ts";
+import { hasCarrierScan } from "./escrow-tracking-logic.ts";
 
 type Hlp = { auth: any; body: (c: any) => Promise<Record<string, any>> };
 type Account = typeof sellerShippingAccounts.$inferSelect;
@@ -169,10 +172,12 @@ export function registerShipping(app: any, { auth, body }: Hlp) {
     const order = await sellerOrder(c);
     if (!order) return c.json({ error: "Bestellung nicht gefunden" }, 404);
     if (order.frozen) return c.json({ error: "Diese Bestellung ist wegen einer Rückbuchung eingefroren." }, 409);
-    if (order.status !== "paid") return c.json({ error: "Etiketten gibt es nur für bezahlte, noch nicht versendete Bestellungen." }, 409);
     const acc = await loadAccount(user.id);
     if (!acc) return c.json({ error: "Bitte zuerst deine DHL-Geschäftskunden-Zugangsdaten im Händler-Bereich hinterlegen." }, 412);
     const [active] = await db.select().from(shippingLabels).where(and(eq(shippingLabels.marketOrderId, order.id), eq(shippingLabels.status, "created"))).limit(1);
+    // Ersatz-Etikett auch nach dem automatischen „versendet“, solange DHL die Sendung noch nicht gescannt hat
+    const replacingShipped = order.status === "shipped" && Boolean(order.labelShippedAt) && Boolean(active) && order.trackingNumber === active?.shipmentNo && !hasCarrierScan(order.trackingStatus);
+    if (order.status !== "paid" && !replacingShipped) return c.json({ error: "Etiketten gibt es nur für bezahlte, noch nicht versendete Bestellungen." }, 409);
     const b = await body(c);
     if (active && b.replace !== true) return c.json({ error: "Für diese Bestellung gibt es schon ein Etikett. Erst stornieren oder „Neues Etikett“ bestätigen.", label: labelView(active) }, 409);
     const consignee = consigneeFromAddress(order.shippingAddress);
@@ -212,7 +217,12 @@ export function registerShipping(app: any, { auth, body }: Hlp) {
     }).returning();
     await db.update(sellerShippingAccounts).set({ lastError: "", verifiedAt: acc.verifiedAt ?? new Date(), updatedAt: new Date() }).where(eq(sellerShippingAccounts.userId, user.id));
     log.info("shipping", "DHL-Etikett erstellt", { orderId: order.id, product: prod.product, sandbox: acc.sandbox });
-    return c.json({ ok: true, label: labelView(label), carrier: "dhl", trackingNumber: parsed.shipmentNo, warnings: parsed.warnings, sandbox: acc.sandbox }, 201);
+    // Automatischer Statuswechsel: bezahlt → versendet (Sendungsnummer, Zeitstempel, Mitteilung an den Käufer)
+    let shipped = null;
+    try { shipped = await markShippedFromLabel(order, parsed.shipmentNo, acc.sandbox); }
+    catch (e) { log.error("shipping", "Versandstatus nach Etikett nicht gesetzt", { orderId: order.id, err: e }); }
+    return c.json({ ok: true, label: labelView(label), carrier: "dhl", trackingNumber: parsed.shipmentNo, warnings: parsed.warnings, sandbox: acc.sandbox,
+      orderStatus: shipped?.status || order.status, shippedAt: shipped?.shippedAt || null, autoShipped: Boolean(shipped) }, 201);
   });
 
   app.get("/api/orders/:id/label/:labelId/pdf", auth, async (c: any) => {
@@ -236,11 +246,17 @@ export function registerShipping(app: any, { auth, body }: Hlp) {
     const labelId = int(c.req.param("labelId"), 1, 2 ** 31 - 1, 0);
     const [label] = await db.select().from(shippingLabels).where(and(eq(shippingLabels.id, labelId), eq(shippingLabels.marketOrderId, order.id), eq(shippingLabels.status, "created"))).limit(1);
     if (!label) return c.json({ error: "Kein aktives Etikett gefunden" }, 404);
-    if (order.status !== "paid" && order.trackingNumber === label.shipmentNo) return c.json({ error: "Die Sendung ist bereits als versendet gemeldet und kann nicht mehr storniert werden." }, 409);
+    const autoShipped = order.status === "shipped" && Boolean(order.labelShippedAt) && order.trackingNumber === label.shipmentNo;
+    if (order.status !== "paid" && order.trackingNumber === label.shipmentNo && (!autoShipped || hasCarrierScan(order.trackingStatus))) {
+      return c.json({ error: "Die Sendung wurde von DHL bereits gescannt und kann nicht mehr storniert werden." }, 409);
+    }
     const acc = await loadAccount(user.id);
     if (!acc) return c.json({ error: "DHL-Zugangsdaten fehlen – bitte im DHL-Portal stornieren." }, 412);
     const r = await cancelLabel(acc, label);
-    return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 502);
+    if (!r.ok) return c.json({ error: r.error }, 502);
+    // Automatisch gesetzten Versandstatus zurücknehmen (die Versandfrist läuft wieder ab Zahlung)
+    const reverted = autoShipped ? await revertLabelShipment(order, label.shipmentNo).catch(() => false) : false;
+    return c.json({ ok: true, orderStatus: reverted ? "paid" : order.status });
   });
 }
 

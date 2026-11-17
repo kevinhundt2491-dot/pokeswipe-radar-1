@@ -132,5 +132,9 @@ test("Suchbegriffe, Ziel-Schlüssel und Deal-Filter", () => {
   assert.deepEqual(parseTargetKey("print:ja:SV2a-201"), { kind: "print", id: "ja:SV2a-201" });
   assert.equal(parseTargetKey("user:1"), null);
   const f = parseDealQuery({ cat: "sealed", grade: "x", minPct: "5", limit: "999", sort: "ending" });
-  assert.deepEqual(f, { cat: "sealed", grade: "all", option: "all", lang: "all", minPct: 20, sort: "ending", limit: 60 });
+  assert.deepEqual(f, { cat: "sealed", grade: "all", option: "all", lang: "all", minPct: 20, sort: "ending", limit: 60, netOnly: false });
+  // Netto-Flip: Sortierung nach Netto-Gewinn und Filter „nur echter Netto-Gewinn“
+  const n = parseDealQuery({ sort: "net", netOnly: "1" });
+  assert.equal(n.sort, "net");
+  assert.equal(n.netOnly, true);
 });

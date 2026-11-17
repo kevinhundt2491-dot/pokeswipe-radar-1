@@ -7,7 +7,7 @@
 // die einbehaltenen Provisionen werden getrennt je Quartal gemeldet.
 
 export const DAC7_TX_THRESHOLD = 30;
-export const DAC7_GROSS_THRESHOLD_CENTS = 200_000; // 2.000 €
+export const DAC7_GROSS_THRESHOLD_CENTS = 200_000; // 2.000 € – meldepflichtig erst bei MEHR als diesem Betrag
 /** Vorwarnung (Phase 10): ab 25 Verkäufen ODER 1.700 € bitten wir rechtzeitig um Steuer-ID und Anschrift. */
 export const PSTTG_WARN_TX = 25;
 export const PSTTG_WARN_GROSS_CENTS = 170_000; // 1.700 €
@@ -27,7 +27,9 @@ export type Dac7Stats = {
 export const netConsiderationCents = (s: Dac7Stats) => Math.max(0, (Number(s.grossCents) || 0) - (Number(s.refundedCents) || 0));
 
 export function dac7Reportable(s: Dac7Stats): boolean {
-  return (Number(s.transactions) || 0) >= DAC7_TX_THRESHOLD || netConsiderationCents(s) >= DAC7_GROSS_THRESHOLD_CENTS; // § 4 Abs. 5 PStTG: ausgenommen nur unter 30 Verkäufen UND unter 2.000 €
+  // § 4 Abs. 5 Nr. 4 PStTG: ausgenommen ist nur, wer weniger als 30 Verkäufe UND nicht mehr als 2.000 € Vergütung hat.
+  // Genau 2.000,00 € sind also noch NICHT meldepflichtig – erst ab 2.000,01 € (strikt „mehr als“).
+  return (Number(s.transactions) || 0) >= DAC7_TX_THRESHOLD || netConsiderationCents(s) > DAC7_GROSS_THRESHOLD_CENTS;
 }
 
 /** Vorwarnschwelle erreicht (25 Verkäufe oder 1.700 € netto im Kalenderjahr)? */
@@ -36,7 +38,7 @@ export function psttgWarningReached(s: Dac7Stats): boolean {
 }
 
 export type PsttgStage = "none" | "warning" | "reporting";
-/** Stufe für Banner und Export: reporting (ab 30 / 2.000 €) vor warning (ab 25 / 1.700 €). */
+/** Stufe für Banner und Export: reporting (ab 30 Verkäufen / mehr als 2.000 €) vor warning (ab 25 / 1.700 €). */
 export function psttgStage(s: Dac7Stats): PsttgStage {
   return dac7Reportable(s) ? "reporting" : psttgWarningReached(s) ? "warning" : "none";
 }

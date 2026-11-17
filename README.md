@@ -242,7 +242,7 @@ Werte ändern: `server/plans.ts`.
 8. **Impressum:** Wird bewusst nicht im Code gespeichert. In der Admin-Zentrale die Felder (Name/Firma, Anschrift,
    E-Mail, ggf. Telefon/USt-IdNr.) ausfüllen – daraus entstehen Impressum, Anbieterangaben in AGB/Widerrufsbelehrung und
    das Muster-Widerrufsformular. Rückfall: Freitext oder Umgebungsvariable `IMPRESSUM_TEXT`.
-   **Kündigungsbestätigung per E-Mail (optional):** `RESEND_API_KEY` und `MAIL_FROM` (z. B. `PokeSwipe <kontakt@pokeswipe-radar.de>`)
+   **Kündigungsbestätigung per E-Mail (optional):** `RESEND_API_KEY` und `MAIL_FROM` (z. B. `PokeSwipe <kontakt@deine-domain.de>`)
    setzen. Ohne diese Variablen wird die Bestätigung auf der Seite angezeigt, als Datei angeboten und im Konto hinterlegt.
 9. **Set-Releases:** Als Admin unter Community → Kalender eintragen (Art „Set-Release“). Nutzer können sich erinnern lassen.
 10. **Marktplatz mit Käuferschutz:** Im Stripe-Dashboard **Connect** aktivieren (Plattform-Profil: „Marktplatz“, Verkäufer als
@@ -253,6 +253,20 @@ Werte ändern: `server/plans.ts`.
    Schreiben nur mit Firebase-Anmeldung) in der Firebase-Konsole übernehmen.
 12. **Native App (optional):** siehe `native/README.md` – Push über `FCM_SERVICE_ACCOUNT`, App-Links über `APPLE_TEAM_ID`
    und `ANDROID_CERT_SHA256`.
+
+13. **Steuerdaten-Verschlüsselung (DSGVO/DAC7):** `DATA_ENCRYPTION_KEY` setzen (32 Byte, z. B. `openssl rand -hex 32` →
+   64 Hex-Zeichen; als „Secret“ markieren). Steuer-ID, IBAN und Geburtsdatum werden damit per AES-256-GCM verschlüsselt
+   (`server/vault.ts`). Ohne Schlüssel wird mit einem Notfall-Schlüssel aus Netlify Blobs verschlüsselt; nach dem Setzen
+   in der DAC7-Auswertung „🔐 Alt-Einträge verschlüsseln“ tippen (der Treuhand-Job erledigt das sonst schrittweise).
+   **Schlüssel nie ändern oder löschen**, solange verschlüsselte Einträge existieren – sonst sind sie nicht mehr lesbar.
+14. **DHL-Zustellprüfung (Treuhand):** `DHL_TRACKING_API_KEY` (DHL-Entwicklerportal, API „Shipment Tracking – Unified“;
+   fällt auf `DHL_API_KEY` zurück, wenn die DHL-App beide APIs hat). Damit startet die Auszahlungsfrist erst ab Zustellung.
+15. **Anbieterangaben per Umgebungsvariablen (optional):** Statt/zusätzlich zur Admin-Zentrale `OPERATOR_NAME`,
+   `OPERATOR_COMPANY`, `OPERATOR_STREET`, `OPERATOR_ZIP`, `OPERATOR_CITY`, `OPERATOR_COUNTRY`, `OPERATOR_EMAIL`,
+   `OPERATOR_PHONE`, `OPERATOR_VAT_ID`, `OPERATOR_REGISTER`, `OPERATOR_RESPONSIBLE`, `OPERATOR_SMALL_BUSINESS` (`1`).
+   Admin-Einstellungen haben Vorrang. `VAPID_SUBJECT` (optional, `mailto:…`) für Web-Push, sonst `OPERATOR_EMAIL`.
+16. **CI (GitHub Actions):** Vorlage `docs/github-workflow-ci.yml` einmalig auf github.com als `.github/workflows/ci.yml`
+   anlegen (Netlify darf keine Workflow-Dateien hochladen). Prüft bei Push/PR auf `main`: TypeScript, Tests, Build.
 
 ## Auto-Reels & Make.com
 

@@ -537,7 +537,7 @@ export function registerCart(app: any, hlp: Hlp) {
           metadata: { kind: "cart", checkoutId: String(co.id), buyerId: user.id },
         },
         metadata: { kind: "cart", checkoutId: String(co.id), userId: user.id, legal_version: LEGAL_VERSION, terms_accepted_at: new Date().toISOString() },
-        custom_text: { submit: { message: `Käuferschutz: Das Geld wird je Verkäufer erst ausgezahlt, wenn du den Erhalt bestätigst (spätestens ${AUTO_RELEASE_DAYS} Tage nach Versand). Du schließt je Verkäufer einen eigenen Kaufvertrag.${hasBusiness ? ` Bei gewerblichen Händlern hast du ${WITHDRAWAL_DAYS} Tage Widerrufsrecht.` : ""}` } },
+        custom_text: { submit: { message: `Käuferschutz: Das Geld wird je Verkäufer erst ausgezahlt, wenn du den Erhalt bestätigst (bei DHL erst 3 Tage nach bestätigter Zustellung, sonst spätestens ${AUTO_RELEASE_DAYS} Tage nach Versand). Du schließt je Verkäufer einen eigenen Kaufvertrag.${hasBusiness ? ` Bei gewerblichen Händlern hast du ${WITHDRAWAL_DAYS} Tage Widerrufsrecht.` : ""}` } },
         expires_at: Math.floor(expiresAt.getTime() / 1000),
         success_url: `${o}/?cart=paid&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${o}/?cart=1`,

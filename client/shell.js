@@ -135,23 +135,6 @@ function renderQuickbar() {
 }
 
 // ---------------------------------------------------------------------------
-// Community & Markt: zwei Bereiche unter einem Navigationspunkt
-// ---------------------------------------------------------------------------
-function injectMarketSwitch() {
-  for (const view of ["map", "community"]) {
-    const section = $(`view-${view}`);
-    if (!section || section.querySelector("[data-market-switch]")) continue;
-    const bar = document.createElement("div");
-    bar.dataset.marketSwitch = "1";
-    bar.className = "flex bg-slate-950/90 border border-slate-700 rounded-2xl p-1 gap-1 text-xs font-black";
-    bar.setAttribute("role", "tablist");
-    bar.innerHTML = [["map", "🤝 Markt & Tausch"], ["community", "💬 Community & Pull-Wall"]].map(([k, label]) =>
-      `<button type="button" role="tab" aria-selected="${k === view}" onclick="switchTab('${k}')" class="flex-1 py-2 rounded-xl ${k === view ? "bg-yellow-400 text-slate-950 shadow" : "text-slate-300 hover:text-white"}">${label}</button>`).join("");
-    section.prepend(bar);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Onboarding (3 Schritte) + Demo-Modus
 // ---------------------------------------------------------------------------
 const ob = { step: 1, goal: null, langs: ["de"], mode: "simple" };
@@ -369,7 +352,8 @@ function injectHeaderModeSwitch() {
   if (!auth) return;
   const el = document.createElement("div");
   el.id = "ps-mode-header";
-  el.className = "ps-mode-switch inline-flex items-center gap-0.5 bg-slate-900 border border-slate-600 rounded-xl p-0.5 text-[11px]";
+  // Auf dem Handy liegt der Umschalter im Bereich „Profil“ – der Kopf bleibt aufgeräumt
+  el.className = "ps-mode-switch hidden lg:inline-flex items-center gap-0.5 bg-slate-900 border border-slate-600 rounded-xl p-0.5 text-[11px]";
   el.setAttribute("role", "group");
   el.setAttribute("aria-label", "Ansicht");
   el.innerHTML = `<button type="button" data-mode-btn="simple" onclick="PS.setUiMode('simple')" title="Einsteiger-Ansicht: 4 Kernbereiche" class="px-2 py-1 rounded-lg font-black text-slate-300">🌱<span class="hidden sm:inline"> Einsteiger</span></button>
@@ -428,7 +412,7 @@ function injectArenaEntry() {
 }
 
 export function initShell() {
-  injectMarketSwitch();
+  // Markt/Community-Umschalter entfällt: Marktplatz hat eigene Tabs (client/app-nav.js), Community einen eigenen Seitenkopf
   injectArenaEntry();
   injectHeaderModeSwitch();
   renderQuickbar();
@@ -448,8 +432,7 @@ export function routeShell() {
   if (params.get("onboarding") === "1") return openOnboarding();
   if (params.get("quickstart") === "1") return openQuickstart();
   const deepLink = ["tab", "sub", "shop", "scan", "sealed", "card", "set", "reel", "drop", "pro"].some((k) => params.has(k)) || /^\/shop\//.test(location.pathname);
-  // Einsteiger-Ansicht: Start im Scanner (die Swipe-Arena ist dort kein Navigationspunkt)
-  if (getMode() === "simple" && !deepLink && !$("view-swipe")?.classList.contains("hidden")) window.switchTab?.("scan");
+  // Start ist immer „Entdecken“ (Swipe & Live-Deals) – auch in der Einsteiger-Ansicht ein fester Navigationspunkt
   if (!localStorage.getItem(ONBOARD_KEY) && !RETURNING && !deepLink && !state.recovery && !state.invite) {
     setTimeout(() => { if (!localStorage.getItem(ONBOARD_KEY) && !document.querySelector("#ps-account:not(.hidden)")) openQuickstart(); }, 900);
   }

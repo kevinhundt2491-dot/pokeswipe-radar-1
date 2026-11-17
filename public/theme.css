@@ -341,11 +341,43 @@ html.ps-native-ui button:active, html.ps-native-ui .mob-nav:active { transform: 
    (Scanner · Sammlung · Deals/Flip-Radar · Community & Tausch). Die Swipe-Arena bleibt über
    „🃏 Karten swipen“ in der Schnellstart-Leiste und im Deals-Bereich erreichbar; Profi-Ansicht zeigt alle 5.
    --------------------------------------------------------------------------- */
-body.ps-simple #tab-swipe, body.ps-simple #mob-swipe { display: none !important; }
-body.ps-simple .dex-nav { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
-body.ps-simple .dex-bottom > div { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
-body.ps-simple #tab-scan, body.ps-simple #mob-scan { order: 1; }
-body.ps-simple #tab-portfolio, body.ps-simple #mob-portfolio { order: 2; }
-body.ps-simple #tab-flip, body.ps-simple #mob-flip { order: 3; }
-body.ps-simple #tab-map, body.ps-simple #mob-map { order: 4; }
+/* Seit dem Mobile-First-Umbau zeigt auch die Einsteiger-Ansicht alle 5 Hauptbereiche
+   (Entdecken · Scanner · Marktplatz · Radar · Profil) – Profi-Werkzeuge bleiben über .ps-pro-only ausgeblendet. */
 .ps-mode-switch [aria-pressed="true"] { background: #facc15; color: #0f172a; }
+
+
+/* ---------------------------------------------------------------------------
+   Mobile-First-App: klare Seiten, feste Bottom-Navigation, kein horizontales Wackeln
+   --------------------------------------------------------------------------- */
+html, body { overflow-x: hidden; max-width: 100%; }
+main { overflow-x: clip; }
+/* Hero, Schnellzugriff und Schnellstart nur auf der Startseite „Entdecken“ – andere Bereiche starten direkt mit ihrem Inhalt */
+body[data-tab]:not([data-tab="swipe"]) #dex-hero,
+body[data-tab]:not([data-tab="swipe"]) #dex-stats,
+body[data-tab]:not([data-tab="swipe"]) #ps-quickbar,
+body[data-tab]:not([data-tab="swipe"]) #ps-quickstart { display: none !important; }
+/* Seitenkopf mit Überschrift + Zurück */
+.ps-page-head { padding: 0.25rem 0.125rem; }
+.ps-page-head h2 { font-family: var(--font-display, inherit); letter-spacing: 0.02em; }
+.ps-back:active { transform: scale(0.95); }
+/* Segment-Umschalter: große Tippflächen */
+.ps-segment button { transition: background-color 0.15s ease, color 0.15s ease; }
+/* Marktplatz „Meine Verkäufe“: Inserate-Unterbereiche ausblenden */
+#view-map[data-market-mode="mine"] > [data-sub],
+#view-map[data-market-mode="mine"] > [role="tablist"] { display: none !important; }
+/* Einklappbare Bereiche (Accordions) */
+details.ps-acc > summary { list-style: none; }
+details.ps-acc > summary::-webkit-details-marker { display: none; }
+details.ps-acc[open] > summary .ps-acc-chevron { transform: rotate(180deg); }
+.ps-acc-chevron { transition: transform 0.15s ease; display: inline-block; }
+/* Bottom-Navigation: ergonomische Tippflächen (≥ 48 px), Notch/Home-Indicator per safe-area */
+#ps-bottom-nav .mob-nav { min-height: 52px; justify-content: center; }
+#ps-bottom-nav .mob-nav[aria-current="page"] { box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.35); }
+#ps-bottom-nav { padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+@media (max-width: 1023px) {
+  /* großzügige Abstände auf dem Handy */
+  main { padding-left: max(0.875rem, env(safe-area-inset-left, 0px)); padding-right: max(0.875rem, env(safe-area-inset-right, 0px)); }
+  .ps-head-icon { min-height: 36px; min-width: 36px; justify-content: center; }
+  /* kein Element darf breiter als der Bildschirm werden */
+  main img, main video, main canvas, main table { max-width: 100%; }
+}

@@ -2,7 +2,8 @@
 //
 // Ablauf („separate charges and transfers“): Der Käufer bezahlt an die Plattform, das Geld bleibt auf dem
 // Plattform-Konto. Ausgezahlt (Transfer an das Express-Konto des Verkäufers, abzüglich Provision) wird erst,
-// wenn der Käufer den Erhalt bestätigt oder AUTO_RELEASE_DAYS nach dem Versand ohne Reklamation.
+// wenn der Käufer den Erhalt bestätigt oder ohne Reklamation die Frist abläuft: bei DHL-Sendungen erst
+// RELEASE_AFTER_DELIVERY_DAYS nach dem DHL-Zustell-Scan (server/tracking.ts), sonst AUTO_RELEASE_DAYS nach dem Versand.
 // Reklamationen entscheidet ein Admin (Erstattung oder Auszahlung). Die Lieferadresse sieht der Verkäufer erst
 // nach erfolgreicher Zahlung. Provision je Tarif des Verkäufers, mit Rabatt für Pro-Pass-Inhaber.
 import { and, eq, inArray, or, sql } from "drizzle-orm";
@@ -15,8 +16,7 @@ import { LEGAL_VERSION } from "./legal.ts";
 import { notify } from "./prices.ts";
 import { isBlockedBetween, forgetTrust, trustFor } from "./community.ts";
 import { checkEscrowLimit } from "./community-logic.ts";
-import { registerDac7, recordDac7Release, recordDac7Refund, dac7SellerBlock, runDac7Reminders, psttgNotice } from "./dac7.ts";
-import { taxInfoComplete } from "./dac7-logic.ts";
+import { registerDac7, recordDac7Release, recordDac7Refund, dac7SellerBlock, runDac7Reminders, psttgNotice, rawComplete, resealTaxRows } from "./dac7.ts";
 import { withdrawalOpen, withdrawalDeadline } from "./cart-logic.ts";
 import {
   feeFor, nextStatus, escrowPhase, validOffer, validTracking, trackingUrl, MARKET_FEE_BPS, MARKET_MIN_PRICE_CENTS, MARKET_MAX_PRICE_CENTS,
@@ -27,6 +27,8 @@ import { str, int, money, rows, rateLimit, trustedOrigin, euro } from "./util.ts
 import { log } from "./log.ts";
 import { recordOrderSale, removeOrderSale, backfillMarketComps } from "./condition-prices.ts";
 import { currentJob } from "./resilience.ts";
+import { runTrackingChecks, trackingEnabled } from "./tracking.ts";
+import { initialReleaseAfter, releaseDecision, isTrackable, TRACKING_LABEL, RELEASE_AFTER_DELIVERY_DAYS, TRACKING_FALLBACK_DAYS } from "./escrow-tracking-logic.ts";
 
 type Hlp = { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> };
 type Order = typeof marketOrders.$inferSelect;
@@ -57,7 +59,7 @@ async function saveSellerAccount(userId: string, a: Stripe.Account) {
     stripeConnectAccountId: a.id, chargesEnabled: Boolean(a.charges_enabled), payoutsEnabled: Boolean(a.payouts_enabled),
     detailsSubmitted: Boolean(a.details_submitted), transfersActive: a.capabilities?.transfers === "active",
     verificationStatus: verificationStatus(a), requirementsDue: (a.requirements?.currently_due || []).slice(0, 20),
-    disabledReason: a.requirements?.disabled_reason || null, psttgTaxDataComplete: taxInfoComplete(tax ?? null), lastSyncedAt: now, updatedAt: now,
+    disabledReason: a.requirements?.disabled_reason || null, psttgTaxDataComplete: rawComplete(tax ?? null), lastSyncedAt: now, updatedAt: now,
   };
   await db.insert(sellerAccounts).values({ userId, ...v }).onConflictDoUpdate({ target: sellerAccounts.userId, set: v });
 }
@@ -517,12 +519,36 @@ export async function runEscrowJobs() {
     result.expired++;
     await notify(o.buyerId, "⌛ Bestellung verfallen", `„${o.title}“: ${o.payBy ? "Die Zahlungsfrist ist abgelaufen" : "Der Verkäufer hat nicht auf dein Angebot reagiert"} – es wurde nichts berechnet.`, "/?orders=1");
   }
-  // 2. Nach Versand ohne Reklamation automatisch auszahlen
-  const due = await db.select().from(marketOrders).where(and(eq(marketOrders.status, "shipped"), eq(marketOrders.frozen, false), sql`${marketOrders.releaseAfter} < now()`)).limit(25);
+  // 2a. DHL-Sendungsverfolgung: Zustellung erkennen – erst ab dem Zustell-Scan läuft die Auszahlungsfrist
+  try { const t = await runTrackingChecks(20); (result as any).trackingChecked = t.checked; (result as any).delivered = t.delivered; }
+  catch (e) { result.errors++; log.error("market", "Sendungsverfolgung fehlgeschlagen", { err: e }); }
+  // 2b. Nach Zustellung (bzw. bei nicht verfolgbaren Sendungen nach Versand) ohne Reklamation automatisch auszahlen.
+  //     Ohne Versandnachweis (kein einziger DHL-Scan) wird NICHT ausgezahlt – stattdessen einmalig Admin-Prüfung.
+  const tracking = trackingEnabled();
+  // Verfolgbare DHL-Sendungen ohne Zustell-Scan erst ab dem Fallback-Zeitpunkt betrachten – sonst würden ältere
+  // Bestellungen (Frist noch nach alter Regel) bei jedem Lauf übersprungen und andere fällige Auszahlungen verdrängen.
+  const waitingDhl = tracking
+    ? sql`NOT (${marketOrders.carrier} = 'dhl' AND ${marketOrders.trackingStatus} <> 'sandbox' AND ${marketOrders.deliveredAt} IS NULL
+        AND ${marketOrders.shippedAt} > now() - make_interval(days => ${TRACKING_FALLBACK_DAYS}::int))`
+    : sql`TRUE`;
+  const due = await db.select().from(marketOrders).where(and(eq(marketOrders.status, "shipped"), eq(marketOrders.frozen, false),
+    sql`${marketOrders.releaseAfter} < now()`, sql`${marketOrders.trackingAlertAt} IS NULL`, waitingDhl)).limit(25);
   for (const o of due) {
     // Zeitbudget des geplanten Laufs: keine neue Auszahlung mehr beginnen, Rest folgt im nächsten Lauf
     if (currentJob()?.near(6000)) { currentJob()?.markPartial("Zeitbudget: Auszahlungen offen"); break; }
-    try { if (await releaseOrder(o, "system", "Automatisch nach Ablauf der Prüffrist.")) result.released++; } catch (e) { result.errors++; log.error("market", "Auto-Auszahlung fehlgeschlagen", { orderId: o.id, err: e }); }
+    const d = releaseDecision(o, tracking);
+    if (d.action === "wait") continue;
+    if (d.action === "review") {
+      const [flagged] = await db.update(marketOrders).set({ trackingAlertAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(marketOrders.id, o.id), sql`${marketOrders.trackingAlertAt} IS NULL`)).returning({ id: marketOrders.id });
+      if (flagged) {
+        (result as any).review = ((result as any).review || 0) + 1;
+        await notifyAdmins("🔎 Treuhand: kein Versandnachweis", `Bestellung #${o.id} „${o.title}“ (${o.trackingNumber}): ${d.reason}`);
+        await notify(o.sellerId, "🔎 Auszahlung in Prüfung", `„${o.title}“: ${d.reason} Bitte gib die Sendung bei DHL ab bzw. lade einen Einlieferungsbeleg im Support-Chat hoch.`, "/?orders=1");
+      }
+      continue;
+    }
+    try { if (await releaseOrder(o, "system", d.reason)) result.released++; } catch (e) { result.errors++; log.error("market", "Auto-Auszahlung fehlgeschlagen", { orderId: o.id, err: e }); }
   }
   // 3. Bezahlt, aber nicht versendet → automatisch erstatten
   const late = await db.select().from(marketOrders).where(and(eq(marketOrders.status, "paid"), eq(marketOrders.frozen, false), sql`${marketOrders.paidAt} < now() - make_interval(days => ${SHIP_WINDOW_DAYS}::int)`)).limit(25);
@@ -542,6 +568,10 @@ export async function runEscrowJobs() {
   try { const b = await backfillMarketComps(100); (result as any).compsRecorded = b.recorded; } catch (e) { result.errors++; log.error("market", "Comps-Nachtrag fehlgeschlagen", { err: e }); }
   // 6. DAC7: meldepflichtige Verkäufer ohne Steuerdaten erinnern (max. 2-mal, danach Sperre für neue Verkäufe)
   try { result.dac7Reminders = (await runDac7Reminders()).reminded; } catch (e) { result.errors++; log.error("market", "DAC7-Erinnerungen fehlgeschlagen", { err: e }); }
+  // 7. DSGVO: unverschlüsselte Alt-Einträge der Steuerdaten schrittweise verschlüsseln
+  if (!currentJob()?.near(4000)) {
+    try { (result as any).taxResealed = (await resealTaxRows(25)).resealed; } catch (e) { result.errors++; log.error("market", "Steuerdaten-Umschlüsselung fehlgeschlagen", { err: e }); }
+  }
   return result;
 }
 
@@ -561,6 +591,9 @@ function orderView(o: any, userId: string, admin = false, items: any[] = []) {
     message: o.message, carrier: o.carrier, carrierLabel: CARRIERS[o.carrier] || o.carrier, trackingNumber: o.tracking_number,
     trackingUrl: o.tracking_number ? trackingUrl(o.carrier, o.tracking_number) : "", disputeReason: o.dispute_reason,
     payBy: o.pay_by, paidAt: o.paid_at, shippedAt: o.shipped_at, releaseAfter: o.release_after, releasedAt: o.released_at, createdAt: o.created_at,
+    trackingStatus: o.tracking_status || "", trackingStatusLabel: TRACKING_LABEL[o.tracking_status || ""] || "", deliveredAt: o.delivered_at || null,
+    trackingCheckedAt: o.tracking_checked_at || null, labelShipped: Boolean(o.label_shipped_at), releaseReview: Boolean(o.tracking_alert_at),
+    trackable: isTrackable({ carrier: o.carrier, trackingStatus: o.tracking_status || "" }, trackingEnabled()),
     buyer: { id: o.buyer_id, name: o.buyer_name }, seller: { id: o.seller_id, name: o.seller_name },
     address, reviewed: Boolean(o.reviewed), frozen: Boolean(o.frozen), disputeStatus: o.dispute_status || "",
     // Phase 7: Warenkorb-Teilbestellung, Verkäufertyp und Widerruf
@@ -622,7 +655,7 @@ async function checkoutForOrder(c: any, order: Order, buyer: Profile) {
       metadata: { kind: "order", orderId: String(order.id), buyerId: order.buyerId, sellerId: order.sellerId },
     },
     metadata: { kind: "order", orderId: String(order.id), userId: buyer.userId, legal_version: LEGAL_VERSION, terms_accepted_at: new Date().toISOString() },
-    custom_text: { submit: { message: `Käuferschutz: Das Geld wird erst an den Verkäufer ausgezahlt, wenn du den Erhalt bestätigst (spätestens ${AUTO_RELEASE_DAYS} Tage nach Versand). Mit dem Klick schließt du einen zahlungspflichtigen Kaufvertrag mit dem Verkäufer ab.` } },
+    custom_text: { submit: { message: `Käuferschutz: Das Geld wird erst an den Verkäufer ausgezahlt, wenn du den Erhalt bestätigst (bei DHL erst ${RELEASE_AFTER_DELIVERY_DAYS} Tage nach bestätigter Zustellung, sonst spätestens ${AUTO_RELEASE_DAYS} Tage nach Versand). Mit dem Klick schließt du einen zahlungspflichtigen Kaufvertrag mit dem Verkäufer ab.` } },
     expires_at: Math.floor(Date.now() / 1000) + 60 * 60, // 1 Stunde
     success_url: `${o}/?order=paid&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${o}/?orders=1`,
@@ -705,7 +738,7 @@ export function registerMarket(app: any, hlp: Hlp) {
   app.post("/api/connect/dashboard-link", auth, sellerDashboard);
   app.get("/api/connect/dashboard-link", auth, sellerDashboard);
 
-  app.get("/api/market/meta", (c: any) => c.json({ conditions: CONDITIONS, carriers: CARRIERS, feeBps: MARKET_FEE_BPS, autoReleaseDays: AUTO_RELEASE_DAYS, shipWindowDays: SHIP_WINDOW_DAYS, payWindowHours: PAY_WINDOW_HOURS, countries: SHIP_COUNTRIES, enabled: Boolean(stripe()) }));
+  app.get("/api/market/meta", (c: any) => c.json({ conditions: CONDITIONS, carriers: CARRIERS, feeBps: MARKET_FEE_BPS, autoReleaseDays: AUTO_RELEASE_DAYS, releaseAfterDeliveryDays: RELEASE_AFTER_DELIVERY_DAYS, trackingFallbackDays: TRACKING_FALLBACK_DAYS, dhlTracking: trackingEnabled(), shipWindowDays: SHIP_WINDOW_DAYS, payWindowHours: PAY_WINDOW_HOURS, countries: SHIP_COUNTRIES, enabled: Boolean(stripe()) }));
 
   // ---------------- Bestellungen ----------------
   app.get("/api/orders", auth, async (c: any) => {
@@ -864,9 +897,13 @@ export function registerMarket(app: any, hlp: Hlp) {
         const carrier = CARRIERS[str(b.carrier, 20)] ? str(b.carrier, 20) : "other";
         const tracking = str(b.trackingNumber, 40).replace(/\s+/g, "");
         if (!validTracking(tracking)) return c.json({ error: "Bitte eine gültige Sendungsnummer eintragen (6–40 Zeichen)." }, 400);
-        Object.assign(updates, { carrier, trackingNumber: tracking, shippedAt: now, releaseAfter: new Date(Date.now() + AUTO_RELEASE_DAYS * 86400_000),
+        const tracked = isTrackable({ carrier, trackingStatus: "" }, trackingEnabled());
+        Object.assign(updates, { carrier, trackingNumber: tracking, shippedAt: now, releaseAfter: initialReleaseAfter(carrier, trackingEnabled(), now, AUTO_RELEASE_DAYS),
+          trackingStatus: "", trackingChecks: 0, trackingCheckedAt: null, deliveredAt: null, trackingAlertAt: null,
           ...(order.sellerType === "business" ? { withdrawalUntil: withdrawalDeadline("shipped", now, AUTO_RELEASE_DAYS) } : {}) });
-        msg = ["📦 Versendet", `„${order.title}“ ist mit ${CARRIERS[carrier]} unterwegs (${tracking}). Bitte bestätige den Erhalt, sobald die Karte da ist – sonst wird ${AUTO_RELEASE_DAYS} Tage nach Versand automatisch ausgezahlt.`];
+        msg = ["📦 Versendet", tracked
+          ? `„${order.title}“ ist mit ${CARRIERS[carrier]} unterwegs (${tracking}). Wir verfolgen die Sendung automatisch – ausgezahlt wird erst ${RELEASE_AFTER_DELIVERY_DAYS} Tage nach der Zustellung, falls du dich nicht meldest.`
+          : `„${order.title}“ ist mit ${CARRIERS[carrier]} unterwegs (${tracking}). Bitte bestätige den Erhalt, sobald die Karte da ist – sonst wird ${AUTO_RELEASE_DAYS} Tage nach Versand automatisch ausgezahlt.`];
       } else if (action === "dispute") {
         const reason = str(b.reason, 500);
         if (reason.length < 10) return c.json({ error: "Bitte beschreibe das Problem (mindestens 10 Zeichen)." }, 400);

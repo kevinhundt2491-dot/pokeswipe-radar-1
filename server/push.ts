@@ -25,8 +25,18 @@ export async function getVapid(): Promise<Vapid> {
     }
     vapid = saved;
   }
-  webpush.setVapidDetails("mailto:info@pokeswipe-radar.de", vapid.publicKey, vapid.privateKey);
+  // VAPID-Kontakt: aus VAPID_SUBJECT bzw. OPERATOR_EMAIL, sonst neutral die Website-Adresse (keine Kontaktdaten im Quellcode)
+  webpush.setVapidDetails(vapidSubject(), vapid.publicKey, vapid.privateKey);
   return vapid;
+}
+
+export function vapidSubject(env: Record<string, string | undefined> = process.env): string {
+  const subj = String(env.VAPID_SUBJECT || "").trim();
+  if (/^(mailto:[^\s@]+@[^\s@]+\.[^\s@]+|https:\/\/\S+)$/.test(subj)) return subj;
+  const mail = String(env.OPERATOR_EMAIL || "").trim();
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) return `mailto:${mail}`;
+  const site = String(env.URL || "").trim();
+  return /^https:\/\//.test(site) ? site : "https://pokeswipe-radar.de";
 }
 
 /** Schickt eine Push-Nachricht an alle Geräte eines Nutzers; abgelaufene Abos werden entfernt. */

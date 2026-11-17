@@ -15,7 +15,7 @@ export const KEEP = [
   "Flip-Radar", "Live-Scanner", "Scanner",  "Community Ø", "DE…", "LÖSCHEN", "Max Mustermann",
   "Musterstraße 1", "Musterstadt", "Amtsgericht …, HRB …",
   // Impressum (Rechtstext bleibt Deutsch)
-  "Kevin Hundt Hähn 10 51515 Kürten Deutschland Kontakt: E-Mail: info@pokeswipe-radar.de Telefon: +49 174 2182874 Kleinunternehmer gemäß § 19 UStG – es wird keine Umsatzsteuer berechnet. Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV: Kevin Hundt, Hähn 10, 51515 Kürten",
+  "Die Anbieterkennzeichnung (§ 5 DDG) konnte gerade nicht geladen werden. Du findest sie jederzeit unter pokeswipe-radar.de/rechtliches#impressum.",
   // Template-Rohformen (gerenderte Varianten stehen unten als Muster)
   "{hits} Angebot{hits2}", "{offers} Angebot{offers2} gibt es schon – ab {minPrice}.", "{added} Karte{added2} automatisch hinzugefügt.",
   "Markt {price}{maxPrice}", "• max. {maxPrice}", "PSA {gradeLow}{gradeLow2}", "✕ Nicht erkannt{name}",

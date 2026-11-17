@@ -15,6 +15,7 @@ import { searchTcgdex, fetchSet, normNum, pool, reserveScan } from "./features.t
 import { BADGES, earnedBadges, berlinDay, nextStreak, weeklySummary, type BadgeStats } from "./logic.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro } from "./util.ts";
 import { scanLimit } from "./viral.ts";
+import { taxInfoForExport } from "./dac7.ts";
 import { checkMatchesAfterWishlist } from "./trading.ts";
 import { parseVariant, normalizeVariant, normalizeCondition, availableVariants, variantPrice, VARIANT_LABELS } from "./variant-logic.ts";
 import { publicCache } from "./cache.ts";
@@ -806,6 +807,8 @@ export function registerGrowth(app: any, hlp: {
         CASE WHEN buyer_id = ${userId} THEN 'buyer' ELSE 'seller' END AS role,
         CASE WHEN buyer_id = ${userId} THEN shipping_address END AS my_shipping_address
         FROM market_orders WHERE buyer_id = ${userId} OR seller_id = ${userId}`)),
+      // DAC7-Steuerdaten: sensible Felder maskiert (DSGVO-Export, keine Klartext-Steuer-ID/IBAN in Dateien)
+      sellerTaxInfo: await taxInfoForExport(userId).catch(() => null),
     };
     return c.body(JSON.stringify(data, null, 2), 200, {
       "Content-Type": "application/json; charset=utf-8",

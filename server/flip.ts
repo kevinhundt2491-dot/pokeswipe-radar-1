@@ -23,7 +23,7 @@ import {
   GRADE_KEYS, GRADE_LABEL, FLIP_DEAL_MIN_PCT, SNIPER_MIN_PCT, FLIP_MIN_REF_EUR, GRADING_PRESETS, SEALED_SOURCE_LABEL,
   parseGrade, rawCondition, titleLang, isJunkTitle, titleMatchesCard, titleMatchesSealed, evaluateDeal, chooseRef,
   trimOutliers, median, round2, dailyMedians, sealedAutoPrice, affiliateItemUrl, ebaySearchUrl, buildQuery,
-  nameTokens, targetKey, parseTargetKey, discountPct, type GradeKey, type TargetKind, type MatchTarget,
+  nameTokens, targetKey, parseTargetKey, discountPct, netFlipAll, SELL_CHANNELS, type GradeKey, type TargetKind, type MatchTarget,
 } from "./flip-logic.ts";
 
 const PRINT_ID_RE = /^(en|ja):[A-Za-z0-9.\-_]{2,40}$/;
@@ -464,7 +464,7 @@ const targetJoin = sql`
   LEFT JOIN sealed_products sp ON o.target_kind = 'sealed' AND sp.id::text = o.target_id`;
 const targetCols = sql`COALESCE(c.name, cp.name, sp.name) AS target_name, COALESCE(c.local_id, cp.number, '') AS target_number, COALESCE(NULLIF(c.image, ''), NULLIF(cp.image, ''), sp.image, '') AS target_image`;
 
-type DealQuery = { cat: string; grade: string; option: string; lang: string; minPct: number; sort: string; limit: number };
+type DealQuery = { cat: string; grade: string; option: string; lang: string; minPct: number; sort: string; limit: number; netOnly: boolean };
 export function parseDealQuery(q: Record<string, string | undefined>): DealQuery {
   const pick = (v: unknown, list: string[], d: string) => (list.includes(String(v)) ? String(v) : d);
   return {
@@ -473,9 +473,20 @@ export function parseDealQuery(q: Record<string, string | undefined>): DealQuery
     option: pick(q.option, ["all", "bin", "auction"], "all"),
     lang: pick(q.lang, ["all", "de", "en", "ja"], "all"),
     minPct: int(q.minPct, FLIP_DEAL_MIN_PCT, 90, FLIP_DEAL_MIN_PCT),
-    sort: pick(q.sort, ["discount", "ending", "newest", "savings"], "discount"),
+    sort: pick(q.sort, ["discount", "ending", "newest", "savings", "net"], "discount"),
     limit: int(q.limit, 1, 60, 40),
+    netOnly: q.netOnly === "1",
   };
+}
+
+// Netto-Gewinn beim Weiterverkauf über Cardmarket (Standard-Kanal) – gleiche Regeln wie netFlip()/shippingEstimate()
+const NET_SQL = sql.raw(`(o.ref_price * (1 - ${SELL_CHANNELS.cardmarket.feePct / 100}) - o.total - CASE WHEN o.target_kind = 'sealed' OR o.grade_key <> 'raw' OR o.ref_price >= 100 THEN 6.99 WHEN o.ref_price >= 25 THEN 3.70 ELSE 1.35 END)`);
+
+/** Netto-Rechnung an ein Angebot hängen (nicht bei gesperrten Sniper-Deals – Preis ist dort verborgen). */
+export function withNet(d: any) {
+  if (d.locked || !(Number(d.total) > 0) || !(Number(d.refPrice) > 0)) return { ...d, net: null };
+  const nets = netFlipAll({ buyTotal: Number(d.total), resale: Number(d.refPrice), kind: d.kind, gradeKey: d.gradeKey, buyShippingIncluded: d.source === "ebay" });
+  return { ...d, net: nets, netProfit: nets?.cardmarket.net ?? null };
 }
 
 async function liveDeals(f: DealQuery, viewer: Viewer) {
@@ -490,12 +501,13 @@ async function liveDeals(f: DealQuery, viewer: Viewer) {
   if (f.lang === "ja") where.push(sql`(o.lang = 'ja' OR cp.lang = 'ja')`);
   if (f.lang === "en") where.push(sql`(o.lang = 'en' OR (cp.lang = 'en' AND o.lang IS NULL))`);
   if (f.lang === "de") where.push(sql`(o.lang = 'de' OR (o.target_kind = 'card' AND o.lang IS NULL))`);
+  if (f.netOnly) where.push(sql`${NET_SQL} > 0`);
   const order = f.sort === "ending" ? sql`o.end_at ASC NULLS LAST` : f.sort === "newest" ? sql`o.first_seen_at DESC`
-    : f.sort === "savings" ? sql`(o.ref_price - o.total) DESC` : sql`o.suspicious ASC, o.discount_pct DESC`;
+    : f.sort === "savings" ? sql`(o.ref_price - o.total) DESC` : f.sort === "net" ? sql`${NET_SQL} DESC` : sql`o.suspicious ASC, o.discount_pct DESC`;
   const list = rows(await db.execute(sql`
     SELECT o.*, ${targetCols} FROM market_offers o ${targetJoin}
     WHERE ${sql.join(where, sql` AND `)} ORDER BY ${order} LIMIT ${f.limit}`));
-  return list.map((o: any) => shapeOffer(o, viewer));
+  return list.map((o: any) => withNet(shapeOffer(o, viewer)));
 }
 
 /** Demo/Fallback: echte Cardmarket-Tiefstpreise unter Trend (deutsch + EN/JA-Drucke) und Community-Inserate für Sealed. */
@@ -542,7 +554,9 @@ async function fallbackDeals(f: DealQuery, viewer: Viewer) {
       });
     }
   }
-  return out.sort((a, b) => (b.discountPct ?? 0) - (a.discountPct ?? 0)).slice(0, f.limit);
+  let res = out.map(withNet);
+  if (f.netOnly) res = res.filter((d) => d.locked || (d.netProfit ?? 0) > 0);
+  return res.sort((a, b) => f.sort === "net" ? (b.netProfit ?? -1e9) - (a.netProfit ?? -1e9) : (b.discountPct ?? 0) - (a.discountPct ?? 0)).slice(0, f.limit);
 }
 
 async function flipMeta() {
@@ -656,6 +670,7 @@ export function registerFlip(app: any, { auth, adminOnly, body }: { auth: any; a
     return c.json({
       mode: live ? "live" : "demo", deals, fallback, filters: f, meta: await flipMeta(),
       paid: viewer.paid, sniperMinPct: SNIPER_MIN_PCT, dealMinPct: FLIP_DEAL_MIN_PCT,
+      sellChannels: Object.fromEntries(Object.entries(SELL_CHANNELS).map(([k, v]) => [k, { label: v.label, note: v.note }])),
     });
   });
 

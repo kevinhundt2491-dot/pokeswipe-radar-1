@@ -18,7 +18,7 @@ import { log } from "./log.ts";
 import { buildPrivacyPolicy, privacyPage } from "./privacy.ts";
 
 /** Stand der Rechtstexte – wird bei jeder Bestellung als Nachweis in Stripe gespeichert. */
-export const LEGAL_VERSION = "2026-11-16";
+export const LEGAL_VERSION = "2026-11-17";
 const BRAND = "PokeSwipe & Radar";
 
 export type Operator = {
@@ -56,11 +56,45 @@ async function loadSaved(): Promise<Saved> {
   try { return ((await getStore("app-config").get("legal", { type: "json" })) as Saved) || {}; } catch { return {}; }
 }
 
+/**
+ * Anbieterangaben aus Umgebungsvariablen (Rückfall, falls die Admin-Zentrale leer ist):
+ * OPERATOR_NAME, OPERATOR_COMPANY, OPERATOR_REPRESENTATIVE, OPERATOR_STREET, OPERATOR_ZIP, OPERATOR_CITY, OPERATOR_COUNTRY,
+ * OPERATOR_EMAIL, OPERATOR_PHONE, OPERATOR_VAT_ID, OPERATOR_REGISTER, OPERATOR_RESPONSIBLE, OPERATOR_SMALL_BUSINESS ("1"/"true").
+ */
+export function operatorFromEnv(env: Record<string, string | undefined> = process.env): Partial<Operator> {
+  const e = (k: string) => String(env[k] || "").trim();
+  return {
+    name: e("OPERATOR_NAME"), company: e("OPERATOR_COMPANY"), representative: e("OPERATOR_REPRESENTATIVE"), street: e("OPERATOR_STREET"),
+    zip: e("OPERATOR_ZIP"), city: e("OPERATOR_CITY"), country: e("OPERATOR_COUNTRY"), email: e("OPERATOR_EMAIL"), phone: e("OPERATOR_PHONE"),
+    vatId: e("OPERATOR_VAT_ID"), register: e("OPERATOR_REGISTER"), responsible: e("OPERATOR_RESPONSIBLE"),
+    smallBusiness: /^(1|true|ja|yes)$/i.test(e("OPERATOR_SMALL_BUSINESS")),
+  };
+}
+
+/** Admin-Einstellungen haben Vorrang; leere Felder werden aus den Umgebungsvariablen ergänzt. */
+export function mergeOperator(saved: Partial<Operator>, fromEnv: Partial<Operator>): Operator {
+  const a = cleanOperator(saved || {}), b = cleanOperator(fromEnv || {});
+  if (operatorComplete(a)) return a;
+  const out: any = { ...a };
+  for (const k of Object.keys(a) as (keyof Operator)[]) {
+    if (k === "smallBusiness") out.smallBusiness = a.smallBusiness || b.smallBusiness;
+    else if (!a[k] || (k === "country" && a.country === "Deutschland" && b.country)) out[k] = b[k] || a[k];
+  }
+  return out as Operator;
+}
+
+/** Verantwortlicher (DSGVO) in einer Zeile – neutral, falls keine Angaben hinterlegt sind. */
+export function controllerLine(o: Operator) {
+  if (!operatorComplete(o)) return "";
+  return [o.company || o.name, o.street, `${o.zip} ${o.city}`, `E-Mail: ${o.email}`].filter(Boolean).join(", ");
+}
+
 export async function getOperator() {
   const saved = await loadSaved();
-  const own = cleanOperator(saved.operator || {});
+  const own = mergeOperator(saved.operator || {}, operatorFromEnv());
   const legacy = str(saved.impressum, 4000) || str(process.env.IMPRESSUM_TEXT, 4000);
-  // Anbieterangaben kommen ausschließlich aus der Admin-Konfiguration (keine personenbezogenen Daten im Quellcode).
+  // Anbieterangaben kommen ausschließlich aus der Admin-Konfiguration bzw. den OPERATOR_*-Umgebungsvariablen
+  // (keine personenbezogenen Daten im Quellcode).
   // Unvollständige Angaben meldet die Admin-Zentrale unter „Integrationen“ (operatorComplete).
   if (!operatorComplete(own) && !legacy) log.warn("legal", "Anbieterangaben unvollständig – bitte in der Admin-Zentrale unter „Rechtliches“ ergänzen.");
   return { operator: own, legacy, updatedAt: saved.updatedAt || null };
@@ -204,7 +238,7 @@ export function buildDocuments(input: Operator, legacy = ""): LegalDoc[] {
         { h: "§ 8a Marktplatz mit Käuferschutz (Treuhand)", p: [
           "(1) Über den Marktplatz schließen Käufer und Verkäufer einen Kaufvertrag unmittelbar miteinander. Wir sind nicht Vertragspartei des Kaufvertrags, sondern stellen die Plattform und die treuhänderische Zahlungsabwicklung über unseren Zahlungsdienstleister Stripe Payments Europe, Ltd. bereit. Verkäufer, die Privatpersonen sind, verkaufen in der Regel ohne Widerrufsrecht und unter Ausschluss der Sachmängelhaftung, soweit gesetzlich zulässig; gewerbliche Verkäufer müssen sich als solche kennzeichnen und die Verbraucherrechte erfüllen.",
           "(2) Verkaufen mit Käuferschutz setzt ein verifiziertes Verkäuferkonto bei Stripe (Stripe Connect Express, inkl. Identitätsprüfung) voraus. Verkäufer beschreiben Karten wahrheitsgemäß (Zustand, Sprache, Echtheit) und versenden innerhalb von 7 Tagen nach Zahlungseingang mit Sendungsnummer.",
-          "(3) Der Käufer zahlt Kaufpreis und Versand an uns. Wir verwahren den Betrag und zahlen ihn abzüglich der Provision an den Verkäufer aus, sobald der Käufer den Erhalt bestätigt oder 14 Tage nach Eintragen der Sendungsnummer keine Reklamation eingegangen ist. Wird nicht innerhalb von 7 Tagen versendet, erstatten wir den Betrag automatisch.",
+          "(3) Der Käufer zahlt Kaufpreis und Versand an uns. Wir verwahren den Betrag und zahlen ihn abzüglich der Provision an den Verkäufer aus, sobald der Käufer den Erhalt bestätigt oder ohne Reklamation die Käuferschutz-Frist abgelaufen ist. Bei DHL-Sendungen (insbesondere mit in der App erstelltem DHL-Etikett – die Bestellung gilt dann automatisch als versendet) beginnt diese Frist erst mit der durch die DHL-Sendungsverfolgung bestätigten Zustellung und beträgt 3 Tage. Meldet DHL keinen Zustell-Scan, zahlen wir frühestens 21 Tage nach Versand und nur bei nachgewiesener Einlieferung (Transport-Scan) aus; ohne jeden Versandnachweis erfolgt keine automatische Auszahlung, sondern eine Prüfung durch uns. Bei anderen Versandarten endet die Frist 14 Tage nach Eintragen der Sendungsnummer. Wird nicht innerhalb von 7 Tagen versendet, erstatten wir den Betrag automatisch.",
           "(4) Bei einer Reklamation (z. B. nicht angekommen, falsche oder gefälschte Karte, erheblich schlechterer Zustand) wird die Auszahlung angehalten. Wir prüfen den Fall anhand der Angaben beider Seiten und der Sendungsverfolgung und entscheiden über Erstattung an den Käufer oder Auszahlung an den Verkäufer. Gesetzliche Ansprüche der Parteien untereinander bleiben unberührt.",
           "(5) Die Provision trägt der Verkäufer; sie beträgt im Tarif Free 6,5 %, Premium 5 % und Pro Trader (Pro-Pass) 3 % des Kaufpreises, mindestens 0,49 €, und fällt nur bei erfolgreichem Verkauf an. Für Käufer entstehen keine Gebühren. Ein verbindliches Preisangebot muss mindestens 50 % des Inseratspreises betragen; nimmt der Verkäufer es an, ist innerhalb von 48 Stunden zu zahlen.",
           "(6) Die Lieferadresse des Käufers wird dem Verkäufer erst nach erfolgreicher Zahlung und nur für die Abwicklung angezeigt. Zahlungen außerhalb des Käuferschutzes (z. B. PayPal Freunde & Familie, Vorkasse per Überweisung) sind auf eigenes Risiko und dürfen in der Community nicht beworben werden.",
@@ -287,6 +321,7 @@ export async function getLegalPayload() {
   const documents = withPrivacyPointer(buildDocuments(operator, legacy));
   return {
     impressum: impressumText(operator, legacy),
+    controller: controllerLine(operator),
     operatorComplete: operatorComplete(operator) || Boolean(legacy),
     version: LEGAL_VERSION,
     updatedAt,

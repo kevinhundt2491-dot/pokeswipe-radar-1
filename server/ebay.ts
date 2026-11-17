@@ -55,6 +55,11 @@ async function token(scope: string): Promise<string | null> {
   return tokens[scope]!.value;
 }
 
+/** Anwendungs-Token (Client Credentials, Basis-Scope) – u. a. für den Abruf der Notification-Public-Keys. */
+export async function applicationToken(): Promise<string | null> {
+  return token(SCOPE_BASE);
+}
+
 const money = (m: any): number | null => {
   const v = Number(m?.value);
   return Number.isFinite(v) && v >= 0 ? v : null;

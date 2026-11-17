@@ -50,3 +50,26 @@ test("Sealed-CSV: Semikolon, deutsche Zahlen, Spaltennamen", () => {
   assert.equal(rows[1].refPrice, null);
   assert.deepEqual(parseSealedCsv("foo;bar\n1;2"), []);
 });
+
+test("Anbieterangaben: Admin-Einstellungen vor Umgebungsvariablen, leere Felder aus OPERATOR_*", async () => {
+  const { operatorFromEnv, mergeOperator, controllerLine } = await import("../server/legal.ts");
+  const env = operatorFromEnv({ OPERATOR_NAME: "Erika Muster", OPERATOR_STREET: "Hauptstr. 1", OPERATOR_ZIP: "50667", OPERATOR_CITY: "Köln", OPERATOR_EMAIL: "info@example.de", OPERATOR_SMALL_BUSINESS: "1" });
+  const merged = mergeOperator({}, env);
+  assert.equal(operatorComplete(merged), true);
+  assert.equal(merged.smallBusiness, true);
+  assert.match(controllerLine(merged), /Erika Muster, Hauptstr\. 1, 50667 Köln, E-Mail: info@example\.de/);
+  // vollständige Admin-Angaben haben Vorrang
+  assert.equal(mergeOperator(op, env).phone, "0221 123");
+  assert.equal(mergeOperator({ name: "Firma X" }, env).name, "Firma X");
+  // ohne Angaben: neutral, keine Daten erfunden
+  assert.equal(controllerLine(mergeOperator({}, operatorFromEnv({}))), "");
+});
+
+test("Keine hartcodierten persönlichen Anbieterdaten im Client- und Server-Code", () => {
+  const files = ["client/growth.js", "client/i18n-en-1.js", "client/i18n-en-3.js", "public/index.html", "server/push.ts", "server/legal.ts", "server/privacy.ts"];
+  for (const f of files) {
+    const t = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
+    assert.ok(!/\+49\s?1\d{2}\s?\d{6,}/.test(t), `Telefonnummer in ${f}`);
+    assert.ok(!/info@pokeswipe-radar\.de/.test(t), `E-Mail in ${f}`);
+  }
+});

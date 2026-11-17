@@ -360,8 +360,13 @@ export const CHOREO = {
         await s.scrollBy(VIEW_H * 0.6, Math.max(900, d * 1000 * 0.45));
       },
       async (s, d) => {
-        const nav = s.$("#mob-portfolio");
+        // Sammlung liegt seit dem Mobile-First-Umbau im Bereich „Scanner“ (Umschalter 📷 Scanner | 💼 Meine Sammlung)
+        const nav = s.$("#mob-scan");
         if (nav) await s.tap(nav, { reveal: false });
+        await s.idle({ quietMs: 200, timeoutMs: 2000 });
+        const seg = s.$('#view-scan [data-seg="portfolio"]');
+        if (seg) await s.tap(seg, { reveal: false });
+        else s.win.switchTab?.("portfolio");
         await s.idle({ quietMs: 300, timeoutMs: 4000 });
         s.win.scrollTo(0, Math.max(0, s.win.scrollY + (s.$("#view-portfolio")?.getBoundingClientRect().top || 0) - 64));
         s.fact("total", s.text("#portfolio-total"));

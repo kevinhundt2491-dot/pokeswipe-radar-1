@@ -9,7 +9,7 @@ const COMP_SOURCE = { "ebay-sold": "eBay-Verkauf", "ebay-auction": "Auktionsende
 const FILTER_KEY = "ps_flip_filters";
 
 const flip = {
-  filters: { cat: "all", grade: "all", option: "all", lang: "all", minPct: 20, sort: "discount", ...readFilters() },
+  filters: { cat: "all", grade: "all", option: "all", lang: "all", minPct: 20, sort: "discount", netOnly: false, channel: "cardmarket", ...readFilters() },
   data: null, loading: false, timer: null, comps: null, chartGrade: "raw", chartDays: 90,
 };
 
@@ -51,16 +51,21 @@ function panelHtml() {
       </div>
     </div>
     <div id="ps-flip-mode"></div>
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
       ${sel("ps-ff-cat", [["all", "Alles"], ["singles", "🃏 Einzelkarten"], ["sealed", "📦 Sealed"]], f.cat, "Kategorie")}
-      ${sel("ps-ff-sort", [["discount", "Größter Rabatt"], ["savings", "Größte Ersparnis €"], ["ending", "Endet bald"], ["newest", "Neueste"]], f.sort, "Sortierung")}
-      <div class="ps-pro-only contents">
+      ${sel("ps-ff-sort", [["discount", "Größter Rabatt"], ["net", "💶 Größter Netto-Gewinn"], ["savings", "Größte Ersparnis €"], ["ending", "Endet bald"], ["newest", "Neueste"]], f.sort, "Sortierung")}
+      ${sel("ps-ff-channel", [["cardmarket", "Cardmarket (5 %)"], ["ebay", "eBay gewerblich (~11 %)"], ["pokeswipe", "PokeSwipe (6,5 %)"]], f.channel, "Weiterverkauf über")}
+    </div>
+    <label class="flex items-center gap-2 text-[11px] font-bold text-emerald-200"><input type="checkbox" id="ps-ff-net" ${f.netOnly ? "checked" : ""} onchange="PS.flipFilter()" class="accent-emerald-400"> Nur Deals mit echtem Netto-Gewinn (nach Gebühren &amp; Porto)</label>
+    <details class="ps-acc bg-slate-950/60 border border-slate-800 rounded-2xl px-3 py-2">
+      <summary class="text-[11px] font-black text-slate-300 cursor-pointer select-none">⚙️ Weitere Filter (Zustand, Angebotsart, Sprache, Mindest-Rabatt)</summary>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
         ${sel("ps-ff-grade", [["all", "Alle"], ["raw", "Raw (ungegradet)"], ["graded", "Graded (Slabs)"], ["psa10", "Nur PSA 10"]], f.grade, "Zustand")}
         ${sel("ps-ff-option", [["all", "Alle"], ["bin", "Sofort-Kaufen"], ["auction", "Auktionen (< 24 h)"]], f.option, "Angebotsart")}
         ${sel("ps-ff-lang", [["all", "Alle"], ["de", "🇩🇪 Deutsch"], ["en", "🇬🇧 Englisch"], ["ja", "🇯🇵 Japanisch"]], f.lang, "Sprache")}
         ${sel("ps-ff-min", [[20, "ab 20 %"], [25, "ab 25 % (Sniper)"], [30, "ab 30 %"], [40, "ab 40 %"]], f.minPct, "Mindest-Rabatt")}
       </div>
-    </div>
+    </details>
     <div id="ps-flip-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
     <p class="text-[10px] text-slate-500">Rabatt = Gesamtpreis inkl. Versand gegenüber dem Referenzpreis (Cardmarket-Trend, TCGplayer oder Median echter Verkäufe derselben Note). Slabs werden nur mit genug Verkaufsdaten bewertet. *Partner-Link (eBay Partner Network) – für dich ohne Mehrkosten.</p>
     <div id="ps-flip-admin"></div>
@@ -104,6 +109,12 @@ function dealCard(d, paid) {
     : link ? `<a href="${esc(link)}" target="_blank" rel="noopener sponsored" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">${d.source === "ebay" ? "🛒 Zum Angebot*" : "🔎 eBay-Suche*"}</a>` : "";
   const cmLink = d.source === "cardmarket-low" ? `<a href="${esc(cm(d.targetName))}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl">Cardmarket</a>` : "";
   const saving = d.refPrice && d.total ? d.refPrice - d.total : 0;
+  const n = d.net?.[flip.filters.channel] || d.net?.cardmarket || null;
+  const netHtml = n ? `<div class="rounded-xl px-2.5 py-1.5 ${n.net > 0 ? "bg-emerald-500/10 border border-emerald-500/40" : "bg-rose-500/10 border border-rose-500/40"}">
+      <p class="text-[11px] font-black ${n.net > 0 ? "text-emerald-300" : "text-rose-300"}">💶 Netto-Gewinn ${n.net > 0 ? "+" : ""}${eur(n.net)} <span class="font-bold text-slate-300">· Marge ${n.marginPct != null ? String(n.marginPct).replace(".", ",") : "–"} % · ROI ${n.roiPct != null ? String(n.roiPct).replace(".", ",") : "–"} %</span></p>
+      <details class="ps-acc"><summary class="text-[10px] text-slate-400 cursor-pointer select-none">So gerechnet (${esc(flip.data?.sellChannels?.[n.channel]?.label || n.channel)})</summary>
+        <p class="text-[10px] text-slate-300 leading-relaxed pt-1">Verkauf ${eur(n.resale)} − Gebühren ${eur(n.fees)} − Porto ${eur(n.shipping)} − Einkauf ${eur(n.cost - n.buyShipping)}${n.buyShipping ? ` − Einkaufsporto ${eur(n.buyShipping)}` : ""} = <strong class="${n.net > 0 ? "text-emerald-300" : "text-rose-300"}">${eur(n.net)}</strong><br><span class="text-slate-500">${esc(flip.data?.sellChannels?.[n.channel]?.note || "")}; Porto-Richtwert inkl. Versandmaterial.</span></p>
+      </details></div>` : "";
   return `<div class="poke-glass rounded-2xl p-3 flex gap-3 ${sniper ? "border-2 border-yellow-400/60" : ""}">
     <img src="${esc(cdn(img || FALLBACK_IMG, 160))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" alt="" class="w-20 h-28 object-contain rounded-lg bg-slate-950 shrink-0" />
     <div class="min-w-0 flex-1 flex flex-col gap-1.5">
@@ -115,9 +126,10 @@ function dealCard(d, paid) {
         <div>
           <p class="text-lg font-black text-emerald-400 leading-none">${eur(d.total)}</p>
           <p class="text-[10px] text-slate-400">${d.shipping != null && d.source === "ebay" ? `inkl. ${eur(d.shipping)} Versand • ` : ""}<del>${eur(d.refPrice)}</del> ${esc(REF_LABEL[d.refSource] || "Marktwert")}</p>
-          <p class="text-[10px] text-emerald-300 ps-pro-only">Ersparnis ${eur(saving)}</p>
+          <p class="text-[10px] text-emerald-300 ps-pro-only">Ersparnis brutto ${eur(saving)}</p>
         </div>
       </div>
+      ${netHtml}
       ${d.suspicious ? `<p class="text-[10px] text-amber-300">⚠️ Ungewöhnlich günstig oder Verkäufer mit wenig Bewertungen – Fotos, Rückgabe und Echtheit prüfen.</p>` : ""}
       ${d.seller ? `<p class="text-[10px] text-slate-500 ps-pro-only">Verkäufer: ${esc(d.seller)}${d.sellerFeedbackPct != null ? ` (${String(d.sellerFeedbackPct).replace(".", ",")} % positiv${d.sellerFeedbackScore != null ? `, ${Number(d.sellerFeedbackScore)}` : ""})` : ""}${d.country ? ` • ${esc(d.country)}` : ""}</p>` : ""}
       <div class="flex flex-wrap gap-1.5 pt-1">${main}${cmLink}${compsBtn}</div>
@@ -143,7 +155,7 @@ async function loadDeals({ quiet = false } = {}) {
   if (flip.loading) return;
   flip.loading = true;
   const f = flip.filters;
-  const q = new URLSearchParams({ cat: f.cat, grade: f.grade, option: f.option, lang: f.lang, minPct: String(f.minPct), sort: f.sort, limit: "45" });
+  const q = new URLSearchParams({ cat: f.cat, grade: f.grade, option: f.option, lang: f.lang, minPct: String(f.minPct), sort: f.sort, netOnly: f.netOnly ? "1" : "0", limit: "45" });
   try {
     flip.data = await api(`/api/flip/deals?${q}`);
     renderDeals();
@@ -157,6 +169,7 @@ function flipFilter() {
   flip.filters = {
     cat: v("ps-ff-cat") || "all", sort: v("ps-ff-sort") || "discount", grade: v("ps-ff-grade") || "all",
     option: v("ps-ff-option") || "all", lang: v("ps-ff-lang") || "all", minPct: Number(v("ps-ff-min")) || 20,
+    netOnly: Boolean($("ps-ff-net")?.checked), channel: ["cardmarket", "ebay", "pokeswipe"].includes(v("ps-ff-channel")) ? v("ps-ff-channel") : "cardmarket",
   };
   localStorage.setItem(FILTER_KEY, JSON.stringify(flip.filters));
   loadDeals();
