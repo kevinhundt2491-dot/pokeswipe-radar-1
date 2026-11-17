@@ -209,6 +209,23 @@ Offen sind keine Technikfehler mehr, sondern Betrieb und Wachstum: Abo-Abgleich 
 - [ ] Externen Uptime-Monitor auf `/api/health` einrichten
 - [ ] CI-Workflow aus `docs/github-workflow-ci.yml` auf GitHub aktivieren
 
+### Stand 17.11.2026
+
+Alle Punkte sind Aufgaben in Stripe, bei Netlify, bei ElevenLabs, bei Google oder auf GitHub. Im Code fehlt nichts. Fehlt ein Schlüssel, läuft die App mit einem sicheren Ersatz weiter. Sobald der echte Wert gesetzt und neu deployt ist, wird er automatisch verwendet.
+
+| Punkt | Verhalten ohne Schlüssel | So wird es erledigt |
+|---|---|---|
+| Pro-Testabos kündigen | – | Stripe → Abos → überzählige Abos aus Kapitel 2.1 kündigen (bis 22.11.) |
+| `DATA_ENCRYPTION_KEY` | Steuerdaten werden mit dem Notfall-Schlüssel aus Netlify Blobs verschlüsselt | `openssl rand -hex 32` → in Netlify als Variable setzen → neu deployen → in der Admin-Zentrale „🔐 Alt-Einträge verschlüsseln“ |
+| `DHL_TRACKING_API_KEY` | Es wird `DHL_API_KEY` genutzt. Ohne Tracking-Freigabe gibt es keinen Live-Status | Im DHL-Entwicklerportal die Tracking-API freischalten und den Schlüssel setzen |
+| ElevenLabs-Credits | Ohne Guthaben bleibt die Sprachausgabe stumm | Im ElevenLabs-Konto Guthaben aufladen |
+| Doppelter Stripe-Webhook | – | Stripe → Entwickler → Webhooks → zweiten Endpunkt auf dieselbe URL deaktivieren |
+| Google-Login | Nur E-Mail-Login | Netlify → Project configuration → Identity → External providers → Google |
+| `REVENUECAT_IOS_API_KEY`, `REVENUECAT_WEBHOOK_AUTH`, `FCM_SERVICE_ACCOUNT` | Die App nutzt Stripe statt In-App-Kauf. Statt nativem Push gibt es Web-Push | Vor dem Store-Start setzen |
+| `CARDMARKET_PARTNER_ID` | Cardmarket-Links ohne Partnerkennung, nur mit UTM | Partner-ID setzen |
+| Uptime-Monitor | – | z. B. UptimeRobot: HTTP-Monitor auf `https://pokeswipe-radar.de/api/health` (Antwort `{"ok":true}`) |
+| CI-Workflow | – | Auf github.com `.github/workflows/ci.yml` mit dem Inhalt von `docs/github-workflow-ci.yml` anlegen |
+
 ## 7. Prüfprotokoll
 
 | Prüfung | Ergebnis |
