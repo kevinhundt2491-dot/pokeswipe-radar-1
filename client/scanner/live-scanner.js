@@ -3,6 +3,7 @@
 import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, requireLogin } from "../core.js";
 import { SCORE_STRONG } from "../../server/scan-logic.ts";
 import { haptic } from "../native.js";
+import { openQuickList, quickListApi } from "./quick-list.js";
 
 // Hybrid-Scanner (Phase 9):
 //  Stufe 1 – Erkennung auf dem Gerät (Kanten, Entzerrung, Kontrast-Normalisierung, pHash/dHash + Farb-Signatur, Nummern-OCR)
@@ -373,6 +374,7 @@ function renderHud(cur) {
       <button onclick="PS.liveScanDismiss()" class="text-slate-400 hover:text-white text-sm px-1" aria-label="Ergebnis schließen">✕</button>
     </div>
     ${cur.variants.length > 1 ? `<div class="flex flex-wrap gap-1">${cur.variants.map((v) => `<button onclick="PS.liveScanVariant(${jsArg(v.key)})" class="text-[10px] font-black px-2 py-0.5 rounded-full ${v.key === i.key ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-200"}">${FLAG[v.lang] || ""} ${esc(v.setCode || v.setName || "")} ${esc(v.number || "")} · ${priceTxt(v)}</button>`).join("")}</div>` : ""}
+    <button onclick="PS.liveScanSell(${k})" class="w-full bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-xs font-black py-2.5 rounded-xl shadow">🏷️ Direkt inserieren${i.price ? ` · Vorschlag ${priceTxt(i)}` : ""}</button>
     <div class="grid grid-cols-4 gap-1.5">
       <button onclick="PS.liveScanAdd(${k})" class="bg-emerald-500 text-slate-950 text-[11px] font-black py-2 rounded-xl">💼 Sammlung</button>
       <button onclick="PS.liveScanWish(${k})" ${canWish ? "" : 'disabled title="Wunschliste gibt es für deutsche und englische Karten"'} class="bg-rose-400 text-slate-950 text-[11px] font-black py-2 rounded-xl disabled:opacity-40">❤️ Wunsch</button>
@@ -396,14 +398,16 @@ function renderSeries() {
   const total = sc.series.reduce((s, x) => s + (Number(x.price) || 0), 0);
   box.innerHTML = `<div class="flex items-center justify-between gap-2">
       <p class="text-xs font-black text-white">🗂️ In dieser Sitzung gescannt: ${sc.series.length} Karten • ${eur(total)}</p>
-      <div class="flex gap-1.5"><button onclick="PS.liveScanAddAll()" class="bg-emerald-500 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-lg">💼 Alle zur Sammlung</button>
+      <div class="flex flex-wrap justify-end gap-1.5"><button onclick="PS.liveScanSellAll()" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-lg">🏷️ Alle inserieren</button>
+      <button onclick="PS.liveScanAddAll()" class="bg-emerald-500 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-lg">💼 Alle zur Sammlung</button>
       <button onclick="PS.liveScanClear()" class="bg-slate-800 text-slate-300 text-[11px] font-bold px-2.5 py-1.5 rounded-lg">Leeren</button></div>
     </div>
     <div class="grid grid-cols-3 sm:grid-cols-6 gap-1.5">${sc.series.map((s) => `
       <button onclick="PS.liveScanDetails(${jsArg(s.key)})" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-1.5 text-[10px] text-white text-center">
         <img src="${esc(cdn(s.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" alt="" class="h-16 mx-auto object-contain" />
         <span class="block truncate font-bold">${FLAG[s.lang] || ""} ${esc(s.name)}</span><span class="block text-emerald-400 font-black">${priceTxt(s)}</span>
-      </button>`).join("")}</div>`;
+      </button>`).join("")}</div>
+    <p class="text-[10px] text-slate-500">Tipp: Karten einfach nacheinander vor die Kamera halten – jede erkannte Karte landet hier. Danach mit „Alle inserieren“ alle auf einmal mit fairem Preis veröffentlichen.</p>`;
 }
 
 /** KI-Knopf hervorheben, wenn die Erkennung auf dem Gerät unsicher ist (Stufe 3 nur bei Bedarf). */
@@ -518,6 +522,22 @@ async function addWish(key) {
   } catch (e) { handleError(e); }
 }
 
+/** Eine Karte direkt inserieren (Schnell-Inserieren mit fairem Preisvorschlag) */
+function sellOne(key) {
+  const i = infoOf(key);
+  if (!i || !requireLogin()) return;
+  learn(key, probeFor(key));
+  openQuickList([i]);
+}
+
+/** Alle Karten der Scan-Serie auf einmal inserieren */
+function sellAll() {
+  if (!sc.series.length) { toast("Noch nichts gescannt", "Halte Karten nacheinander vor die Kamera – jede erkannte Karte landet in der Liste."); return; }
+  if (!requireLogin()) return;
+  for (const s of sc.series) learn(s.key, s.probe);
+  openQuickList([...sc.series].reverse());
+}
+
 function flipCheck(key) {
   const i = infoOf(key);
   if (i) window.PS?.openComps?.(i.kind, i.id);
@@ -566,6 +586,11 @@ export const liveScanApi = {
   liveScanAddAll: addAll,
   liveScanWish: addWish,
   liveScanFlip: flipCheck,
+  liveScanSell: sellOne,
+  liveScanSellAll: sellAll,
+  /** Schnell-Inserieren für beliebige Treffer (z. B. Foto-Scan) */
+  liveScanQuickList: (infos) => openQuickList(infos),
+  ...quickListApi,
   liveScanDetails: details,
   liveScanPhoto: photoScan,
   /** Stufe 1 für Fotos: Erkennung auf dem Gerät, bevor die KI gefragt wird */
