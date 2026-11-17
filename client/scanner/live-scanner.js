@@ -405,7 +405,10 @@ function renderHud(cur) {
       <button onclick="PS.liveScanDismiss()" class="text-slate-400 hover:text-white text-sm px-1" aria-label="Ergebnis schließen">✕</button>
     </div>
     ${cur.variants.length > 1 ? `<div class="flex flex-wrap gap-1">${cur.variants.map((v) => `<button onclick="PS.liveScanVariant(${jsArg(v.key)})" class="text-[10px] font-black px-2 py-0.5 rounded-full ${v.key === i.key ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-200"}">${FLAG[v.lang] || ""} ${esc(v.setCode || v.setName || "")} ${esc(v.number || "")} · ${priceTxt(v)}</button>`).join("")}</div>` : ""}
-    <button onclick="PS.liveScanSell(${k})" class="w-full bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-xs font-black py-2.5 rounded-xl shadow">🏷️ Direkt inserieren${i.price ? ` · Vorschlag ${priceTxt(i)}` : ""}</button>
+    <div class="grid grid-cols-[1fr_auto] gap-1.5">
+      <button onclick="PS.liveScanSell(${k})" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-xs font-black py-2.5 rounded-xl shadow truncate px-2">🏷️ Verkaufen${i.price ? ` · ${priceTxt(i)}` : ""}</button>
+      <button onclick="PS.liveScanSell(${k}, 'instant')" title="1-Tap: fairer Preis, gemerkte Angaben, geht nach kurzem Countdown live" class="bg-yellow-400 text-slate-950 text-xs font-black px-3 py-2.5 rounded-xl shadow disabled:opacity-40">⚡ 1-Tap live</button>
+    </div>
     <div class="grid grid-cols-4 gap-1.5">
       <button onclick="PS.liveScanAdd(${k})" class="bg-emerald-500 text-slate-950 text-[11px] font-black py-2 rounded-xl">💼 Sammlung</button>
       <button onclick="PS.liveScanWish(${k})" ${canWish ? "" : 'disabled title="Wunschliste gibt es für deutsche und englische Karten"'} class="bg-rose-400 text-slate-950 text-[11px] font-black py-2 rounded-xl disabled:opacity-40">❤️ Wunsch</button>
@@ -430,6 +433,7 @@ function renderSeries() {
   box.innerHTML = `<div class="flex items-center justify-between gap-2">
       <p class="text-xs font-black text-white">🗂️ In dieser Sitzung gescannt: ${sc.series.length} Karten • ${eur(total)}</p>
       <div class="flex flex-wrap justify-end gap-1.5"><button onclick="PS.liveScanSellAll()" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-lg">🏷️ Alle inserieren</button>
+      <button onclick="PS.liveScanSellAll('instant')" class="bg-yellow-400 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-lg" title="Alle mit fairem Preis – nach kurzem Countdown live">⚡ Alle 1-Tap</button>
       <button onclick="PS.liveScanAddAll()" class="bg-emerald-500 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-lg">💼 Alle zur Sammlung</button>
       <button onclick="PS.liveScanClear()" class="bg-slate-800 text-slate-300 text-[11px] font-bold px-2.5 py-1.5 rounded-lg">Leeren</button></div>
     </div>
@@ -442,7 +446,7 @@ function renderSeries() {
         </span>
         <span class="block truncate font-bold mt-1">${FLAG[s.lang] || ""} ${esc(s.name)}</span>
       </button>`).join("")}</div>
-    <p class="text-[10px] text-slate-500">Tipp: Karten einfach nacheinander vor die Kamera halten – jede erkannte Karte landet hier mit Preis-Etikett und echtem Scan-Foto. Mit „Alle inserieren“ erscheinen sie im Swipe-Radar, wo Käufer mit ❌, 🛒 Kaufen oder ❤️ reagieren.</p>`;
+    <p class="text-[10px] text-slate-500">Tipp: Karten einfach nacheinander vor die Kamera halten – jede erkannte Karte landet hier mit Preis-Etikett und echtem Scan-Foto. Mit „Alle inserieren“ (oder ⚡ 1-Tap: faire Preise, geht nach kurzem Countdown von selbst live) erscheinen sie im Swipe-Radar, wo Käufer mit ❌, 🛒 Kaufen oder ❤️ reagieren.</p>`;
 }
 
 /** KI-Knopf hervorheben, wenn die Erkennung auf dem Gerät unsicher ist (Stufe 3 nur bei Bedarf). */
@@ -558,21 +562,21 @@ async function addWish(key) {
 }
 
 /** Eine Karte direkt inserieren (Schnell-Inserieren mit fairem Preisvorschlag) */
-function sellOne(key) {
+function sellOne(key, mode = "") {
   const i = infoOf(key);
   if (!i || !requireLogin()) return;
   learn(key, probeFor(key));
   // Scan-Foto mitgeben (Serie bzw. aktueller Treffer), damit Käufer im Swipe-Radar die echte Karte sehen
   const photo = sc.series.find((s) => s.key === key)?.photo || (sc.current?.key === key ? sc.current.photo : null) || null;
-  openQuickList([{ ...i, photo }]);
+  openQuickList([{ ...i, photo, source: "scan" }], { instant: mode === "instant" });
 }
 
 /** Alle Karten der Scan-Serie auf einmal inserieren */
-function sellAll() {
+function sellAll(mode = "") {
   if (!sc.series.length) { toast("Noch nichts gescannt", "Halte Karten nacheinander vor die Kamera – jede erkannte Karte landet in der Liste."); return; }
   if (!requireLogin()) return;
   for (const s of sc.series) learn(s.key, s.probe);
-  openQuickList([...sc.series].reverse());
+  openQuickList([...sc.series].reverse().map((s) => ({ ...s, source: "scan" })), { instant: mode === "instant" });
 }
 
 function flipCheck(key) {
@@ -626,7 +630,7 @@ export const liveScanApi = {
   liveScanSell: sellOne,
   liveScanSellAll: sellAll,
   /** Schnell-Inserieren für beliebige Treffer (z. B. Foto-Scan) */
-  liveScanQuickList: (infos) => openQuickList(infos),
+  liveScanQuickList: (infos, opts) => openQuickList(infos, opts),
   ...quickListApi,
   liveScanDetails: details,
   liveScanPhoto: photoScan,

@@ -19,7 +19,9 @@ import {
 import { cardExtrasHtml, accountExtrasHtml } from "./growth.js";
 import { refreshDupes } from "./collector.js";
 import { groupDuplicates, surplusBadge } from "./collector-logic.js";
-import { initArena, arenaApi, addSwipeItemToPortfolio } from "./arena.js";
+import { initArena, arenaApi, addSwipeItemToPortfolio, sellBlockHtml } from "./arena.js";
+import { sellApi, loadMyListings, activeListingFor } from "./sell.js";
+import { priceTagHtml } from "./price-tag.js";
 import { initDealsRadar, dealsRadarApi } from "./deals-radar.js";
 import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
 import { initFlip, flipApi, syncFlip } from "./flip.js";
@@ -458,7 +460,8 @@ async function openCard(cardId) {
           ${btn("Hinzufügen", `PS.addCardToPortfolio(${jsArg(card.id)})`, "w-full bg-emerald-500 text-slate-950")}
         </div>
       </div>
-      <button onclick="PS.listCard(${jsArg(card.id)}, ${jsArg(card.name)}, ${Number(price) || 0})" class="w-full bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">🤝 Diese Karte im Tausch-Hub inserieren</button>
+      ${sellBlockHtml("sellCatalogCard", `${jsArg(card.id)}, ${jsArg(card.name)}, ${Number(price) || 0}, ${jsArg(card.image || "")}, ${jsArg(card.setName || "")}`, price)}
+      <button onclick="PS.listCard(${jsArg(card.id)}, ${jsArg(card.name)}, ${Number(price) || 0})" class="w-full bg-slate-800 text-slate-200 font-bold py-2 rounded-xl text-[11px]">🤝 Nur zum Tausch anbieten (mit Tauschwunsch)</button>
       ${cardExtrasHtml(card)}
       <p class="text-[10px] text-slate-500">Preise: eigene PokeSwipe-Preisdatenbank (Cardmarket-Referenz, eBay- und PokeSwipe-Verkäufe), stündlich aktualisiert. *Affiliate-Link</p>`, { wide: true });
     // Eigene Bewertung nach Zustand & Graded-Stufen (Phase 9)
@@ -685,8 +688,29 @@ function renderServerPortfolio() {
   const box = $("portfolio-list");
   if (!box) return;
   refreshDupes();
-  if (!p.items.length) { box.innerHTML = `<p class="text-xs text-slate-500 py-4 text-center">Dein Portfolio ist leer. Suche oben eine Karte – der Wert wird automatisch live berechnet.</p>`; return; }
+  if (!p.items.length) { $("ps-pf-sellbar")?.remove(); box.innerHTML = `<p class="text-xs text-slate-500 py-4 text-center">Dein Portfolio ist leer. Suche oben eine Karte – der Wert wird automatisch live berechnet.</p>`; return; }
   const dupeMap = new Map(groupDuplicates(p.items).map((d) => [d.cardId, d]));
+  const sellable = (i) => Boolean(i.cardId || i.printId);
+  // Verkaufen-Leiste: Auswahlmodus für mehrere Karten → ein Schnell-Inserat für alle
+  const bar = $("ps-pf-sellbar") || (() => {
+    const el = document.createElement("div");
+    el.id = "ps-pf-sellbar";
+    box.before(el);
+    return el;
+  })();
+  for (const id of [...pfSell.sel]) if (!p.items.some((i) => Number(i.id) === id && sellable(i))) pfSell.sel.delete(id);
+  const selItems = p.items.filter((i) => pfSell.sel.has(Number(i.id)));
+  const selTotal = selItems.reduce((sum, i) => sum + (Number(i.unitValue) || 0), 0);
+  bar.className = "mb-2";
+  bar.innerHTML = pfSell.on
+    ? `<div class="sticky top-0 z-10 bg-slate-950/95 backdrop-blur border-2 border-emerald-400/60 rounded-2xl p-2 flex flex-wrap items-center gap-2 text-xs">
+        <span class="font-black text-white flex-1 min-w-[8rem]">🏷️ ${selItems.length} ausgewählt${selItems.length ? ` • ${eur(selTotal)}` : " – Karten antippen"}</span>
+        <button onclick="PS.pfSellAll()" class="bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-xl">Alle</button>
+        <button onclick="PS.pfSellGo()" ${selItems.length ? "" : "disabled"} class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 font-black px-3 py-1.5 rounded-xl disabled:opacity-40">🚀 Verkaufen</button>
+        <button onclick="PS.pfSellGo('instant')" ${selItems.length ? "" : "disabled"} class="bg-yellow-400 text-slate-950 font-black px-2.5 py-1.5 rounded-xl disabled:opacity-40" title="Faire Preise, gemerkte Angaben – nach kurzem Countdown live">⚡ 1-Tap</button>
+        <button onclick="PS.pfSellMode(false)" class="text-slate-400 hover:text-white px-1" aria-label="Auswahl beenden">✕</button>
+      </div>`
+    : p.items.some(sellable) ? `<button onclick="PS.pfSellMode(true)" class="w-full bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-400/50 text-emerald-200 font-black text-xs py-2 rounded-xl">🏷️ Mehrere Karten auf einmal verkaufen – faire Preise sind schon eingetragen</button>` : "";
   const shownDupe = new Set();
   const dupeBadge = (i) => {
     const d = i.cardId && dupeMap.get(i.cardId);
@@ -694,10 +718,21 @@ function renderServerPortfolio() {
     shownDupe.add(d.cardId);
     return `<button onclick="event.stopPropagation();PS.sellSurplus(${jsArg(d.cardId)})" class="mt-0.5 inline-block bg-amber-400 text-slate-950 text-[10px] font-black rounded-md px-1.5 py-0.5 text-left">♻️ ${esc(surplusBadge(d, eur))} • verkaufen</button>`;
   };
-  box.innerHTML = p.items.map((i) => `
-    <div class="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-xs">
-      <div class="flex items-center gap-2.5 min-w-0 ${i.cardId || i.printId ? "cursor-pointer" : ""}" ${i.printId ? `onclick="PS.openPrint(${jsArg(i.printId)})"` : i.cardId ? `onclick="PS.openCard(${jsArg(i.cardId)})"` : ""}>
-        <img src="${esc(cdn(i.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" class="w-8 h-11 object-contain rounded shrink-0" />
+  const condKey = (c) => ({ M: "mint", NM: "nm", EX: "ex", GD: "gd", LP: "lp", PL: "pl", PO: "po" })[String(c || "").toUpperCase()] || "";
+  box.innerHTML = p.items.map((i) => {
+    const listed = activeListingFor(i);
+    const picked = pfSell.sel.has(Number(i.id));
+    const open = pfSell.on && sellable(i) ? `onclick="PS.pfSellToggle(${Number(i.id)})"`
+      : i.printId ? `onclick="PS.openPrint(${jsArg(i.printId)})"` : i.cardId ? `onclick="PS.openCard(${jsArg(i.cardId)})"` : "";
+    return `
+    <div class="flex items-center justify-between gap-2 bg-slate-900 border ${picked ? "border-emerald-400 ring-1 ring-emerald-400" : "border-slate-800"} px-3 py-2 rounded-xl text-xs">
+      <div class="flex items-center gap-2.5 min-w-0 ${i.cardId || i.printId ? "cursor-pointer" : ""}" ${open}>
+        ${pfSell.on ? `<span class="shrink-0 w-5 h-5 rounded-md border-2 ${picked ? "bg-emerald-400 border-emerald-300 text-slate-950" : "border-slate-500"} ${sellable(i) ? "" : "opacity-30"} flex items-center justify-center text-[11px] font-black" aria-hidden="true">${picked ? "✓" : ""}</span>` : ""}
+        <div class="relative shrink-0 w-10 pb-1">
+          <img src="${esc(cdn(i.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" class="w-10 h-14 object-contain rounded" />
+          ${listed ? `<div class="absolute -bottom-1 -left-1.5 ps-price-tag-tilt">${priceTagHtml({ price: Number(listed.price), condition: listed.condition || condKey(i.condition) }, "sm")}</div>`
+            : Number(i.unitValue) > 0 ? `<div class="absolute -bottom-1 -left-1.5 ps-price-tag-tilt opacity-80">${priceTagHtml({ price: Number(i.unitValue), condition: condKey(i.condition) }, "sm")}</div>` : ""}
+        </div>
         <div class="min-w-0">
           <p class="font-bold text-white truncate">${langFlag(i.lang)}${i.quantity > 1 ? `${Number(i.quantity) || 0}× ` : ""}${esc(i.name)}</p>
           <p class="flex gap-1 items-center">${variantBadge(i.variant)}${i.condition && i.condition !== "NM" ? `<span class="text-[9px] font-black bg-slate-700 text-slate-100 px-1.5 rounded">${esc(i.condition)}</span>` : ""}${i.live && i.variant !== "normal" && !i.exactVariant ? `<span class="text-[9px] text-slate-500">Basispreis</span>` : ""}</p>
@@ -706,20 +741,45 @@ function renderServerPortfolio() {
             ${i.change30 !== null ? `<span class="${i.change30 >= 0 ? "text-emerald-400" : "text-rose-400"} text-[10px] font-bold">${pct(i.change30)}</span>` : ""}
             ${i.purchasePrice !== null ? `<span class="text-slate-500 text-[10px]">• EK ${eur(i.purchasePrice)}</span>` : ""}</p>
           ${dupeBadge(i)}
+          ${listed ? `<span class="mt-0.5 inline-block text-[10px] font-black text-emerald-300">✅ Inseriert für ${eur(listed.price)}${listed.buy_now ? " • Sofort-Kauf" : ""}</span>` : ""}
         </div>
       </div>
-      <div class="flex gap-1.5 shrink-0">
+      <div class="flex gap-1.5 shrink-0 items-center">
+        ${sellable(i) && !pfSell.on ? (listed
+          ? `<button onclick="PS.showSub('map', 'market')" class="bg-emerald-500/20 text-emerald-300 font-bold px-2 py-1 rounded-lg" title="Zu deinen Inseraten">📋</button>`
+          : `<button onclick="PS.sellPortfolioItem(${Number(i.id)})" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 font-black px-2 py-1 rounded-lg" title="Verkaufen – fairer Preis ist schon eingetragen">🏷️ Verkaufen</button>`) : ""}
         <button onclick="PS.editItem(${Number(i.id)})" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg" title="Anzahl / Einkaufspreis">✏️</button>
         <a href="${cm(i.name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2 py-1 rounded-lg">CM</a>
         <a href="${ebay(i.name)}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-bold px-2 py-1 rounded-lg">eBay</a>
         <button onclick="PS.removeItem(${Number(i.id)})" class="text-slate-400 hover:text-rose-400 px-1.5" aria-label="Entfernen">✕</button>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
+
+// Auswahlmodus „Mehrere verkaufen“ in der Sammlung
+const pfSell = { on: false, sel: new Set() };
+const pfSellApi = {
+  pfSellMode: (on) => { pfSell.on = Boolean(on); if (!on) pfSell.sel.clear(); renderServerPortfolio(); },
+  pfSellToggle: (id) => { id = Number(id); if (pfSell.sel.has(id)) pfSell.sel.delete(id); else pfSell.sel.add(id); renderServerPortfolio(); },
+  pfSellAll: () => {
+    const items = (state.portfolio?.items || []).filter((i) => (i.cardId || i.printId) && !activeListingFor(i));
+    const all = items.length && items.every((i) => pfSell.sel.has(Number(i.id)));
+    pfSell.sel = all ? new Set() : new Set(items.slice(0, 60).map((i) => Number(i.id)));
+    renderServerPortfolio();
+  },
+  pfSellGo: (mode = "") => {
+    const ids = [...pfSell.sel].slice(0, 60);
+    if (!ids.length) return toast("Nichts ausgewählt", "Tippe die Karten an, die du verkaufen möchtest.");
+    sellApi.sellPortfolioItems(ids, mode);
+    pfSell.on = false; pfSell.sel.clear(); renderServerPortfolio();
+  },
+};
+window.addEventListener("ps:my-listings", () => { if (state.portfolio) renderServerPortfolio(); });
 
 async function loadPortfolio() {
   if (!state.user) { state.portfolio = null; renderPortfolioDash(); origRenderPortfolio?.(); refreshDupes(); return; }
-  try { state.portfolio = await api("/api/portfolio"); renderServerPortfolio(); }
+  try { state.portfolio = await api("/api/portfolio"); renderServerPortfolio(); loadMyListings(); }
   catch (e) { if (e.status === 401) { state.user = null; renderPortfolioDash(); } }
 }
 
@@ -826,7 +886,10 @@ function listingCard(l) {
     const pb = l.priceCheck ? priceBadge[l.priceCheck] : null;
     return `<div class="poke-glass rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${l.boosted ? "border-2 border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,.25)]" : ""}">
       <div class="flex items-center gap-3 min-w-0">
-        <img src="${esc(cdn(l.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" class="w-12 h-16 object-contain rounded border border-yellow-400/40 shrink-0" />
+        <div class="relative shrink-0 pb-1">
+          <img src="${esc(cdn(l.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" class="w-12 h-16 ${String(l.image || "").startsWith("/api/images/") ? "object-cover" : "object-contain"} rounded border border-yellow-400/40" />
+          <div class="absolute -bottom-1 -left-2 ps-price-tag-tilt">${priceTagHtml({ price: Number(l.price), condition: l.condition || "" }, "sm")}</div>
+        </div>
         <div class="min-w-0 text-xs space-y-0.5">
           <div class="flex flex-wrap gap-1">
             ${l.boosted ? `<span class="text-[9px] font-black bg-yellow-400 text-slate-950 px-1.5 rounded">🚀 TOP</span>` : ""}
@@ -1236,6 +1299,8 @@ window.PS = {
   scanQuickSearch: () => searchCards(($("scan-quick-q")?.value || "").trim(), "scan-quick-results"),
   ...featureApi,
   ...arenaApi,
+  ...sellApi,
+  ...pfSellApi,
   ...dealsRadarApi,
   ...shellApi,
   ...flipApi,

@@ -408,6 +408,23 @@ const usd = (n) => (globalThis.psLang === "en"
   ? "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   : (Number(n) || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $");
 
+/**
+ * „Verkaufen“-Block für Detailansichten: großes Etikett mit fairem Preis + ein Tipp zum Schnell-Inserieren
+ * (oder 1-Tap mit Countdown). fn: Name der PS-Funktion, args: bereits escapte Argumentliste.
+ */
+export function sellBlockHtml(fn, args, price) {
+  return `<div class="bg-gradient-to-r from-emerald-500/15 to-cyan-500/15 border-2 border-emerald-400/50 rounded-2xl p-3 space-y-2">
+    <div class="flex items-center gap-3">
+      <div class="ps-price-tag-tilt shrink-0">${Number(price) > 0 ? priceTagHtml({ price, label: "Markt" }, "md") : `<span class="text-2xl" aria-hidden="true">🏷️</span>`}</div>
+      <p class="text-[11px] text-slate-200 leading-snug"><strong class="text-white">Hast du die Karte?</strong> Fairer Preis ist schon eingetragen – in 1–2 Tipps mit Etikett im Swipe-Radar und Tausch-Hub.</p>
+    </div>
+    <div class="grid grid-cols-[1fr_auto] gap-2">
+      <button type="button" onclick="PS.${fn}(${args})" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 font-black text-xs py-2.5 rounded-xl shadow">🏷️ Jetzt verkaufen</button>
+      <button type="button" onclick="PS.${fn}(${args}, 'instant')" class="bg-yellow-400 text-slate-950 font-black text-xs px-3 py-2.5 rounded-xl shadow" title="Fairer Preis, gemerkte Angaben – geht nach kurzem Countdown live">⚡ 1-Tap</button>
+    </div>
+  </div>`;
+}
+
 export async function openPrint(id) {
   if (!/^(en|ja):[A-Za-z0-9.\-_]{2,40}$/.test(String(id || ""))) return;
   modal("ps-card", `<p class="text-yellow-400 text-xs font-bold text-center py-6">⏳ Lade Marktpreise …</p>`);
@@ -445,6 +462,7 @@ export async function openPrint(id) {
       </div>
       ${series.length > 1 ? `<div class="bg-slate-950 rounded-2xl p-3 border border-slate-800">${sparkline(series, 400, 60)}</div>` : ""}
       <div id="ps-print-comps"></div>
+      ${sellBlockHtml("sellPrint", `${jsArg(p.id)}, ${jsArg(p.lang)}, ${jsArg(`${p.name}${p.number ? ` ${p.number}` : ""}`)}, ${price || 0}, ${jsArg(p.image || "")}, ${jsArg(p.setName || "")}`, price)}
       <div class="grid grid-cols-2 gap-2">
         ${btn("💼 Zur Sammlung", `PS.addPrintToPortfolio(${jsArg(p.id)})`, "bg-emerald-500 text-slate-950")}
         ${p.baseCardId ? btn("🔔 Preisalarm & Wunschliste", `PS.openCard(${jsArg(p.baseCardId)})`, "bg-yellow-400 text-slate-950") : btn("💎 PSA-Werte & Verkäufe", `PS.openComps("print", ${jsArg(p.id)})`, "bg-slate-800 text-purple-300")}
@@ -512,6 +530,7 @@ function actionsHtml(item) {
     <div class="flex justify-center flex-wrap gap-x-4 gap-y-1 text-[11px]">
       <button type="button" onclick="PS.arenaUndo()" class="text-slate-400 hover:text-white font-bold">↩️ Zurück</button>
       ${isListing ? "" : `<button type="button" onclick="addCurrentSwipeToPortfolio()" class="text-purple-300 hover:text-purple-200 font-bold">💼 + Portfolio</button>`}
+      ${isListing || !(item.cardId || item.printId || item.lang === "de") ? "" : `<button type="button" onclick="PS.sellSwipeCard()" class="text-emerald-300 hover:text-emerald-200 font-black" title="Du hast die Karte? Fairer Preis ist schon eingetragen">🏷️ Hab ich – verkaufen${Number(item.cm) > 0 ? ` · ${eur(item.cm)}` : ""}</button>`}
       ${isListing && item.buyNow ? `<button type="button" onclick="PS.arenaBuy('cart')" class="text-cyan-300 hover:text-cyan-200 font-bold">➕ In den Warenkorb &amp; weiter</button>` : ""}
     </div>`;
 }
@@ -536,11 +555,13 @@ function paintSwipeExtras(item) {
   // Preis-Etikett: Inserat = Verkaufspreis + Zustand + Versand; Katalogkarte = günstigstes Angebot
   const tag = $("swipe-tag");
   if (tag) {
-    const price = Number(item.price) || 0;
+    // Katalogkarte ohne Angebot: Marktwert als Etikett, damit jede Karte im Stapel ein Preisschild trägt
+    const offer = Number(item.price) || 0;
+    const price = offer > 0 || isListing ? offer : Number(item.cm) || 0;
     tag.innerHTML = price > 0 ? priceTagHtml({
-      price, market: item.cm, condition: isListing ? item.condition : "",
+      price, market: offer > 0 ? item.cm : null, condition: isListing ? item.condition : "",
       shippingCents: isListing && item.buyNow ? item.shippingCents : 0,
-      label: isListing ? (item.buyNow ? "Sofort" : "Preis") : "ab",
+      label: isListing ? (item.buyNow ? "Sofort" : "Preis") : offer > 0 ? "ab" : "Markt",
     }, "lg") : "";
   }
   // Kennzeichen: frisch gescannt mit echtem Foto, Zustand ausgeschrieben
