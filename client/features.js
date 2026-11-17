@@ -786,10 +786,10 @@ const SUBTABS = {
     { key: "search", label: "Kartensuche & Rip or Keep", match: (el) => el.querySelector("#tcgdex-search-inp, #ripkeep-select") },
   ],
   flip: [
-    { key: "drops", label: "🚨 Restock & Vorbestellung", match: (el) => el.id === "ps-drops" },
-    { key: "alerts", label: "Preisalarme", match: (el) => el.id === "ps-tracker" },
+    { key: "drops", label: "🚨 Restock-Radar", match: (el) => el.id === "ps-drops" },
+    { key: "deals", label: "📡 Netto-Flip-Radar", fallback: true, match: () => false },
+    { key: "alerts", label: "🔔 Preisalarme", match: (el) => el.id === "ps-tracker" },
     { key: "sealed", label: "Sealed-Analyse", pro: true, match: (el) => el.id === "ps-sealed" },
-    { key: "deals", label: "Flip-Deals", fallback: true, match: () => false },
   ],
   scan: [
     { key: "live", label: "⚡ Live-Scan", match: (el) => el.id === "ps-live-scan" },
@@ -934,15 +934,19 @@ function tidyLayout() {
     scan: svg('<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><rect x="8.5" y="7" width="7" height="10" rx="1.2"/>'),
     map: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.9.6 3.1 2.5 3.5 5.5"/>'),
     portfolio: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h6M15 12h6"/><circle cx="12" cy="12" r="3"/>'),
+    profile: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.4 4.2-6.5 8-6.5s7 2.1 8 6.5"/>'),
+    radar: svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/>'),
+    market: svg('<path d="M4 7h16l-1.5 9.5a2 2 0 0 1-2 1.5h-9a2 2 0 0 1-2-1.5z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/>'),
   };
-  // 5 Kernbereiche: Entdecken, Live-Scanner, Flip-Radar, Meine Sammlung, Community & Markt
-  const names = { swipe: ["electric", "Entdecken"], scan: ["water", "Live-Scanner"], flip: ["fire", "Flip-Radar"], portfolio: ["grass", "Meine Sammlung"], map: ["psychic", "Community & Markt"] };
-  const short = { portfolio: "Sammlung", map: "Markt", scan: "Scanner" };
+  // 5 Hauptbereiche (Mobile-First): Entdecken · Scanner & Sammlung · Marktplatz & Tausch · Radar · Profil
+  const names = { swipe: ["electric", "Entdecken"], scan: ["water", "Scanner & Sammlung"], map: ["psychic", "Marktplatz & Tausch"], flip: ["fire", "Radar"], profile: ["grass", "Profil"] };
+  const iconOf = { swipe: "swipe", scan: "scan", map: "market", flip: "radar", profile: "profile" };
+  const short = { scan: "Scanner", map: "Marktplatz" };
   for (const [k, [type, label]] of Object.entries(names)) {
     const d = $(`tab-${k}`);
-    if (d) { d.dataset.type = type; d.innerHTML = `<span class="ico">${icons[k]}</span><span>${label}</span>`; }
+    if (d) { d.dataset.type = type; d.innerHTML = `<span class="ico">${icons[iconOf[k]]}</span><span>${label}</span>`; }
     const m = $(`mob-${k}`);
-    if (m) { m.dataset.type = type; m.innerHTML = `<span class="ico">${icons[k]}</span><span class="text-[10px] mt-0.5">${short[k] || label}</span>`; }
+    if (m) { m.dataset.type = type; m.setAttribute("aria-label", label); m.innerHTML = `<span class="ico">${icons[iconOf[k]]}</span><span class="text-[10px] mt-0.5">${short[k] || label}</span>`; }
   }
   const origSwitch = window.switchTab;
   window.switchTab = (tab) => {

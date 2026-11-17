@@ -14,9 +14,10 @@ test("PStTG: Vorwarnung ab 25 Verkäufen oder 1.700 €", () => {
   assert.equal(psttgWarningReached({ transactions: 1, grossCents: 180_000, refundedCents: 20_000 }), false);
 });
 
-test("PStTG: Meldepflicht ab 30 Verkäufen oder 2.000 €", () => {
+test("PStTG: Meldepflicht ab 30 Verkäufen oder mehr als 2.000 €", () => {
   assert.equal(psttgStage({ transactions: 30, grossCents: 0, refundedCents: 0 }), "reporting");
-  assert.equal(psttgStage({ transactions: 3, grossCents: 200_000, refundedCents: 0 }), "reporting");
+  assert.equal(psttgStage({ transactions: 3, grossCents: 200_000, refundedCents: 0 }), "warning");
+  assert.equal(psttgStage({ transactions: 3, grossCents: 200_001, refundedCents: 0 }), "reporting");
   assert.equal(psttgStage({ transactions: 29, grossCents: 199_999, refundedCents: 0 }), "warning");
   assert.equal(dac7Reportable({ transactions: 29, grossCents: 210_000, refundedCents: 20_000 }), false);
 });

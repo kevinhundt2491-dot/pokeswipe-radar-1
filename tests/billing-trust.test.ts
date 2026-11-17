@@ -20,11 +20,14 @@ test("Trust-Grenzen: neue Konten dürfen nur kleine Beträge per Treuhand bezahl
   assert.equal(flagged.ok, false);
 });
 
-test("DAC7: Meldeschwellen 30 Verkäufe oder 2.000 €", () => {
+test("DAC7: Meldeschwellen 30 Verkäufe oder mehr als 2.000 €", () => {
   const s = (transactions: number, grossCents: number, refundedCents = 0) => ({ transactions, grossCents, refundedCents, feeCents: 0 } as any);
   assert.equal(dac7Reportable(s(DAC7_TX_THRESHOLD - 1, DAC7_GROSS_THRESHOLD_CENTS - 1)), false);
   assert.equal(dac7Reportable(s(DAC7_TX_THRESHOLD, 0)), true);
-  assert.equal(dac7Reportable(s(1, DAC7_GROSS_THRESHOLD_CENTS)), true);
+  // genau 2.000,00 € ist noch nicht meldepflichtig (§ 4 Abs. 5 Nr. 4 PStTG: „nicht mehr als 2.000 €“)
+  assert.equal(dac7Reportable(s(1, DAC7_GROSS_THRESHOLD_CENTS)), false);
+  assert.equal(dac7Reportable(s(1, DAC7_GROSS_THRESHOLD_CENTS + 1)), true);
+  assert.equal(dac7Reportable(s(29, DAC7_GROSS_THRESHOLD_CENTS)), false);
   assert.ok(commercialReasons({ ...s(45, 100_000) }).length > 0);
   assert.equal(commercialReasons(s(3, 1_000)).length, 0);
 });

@@ -38,7 +38,7 @@ async function openSeller() {
       <h3 class="text-base font-black text-white">🔒 Verkaufen mit Käuferschutz</h3>
       <ul class="text-xs text-slate-200 space-y-1 bg-slate-950 border border-slate-800 rounded-2xl p-3">
         <li>• Käufer bezahlen sicher über Stripe (Karte, Apple Pay, Google Pay, Klarna, SEPA …).</li>
-        <li>• Das Geld liegt in der Treuhand, bis der Käufer den Erhalt bestätigt – spätestens ${m.autoReleaseDays} Tage nach Versand wird automatisch ausgezahlt.</li>
+        <li>• Das Geld liegt in der Treuhand, bis der Käufer den Erhalt bestätigt – bei DHL-Sendungen wird automatisch erst ${Number(m.releaseAfterDeliveryDays) || 3} Tage nach der DHL-Zustellung ausgezahlt (mit Etikett aus der App wird die Bestellung automatisch „versendet“), bei anderen Versandarten ${m.autoReleaseDays} Tage nach Versand.</li>
         <li>• Die Lieferadresse siehst du erst nach erfolgreicher Zahlung. Bitte innerhalb von ${m.shipWindowDays} Tagen versichert versenden.</li>
         <li>• Provision je Tarif (nur bei Verkauf, mindestens 0,49 €):</li>
       </ul>
@@ -60,7 +60,7 @@ async function openSeller() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 10: PStTG-Hinweis (ab 25 Verkäufen / 1.700 € Vorwarnung, ab 30 / 2.000 € meldepflichtig)
+// Phase 10: PStTG-Hinweis (ab 25 Verkäufen / 1.700 € Vorwarnung, ab 30 Verkäufen / mehr als 2.000 € meldepflichtig)
 // ---------------------------------------------------------------------------
 function psttgText(n) {
   if (!n || n.taxInfoComplete) return "";
@@ -149,7 +149,7 @@ export function listingMetaHtml(l) {
 }
 
 const buyerConsent = (m) => `<label class="flex gap-2 items-start text-xs text-slate-200"><input type="checkbox" id="ps-buy-terms" class="mt-0.5 accent-cyan-400">
-  <span>Ich schließe einen verbindlichen Kaufvertrag mit dem Verkäufer (in der Regel Privatperson – dann ohne Widerrufsrecht und Gewährleistung). PokeSwipe verwahrt die Zahlung treuhänderisch: Bestätige ich den Erhalt nicht und melde kein Problem, wird ${m.autoReleaseDays} Tage nach Versand ausgezahlt. Es gelten die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> (<a href="/datenschutz#marktplatz" target="_blank" rel="noopener" class="underline">Datenschutz</a>).</span></label>
+  <span>Ich schließe einen verbindlichen Kaufvertrag mit dem Verkäufer (in der Regel Privatperson – dann ohne Widerrufsrecht und Gewährleistung). PokeSwipe verwahrt die Zahlung treuhänderisch: Bestätige ich den Erhalt nicht und melde kein Problem, wird bei DHL ${Number(m.releaseAfterDeliveryDays) || 3} Tage nach der bestätigten Zustellung, sonst ${m.autoReleaseDays} Tage nach Versand ausgezahlt. Es gelten die <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline font-bold">AGB</a> (<a href="/datenschutz#marktplatz" target="_blank" rel="noopener" class="underline">Datenschutz</a>).</span></label>
   <p id="ps-buy-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>`;
 
 async function openBuy(listingId) {
@@ -221,7 +221,7 @@ async function openOrders() {
       ${btn(state.me?.sellerReady ? "🔒 Verkäuferkonto" : "🔒 Verkäufer werden", "PS.openSeller()", "bg-slate-800 text-cyan-200")}</div>
       ${section("🛍️ Meine Käufe", orders.filter((o) => o.role === "buyer"))}
       ${section("💼 Meine Verkäufe", orders.filter((o) => o.role === "seller"))}
-      <p class="text-[10px] text-slate-500">Käuferschutz: Zahlung liegt in der Treuhand, bis der Käufer den Erhalt bestätigt (automatisch ${m.autoReleaseDays} Tage nach Versand). Nicht versendet nach ${m.shipWindowDays} Tagen → automatische Erstattung. Bei Problemen „Reklamation“ wählen – unser Team entscheidet.</p>`, { wide: true });
+      <p class="text-[10px] text-slate-500">Käuferschutz: Zahlung liegt in der Treuhand, bis der Käufer den Erhalt bestätigt (automatisch bei DHL ${Number(m.releaseAfterDeliveryDays) || 3} Tage nach Zustellung, sonst ${m.autoReleaseDays} Tage nach Versand). Nicht versendet nach ${m.shipWindowDays} Tagen → automatische Erstattung. Bei Problemen „Reklamation“ wählen – unser Team entscheidet.</p>`, { wide: true });
   } catch (e) { closeModalEl("ps-orders"); handleError(e); }
 }
 
@@ -236,7 +236,8 @@ function orderCard(o, m) {
   if (isB && o.canWithdraw) acts.push(btn("↩️ Widerrufen", `PS.withdrawOrder(${id})`, "bg-slate-800 text-amber-200"));
   if (isS && o.status === "withdrawn") acts.push(a("accept_return", "Rücksendung erhalten – erstatten", "bg-emerald-500 text-slate-950"));
   if (!o.checkoutId && ((isB && ["offered", "awaiting_payment"].includes(o.status)) || (isS && o.status === "awaiting_payment"))) acts.push(a("cancel", "Abbrechen", "bg-slate-800 text-slate-300"));
-  if (isS && o.status === "paid") acts.push(btn("📦 Versand eintragen", `PS.shipOrder(${id})`, "bg-yellow-400 text-slate-950"), a("refund", "Stornieren & erstatten", "bg-slate-800 text-rose-300"));
+  if (isS && o.status === "paid") acts.push(btn("📦 Versand eintragen / DHL-Etikett", `PS.shipOrder(${id})`, "bg-yellow-400 text-slate-950"), a("refund", "Stornieren & erstatten", "bg-slate-800 text-rose-300"));
+  if (isS && o.status === "shipped" && o.labelShipped && !["transit", "delivered"].includes(o.trackingStatus)) acts.push(btn("📮 Etikett verwalten", `PS.shipOrder(${id})`, "bg-slate-800 text-cyan-200"));
   if (isB && ["paid", "shipped"].includes(o.status)) acts.push(a("confirm", "✅ Erhalten – Geld freigeben", "bg-emerald-500 text-slate-950"), a("dispute", "⚠️ Problem melden", "bg-slate-800 text-rose-300"));
   if (o.status === "released" && !o.reviewed) acts.push(btn("⭐ Bewerten", `PS.reviewOrder(${id})`, "bg-amber-400 text-slate-950"));
   const other = isB ? o.seller : o.buyer;
@@ -251,7 +252,9 @@ function orderCard(o, m) {
         ${isS && o.payoutCents !== undefined ? `<p class="text-[11px] text-slate-400">Auszahlung an dich: <strong class="text-emerald-300">${cents(o.payoutCents)}</strong> (Provision ${cents(o.feeCents)})</p>` : ""}
         ${o.message ? `<p class="text-[11px] text-slate-400">„${esc(o.message)}“</p>` : ""}
         ${o.status === "awaiting_payment" && o.payBy ? `<p class="text-[11px] text-amber-300">Zahlung bis ${new Date(o.payBy).toLocaleString("de-DE")}</p>` : ""}
-        ${o.trackingNumber ? `<p class="text-[11px] text-slate-300">📦 ${esc(o.carrierLabel)} ${o.trackingUrl ? `<a href="${esc(o.trackingUrl)}" target="_blank" rel="noopener" class="underline text-cyan-300">${esc(o.trackingNumber)}</a>` : esc(o.trackingNumber)}${o.releaseAfter && o.status === "shipped" ? ` • automatische Auszahlung am ${new Date(o.releaseAfter).toLocaleDateString("de-DE")}` : ""}</p>` : ""}
+        ${o.trackingNumber ? `<p class="text-[11px] text-slate-300">📦 ${esc(o.carrierLabel)} ${o.trackingUrl ? `<a href="${esc(o.trackingUrl)}" target="_blank" rel="noopener" class="underline text-cyan-300">${esc(o.trackingNumber)}</a>` : esc(o.trackingNumber)}${o.releaseAfter && o.status === "shipped" && (!o.trackable || o.deliveredAt) ? ` • automatische Auszahlung am ${new Date(o.releaseAfter).toLocaleDateString("de-DE")}` : ""}</p>` : ""}
+        ${o.trackingNumber && o.trackingStatusLabel && ["shipped", "released"].includes(o.status) ? `<p class="text-[11px] ${o.trackingStatus === "delivered" ? "text-emerald-300" : o.trackingStatus === "failure" ? "text-rose-300" : "text-cyan-200"}">🛰️ DHL-Status: ${esc(o.trackingStatusLabel)}${o.deliveredAt ? ` am ${new Date(o.deliveredAt).toLocaleDateString("de-DE")}` : ""}${o.status === "shipped" && o.trackable && !o.deliveredAt ? " • Auszahlung erst nach Zustellung" : ""}</p>` : ""}
+        ${o.releaseReview && o.status === "shipped" ? `<p class="text-[11px] text-amber-300">🔎 Auszahlung in Prüfung: noch kein Versandnachweis von DHL.</p>` : ""}
         ${o.disputeReason ? `<p class="text-[11px] text-rose-300">⚠️ ${esc(o.disputeReason)}</p>` : ""}
         <p class="text-[10px] text-slate-400">${o.sellerType === "business" ? `🏪 Gewerblicher Händler${o.sellerBusiness?.name ? `: ${esc(o.sellerBusiness.name)}, ${esc(o.sellerBusiness.address)}` : ""}${o.withdrawalUntil && ["shipped", "released"].includes(o.status) ? ` • Widerruf bis ${new Date(o.withdrawalUntil).toLocaleDateString("de-DE")}` : ""}` : "Privatverkauf (kein gesetzliches Widerrufsrecht)"}</p>
         ${o.status === "withdrawn" ? `<p class="text-[11px] text-amber-200">↩️ Widerrufen ${o.withdrawnAt ? `am ${new Date(o.withdrawnAt).toLocaleDateString("de-DE")}` : ""}${o.returnTracking ? ` • Rücksendung ${esc(o.returnTracking)}` : ""}${o.withdrawalNote ? ` • „${esc(o.withdrawalNote)}“` : ""}</p>` : ""}
@@ -357,8 +360,15 @@ async function createLabel(id, replace = false) {
     } });
     const nr = $("ps-ship-nr"); if (nr) nr.value = "";
     fillTracking(r.trackingNumber);
-    toast("📮 Etikett erstellt", `Sendungsnummer ${r.trackingNumber}${r.sandbox ? " (Testumgebung)" : ""}. Nach dem Aufkleben „Als versendet markieren“.`);
     labelPdf(r.label.pdfUrl, r.trackingNumber);
+    if (r.autoShipped) {
+      // Treuhand-Härtung: Etikett erzeugt → Bestellung ist automatisch „versendet“, der Käufer wurde benachrichtigt
+      toast("📦 Etikett erstellt & versendet", `Sendungsnummer ${r.trackingNumber}${r.sandbox ? " (Testumgebung)" : ""}. Die Bestellung ist jetzt als versendet markiert – die Auszahlung startet nach der DHL-Zustellung.`);
+      closeModalEl("ps-ship");
+      openOrders();
+      return;
+    }
+    toast("📮 Etikett erstellt", `Sendungsnummer ${r.trackingNumber}${r.sandbox ? " (Testumgebung)" : ""}.`);
     renderLabelBox(id);
   } catch (e) { if (msg) msg.textContent = e.message || "Etikett konnte nicht erstellt werden."; }
 }
@@ -380,9 +390,9 @@ async function labelPdf(url, shipmentNo) {
 async function cancelLabel(id, labelId) {
   if (!confirm("Etikett bei DHL stornieren? Bereits eingelieferte Sendungen lassen sich nicht stornieren.")) return;
   try {
-    await api(`/api/orders/${Number(id)}/label/${Number(labelId)}`, { method: "DELETE" });
+    const r = await api(`/api/orders/${Number(id)}/label/${Number(labelId)}`, { method: "DELETE" });
     const nr = $("ps-ship-nr"); if (nr) nr.value = "";
-    toast("🗑️ Storniert", "Das Etikett wurde bei DHL storniert.");
+    toast("🗑️ Storniert", r?.orderStatus === "paid" ? "Das Etikett wurde storniert – die Bestellung ist wieder „bezahlt, noch nicht versendet“." : "Das Etikett wurde bei DHL storniert.");
     renderLabelBox(id);
   } catch (e) { handleError(e); }
 }

@@ -356,3 +356,65 @@ export function parseTargetKey(key: string): { kind: TargetKind; id: string } | 
   const m = String(key || "").match(/^(card|print|sealed):(.{1,60})$/);
   return m ? { kind: m[1] as TargetKind, id: m[2] } : null;
 }
+
+// ---------------------------------------------------------------------------
+// Netto-Flip: realistischer Gewinn nach Verkaufsgebühren und Porto
+// ---------------------------------------------------------------------------
+// Bisher wurde nur Einkaufspreis gegen Marktpreis verglichen („Ersparnis“). Beim Weiterverkauf fallen aber
+// Plattform-/Zahlungsgebühren und Porto an – und bei Cardmarket-„ab“-Preisen auch das Porto für den Einkauf.
+// Werte: übliche öffentliche Gebühren (Stand 11/2026) und Porto-Richtwerte inkl. Versandmaterial – bewusst konservativ.
+export type SellChannel = "cardmarket" | "ebay" | "pokeswipe";
+export const SELL_CHANNELS: Record<SellChannel, { label: string; feePct: number; fixedEur: number; minFeeEur: number; note: string }> = {
+  cardmarket: { label: "Cardmarket", feePct: 5, fixedEur: 0, minFeeEur: 0, note: "5 % Verkaufsprovision" },
+  ebay: { label: "eBay (gewerblich)", feePct: 11, fixedEur: 0.35, minFeeEur: 0, note: "≈ 11 % Verkaufsprovision + 0,35 € je Verkauf" },
+  pokeswipe: { label: "PokeSwipe-Marktplatz", feePct: 6.5, fixedEur: 0, minFeeEur: 0.49, note: "6,5 % Provision im Free-Tarif (Pro-Pass: 3 %), mind. 0,49 €" },
+};
+export const SELL_CHANNEL_KEYS = Object.keys(SELL_CHANNELS) as SellChannel[];
+
+/**
+ * Porto-Richtwert je Sendung inkl. Versandmaterial (Toploader, Teambag, Umschlag/Karton):
+ *  – Einzelkarte unter 25 €: Standardbrief ≈ 1,35 €
+ *  – Einzelkarte 25–99 €: Einschreiben/Warensendung mit Nachverfolgung ≈ 3,70 €
+ *  – ab 100 €, Slabs (gegradet) und Sealed: versichertes DHL-Paket ≈ 6,99 €
+ */
+export function shippingEstimate(value: number, kind: string = "card", gradeKey: string = "raw"): number {
+  const v = Number(value) || 0;
+  if (kind === "sealed" || (gradeKey && gradeKey !== "raw") || v >= 100) return 6.99;
+  if (v >= 25) return 3.7;
+  return 1.35;
+}
+
+export type NetFlipInput = {
+  buyTotal: number; resale: number; kind?: string; gradeKey?: string; channel?: SellChannel;
+  /** Ist das Einkaufs-Porto schon im Einkaufspreis enthalten (z. B. eBay „inkl. Versand“)? */
+  buyShippingIncluded?: boolean;
+};
+export type NetFlip = {
+  channel: SellChannel; resale: number; fees: number; shipping: number; buyShipping: number; cost: number;
+  net: number; marginPct: number | null; roiPct: number | null; profitable: boolean;
+};
+
+export function netFlip(i: NetFlipInput): NetFlip | null {
+  const buy = Number(i.buyTotal), resale = Number(i.resale);
+  if (!(buy > 0) || !(resale > 0)) return null;
+  const channel: SellChannel = i.channel && SELL_CHANNELS[i.channel] ? i.channel : "cardmarket";
+  const c = SELL_CHANNELS[channel];
+  const fees = round2(Math.max(c.minFeeEur, resale * (c.feePct / 100) + c.fixedEur));
+  const shipping = shippingEstimate(resale, i.kind, i.gradeKey);
+  const buyShipping = i.buyShippingIncluded === false ? shippingEstimate(buy, i.kind, i.gradeKey) : 0;
+  const cost = round2(buy + buyShipping);
+  const net = round2(resale - fees - shipping - cost);
+  return {
+    channel, resale: round2(resale), fees, shipping, buyShipping, cost, net,
+    marginPct: resale > 0 ? Math.round((net / resale) * 1000) / 10 : null,
+    roiPct: cost > 0 ? Math.round((net / cost) * 1000) / 10 : null,
+    profitable: net > 0,
+  };
+}
+
+/** Netto-Rechnung für alle Verkaufskanäle (für die Auswahl im Flip-Radar). */
+export function netFlipAll(i: Omit<NetFlipInput, "channel">): Record<SellChannel, NetFlip> | null {
+  const out: Partial<Record<SellChannel, NetFlip>> = {};
+  for (const ch of SELL_CHANNEL_KEYS) { const r = netFlip({ ...i, channel: ch }); if (!r) return null; out[ch] = r; }
+  return out as Record<SellChannel, NetFlip>;
+}

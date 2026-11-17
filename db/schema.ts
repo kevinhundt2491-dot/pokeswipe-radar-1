@@ -976,10 +976,20 @@ export const marketOrders = pgTable("market_orders", {
   withdrawnAt: timestamp("withdrawn_at", { withTimezone: true }),
   withdrawalNote: text("withdrawal_note").notNull().default(""),
   returnTracking: text("return_tracking").notNull().default(""),
+  // Treuhand-Härtung: DHL-Sendungsverfolgung. Die Auszahlungsfrist startet erst ab bestätigter Zustellung.
+  // tracking_status: "" | pre-transit | transit | delivered | failure | unknown (DHL Unified Tracking API)
+  trackingStatus: text("tracking_status").notNull().default(""),
+  trackingCheckedAt: timestamp("tracking_checked_at", { withTimezone: true }),
+  trackingChecks: integer("tracking_checks").notNull().default(0),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  // Admin-Hinweis „kein Versandnachweis“ (genau einmal je Bestellung)
+  trackingAlertAt: timestamp("tracking_alert_at", { withTimezone: true }),
+  labelShippedAt: timestamp("label_shipped_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index("market_orders_checkout").on(t.checkoutId),
+  index("market_orders_tracking").on(t.status, t.carrier, t.trackingCheckedAt),
   index("market_orders_buyer").on(t.buyerId, t.createdAt),
   index("market_orders_seller").on(t.sellerId, t.createdAt),
   index("market_orders_status").on(t.status, t.releaseAfter),
@@ -1115,11 +1125,13 @@ export const sellerTaxInfo = pgTable("seller_tax_info", {
   postalCode: text("postal_code").notNull(),
   city: text().notNull(),
   country: text().notNull().default("DE"),
-  birthDate: date("birth_date"),
-  taxId: text("tax_id").notNull(), // Steuer-Identifikationsnummer (TIN)
+  birthDate: date("birth_date"), // nur Alt-Einträge im Klartext – neue Einträge: birth_date_enc
+  // AES-256-GCM verschlüsselt (server/vault.ts): Geburtsdatum, Steuer-ID und IBAN
+  birthDateEnc: text("birth_date_enc").notNull().default(""),
+  taxId: text("tax_id").notNull(), // Steuer-Identifikationsnummer (TIN) – verschlüsselt
   vatId: text("vat_id").notNull().default(""),
   businessRegNo: text("business_reg_no").notNull().default(""),
-  iban: text().notNull().default(""),
+  iban: text().notNull().default(""), // verschlüsselt
   collectedAt: timestamp("collected_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

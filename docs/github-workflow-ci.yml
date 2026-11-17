@@ -1,0 +1,55 @@
+# VORLAGE für .github/workflows/ci.yml – wird erst nach dem Kopieren automatisch ausgeführt.
+# Netlify darf keine Dateien in .github/workflows/ hochladen (GitHub verlangt dafür die Extra-Berechtigung „workflows“).
+# Aktivieren (einmalig, ca. 1 Minute):
+#   1. Auf github.com im Repository „Add file → Create new file“ wählen
+#   2. Pfad: .github/workflows/ci.yml
+#   3. Diesen kompletten Inhalt einfügen und auf main committen
+# Danach läuft die Prüfung bei jedem Push und Pull Request auf main.
+#
+# CI: Abhängigkeiten installieren → TypeScript prüfen → Test-Suite → Produktions-Build validieren
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # gleiche Node-Version wie auf Netlify (netlify.toml → NODE_VERSION)
+          node-version: 24
+          cache: npm
+
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: TypeScript prüfen
+        run: npm run typecheck
+
+      - name: Test-Suite
+        run: npm test
+
+      - name: Produktions-Build validieren
+        run: npm run build
+
+      - name: Build-Artefakte prüfen
+        run: |
+          test -s public/assets/app.js
+          test -s public/assets/tailwind.css
+          test -s public/assets/scan-worker.js

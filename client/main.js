@@ -24,6 +24,7 @@ import { sellApi, loadMyListings, activeListingFor } from "./sell.js";
 import { priceTagHtml } from "./price-tag.js";
 import { initDealsRadar, dealsRadarApi } from "./deals-radar.js";
 import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
+import { initAppNav, appNavApi, marketMode, renderProfileHub } from "./app-nav.js";
 import { initFlip, flipApi, syncFlip } from "./flip.js";
 import { initCommunity, communityApi, syncCommunity, routeCommunity, communityAdminHtml } from "./community.js";
 import { profileApi, routeProfile, userSocialHtml } from "./profile.js";
@@ -78,6 +79,7 @@ function renderHeader() {
   const open = state.me?.usage?.open_trades || 0;
   if (tc) { tc.textContent = String(open); tc.classList.toggle("hidden", !open); }
   syncAdminTools();
+  if (!$("view-profile")?.classList.contains("hidden")) renderProfileHub();
 }
 
 function openAccount(hint = "") {
@@ -873,10 +875,18 @@ function renderMarket() {
   const box = $("market-list");
   if (!box) return;
   const f = ($("market-search")?.value || "").toLowerCase().trim();
-  const list = f ? state.listings.filter((m) => (m.card_name || "").toLowerCase().includes(f) || (m.city || "").toLowerCase().includes(f)) : state.listings;
+  // Marktplatz-Tabs: „Marktplatz“ = Sofort-Kauf mit Käuferschutz, „Tausch-Hub“ = alle Inserate
+  const mode = marketMode();
+  const base = mode === "buy" ? state.listings.filter((m) => m.buy_now) : state.listings;
+  const list = f ? base.filter((m) => (m.card_name || "").toLowerCase().includes(f) || (m.city || "").toLowerCase().includes(f)) : base;
   if ($("marketTotalBadge")) $("marketTotalBadge").textContent = state.listings.length;
   if ($("statMarketCount")) $("statMarketCount").textContent = state.listings.length;
-  if (!list.length) { box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">Noch keine passenden Inserate. Nutze links das Stapel-Inserat!</div>`; return; }
+  if (!list.length) {
+    box.innerHTML = mode === "buy" && !f && state.listings.length
+      ? `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400 space-y-2"><p>Gerade keine Sofort-Kauf-Angebote. Im Tausch-Hub warten ${state.listings.length} Inserate.</p><button type="button" onclick="PS.marketMode('trade')" class="bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-xl">🤝 Zum Tausch-Hub</button></div>`
+      : `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">Noch keine passenden Inserate. Nutze das Stapel-Inserat oder den Scanner!</div>`;
+    return;
+  }
   box.innerHTML = list.map(listingCard).join("");
 }
 
@@ -1293,7 +1303,7 @@ window.PS = {
   listCard, submitCardListing, deleteAlert, editItem, saveItem, removeItem, setListingStatus,
   openTrades, selectTrade, tradeAction, sendMsg, pickStars, sendReview, openUser, report,
   openNotifications, openAdmin, resolveReport, openGenerator, runTracker: runTrackerNow, goMarket,
-  loadPortfolio, loadListings, listingCard, refreshMe: async () => { await loadMe(); renderHeader(); },
+  loadPortfolio, loadListings, listingCard, renderMarketList: () => renderMarket(), refreshMe: async () => { await loadMe(); renderHeader(); },
   closeAll: () => ["ps-notifs", "ps-account"].forEach(closeModalEl),
   searchCards,
   scanQuickSearch: () => searchCards(($("scan-quick-q")?.value || "").trim(), "scan-quick-results"),
@@ -1303,6 +1313,7 @@ window.PS = {
   ...pfSellApi,
   ...dealsRadarApi,
   ...shellApi,
+  ...appNavApi,
   ...flipApi,
   ...communityApi,
   ...profileApi,
@@ -1329,6 +1340,7 @@ async function boot() {
   initFeatures();
   initLazyAdminTools();
   initShell();
+  initAppNav(); // Mobile-First: 5 Hauptbereiche, Seitenköpfe mit Zurück, Marktplatz-Tabs, Profil-Bereich
   initArena();
   initFlip();
   initCommunity();
@@ -1356,7 +1368,7 @@ async function boot() {
   await confirmCheckoutFromUrl();
   const tab = new URLSearchParams(location.search).get("tab");
   if (tab === "trades") openTrades();
-  else if (["swipe", "scan", "flip", "community", "map", "portfolio"].includes(tab)) switchTabSafe(tab);
+  else if (["swipe", "scan", "flip", "community", "map", "portfolio", "profile"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
   routeCart();
   if (state.user) refreshCartBadge();

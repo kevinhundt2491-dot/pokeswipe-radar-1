@@ -1,5 +1,5 @@
 // Phase 6: Plattform-Pflichten im Browser
-// • DAC7-Steuerdaten für Verkäufer (Pflicht ab 30 Verkäufen oder 2.000 € im Kalenderjahr, PStTG)
+// • DAC7-Steuerdaten für Verkäufer (Pflicht ab 30 Verkäufen oder mehr als 2.000 € im Kalenderjahr, § 4 Abs. 5 PStTG)
 // • DAC7-Auswertung und BZSt-Export für Admins
 // • Stripe-Kundenportal („Abo & Rechnungen verwalten“)
 import { $, esc, eur, toast, state, api, handleError, requireLogin, modal, closeModalEl, input, btn } from "./core.js";
@@ -27,11 +27,12 @@ export function billingPortalButton() {
 // ---------------------------------------------------------------------------
 // DAC7-Steuerdaten (Verkäufer)
 // ---------------------------------------------------------------------------
-async function openTaxInfo() {
+async function openTaxInfo(revealArg = false) {
   if (!requireLogin()) return;
+  const reveal = revealArg === true;
   modal("ps-taxinfo", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Steuerdaten …</p>`);
   try {
-    const r = await api("/api/market/tax-info");
+    const r = await api(`/api/market/tax-info${reveal ? "?reveal=1" : ""}`);
     renderTaxInfo(r);
   } catch (e) { closeModalEl("ps-taxinfo"); handleError(e); }
 }
@@ -40,10 +41,13 @@ function renderTaxInfo(r) {
   const t = r.taxInfo || {};
   const entity = t.sellerType === "entity";
   const field = (id, label, value, attrs = "") => `<label class="block text-[11px] text-slate-300 font-bold space-y-1"><span>${label}</span>${input(id, `value="${esc(value || "")}" ${attrs}`)}</label>`;
+  // Steuer-ID, IBAN und Geburtsdatum liegen verschlüsselt auf dem Server und kommen nur maskiert zurück.
+  // Leer lassen = gespeicherten Wert behalten; „👁️ Anzeigen“ lädt den Klartext (nur für dich selbst).
+  const keepHint = (masked) => masked ? ` placeholder="${esc(masked)} (gespeichert – leer lassen zum Behalten)"` : "";
   modal("ps-taxinfo", `
     <h3 class="text-base font-black text-white">🧾 Steuerdaten für Verkäufer (DAC7)</h3>
     <p class="text-xs text-slate-300">Plattformen müssen Verkäufer an das Bundeszentralamt für Steuern melden, die in einem Kalenderjahr mindestens
-      ${Number(r.thresholds.transactions)} Verkäufe oder ${cents(r.thresholds.grossCents)} Umsatz erreichen (Plattformen-Steuertransparenzgesetz).
+      ${Number(r.thresholds.transactions)} Verkäufe abschließen oder mehr als ${cents(r.thresholds.grossCents)} erlösen (§ 4 Abs. 5 Plattformen-Steuertransparenzgesetz).
       Dieses Jahr: <strong class="text-white">${Number(r.year.transactions)} Verkäufe, ${cents(r.year.netCents)}</strong>.</p>
     ${r.required ? `<p class="text-xs font-black ${r.blocked ? "text-rose-300" : "text-amber-300"}">${r.blocked
       ? "⛔ Neue Verkäufe mit Käuferschutz sind gesperrt, bis die Angaben vollständig sind."
@@ -57,16 +61,20 @@ function renderTaxInfo(r) {
           <option value="entity" ${entity ? "selected" : ""}>Unternehmen (GmbH, UG …)</option>
         </select></label>
       ${field("tx-name", entity ? "Firma" : "Vor- und Nachname", t.legalName, 'maxlength="120" autocomplete="name"')}
-      <div id="tx-birth-wrap" class="${entity ? "hidden" : ""}">${field("tx-birth", "Geburtsdatum", t.birthDate, 'type="date"')}</div>
+      <div id="tx-birth-wrap" class="${entity ? "hidden" : ""}">${field("tx-birth", `Geburtsdatum${t.birthDateMasked ? ` <span class="text-slate-500 font-normal">(gespeichert: ${esc(t.birthDateMasked)})</span>` : ""}`, t.birthDate, 'type="date"')}</div>
       ${field("tx-street", "Straße und Hausnummer", t.street, 'maxlength="120" autocomplete="street-address"')}
       ${field("tx-zip", "PLZ", t.postalCode, 'maxlength="12" autocomplete="postal-code"')}
       ${field("tx-city", "Ort", t.city, 'maxlength="80" autocomplete="address-level2"')}
       ${field("tx-country", "Land (ISO, z. B. DE)", t.country || "DE", 'maxlength="2" autocomplete="country"')}
-      ${field("tx-tin", "Steuer-Identifikationsnummer (11 Ziffern bei DE)", t.taxId, 'maxlength="20" inputmode="numeric" autocomplete="off"')}
+      ${field("tx-tin", "Steuer-Identifikationsnummer (11 Ziffern bei DE)", t.taxId, `maxlength="20" inputmode="numeric" autocomplete="off"${keepHint(t.taxIdMasked)}`)}
       ${field("tx-vat", "USt-IdNr. (falls vorhanden)", t.vatId, 'maxlength="20" autocomplete="off"')}
       <div id="tx-reg-wrap" class="${entity ? "" : "hidden"}">${field("tx-reg", "Handelsregisternummer", t.businessRegNo, 'maxlength="40" autocomplete="off"')}</div>
-      ${field("tx-iban", "IBAN des Auszahlungskontos", t.iban, 'maxlength="34" autocomplete="off"')}
+      ${field("tx-iban", "IBAN des Auszahlungskontos", t.iban, `maxlength="34" autocomplete="off"${keepHint(t.ibanMasked)}`)}
     </div>
+    ${t.encrypted ? `<div class="flex flex-wrap items-center justify-between gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-3 py-2 text-[11px] text-emerald-200">
+      <span>🔐 Steuer-ID, IBAN und Geburtsdatum werden verschlüsselt gespeichert (AES-256) und überall maskiert angezeigt.</span>
+      ${t.revealed ? "" : `<button type="button" onclick="PS.openTaxInfo(true)" class="shrink-0 bg-slate-800 text-white font-black px-2.5 py-1 rounded-lg">👁️ Anzeigen</button>`}
+    </div>` : ""}
     <p id="tx-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
     ${btn("Steuerdaten speichern", "PS.saveTaxInfo()", "w-full bg-yellow-400 text-slate-950")}
     <p class="text-[10px] text-slate-500">Rechtsgrundlage: Art. 6 Abs. 1 lit. c DSGVO i. V. m. §§ 13 ff. PStTG. Die Daten werden nur für die gesetzliche Meldung
@@ -116,7 +124,7 @@ async function openDac7Admin(year) {
         <h3 class="text-base font-black text-white">🧾 DAC7-Meldung ${Number(r.year)}</h3>
         <div class="flex gap-1">${years.map((x) => btn(String(x), `PS.openDac7Admin(${x})`, x === y ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-200")).join("")}</div>
       </div>
-      <p class="text-xs text-slate-400">Meldeschwelle: ${Number(r.thresholds.transactions)} Verkäufe oder ${cents(r.thresholds.grossCents)} Vergütung im Kalenderjahr. Meldung an das BZSt bis 31. Januar des Folgejahres.</p>
+      <p class="text-xs text-slate-400">Meldeschwelle: ${Number(r.thresholds.transactions)} Verkäufe oder mehr als ${cents(r.thresholds.grossCents)} Vergütung im Kalenderjahr (§ 4 Abs. 5 PStTG). Meldung an das BZSt bis 31. Januar des Folgejahres.</p>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
         ${tile("Verkäufer mit Umsatz", Number(s.sellers))}
         ${tile("Meldepflichtig", Number(s.reportable), "text-amber-300")}
@@ -124,9 +132,12 @@ async function openDac7Admin(year) {
         ${tile("Gewerbliches Muster", Number(s.commercial), s.commercial ? "text-amber-300" : "text-white")}
       </div>
       <div class="flex flex-wrap gap-2">
-        <a href="/api/admin/dac7/export.csv?year=${y}" class="bg-emerald-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs">⬇️ Export meldepflichtige Verkäufer (CSV)</a>
-        <a href="/api/admin/dac7/export.csv?year=${y}&all=1" class="bg-slate-800 text-white font-black py-2.5 px-3 rounded-xl text-xs">⬇️ Export alle Verkäufer</a>
+        <button type="button" onclick="PS.dac7ExportBzst(${y})" class="bg-emerald-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs">⬇️ BZSt-Meldedatei (Klartext, protokolliert)</button>
+        <a href="/api/admin/dac7/export.csv?year=${y}" class="bg-slate-800 text-white font-black py-2.5 px-3 rounded-xl text-xs">⬇️ Meldepflichtige (maskiert)</a>
+        <a href="/api/admin/dac7/export.csv?year=${y}&all=1" class="bg-slate-800 text-white font-black py-2.5 px-3 rounded-xl text-xs">⬇️ Alle Verkäufer (maskiert)</a>
+        <button type="button" onclick="PS.dac7Reseal()" class="bg-slate-800 text-emerald-300 font-black py-2.5 px-3 rounded-xl text-xs">🔐 Alt-Einträge verschlüsseln</button>
       </div>
+      ${r.vault && !r.vault.configured ? `<p class="text-[11px] font-bold text-amber-300">⚠️ DATA_ENCRYPTION_KEY ist nicht gesetzt – Steuerdaten werden mit dem Notfall-Schlüssel aus Netlify Blobs verschlüsselt. Bitte den Schlüssel in den Netlify-Umgebungsvariablen hinterlegen und danach „Alt-Einträge verschlüsseln“ ausführen.</p>` : ""}
       <div class="max-h-[55vh] overflow-y-auto space-y-1.5">
         ${r.sellers.length ? r.sellers.map((x) => `<div class="bg-slate-950 border ${x.reportable ? (x.taxInfo?.complete ? "border-emerald-500/40" : "border-rose-500/50") : "border-slate-800"} rounded-xl p-2.5 text-xs space-y-1">
           <div class="flex flex-wrap justify-between gap-2"><p class="font-black text-white">${esc(x.displayName)} <span class="text-slate-500 font-normal">${esc(x.email)}</span></p>
@@ -134,7 +145,7 @@ async function openDac7Admin(year) {
           <p class="text-slate-400">Quartale: ${x.quarters.map((q, i) => `Q${i + 1} ${cents(q)}`).join(" · ")}</p>
           <p class="flex flex-wrap gap-1.5">
             ${x.reportable ? `<span class="text-[10px] font-black bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full">meldepflichtig</span>` : ""}
-            ${x.taxInfo?.complete ? `<span class="text-[10px] font-black bg-emerald-500/20 text-emerald-200 px-2 py-0.5 rounded-full">Steuerdaten ✓ ${esc(x.taxInfo.country)} • TIN ${esc(x.taxInfo.taxId)}</span>`
+            ${x.taxInfo?.complete ? `<span class="text-[10px] font-black bg-emerald-500/20 text-emerald-200 px-2 py-0.5 rounded-full">Steuerdaten ✓ ${esc(x.taxInfo.country)} • TIN ${esc(x.taxInfo.taxId)} • IBAN ${esc(x.taxInfo.iban)}${x.taxInfo.decryptError ? " • ⚠️ nicht entschlüsselbar" : ""}</span>`
               : x.reportable ? `<span class="text-[10px] font-black bg-rose-500/20 text-rose-200 px-2 py-0.5 rounded-full">Steuerdaten fehlen • ${Number(x.remindersSent)} Erinnerung(en)</span>` : ""}
             ${x.blocked ? `<span class="text-[10px] font-black bg-rose-600 text-white px-2 py-0.5 rounded-full">Verkauf gesperrt</span>` : ""}
             ${x.flagged ? `<span class="text-[10px] font-black bg-rose-600 text-white px-2 py-0.5 rounded-full">markiert</span>` : ""}
@@ -212,4 +223,20 @@ async function sendTestAlert() {
   } catch (e) { handleError(e); }
 }
 
-export const complianceApi = { openBillingPortal, openTaxInfo, taxTypeChanged, saveTaxInfo, openDac7Admin, openSetCompleteness, openOps, sendTestAlert };
+/** BZSt-Meldedatei: einziger Export mit Klartext-Steuerdaten – nur nach ausdrücklicher Bestätigung (serverseitig protokolliert). */
+function dac7ExportBzst(year) {
+  if (!state.me?.isAdmin) return;
+  const y = Number(year) || new Date().getFullYear();
+  if (!confirm("BZSt-Meldedatei mit Steuer-ID, IBAN und Geburtsdatum im KLARTEXT herunterladen?\n\nDer Abruf wird protokolliert. Die Datei nur für die gesetzliche DAC7-Meldung verwenden und danach sicher löschen.")) return;
+  location.href = `/api/admin/dac7/export.csv?year=${y}&purpose=bzst`;
+}
+
+async function dac7Reseal() {
+  if (!state.me?.isAdmin) return;
+  try {
+    const r = await api("/api/admin/dac7/reseal", { method: "POST", body: {} });
+    toast("🔐 Steuerdaten verschlüsselt", `${Number(r.resealed)} Einträge umgeschlüsselt${r.failed ? `, ${Number(r.failed)} Fehler (siehe Protokoll)` : ""}.${r.keyConfigured ? "" : " Hinweis: DATA_ENCRYPTION_KEY fehlt noch – Notfall-Schlüssel aktiv."}`);
+  } catch (e) { handleError(e); }
+}
+
+export const complianceApi = { dac7ExportBzst, dac7Reseal, openBillingPortal, openTaxInfo, taxTypeChanged, saveTaxInfo, openDac7Admin, openSetCompleteness, openOps, sendTestAlert };

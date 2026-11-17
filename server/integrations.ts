@@ -8,6 +8,9 @@ import { getOperator, operatorComplete, mailConfigured } from "./legal.ts";
 import { catalogStatus } from "./catalog.ts";
 import { SITE } from "./growth.ts";
 import { log } from "./log.ts";
+import { vaultConfigured } from "./vault.ts";
+import { trackingEnabled } from "./tracking.ts";
+import { ebayConfigured } from "./ebay.ts";
 
 export const WEBHOOK_EVENTS = [
   "checkout.session.completed",
@@ -144,6 +147,12 @@ export async function integrationStatus() {
     mail: mailConfigured(),
     legal: { complete: operatorComplete(operator) || Boolean(legacy) },
     firebase: Boolean(String(process.env.FIREBASE_WEB_API_KEY || "").trim()),
+    // Security-Upgrade: Steuerdaten-Verschlüsselung, DHL-Zustellprüfung (Treuhand), eBay-Signaturprüfung
+    security: {
+      dataEncryptionKey: vaultConfigured(),
+      dhlTracking: trackingEnabled(),
+      ebaySignature: ebayConfigured() && Boolean(String(process.env.EBAY_VERIFICATION_TOKEN || "").trim()),
+    },
     catalog,
   };
 }

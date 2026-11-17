@@ -1422,14 +1422,14 @@
       });
     }
 
-    // NAVIGATION (5 REITER)
-    // Bereich → Navigationspunkt (Community und Tausch-Markt liegen gemeinsam unter „Community & Markt“)
-    const NAV_OF = { swipe: "swipe", scan: "scan", flip: "flip", portfolio: "portfolio", map: "map", community: "map" };
+    // NAVIGATION (5 HAUPTBEREICHE): Entdecken · Scanner & Sammlung · Marktplatz & Tausch · Radar · Profil
+    // Bereich → Navigationspunkt (Sammlung gehört zum Scanner, Community wird aus „Entdecken“ geöffnet)
+    const NAV_OF = { swipe: "swipe", scan: "scan", portfolio: "scan", map: "map", flip: "flip", community: "swipe", profile: "profile" };
     function switchTab(tab) {
-      const tabs = ["swipe", "scan", "flip", "community", "map", "portfolio"];
+      const tabs = ["swipe", "scan", "flip", "community", "map", "portfolio", "profile"];
       if (!tabs.includes(tab)) tab = "swipe";
       tabs.forEach(t => {
-        document.getElementById(`view-${t}`).classList.add("hidden");
+        document.getElementById(`view-${t}`)?.classList.add("hidden");
         const desk = document.getElementById(`tab-${t}`);
         if (desk) desk.className = "tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5";
         const mob = document.getElementById(`mob-${t}`);
