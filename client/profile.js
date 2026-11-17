@@ -1,5 +1,6 @@
 // Phase 4: Öffentliche Sammlungs-Profile in der App (Showcase, Tausch-Ordner, Wunschliste, Abzeichen, Follower)
 // und die Einstellungen fürs eigene Profil unter pokeswipe-radar.de/u/<name>.
+import { withRef } from "./referral.js";
 import { $, esc, jsArg, eur, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
 
 const cardGrid = (items, extra = () => "") => `<div class="grid grid-cols-3 sm:grid-cols-4 gap-2">${items.map((x) => `
@@ -60,6 +61,7 @@ async function toggleFollow(id, following) {
 }
 
 function shareProfile(url, name) {
+  url = withRef(url);
   const text = `Schau dir die Pokémon-Sammlung von ${name} an`;
   if (navigator.share) { navigator.share({ title: `${name} auf PokeSwipe`, text, url }).catch(() => {}); return; }
   const enc = encodeURIComponent;

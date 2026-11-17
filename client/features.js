@@ -1,5 +1,6 @@
 // PokeSwipe & Radar – Erweiterungen: Web-Push, Kamera-Scan, Set-Fortschritt, Sealed-Tracker,
 // Grading-Partner, Händler-Shops, Empfehlungsprogramm und die übersichtliche Unter-Navigation.
+import { captureGrowthParams, showPromoBanner, redeemPromo, referralApi, withRef } from "./referral.js";
 import {
   $, esc, jsArg, safeUrl, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
   modal, closeModalEl, input, btn, sparkline, areaChart,
@@ -689,6 +690,7 @@ async function saveShop() {
 }
 
 async function shareLink(url, title = "PokeSwipe & Radar") {
+  url = withRef(url);
   try {
     if (navigator.share) { await navigator.share({ title, url }); return; }
     await navigator.clipboard.writeText(url);
@@ -705,6 +707,7 @@ function captureReferral() {
   const code = new URLSearchParams(location.search).get("ref");
   if (code && /^[A-Za-z0-9]{6,10}$/.test(code)) localStorage.setItem(REF_KEY, code.toUpperCase());
   captureVia();
+  captureGrowthParams(); // ?promo=CODE und Codes von öffentlichen Seiten (Cookie)
 }
 
 export async function claimReferral() {
@@ -712,7 +715,11 @@ export async function claimReferral() {
   if (!code || !state.user) return;
   try {
     const r = await api("/api/referral/claim", { method: "POST", body: { code, via: takeVia() } });
-    if (r.ok && !r.already) toast("🎁 Empfehlung aktiviert", `Dein erster Monat Premium oder Pro ist gratis (${r.trialDays} Tage Testphase).`);
+    if (r.ok && !r.already) {
+      toast("🎁 Einladung angenommen", r.qualified
+        ? `+${Number(r.days)} Tage PokeSwipe Pro sind freigeschaltet – viel Spaß!`
+        : "Scanne deine erste Karte, füge eine zur Sammlung oder Wunschliste hinzu – dann bekommt ihr beide Pro-Tage geschenkt.");
+    }
     await PS().refreshMe();
   } catch {}
   localStorage.removeItem(REF_KEY);
@@ -724,6 +731,9 @@ export function referralHtml() {
 
 export function trialBanner() {
   const invited = state.me ? state.me.referred : Boolean(localStorage.getItem(REF_KEY));
+  if (state.me?.referral?.friendPending) {
+    return `<div class="bg-emerald-500/20 border border-emerald-400 rounded-2xl p-3 text-xs text-emerald-200 font-bold">🎁 Du wurdest eingeladen: Scanne deine erste Karte oder füge eine zur Sammlung/Wunschliste hinzu – dann schalten wir dir und deinem Freund gratis Pro-Tage frei.</div>`;
+  }
   const days = state.me ? state.me.trialDays : invited ? 30 : 7;
   if (!days) return "";
   return `<div class="bg-emerald-500/20 border border-emerald-400 rounded-2xl p-3 text-xs text-emerald-200 font-bold">🎁 ${invited ? "Du wurdest eingeladen: Dein erster Monat ist gratis" : `${days} Tage kostenlos testen`} – jederzeit vorher kündbar, keine Abbuchung in der Testphase.</div>`;
@@ -969,6 +979,7 @@ export const featureApi = {
   ...growthApi,
   ...dropsApi,
   ...viralApi,
+  ...referralApi,
 };
 
 export function initFeatures() {
@@ -979,12 +990,13 @@ export function initFeatures() {
   injectDropsPanels();
   buildSubtabs();
   injectInviteButton();
+  showPromoBanner();
   window.enableBrowserPush = () => (state.user ? enablePush() : requireLogin());
 }
 
 export function afterAuthFeatures() {
   syncPush();
-  claimReferral();
+  claimReferral().then(() => redeemPromo());
   renderPushBox();
   renderScanLeft();
   loadTrackedSets();

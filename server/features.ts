@@ -5,13 +5,14 @@ import {
   db, profiles, cards, portfolioItems, pushSubscriptions, trackedSets, sealedProducts, sealedPriceHistory,
   sealedAlerts, cardScans, affiliateClicks, payments, listings,
 } from "../db/index.ts";
-import { PLANS, REFERRAL_TRIAL_DAYS, TRIAL_DAYS, effectivePlan, type PlanId } from "./plans.ts";
+import { PLANS, REFERRAL_TRIAL_DAYS, TRIAL_DAYS, effectivePlan, proExpiresAt, planSource, type PlanId } from "./plans.ts";
 import { getCard, cardPrice, notify, evaluateSealedAlerts, CARD_ID_RE } from "./prices.ts";
 import { getVapid, isValidPushEndpoint, sendPush } from "./push.ts";
 import { verifyIdentityToken } from "./auth.ts";
 import { recordShopView } from "./growth.ts";
 import { str, money, int, rows, rateLimit, clientIp, euro, trustedOrigin } from "./util.ts";
-import { scanLimit, shareBonusToday, attributeSignup } from "./viral.ts";
+import { scanLimit, shareBonusToday, attributeSignup, qualifyReferral, referralSummary } from "./viral.ts";
+import { isSelfReferral, referralLink, tierRewardDays } from "./referral-logic.ts";
 
 type Profile = typeof profiles.$inferSelect;
 
@@ -79,17 +80,31 @@ export async function extraMe(c: any, profile: Profile, plan: PlanId) {
     SELECT count(*)::int AS invited, count(*) FILTER (WHERE referral_rewarded)::int AS rewarded
     FROM profiles WHERE referred_by = ${profile.userId}
   `));
+  const summary = await referralSummary(profile);
   const [sets] = await db.select({ n: sql<number>`count(*)::int` }).from(trackedSets).where(eq(trackedSets.userId, profile.userId));
   const origin = process.env.URL || trustedOrigin(c) || "https://pokeswipe-radar.de";
   const shareBonus = await shareBonusToday(profile.userId);
   return {
     referral: {
       code,
-      link: `${origin}/einladung/${code}`,
+      link: referralLink(origin, code), // https://pokeswipe-radar.de/?ref=CODE
+      invitePage: `${origin}/einladung/${code}`,
       invited: Number(ref?.invited ?? 0),
       rewarded: Number(ref?.rewarded ?? 0),
+      confirmed: summary.confirmed,
+      pending: summary.pending,
+      next: summary.next,
+      badges: summary.badges,
       trialDays: REFERRAL_TRIAL_DAYS,
+      firstDays: tierRewardDays(1).friend,
+      nextDays: tierRewardDays(2).friend,
+      friendPending: summary.friendPending,
     },
+    // Nahtlose Pro-Prüfung: Pro ist aktiv bei laufendem Abo ODER proExpiresAt > jetzt (Empfehlung, Promo, Teilen-Test)
+    proExpiresAt: summary.proExpiresAt,
+    proSource: planSource(profile),
+    shareTrialAvailable: summary.shareTrialAvailable,
+    shareTrialDays: summary.shareTrialDays,
     trialEligible: await trialEligible(profile),
     trialDays: await trialDays(profile),
     referred: Boolean(profile.referredBy),
@@ -595,12 +610,14 @@ export function registerFeatures(app: any, h: {
     if (profile.stripeSubscriptionId) return c.json({ error: "Empfehlungen gelten nur für neue Konten." }, 409);
     const [referrer] = await db.select().from(profiles).where(eq(profiles.referralCode, code)).limit(1);
     if (!referrer || referrer.userId === profile.userId || referrer.banned) return c.json({ error: "Code nicht gefunden" }, 404);
-    if (referrer.email.toLowerCase() === profile.email.toLowerCase()) return c.json({ error: "Code nicht gültig" }, 409);
+    if (isSelfReferral(referrer, profile)) return c.json({ error: "Selbst-Einladungen sind nicht möglich." }, 409);
     const [set] = await db.update(profiles).set({ referredBy: referrer.userId }).where(and(eq(profiles.userId, profile.userId), sql`${profiles.referredBy} IS NULL`)).returning({ id: profiles.userId });
     if (!set) return c.json({ ok: true, already: true });
     if (via) await attributeSignup(profile.userId, referrer.userId, via).catch(() => {});
-    await notify(referrer.userId, "👋 Neuer Sammler über deinen Link", `${profile.displayName} hat sich registriert. Sobald das erste Abo bezahlt ist, bekommst du deinen Gratismonat.`);
-    return c.json({ ok: true, trialDays: REFERRAL_TRIAL_DAYS });
+    // Freischaltung sofort bei bestätigter E-Mail, sonst nach der ersten aktiven Aktion (Scan, Sammlung, Wunschliste)
+    const q = profile.emailConfirmed ? await qualifyReferral(profile.userId, "email").catch(() => null) : null;
+    if (!q) await notify(referrer.userId, "👋 Neuer Sammler über deinen Link", `${profile.displayName} hat sich registriert – Status: ausstehend (wartet auf erste Aktion). Danach bekommt ihr beide Pro-Tage.`, "/?tab=account&sub=invite");
+    return c.json({ ok: true, trialDays: REFERRAL_TRIAL_DAYS, qualified: Boolean(q), days: q ? q.days.friend : null });
   });
 
   // Alarme insgesamt für die Tracker-Übersicht (Karten + Sealed)

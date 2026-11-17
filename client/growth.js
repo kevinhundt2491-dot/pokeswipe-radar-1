@@ -225,9 +225,9 @@ async function showShare(cv, title, text) {
     <div class="grid grid-cols-2 gap-2">
       ${canShare ? `<button id="ps-share-go" class="bg-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">Teilen</button>` : ""}
       <a href="${url}" download="pokeswipe.png" class="${canShare ? "" : "col-span-2"} text-center bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">⬇️ Speichern</a>
-    </div>${state.me?.referral?.code ? `<button onclick="PS.shareInvite()" class="w-full bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">🎁 Einladungslink dazu teilen (Gratismonat für dich)</button>` : ""}
+    </div>${state.me?.referral?.code ? `<button onclick="PS.shareInvite()" class="w-full bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">🎁 Einladungslink dazu teilen (Pro-Tage für euch beide)</button>` : ""}
     <p class="text-[11px] text-slate-400">Perfekt für Instagram-Story, TikTok, WhatsApp-Status oder Discord.</p>`, { onClose: () => URL.revokeObjectURL(url) });
-  $("ps-share-go")?.addEventListener("click", () => navigator.share({ files: [file], title, text: state.me?.referral?.link ? `${text || title} 🎁 1 Monat gratis: ${state.me.referral.link}` : text }).catch(() => {}));
+  $("ps-share-go")?.addEventListener("click", () => navigator.share({ files: [file], title, text: state.me?.referral?.link ? `${text || title} 🎁 Pro-Tage geschenkt: ${state.me.referral.link}` : text }).catch(() => {}));
 }
 
 async function sharePortfolioImage() {

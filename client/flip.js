@@ -16,6 +16,7 @@ const flip = {
 function readFilters() {
   try { return JSON.parse(localStorage.getItem(FILTER_KEY) || "{}") || {}; } catch { return {}; }
 }
+const PS = () => window.PS;
 const pctTxt = (n) => `${Math.round(Number(n) || 0)} %`;
 const timeLeft = (iso) => {
   const ms = new Date(iso).getTime() - Date.now();
@@ -104,6 +105,7 @@ function dealCard(d, paid) {
       </div></div>`;
   }
   const link = safeUrl(d.itemUrl);
+  const shareBtn = `<button onclick="PS.shareDeal(${jsArg(d.kind || "")}, ${jsArg(d.targetId || "")}, ${jsArg(d.targetName || d.title || "Pokémon-Karte")}, ${Number(pct) || 0}, ${Number(d.total) || 0})" class="bg-slate-800 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl" aria-label="Deal teilen">📤 Teilen</button>`;
   const main = d.source === "community-listing"
     ? `<button onclick="PS.requestTrade(${Number(d.listingId)})" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">🤝 Anfragen</button>`
     : link ? `<a href="${esc(link)}" target="_blank" rel="noopener sponsored" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">${d.source === "ebay" ? "🛒 Zum Angebot*" : "🔎 eBay-Suche*"}</a>` : "";
@@ -132,8 +134,15 @@ function dealCard(d, paid) {
       ${netHtml}
       ${d.suspicious ? `<p class="text-[10px] text-amber-300">⚠️ Ungewöhnlich günstig oder Verkäufer mit wenig Bewertungen – Fotos, Rückgabe und Echtheit prüfen.</p>` : ""}
       ${d.seller ? `<p class="text-[10px] text-slate-500 ps-pro-only">Verkäufer: ${esc(d.seller)}${d.sellerFeedbackPct != null ? ` (${String(d.sellerFeedbackPct).replace(".", ",")} % positiv${d.sellerFeedbackScore != null ? `, ${Number(d.sellerFeedbackScore)}` : ""})` : ""}${d.country ? ` • ${esc(d.country)}` : ""}</p>` : ""}
-      <div class="flex flex-wrap gap-1.5 pt-1">${main}${cmLink}${compsBtn}</div>
+      <div class="flex flex-wrap gap-1.5 pt-1">${main}${cmLink}${compsBtn}${shareBtn}</div>
     </div></div>`;
+}
+
+/** Flip-Deal teilen – der Link trägt den persönlichen ?ref=CODE (über verfolgte Kurzlinks bzw. withRef). */
+function shareDeal(kind, targetId, name, pct, total) {
+  const target = kind === "card" && /^[A-Za-z0-9._-]{1,60}$/.test(String(targetId || "")) ? `/karte/${encodeURIComponent(targetId)}` : "/";
+  const title = `🔥 Flip-Deal −${pctTxt(pct)}: ${name}`;
+  PS().shareTarget(target, "card", title, `${title} für ${eur(total)} – gefunden mit dem PokeSwipe Flip-Radar 👀`);
 }
 
 function renderDeals() {
@@ -448,6 +457,7 @@ const flipAdminApi = {
 // Öffentliche API & Start
 // ---------------------------------------------------------------------------
 export const flipApi = {
+  shareDeal,
   flipFilter, flipReload: () => loadDeals(), openComps, compsRoi, compsRefresh, compsSummary,
   compsChart: (g) => { flip.chartGrade = g; renderComps(); },
   compsDays: (d) => { flip.chartDays = d === 30 ? 30 : 90; renderComps(); },

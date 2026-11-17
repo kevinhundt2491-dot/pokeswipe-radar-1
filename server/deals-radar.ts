@@ -52,7 +52,7 @@ export async function listCommunityDeals(viewerId: string | null, opts: { cat?: 
   const cat = ["singles", "sealed"].includes(String(opts.cat)) ? String(opts.cat) : "";
   const list = rows(await db.execute(sql`
     SELECT d.id, d.user_id, d.title, d.price::float AS price, d.url, d.shop, d.category, d.lang, d.card_id, d.market_price::float AS market_price,
-      d.status, d.up, d.down, d.created_at, d.expires_at, p.display_name, (p.plan = 'pro' AND p.plan_until > now()) AS verified,
+      d.status, d.up, d.down, d.created_at, d.expires_at, p.display_name, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified,
       c.image AS card_image, c.name AS card_name,
       ${viewerId ? sql`(SELECT v.vote FROM community_deal_votes v WHERE v.deal_id = d.id AND v.user_id = ${viewerId})` : sql`NULL::int`} AS my_vote
     FROM community_deals d JOIN profiles p ON p.user_id = d.user_id LEFT JOIN cards c ON c.id = d.card_id
@@ -79,7 +79,7 @@ export async function listRadarPins(viewerId: string | null) {
   const blocked = await blockedIds(viewerId);
   const list = rows(await db.execute(sql`
     SELECT r.user_id, r.name, r.city, r.cards, r.lat, r.lng, r.status, r.updated_at, p.display_name, p.public_profile,
-      (p.plan = 'pro' AND p.plan_until > now()) AS verified
+      ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified
     FROM radar_pins r JOIN profiles p ON p.user_id = r.user_id
     WHERE NOT p.banned AND r.updated_at > now() - make_interval(days => ${RADAR_MAX_AGE_DAYS})
       AND (r.status = 'visible' ${viewerId ? sql`OR (r.status = 'hidden' AND r.user_id = ${viewerId})` : sql``})

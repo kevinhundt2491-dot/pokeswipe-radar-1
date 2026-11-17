@@ -32,6 +32,11 @@ export const profiles = pgTable("profiles", {
   bonusUntil: timestamp("bonus_until", { withTimezone: true }),
   bonusPlan: text("bonus_plan").notNull().default("premium"), // Tarif während bonusUntil: premium | pro (Stufen-Belohnungen)
   referredVia: integer("referred_via"), // share_links.id, über den die Anmeldung kam
+  // Gestaffeltes Empfehlungssystem: Zeitpunkt, an dem der geworbene Nutzer „echt“ wurde (E-Mail bestätigt oder erste Aktion)
+  // – erst dann bekommen Werber und Freund ihre Pro-Tage. NULL = ausstehend.
+  referralQualifiedAt: timestamp("referral_qualified_at", { withTimezone: true }),
+  // „App teilen & 14 Tage Pro testen“ (einmalig)
+  shareTrialAt: timestamp("share_trial_at", { withTimezone: true }),
   // Wechsel-Bonus (einmalig beim Import einer Sammlung aus einer anderen App)
   switchBonusAt: timestamp("switch_bonus_at", { withTimezone: true }),
   planInterval: text("plan_interval").notNull().default("month"), // month | year
@@ -733,6 +738,28 @@ export const referralRewards = pgTable("referral_rewards", {
   creditCents: integer("credit_cents").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("referral_rewards_unique").on(t.userId, t.kind, t.reference), index("referral_rewards_user").on(t.userId)]);
+
+// Video-Promo-Links (?promo=CODE) – vom Admin angelegte Kampagnen-Codes mit Gratis-Pro-Tagen
+export const promoCodes = pgTable("promo_codes", {
+  id: serial().primaryKey(),
+  code: text().notNull(), // GROSSBUCHSTABEN, z. B. START30
+  label: text().notNull().default(""), // interner Name, z. B. „TikTok Dario“
+  days: integer().notNull().default(30),
+  maxRedemptions: integer("max_redemptions"), // NULL = unbegrenzt
+  redemptions: integer().notNull().default(0),
+  active: boolean().notNull().default(true),
+  createdBy: text("created_by").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("promo_codes_code").on(t.code)]);
+
+// Einlösungen – höchstens eine pro Code und Konto
+export const promoRedemptions = pgTable("promo_redemptions", {
+  id: serial().primaryKey(),
+  promoId: integer("promo_id").notNull().references(() => promoCodes.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  days: integer().notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("promo_redemptions_unique").on(t.promoId, t.userId), index("promo_redemptions_user").on(t.userId)]);
 
 // ---------------------------------------------------------------------------
 // Phase 2: Live Flip-Radar, Verkaufspreise (Sold Comps) & PSA-Werte

@@ -1,6 +1,7 @@
 // Phase 4: Öffentliche Sammlungs-Profile /u/<name> und teilbare Pull-Wall-Beiträge /p/<id>
 // – nur mit Zustimmung (Einstellung „Öffentliches Profil“), ohne E-Mail, exakte Werte oder Kaufpreise.
 // Mit dynamischem Vorschaubild (/api/og/u/<name>.jpg, /api/og/p/<id>.jpg) für WhatsApp, Telegram, Facebook, X & Co.
+import { effectivePlan } from "./plans.ts";
 import { eq, sql } from "drizzle-orm";
 import { getStore } from "@netlify/blobs";
 import { db, profiles } from "../db/index.ts";
@@ -62,7 +63,7 @@ export async function publicProfile(p: typeof profiles.$inferSelect, viewer: Aut
       ${viewer ? sql`EXISTS (SELECT 1 FROM follows WHERE follower_id = ${viewer.id} AND followee_id = ${id})` : sql`false`} AS is_following`));
   const t = (await trustFor([id])).get(id) ?? { score: 0, level: trustLevel(0) };
   const posts = await loadPosts({ viewerId: viewer?.id, authorId: id, limit: 6 });
-  const verified = p.plan === "pro" && p.planUntil && new Date(p.planUntil) > new Date();
+  const verified = effectivePlan(p) === "pro"; // Abo ODER geschenkte Pro-Tage
   return {
     id, name: p.displayName, slug: profileSlug(p.displayName), bio: p.bio, city: p.city, memberSince: p.createdAt,
     verified: Boolean(verified), sellerVerified: p.stripeAccountReady, trust: t.score, level: t.level,

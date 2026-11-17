@@ -47,7 +47,7 @@ export function responseLabel(minutes: number | null, lang: Lang = "de"): string
 async function shopProfile(slug: string) {
   if (!SLUG_RE.test(slug)) return null;
   const [p] = await db.select().from(profiles).where(eq(profiles.shopSlug, slug)).limit(1);
-  if (!p || p.banned || effectivePlan({ plan: p.plan, planUntil: p.planUntil }) !== "pro") return null;
+  if (!p || p.banned || effectivePlan(p) !== "pro") return null;
   return p;
 }
 
@@ -172,7 +172,7 @@ export function registerShops(app: any, { auth, body, storeDataUrlImage, ratingO
         (SELECT round(avg(r.stars)::numeric, 1)::float FROM reviews r WHERE r.reviewee_id = p.user_id) AS rating,
         (SELECT count(*)::int FROM reviews r WHERE r.reviewee_id = p.user_id) AS rating_count
       FROM profiles p
-      WHERE p.shop_slug IS NOT NULL AND p.plan = 'pro' AND p.plan_until > now() AND NOT p.banned
+      WHERE p.shop_slug IS NOT NULL AND ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AND NOT p.banned
       ORDER BY rating_count DESC, listing_count DESC LIMIT 60`));
     publicCache(c, "data", { sMaxAge: 300, swr: 3600 });
     return c.json({ shops: list.map((s: any) => ({ ...s, shop_logo: safeOwnImage(s.shop_logo), shop_banner: safeOwnImage(s.shop_banner), shop_accent: accentOf(s.shop_accent) })) });

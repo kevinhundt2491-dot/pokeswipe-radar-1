@@ -256,7 +256,7 @@ export async function loadPosts(o: { viewerId?: string | null; isAdmin?: boolean
   const limit = Math.min(40, Math.max(1, o.limit ?? 20));
   const posts = rows(await db.execute(sql`
     SELECT po.id, po.user_id, po.caption, po.image, po.card_id, po.status, po.flag_reason, po.like_count, po.comment_count, po.created_at,
-      pr.display_name, pr.public_profile, (pr.plan = 'pro' AND pr.plan_until > now()) AS verified,
+      pr.display_name, pr.public_profile, ((pr.plan = 'pro' AND pr.plan_until > now()) OR (pr.bonus_plan = 'pro' AND pr.bonus_until > now())) AS verified,
       ${o.viewerId ? sql`EXISTS (SELECT 1 FROM community_likes l WHERE l.post_id = po.id AND l.user_id = ${o.viewerId})` : sql`false`} AS liked
     FROM community_posts po JOIN profiles pr ON pr.user_id = po.user_id
     WHERE NOT pr.banned
@@ -272,7 +272,7 @@ export async function loadPosts(o: { viewerId?: string | null; isAdmin?: boolean
   const comments = rows(await db.execute(sql`
     SELECT * FROM (
       SELECT cm.id, cm.post_id, cm.user_id, cm.body, cm.status, cm.created_at, pr.display_name, pr.public_profile,
-        (pr.plan = 'pro' AND pr.plan_until > now()) AS verified,
+        ((pr.plan = 'pro' AND pr.plan_until > now()) OR (pr.bonus_plan = 'pro' AND pr.bonus_until > now())) AS verified,
         row_number() OVER (PARTITION BY cm.post_id ORDER BY cm.id DESC) AS rn
       FROM community_comments cm JOIN profiles pr ON pr.user_id = cm.user_id
       WHERE cm.post_id IN (${postIds}) AND NOT pr.banned
@@ -420,7 +420,7 @@ export function registerCommunity(app: any, hlp: Hlp) {
     const blocked = await blockedIds(u?.id);
     const list = rows(await db.execute(sql`
       SELECT * FROM (
-        SELECT m.id, m.user_id, m.body, m.status, m.created_at, p.display_name, p.public_profile, (p.plan = 'pro' AND p.plan_until > now()) AS verified
+        SELECT m.id, m.user_id, m.body, m.status, m.created_at, p.display_name, p.public_profile, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified
         FROM chat_messages m JOIN profiles p ON p.user_id = m.user_id
         WHERE m.room = 'global' AND NOT p.banned AND m.id > ${after}
           AND (m.status = 'visible' ${u ? sql`OR (m.status = 'hidden' AND m.user_id = ${u.id})` : sql``})
