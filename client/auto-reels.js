@@ -689,6 +689,10 @@ const PRO_CSS = `
 #auto-reels .ar-pro ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
 #auto-reels .ar-pro li{background:rgba(19,26,51,.85);padding:7px 9px}
 #auto-reels .ar-pro li.next{border-color:#ffcb05}
+#auto-reels .ar-pro .ar-note{flex-basis:100%;display:block;margin:2px 0 0 32px;padding:6px 9px;border-radius:8px;font:700 12px/1.45 var(--font-body,Figtree,sans-serif);white-space:pre-wrap;word-break:break-word;user-select:text}
+#auto-reels .ar-pro .ar-note.err{background:rgba(251,113,133,.14);border:1px solid rgba(251,113,133,.55);color:#fecdd3}
+#auto-reels .ar-pro .ar-note.warn{background:rgba(255,203,5,.1);border:1px solid rgba(255,203,5,.45);color:#fde68a}
+#auto-reels .ar-pro .ar-note.info{background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.4);color:#bbf7d0}
 #auto-reels button.ar-pro-go{background:#a78bfa;border-color:#a78bfa;color:#1a1420;font-weight:900;flex:1}
 `;
 const PRO_HTML = `
@@ -703,6 +707,9 @@ const PRO_HTML = `
     <small>Cover mit Hook-Schlagzeile (0–2 s, zugleich Vorschaubild) → Fokus-Zoom auf die echte App → „Warum das genial ist“ mit Feature-Badges → Vertrauen &amp; Praxis-Mehrwert → Endscreen „${esc("Jetzt kostenlos testen auf pokeswipe-radar.de")}“. Untertitel im sicheren Mittelbereich. Einstellungen: Admin-Zentrale → 🎬 Make.com &amp; Auto-Reels.</small>
   </div>`;
 const proResults = new Map(); // Vorlage -> { url, name, size, sent, cap, txt, txtUrl, txtName, thumbUrl }
+// Vorlage -> [{ kind: "err" | "warn" | "info", text }] – lesbarer Hinweis/Fehlertext direkt unter der Karte
+const proNotes = new Map();
+const addNote = (key, kind, text) => { proNotes.set(key, [...(proNotes.get(key) || []), { kind, text: String(text || "unbekannter Fehler") }]); };
 let proCfg = { templates: PRO_TEMPLATES.map((t) => t.key), fps: 30, mbit: 15, maxMb: SAFE_MB, tone: "energetic" };
 let proNext = null; // { template, variant } vom Server
 
@@ -718,9 +725,10 @@ function renderPro(states = {}) {
     const icon = { on: "⏺", ok: "✅", err: "⚠️", wait: "⏳" }[st] || (r ? "✅" : on ? "🎞️" : "⏸");
     const words = checkProScript(proScript(tpl, 0).say).words;
     const isNext = proNext?.template === tpl.key;
-    const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ MP4</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> ${r.sent ? "📤 an Make gesendet" : ""}</span></div></div>` : "";
+    const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ ${r.name.endsWith(".mp4") ? "MP4" : "Video (WebM)"} herunterladen</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> <a href="${r.txtUrl}" download="${esc(r.txtName)}">⬇ .txt</a> ${r.sent ? "📤 an Make gesendet" : ""}</span></div></div>` : "";
+    const notes = (proNotes.get(tpl.key) || []).map((n) => `<small class="ar-note ${n.kind}" role="${n.kind === "err" ? "alert" : "status"}">${n.kind === "err" ? "⚠️ Fehler: " : n.kind === "warn" ? "⚠️ " : "ℹ️ "}${esc(n.text)}</small>`).join("");
     return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${on ? "" : " · in der Admin-Zentrale deaktiviert"}</small></span>
-      <span class="ar-acts"><button type="button" data-ar="pro" data-pro="one" data-k="${tpl.key}" title="Nur diese Vorlage aufnehmen">⏺</button></span>${out}</li>`;
+      <span class="ar-acts"><button type="button" data-ar="pro" data-pro="one" data-k="${tpl.key}" title="Nur diese Vorlage aufnehmen">⏺</button></span>${notes}${out}</li>`;
   }).join("");
 }
 
@@ -780,11 +788,14 @@ async function generatePro(list) {
   const ac = unlockAudio(); // im Klick-Handler entsperren
   if (voiceOn && !ac) return setStatus("⚠️ Dieser Browser kann keinen Ton mit aufnehmen – bitte Chrome oder Edge verwenden.", "err");
   if (voiceOn && !voiceReady?.ready) await checkVoice();
-  if (voiceOn && !voiceReady?.ready) return setStatus("⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt) – Start abgebrochen. Alternativ das Voiceover ausschalten.", "err");
+  if (voiceOn && !voiceReady?.ready) return setStatus(voiceReady?.error
+    ? `⚠️ Sprachdienst nicht erreichbar (${voiceReady.error}) – Start abgebrochen. Alternativ das Voiceover ausschalten.`
+    : "⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt) – Start abgebrochen. Alternativ das Voiceover ausschalten.", "err");
   const hs = hookState();
   if (hs.error) { ui.hook.focus(); return setStatus(`⚠️ ${hs.error}`, "err"); }
   const hook = hs.url;
   if (hook && !platforms.size) return setStatus("⚠️ Bitte mindestens eine Plattform für Make.com auswählen (oder die Webhook-URL leeren).", "err");
+  for (const { tpl } of list) proNotes.delete(tpl.key); // alte Hinweise dieser Vorlagen zurücksetzen
   previewToken++;
   if (previewRun) { stage.abort(); try { await previewRun; } catch { /* abgebrochen */ } previewRun = null; }
   mode = "rec"; recLock.owner = "auto"; stopAll = false; setBusy(true); ui.time.classList.add("rec"); fit();
@@ -806,13 +817,24 @@ async function generatePro(list) {
     states[tpl.key] = "on"; renderPro(states); setBusy(true);
     try {
       const script = proScript(tpl, variant);
-      let voice = null, speed = 1;
+      let voice = null, speed = 1, voiceFailed = null;
       if (voiceOn) {
         setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
         try { ({ take: voice, speed } = await loadProNarration(script.say, ac, proCfg.tone)); }
-        catch (e) { throw new Error(`Voiceover fehlgeschlagen (${e.message})`); }
-        const sec = voice.duration + 0.85;
-        setStatus(`🎙️ Stimme fertig: ${sec.toFixed(1).replace(".", ",")} s (Tempo ${speed.toFixed(2).replace(".", ",")})${sec < PRO_MIN_S || sec > PRO_MAX_S ? " – außerhalb 20–30 s, Tempo-Spielraum ausgeschöpft" : ""} – lade die Live-Website …`);
+        catch (e) {
+          // Kein Abbruch: das Video wird mit Musik (ohne Sprecherin) aufgenommen und heruntergeladen,
+          // aber NICHT automatisch an Make.com gesendet. Der genaue Fehler steht unter der Karte.
+          voiceFailed = e?.message || String(e);
+          voice = null;
+          console.warn(`Pro-Voiceover „${tpl.label}“ fehlgeschlagen:`, e);
+          addNote(tpl.key, "warn", `Voiceover fehlgeschlagen: ${voiceFailed} – Video wurde ohne Sprecherin (nur Musik) aufgenommen und nicht an Make.com gesendet.`);
+          renderPro(states);
+          setStatus(`⚠️ ${tpl.label}: Voiceover fehlgeschlagen (${voiceFailed}) – nehme ohne Sprecherin auf …`, "err");
+        }
+        if (voice) {
+          const sec = voice.duration + 0.85;
+          setStatus(`🎙️ Stimme fertig: ${sec.toFixed(1).replace(".", ",")} s (Tempo ${speed.toFixed(2).replace(".", ",")})${sec < PRO_MIN_S || sec > PRO_MAX_S ? " – außerhalb 20–30 s, Tempo-Spielraum ausgeschöpft" : ""} – lade die Live-Website …`);
+        }
       }
       let res = null;
       while (!res && !stopAll) {
@@ -843,37 +865,50 @@ async function generatePro(list) {
         hook_variant: variant, fps: res.fps, video_bitrate_mbit: res.mbit, audio_bitrate_kbps: 192, resolution: "1080x1920", aspect_ratio: "9:16",
         max_mb: maxMb, scenes_json: JSON.stringify(res.scenes.map((s) => ({ key: s.key, start: +s.start.toFixed(2), end: +s.end.toFixed(2) }))),
       };
-      const keepPro = (sentOk) => {
-        const old = proResults.get(tpl.key);
-        if (old) [old.url, old.txtUrl, old.thumbUrl].forEach((u) => URL.revokeObjectURL(u));
-        const txtBlob = new Blob([txt], { type: "text/plain;charset=utf-8" });
-        const r = { url: URL.createObjectURL(res.blob), name, size: res.blob.size, sent: sentOk, cap, txt, txtName: `${fileBase(ep)}.txt`, txtUrl: URL.createObjectURL(txtBlob), thumbUrl: URL.createObjectURL(thumb) };
-        proResults.set(tpl.key, r);
-        if (!sentOk) { download(res.blob, name); setTimeout(() => download(txtBlob, r.txtName), 500); setTimeout(() => download(thumb, thumb.name), 1000); }
-      };
+      // 1) Fertiges Video IMMER sofort sichern: Ergebnis-Karte mit Download-Buttons + automatischer Download
+      //    (MP4, .txt und Cover). Der Make.com-Versand ist danach nur noch ein optionaler Zusatz.
+      const old = proResults.get(tpl.key);
+      if (old) [old.url, old.txtUrl, old.thumbUrl].forEach((u) => URL.revokeObjectURL(u));
+      const txtBlob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+      const r = { url: URL.createObjectURL(res.blob), name, size: res.blob.size, sent: false, cap, txt, txtName: `${fileBase(ep)}.txt`, txtUrl: URL.createObjectURL(txtBlob), thumbUrl: URL.createObjectURL(thumb) };
+      proResults.set(tpl.key, r);
+      try {
+        download(res.blob, name);
+        setTimeout(() => { try { download(txtBlob, r.txtName); } catch { /* Button bleibt */ } }, 500);
+        setTimeout(() => { try { download(thumb, thumb.name); } catch { /* Button bleibt */ } }, 1000);
+      } catch (e) { addNote(tpl.key, "warn", `Automatischer Download blockiert (${e?.message || e}) – bitte unten auf „⬇ MP4 herunterladen“ klicken.`); }
+      states[tpl.key] = "ok"; ok++;
+      renderPro(states);
       const info = `${res.duration.toFixed(1).replace(".", ",")} s, ${res.fps} FPS, ${res.mbit} Mbit/s${res.attempts > 1 ? `, ${res.attempts}. Versuch` : ""}`;
-      if (hook && res.ext === "mp4") {
+      if (res.ext !== "mp4") addNote(tpl.key, "warn", `Dieser Browser hat WebM statt MP4 aufgenommen (${res.mime || res.ext}). Für MP4 bitte aktuelles Chrome oder Edge nutzen.`);
+      if (res.oversize) addNote(tpl.key, "warn", `${mb} MB liegt trotz reduzierter Bitrate über ${maxMb} MB – Video wurde heruntergeladen, aber nicht an Make.com gesendet.`);
+      // 2) Optional: an Make.com senden – ein Fehlschlag bricht NICHTS ab, das Video ist bereits gespeichert
+      const sendable = hook && res.ext === "mp4" && !res.oversize && !voiceFailed;
+      if (sendable) {
         try {
           setStatus(`📤 „${tpl.label}“ wird an Make.com gesendet (${mb} MB, ${info}) …`);
           await sendWithRetry(hook, ep, res, cap, txt, (p) => { ui.time.textContent = `📤 Pro ${n} · ${Math.round(p * 100)} %`; }, extra);
-          keepPro(true); sent++;
+          r.sent = true; sent++;
           reportDelivery({ ok: true, episode: ep.n, sizeMb: res.blob.size / MB, message: `${name} angenommen (Pro-Video)` });
-          setStatus(`✓ ${name} (${mb} MB, ${info}) samt Cover und Beschreibung an Make.com übergeben.`, "ok");
+          setStatus(`✓ ${name} (${mb} MB, ${info}) heruntergeladen und samt Cover und Beschreibung an Make.com übergeben.`, "ok");
         } catch (e) {
-          keepPro(false);
           reportDelivery({ ok: false, episode: ep.n, status: e.status, sizeMb: res.blob.size / MB, message: e.message });
-          setStatus(e.unconfirmed ? `❔ ${e.message} – kein erneuter Versand. ${name} wurde zusätzlich heruntergeladen; bitte in Make prüfen.` : `⚠️ Webhook fehlgeschlagen (${e.message}) – ${name} wurde stattdessen heruntergeladen.`, "err");
-          await new Promise((r) => setTimeout(r, 1500));
+          addNote(tpl.key, "warn", e.unconfirmed
+            ? `Make.com: ${e.message} – kein erneuter Versand, bitte in Make prüfen. Das MP4 wurde trotzdem heruntergeladen.`
+            : `Make.com-Versand fehlgeschlagen: ${e.message}. Das MP4 wurde trotzdem heruntergeladen.`);
+          setStatus(`✓ ${name} heruntergeladen – Make.com-Versand fehlgeschlagen (${e.message}).`, "err");
+          await new Promise((r) => setTimeout(r, 1200));
         }
       } else {
-        keepPro(false);
-        setStatus(`✓ ${name} (${mb} MB, ${info}) + Cover + .txt heruntergeladen${hook ? " (WebM wird nicht an Make.com gesendet)" : ""}.`, hook ? "err" : "ok");
+        setStatus(`✓ ${name} (${mb} MB, ${info}) + Cover + .txt heruntergeladen.`, "ok");
         await new Promise((r) => setTimeout(r, 1200));
       }
-      states[tpl.key] = "ok"; ok++;
     } catch (e) {
-      states[tpl.key] = "err";
-      setStatus(`⚠️ ${tpl.label}: ${e?.name === "StageAbort" ? "abgebrochen" : e.message}`, "err");
+      if (states[tpl.key] !== "ok") states[tpl.key] = "err";
+      const msg = e?.name === "StageAbort" ? "abgebrochen" : (e?.message || String(e));
+      console.error(`Pro-Video „${tpl.label}“ fehlgeschlagen:`, e);
+      addNote(tpl.key, "err", msg);
+      setStatus(`⚠️ ${tpl.label}: ${msg}`, "err");
     }
     renderPro(states);
   }
@@ -883,8 +918,11 @@ async function generatePro(list) {
   ui.bar.style.width = "100%";
   renderPro(Object.fromEntries(Object.entries(states).filter(([, s]) => s === "err")));
   const failed = Object.values(states).filter((s) => s === "err").length;
-  const where = sent && sent === ok ? "an Make.com gesendet" : sent ? `fertig (${sent} an Make.com, ${ok - sent} heruntergeladen)` : "heruntergeladen";
-  setStatus(failed ? `⚠️ ${ok} von ${list.length} Pro-Videos ${where}, ${failed} fehlgeschlagen.` : `🎉 ${ok} Pro-Video${ok === 1 ? "" : "s"} ${where} – mit Cover, Untertiteln, Beschreibung und Hashtags.`, failed ? "err" : "ok");
+  const where = sent ? `heruntergeladen (${sent} davon zusätzlich an Make.com gesendet)` : "heruntergeladen";
+  const warned = list.filter(({ tpl }) => states[tpl.key] === "ok" && (proNotes.get(tpl.key) || []).some((x) => x.kind === "warn")).length;
+  setStatus(failed ? `⚠️ ${ok} von ${list.length} Pro-Videos ${where}, ${failed} fehlgeschlagen – der genaue Fehler steht unter der jeweiligen Karte.`
+    : warned ? `✓ ${ok} Pro-Video${ok === 1 ? "" : "s"} ${where} – bei ${warned} gibt es Hinweise (siehe Text unter der Karte).`
+      : `🎉 ${ok} Pro-Video${ok === 1 ? "" : "s"} ${where} – mit Cover, Untertiteln, Beschreibung und Hashtags.`, failed || warned ? "err" : "ok");
 }
 
 /** Rückfall-Vorschaubild (nur falls Frame 0 nicht exportiert werden konnte): gleiches Cover-Motiv. */
