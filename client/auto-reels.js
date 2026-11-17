@@ -718,7 +718,7 @@ const proResults = new Map(); // Vorlage -> { url, name, size, sent, cap, txt, t
 // Vorlage -> [{ kind: "err" | "warn" | "info", text }] – lesbarer Hinweis/Fehlertext direkt unter der Karte
 const proNotes = new Map();
 const addNote = (key, kind, text) => { proNotes.set(key, [...(proNotes.get(key) || []), { kind, text: String(text || "unbekannter Fehler") }]); };
-let proCfg = { templates: PRO_TEMPLATES.map((t) => t.key), fps: 30, mbit: 15, maxMb: SAFE_MB, tone: "energetic" };
+let proCfg = { templates: PRO_TEMPLATES.map((t) => t.key), fps: 30, mbit: 18, maxMb: SAFE_MB, tone: "energetic" };
 let proNext = null; // { template, variant } vom Server
 
 function proMaxMb() { return Math.min(proCfg.maxMb || SAFE_MB, Math.floor(limitMb * 0.95)); }

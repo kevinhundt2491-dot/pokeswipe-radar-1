@@ -90,7 +90,7 @@ function audioClock(ac) {
  * @param {number} [o.maxMb]
  * @returns {Promise<null | { blob, ext, mime, duration, facts, lines, fps, liveFps, capture, mbit, cover, scenes, exact }>}
  */
-export async function recordPro({ stage, tpl, variant = 0, look = null, coverCard = null, voice = null, mbit = 15, fps = 30, maxMb = SAFE_MB, canvas, onStatus, onTick }) {
+export async function recordPro({ stage, tpl, variant = 0, look = null, coverCard = null, voice = null, mbit = 18, fps = 30, maxMb = SAFE_MB, canvas, onStatus, onTick }) {
   const script = proScript(tpl, variant);
   const chk = checkProScript(script.say);
   if (!chk.ok) throw new Error(`Skript „${tpl.label}“ hat ${chk.words} Wörter (erlaubt ${chk.min}–${chk.max})`);
