@@ -132,7 +132,7 @@ function applyMarketMode() {
   const list = $("market-list");
   if (list && mode !== "mine") {
     const text = mode === "buy"
-      ? "🛒 <strong class=\"text-white\">Marktplatz:</strong> Sofort-Kauf mit Käuferschutz (Treuhand) und DHL-Versand – das Geld geht erst nach Zustellung an den Verkäufer."
+      ? "🛒 <strong class=\"text-white\">Marktplatz:</strong> Sofort-Kauf mit Käuferschutz (Treuhand) und DHL-Versand – das Geld geht erst nach Zustellung an den Verkäufer. Sofort-Kauf-Angebote stehen oben, darunter alle weiteren Inserate."
       : "🤝 <strong class=\"text-white\">Tausch-Hub:</strong> alle Inserate – Tauschanfragen, Preisvorschläge und Treffen in deiner Nähe.";
     if (hint) hint.innerHTML = text;
     else list.insertAdjacentHTML("beforebegin", `<p id="ps-market-mode-hint" class="text-[11px] text-slate-300 bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2">${text}</p>`);
@@ -261,8 +261,11 @@ function onTab(tab) {
   current = tab;
   document.body.dataset.tab = tab;
   const nav = PAGES[tab].nav;
+  // Eigener Navigationspunkt (z. B. Sammlung, Community) hat Vorrang vor dem übergeordneten Bereich
+  const mobKey = document.getElementById(`mob-${tab}`) ? tab : nav;
+  const deskKey = document.getElementById(`tab-${tab}`) ? tab : nav;
   document.querySelectorAll("#ps-bottom-nav .mob-nav, .dex-nav .tab-btn").forEach((b) => {
-    const on = b.id === `mob-${nav}` || b.id === `tab-${nav}`;
+    const on = b.id === `mob-${mobKey}` || b.id === `tab-${deskKey}`;
     if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
   });
   if (tab === "profile") renderProfileHub();

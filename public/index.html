@@ -186,12 +186,17 @@
           🔔 <span id="pushStatusLabel" class="hidden sm:inline">Push-Radar</span>
         </button>
 
-        <!-- Konto & Pro: auf dem Handy im Bereich „Profil“ der unteren Navigation -->
-        <button onclick="openModal('auth-modal')" class="hidden lg:flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-2.5 py-1.5 rounded-xl border border-slate-600">
+        <!-- App installieren (wiederhergestellt) -->
+        <button onclick="openModal('install-modal')" class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-bold text-xs px-2.5 py-1.5 rounded-xl hidden sm:flex items-center gap-1">
+          📲 <span>App</span>
+        </button>
+
+        <!-- Konto & Pro: wieder auf allen Geräten sichtbar (zusätzlich im Bereich „Profil“) -->
+        <button onclick="openModal('auth-modal')" class="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-2.5 py-1.5 rounded-xl border border-slate-600">
           👤 <span id="authBtnText">Profil</span>
         </button>
 
-        <button onclick="openModal('pro-modal')" class="hidden lg:inline-flex bg-gradient-to-r from-yellow-400 via-amber-500 to-red-500 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl shadow-md">
+        <button onclick="openModal('pro-modal')" class="inline-flex bg-gradient-to-r from-yellow-400 via-amber-500 to-red-500 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl shadow-md">
           👑 PRO
         </button>
 
@@ -234,8 +239,15 @@
       </div>
     </section>
 
-    <!-- Schnellzugriff auf der Startseite „Entdecken“: Scanner, Restock-Radar, Marktplatz, Sammlung (nur im Bereich Entdecken sichtbar) -->
-    <div id="dex-stats" class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+    <!-- Schnellzugriff: Merkliste & Deals, Scanner, Restock-Radar, Marktplatz, Sammlung -->
+    <div id="dex-stats" class="grid grid-cols-2 lg:grid-cols-5 gap-2.5">
+      <div onclick="switchTab('swipe')" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
+        <div>
+          <p class="text-[10px] uppercase font-bold text-slate-400">💚 Merkliste & Deals</p>
+          <p class="text-base sm:text-lg font-black text-white"><span id="statMatches">0</span> Karten</p>
+        </div>
+        <span class="text-2xl">🃏</span>
+      </div>
       <button type="button" onclick="PS.openScanner()" class="dex-stat text-left cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
         <span>
           <span class="block text-[10px] uppercase font-bold text-cyan-300">📷 Scanner</span>
@@ -259,18 +271,20 @@
       </button>
       <button type="button" onclick="switchTab('portfolio')" class="dex-stat text-left cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
         <span>
-          <span class="block text-[10px] uppercase font-bold text-purple-300">💼 Sammlung · <span id="statMatches">0</span> gemerkt</span>
+          <span class="block text-[10px] uppercase font-bold text-purple-300">💼 Sammlung · <span id="statMatchesPf">0</span> gemerkt</span>
           <span id="statPortfolioVal" class="block text-base sm:text-lg font-black text-white">0,00 €</span>
         </span>
         <span class="text-2xl" aria-hidden="true">💎</span>
       </button>
     </div>
 
-    <!-- Desktop-Navigation: 5 Hauptbereiche (gleich wie die untere Handy-Navigation) -->
-    <nav class="dex-nav hidden lg:grid grid-cols-5 gap-2 p-1.5 rounded-2xl" aria-label="Hauptbereiche">
+    <!-- Desktop-Navigation: alle Bereiche inkl. Meine Sammlung und Community (wiederhergestellt) -->
+    <nav class="dex-nav hidden lg:grid grid-cols-7 gap-2 p-1.5 rounded-2xl" aria-label="Hauptbereiche">
       <button onclick="switchTab('swipe')" id="tab-swipe" class="tab-btn bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow">🃏 <span>Entdecken</span></button>
       <button onclick="switchTab('scan')" id="tab-scan" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">📷 <span>Scanner &amp; Sammlung</span></button>
+      <button onclick="switchTab('portfolio')" id="tab-portfolio" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">💼 <span>Meine Sammlung</span></button>
       <button onclick="switchTab('map')" id="tab-map" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">🛒 <span>Marktplatz &amp; Tausch</span></button>
+      <button onclick="switchTab('community')" id="tab-community" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">💬 <span>Community</span></button>
       <button onclick="switchTab('flip')" id="tab-flip" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">📡 <span>Radar</span></button>
       <button onclick="switchTab('profile')" id="tab-profile" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">👤 <span>Profil</span></button>
     </nav>
@@ -700,9 +714,10 @@
 
   <!-- 4. MOBILE BOTTOM-NAVIGATION: 5 feste Bereiche, mit dem Daumen erreichbar, respektiert Notch/Home-Indicator -->
   <nav id="ps-bottom-nav" class="dex-bottom fixed bottom-0 left-0 right-0 z-40 lg:hidden" style="padding-bottom: env(safe-area-inset-bottom);" aria-label="Hauptnavigation">
-    <div class="max-w-md mx-auto grid grid-cols-5 gap-1 px-2 py-1.5">
+    <div class="max-w-md mx-auto grid grid-cols-6 gap-1 px-2 py-1.5">
       <button onclick="switchTab('swipe')" id="mob-swipe" class="mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🃏</span><span class="text-[10px]">Entdecken</span></button>
       <button onclick="switchTab('scan')" id="mob-scan" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">📷</span><span class="text-[10px]">Scanner</span></button>
+      <button onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">💼</span><span class="text-[10px]">Sammlung</span></button>
       <button onclick="switchTab('map')" id="mob-map" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🛒</span><span class="text-[10px]">Marktplatz</span></button>
       <button onclick="switchTab('flip')" id="mob-flip" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">📡</span><span class="text-[10px]">Radar</span></button>
       <button onclick="switchTab('profile')" id="mob-profile" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">👤</span><span class="text-[10px]">Profil</span></button>

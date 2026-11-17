@@ -351,11 +351,8 @@ html.ps-native-ui button:active, html.ps-native-ui .mob-nav:active { transform: 
    --------------------------------------------------------------------------- */
 html, body { overflow-x: hidden; max-width: 100%; }
 main { overflow-x: clip; }
-/* Hero, Schnellzugriff und Schnellstart nur auf der Startseite „Entdecken“ – andere Bereiche starten direkt mit ihrem Inhalt */
-body[data-tab]:not([data-tab="swipe"]) #dex-hero,
-body[data-tab]:not([data-tab="swipe"]) #dex-stats,
-body[data-tab]:not([data-tab="swipe"]) #ps-quickbar,
-body[data-tab]:not([data-tab="swipe"]) #ps-quickstart { display: none !important; }
+/* Wiederhergestellt: Hero, Schnellzugriff-Kacheln, Quickbar und Schnellstart bleiben in allen Bereichen sichtbar
+   (wie vor dem Mobile-First-Umbau) – es wird nichts mehr ausgeblendet. */
 /* Seitenkopf mit Überschrift + Zurück */
 .ps-page-head { padding: 0.25rem 0.125rem; }
 .ps-page-head h2 { font-family: var(--font-display, inherit); letter-spacing: 0.02em; }
