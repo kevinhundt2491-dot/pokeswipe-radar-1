@@ -27,6 +27,7 @@
     "drizzle-orm": "^1.0.0-beta.22",
     "hono": "^4.13.18",
     "jpeg-js": "^0.4.4",
+    "mp4-muxer": "^5.2.2",
     "stripe": "^23.1.0",
     "web-push": "^4.0.0"
   },

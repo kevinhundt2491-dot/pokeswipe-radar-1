@@ -14,6 +14,15 @@ const BODY = `"Figtree", system-ui, ${EMOJI}, sans-serif`;
 const SAFE = { left: 80, right: 930, top: 230, bottom: 1500 };
 const CX = (SAFE.left + SAFE.right) / 2; // optische Mitte links der Plattform-Buttons
 const CAP_Y = 1330; // Untertitel-Mitte
+const CAP_Y_PHONE = 1462; // Untertitel unter dem großen Smartphone (Fokus-Szene) – verdeckt keine Buttons/Karten
+// Worauf die Kamera in der Fokus-Szene zielt (Highlight der jeweiligen Funktion)
+const HIGHLIGHT = {
+  overview: "📡 Live-Preise · 👆 Swipe · 🛡️ Käuferschutz",
+  radar: "💶 Cardmarket vs. TCGplayer – live",
+  swipe: "👆 Swipe-Entdecker in Aktion",
+  market: "🛡️ Marktplatz mit Käuferschutz",
+  portfolio: "📈 Portfolio-Wertentwicklung live",
+};
 const XFADE = 0.35; // weicher Übergang (s)
 
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
@@ -60,12 +69,12 @@ export class ProCompositor {
    * @param {() => ({x:number,y:number}|null)} [o.focus]  Fingerposition in Ausgabe-Pixeln (für den Fokus-Zoom)
    * @param {object} [o.facts]
    */
-  constructor({ tpl, cover, badge = "", look = null, coverCard = null, scenes, captions, focus = () => null, facts = {} }) {
-    Object.assign(this, { tpl, cover, badge, coverCard, scenes, captions, focus, facts });
+  constructor({ tpl, cover, badge = "", look = null, coverCard = null, scenes, captions, focus = () => null, facts = {}, fade = 0 }) {
+    Object.assign(this, { tpl, cover, badge, coverCard, scenes, captions, focus, facts, fade });
     this.accent = look?.accent || tpl.accent || "#ffcb05";
     this.layout = look?.layout || "left";
     this.m = 1; // Deckkraft-Faktor (für Überblendungen)
-    this.fx = W / 2; this.fy = H * 0.42; // geglättete Zoom-Mitte
+    this.reset();
     this.bg = this.#background();
     this.blur = document.createElement("canvas"); this.blur.width = W / 12; this.blur.height = H / 12;
   }
@@ -81,6 +90,19 @@ export class ProCompositor {
     for (let x = 0; x <= W; x += 90) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
     for (let y = 0; y <= H; y += 90) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
     return c;
+  }
+
+  /** Kamera-Zustand zurücksetzen (nach dem Vorschaubild, vor Frame 0 der Aufnahme). */
+  reset() {
+    this.fx = 0.5; this.fy = 0.42; // geglättete Zoom-Mitte (normiert 0–1 im Live-Bild)
+    this.zoom = 1.1;
+    this.lastT = 0;
+  }
+
+  /** Zeitbasierte Glättung (unabhängig von der Framerate): Anteil, um den sich ein Wert in dt Sekunden annähert. */
+  #follow(t, rate) {
+    const dt = clamp(t - this.lastT, 0, 0.12);
+    return 1 - Math.exp(-dt * rate);
   }
 
   #backdrop(ctx, t) {
@@ -131,20 +153,65 @@ export class ProCompositor {
     return w;
   }
 
-  /** Echte App im Smartphone-Rahmen; zoom > 1 = Ausschnitt um die Fokus-Mitte (Ken-Burns). */
-  #phone(ctx, live, x, y, w, h, zoom = 1, alpha = 1) {
+  /**
+   * Echte App in einem schwebenden Dark-Mode-Smartphone (abgerundet, Neon-Glow-Rahmen, Schlagschatten,
+   * Dynamic Island, Glas-Reflexion). (x, y, w, h) = Bildschirmfläche. Der Ausschnitt aus dem Live-Bild hat
+   * immer exakt das Seitenverhältnis des Bildschirms – nichts wird gestreckt. zoom > 1 = Kamerafahrt auf die Fokus-Mitte.
+   */
+  #phone(ctx, live, x, y, w, h, zoom = 1, alpha = 1, { spot = null } = {}) {
+    const bez = Math.max(10, w * 0.034), R = w * 0.12, r = R - bez * 0.6;
     ctx.save();
     ctx.globalAlpha = alpha * this.m;
-    ctx.shadowColor = hexA(this.accent, 0.55); ctx.shadowBlur = 60;
-    rr(ctx, x - 10, y - 10, w + 20, h + 20, 56); ctx.fillStyle = "#05070f"; ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.lineWidth = 4; ctx.strokeStyle = hexA(this.accent, 0.9); ctx.stroke();
-    rr(ctx, x, y, w, h, 46); ctx.clip();
+    // realistischer Schlagschatten (versetzt, weich) + Neon-Glow in der Akzentfarbe
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.75)"; ctx.shadowBlur = w * 0.14; ctx.shadowOffsetY = w * 0.07;
+    rr(ctx, x - bez, y - bez, w + bez * 2, h + bez * 2, R); ctx.fillStyle = "#04060d"; ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.shadowColor = hexA(this.accent, 0.7); ctx.shadowBlur = w * 0.09;
+    rr(ctx, x - bez, y - bez, w + bez * 2, h + bez * 2, R); ctx.lineWidth = 3; ctx.strokeStyle = hexA(this.accent, 0.95); ctx.stroke();
+    ctx.restore();
+    // Gehäuse: dunkles Metall mit Kantenlicht
+    const body = ctx.createLinearGradient(x - bez, y - bez, x + w + bez, y + h + bez);
+    body.addColorStop(0, "#2b3045"); body.addColorStop(0.18, "#0b0e19"); body.addColorStop(0.82, "#0b0e19"); body.addColorStop(1, "#242a3f");
+    rr(ctx, x - bez, y - bez, w + bez * 2, h + bez * 2, R); ctx.fillStyle = body; ctx.fill();
+    rr(ctx, x - bez + 2, y - bez + 2, w + bez * 2 - 4, h + bez * 2 - 4, R - 2); ctx.lineWidth = 1.5; ctx.strokeStyle = "rgba(255,255,255,0.16)"; ctx.stroke();
+    // Seitentasten
+    ctx.fillStyle = "#1a1f30";
+    rr(ctx, x + w + bez - 1, y + h * 0.2, bez * 0.45, h * 0.09, 3); ctx.fill();
+    rr(ctx, x - bez - bez * 0.45 + 1, y + h * 0.16, bez * 0.45, h * 0.06, 3); ctx.fill();
+    rr(ctx, x - bez - bez * 0.45 + 1, y + h * 0.24, bez * 0.45, h * 0.06, 3); ctx.fill();
+    // Bildschirm mit der echten App
+    ctx.save();
+    rr(ctx, x, y, w, h, r); ctx.clip();
     if (live) {
-      const sw = W / zoom, sh = H / zoom;
-      const sx = clamp(this.fx - sw / 2, 0, W - sw), sy = clamp(this.fy - sh / 2, 0, H - sh);
+      const LW = live.width, LH = live.height;
+      const base = Math.min(LW / w, LH / h);
+      const sw = (w * base) / zoom, sh = (h * base) / zoom;
+      const sx = clamp(this.fx * LW - sw / 2, 0, LW - sw), sy = clamp(this.fy * LH - sh / 2, 0, LH - sh);
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
       ctx.drawImage(live, sx, sy, sw, sh, x, y, w, h);
+      // Spotlight auf die Stelle, die gerade bedient wird
+      if (spot) {
+        const px = x + ((spot.x * LW - sx) / sw) * w, py = y + ((spot.y * LH - sy) / sh) * h;
+        if (px > x && px < x + w && py > y && py < y + h) {
+          const rad = w * 0.2;
+          const v = ctx.createRadialGradient(px, py, rad * 0.6, px, py, Math.max(w, h));
+          v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, `rgba(3,5,12,${0.42 * spot.a})`);
+          ctx.fillStyle = v; ctx.fillRect(x, y, w, h);
+          ctx.beginPath(); ctx.arc(px, py, rad * (0.55 + 0.06 * Math.sin(spot.t * 6)), 0, Math.PI * 2);
+          ctx.lineWidth = 5; ctx.strokeStyle = hexA(this.accent, 0.85 * spot.a); ctx.shadowColor = this.accent; ctx.shadowBlur = 24; ctx.stroke();
+        }
+      }
     } else { ctx.fillStyle = "#0c1022"; ctx.fillRect(x, y, w, h); }
+    // Glas-Reflexion
+    const gl = ctx.createLinearGradient(x, y, x + w * 0.9, y + h * 0.55);
+    gl.addColorStop(0, "rgba(255,255,255,0.10)"); gl.addColorStop(0.35, "rgba(255,255,255,0.03)"); gl.addColorStop(0.36, "rgba(255,255,255,0)");
+    ctx.fillStyle = gl; ctx.fillRect(x, y, w, h);
+    ctx.restore();
+    // Dynamic Island
+    const iw = w * 0.22, ih = Math.max(12, w * 0.052);
+    rr(ctx, x + w / 2 - iw / 2, y + h * 0.01, iw, ih, ih / 2); ctx.fillStyle = "#000"; ctx.fill();
     ctx.restore();
   }
 
@@ -183,7 +250,7 @@ export class ProCompositor {
     // echte App-Ansicht der Funktion, um die es im Video geht
     ctx.save();
     ctx.translate(mock.x + pw / 2, mock.y + ph / 2); ctx.rotate(mock.rot); ctx.translate(-pw / 2, -ph / 2);
-    this.fx = W / 2; this.fy = H / 2;
+    this.fx = 0.5; this.fy = 0.5;
     this.#phone(ctx, live, 0, 0, pw, ph, 1);
     ctx.restore();
     this.#coverCard(ctx, card.x, card.y + bob, card.rot);
@@ -269,16 +336,25 @@ export class ProCompositor {
     ctx.restore();
   }
 
-  /** 2 · Fokus-Zoom auf die echte App (Ken-Burns um die Fingerposition). */
+  /**
+   * 2 · Fokus-Szene: schwebendes Smartphone mit langsamer Kamerafahrt (Push-in + leichte Neigung). Im Bildschirm
+   * fährt die Kamera gezielt auf die Stelle, an der die App gerade bedient wird (Preisvergleich, Swipe-Karte,
+   * Käuferschutz-Badge, Portfolio-Wert) – mit Spotlight. Ohne Interaktion: sanfter Ken-Burns-Schwenk.
+   */
   focusScene(ctx, t, p, live) {
     this.#backdrop(ctx, t);
     const f = this.focus();
-    const tx = f ? f.x : W / 2, ty = f ? f.y : H * 0.4;
-    this.fx += (tx - this.fx) * 0.06; this.fy += (ty - this.fy) * 0.06;
-    const zoom = 1.08 + 0.32 * ease(p);
-    const w = 820, h = 1250, x = CX - w / 2, y = 330;
-    this.#phone(ctx, live, x, y, w, h, zoom);
-    this.#pill(ctx, this.tpl.label, CX, 270, { size: 38 });
+    const tx = f ? f.x : 0.5, ty = f ? f.y : 0.36 + 0.1 * Math.sin(t * 0.55);
+    const k = this.#follow(t, f ? 3.2 : 1.4), kz = this.#follow(t, 1.8);
+    this.fx += (tx - this.fx) * k; this.fy += (ty - this.fy) * k;
+    this.zoom += ((f ? 1.6 : 1.14 + 0.08 * ease(p)) - this.zoom) * kz;
+    const w = 580, h = 1031, x = CX - w / 2, y = 335;
+    const push = 1 + 0.045 * ease(p), tilt = Math.sin(t * 0.7) * 0.012, bob = Math.sin(t * 1.3) * 6;
+    ctx.save();
+    ctx.translate(CX, y + h / 2 + bob); ctx.rotate(tilt); ctx.scale(push, push); ctx.translate(-CX, -(y + h / 2));
+    this.#phone(ctx, live, x, y, w, h, this.zoom, 1, { spot: f ? { x: f.x, y: f.y, a: clamp((this.zoom - 1.14) / 0.4), t } : null });
+    ctx.restore();
+    this.#pill(ctx, HIGHLIGHT[this.tpl.key] || this.tpl.label, CX, 250, { size: 36 });
   }
 
   /** 3 · Nutzen: kleine Live-Ansicht + animierte Feature-Badges und Kennzahlen. */
@@ -302,8 +378,13 @@ export class ProCompositor {
       ctx.restore();
     });
     // Live-Ansicht links, leicht gezoomt
-    this.fx += (W / 2 - this.fx) * 0.03; this.fy += (H * 0.38 - this.fy) * 0.03;
-    this.#phone(ctx, live, SAFE.left + 10, 580, 380, 640, 1.15 + 0.1 * ease(p));
+    const kb = this.#follow(t, 1.2);
+    this.fx += (0.5 - this.fx) * kb; this.fy += (0.36 - this.fy) * kb;
+    ctx.save();
+    const pcx = SAFE.left + 190, pcy = 900 + Math.sin(t * 1.4) * 6;
+    ctx.translate(pcx, pcy); ctx.rotate(-0.04 + Math.sin(t * 0.8) * 0.01); ctx.translate(-pcx, -pcy);
+    this.#phone(ctx, live, SAFE.left + 10, 580, 360, 640, 1.12 + 0.12 * ease(p));
+    ctx.restore();
     // Badges rechts, nacheinander einfliegend
     (this.tpl.badges || []).forEach((b, i) => {
       const a = back((p - 0.12 - i * 0.12) * 4);
@@ -399,15 +480,20 @@ export class ProCompositor {
     while (ctx.measureText(txt).width > maxW && size > 38) { size -= 4; ctx.font = `900 ${size}px ${BODY}`; }
     const tw = Math.min(maxW, ctx.measureText(txt).width), h = size * 1.7;
     const pop = 0.94 + 0.06 * ease((t - c.start) * 8);
-    ctx.translate(CX, CAP_Y); ctx.scale(pop, pop);
-    rr(ctx, -tw / 2 - 34, -h / 2, tw + 68, h, 30); ctx.fillStyle = "rgba(5,7,15,0.78)"; ctx.fill();
-    ctx.lineWidth = 3; ctx.strokeStyle = hexA(this.accent, 0.55); ctx.stroke();
+    ctx.translate(CX, sc.key === "focus" ? CAP_Y_PHONE : CAP_Y); ctx.scale(pop, pop);
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 8;
+    rr(ctx, -tw / 2 - 34, -h / 2, tw + 68, h, 30); ctx.fillStyle = "rgba(5,7,15,0.88)"; ctx.fill();
+    ctx.restore();
+    ctx.lineWidth = 3; ctx.strokeStyle = hexA(this.accent, 0.7); ctx.stroke();
+    ctx.lineJoin = "round"; ctx.lineWidth = 7; ctx.strokeStyle = "rgba(0,0,0,0.85)";
     let x = -tw / 2;
     for (const w of c.words) {
       const ww = ctx.measureText(`${w.w} `).width;
       const on = t >= w.start && t < w.end + 0.05;
+      ctx.textAlign = "left"; ctx.strokeText(w.w, x, 2);
       ctx.fillStyle = on ? this.accent : "#ffffff";
-      ctx.textAlign = "left"; ctx.fillText(w.w, x, 2);
+      ctx.fillText(w.w, x, 2);
       x += ww;
     }
     ctx.restore();
@@ -442,6 +528,12 @@ export class ProCompositor {
     // dezenter Fortschrittsbalken (hält Zuschauer bis zum Ende)
     const D = this.scenes[this.scenes.length - 1].end;
     ctx.fillStyle = hexA(this.accent, 0.85); ctx.fillRect(0, 0, W * clamp(t / D), 8);
+    // sanftes Ausblenden nach dem letzten Wort (synchron zur Tonspur)
+    if (this.fade > 0 && t > D - this.fade) {
+      const a = clamp((t - (D - this.fade)) / this.fade);
+      ctx.fillStyle = `rgba(0,0,0,${a * a * (3 - 2 * a)})`; ctx.fillRect(0, 0, W, H);
+    }
+    this.lastT = t;
   }
 }
 
