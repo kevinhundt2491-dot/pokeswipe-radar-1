@@ -108,7 +108,7 @@ async function testMakeWebhook() {
     // Felder der Pro-Videos (damit Make die komplette Struktur lernt)
     thumb_offset_ms: "0", cover_headline: "ALL-IN-ONE: Diese App verändert Pokémon-TCG!", cover_badge: "FUNKTIONS-CHECK", cover_color: "cyan",
     cover_accent: "#22d3ee", cover_layout: "left", cover_card_id: "sv03.5-199", cover_card_name: "Test-Karte", cover_card_price_eur: "49.9", video_mode: "pro", video_template: "overview",
-    video_template_label: "Komplett-Überblick", hook_variant: "0", fps: "30", video_bitrate_mbit: "15", audio_bitrate_kbps: "192",
+    video_template_label: "Komplett-Überblick", hook_variant: "0", fps: "30", video_bitrate_mbit: "18", audio_bitrate_kbps: "192",
     resolution: "1080x1920", aspect_ratio: "9:16", max_mb: "95", scenes_json: JSON.stringify([{ key: "cover", start: 0, end: 2 }]),
   };
   const tc = document.createElement("canvas"); tc.width = 108; tc.height = 192;
@@ -161,7 +161,7 @@ function videoHtml(c) {
       <div class="space-y-1">${c.allTemplates.map((t) => `<label class="flex items-center gap-2 text-slate-200"><input type="checkbox" data-mk-tpl="${t.id}" ${v.templates.includes(t.id) ? "checked" : ""} class="accent-yellow-400"> ${esc(t.label)}${t.id === nextKey ? ` <span class="text-yellow-300">• als Nächstes</span>` : ""}</label>`).join("")}</div>
       <div class="flex flex-wrap gap-2 items-center">
         <label class="text-slate-300">FPS <select id="mk-fps" class="${sel}">${opt(30, v.fps, "30 FPS (empfohlen)")}${opt(60, v.fps, "60 FPS (flüssiger)")}</select></label>
-        <label class="text-slate-300">Video-Bitrate <select id="mk-mbit" class="${sel}">${[14, 15, 16].map((m) => opt(m, v.mbit, `${m} Mbit/s`)).join("")}</select></label>
+        <label class="text-slate-300">Video-Bitrate <select id="mk-mbit" class="${sel}">${[[14, ""], [15, ""], [16, ""], [18, " (empfohlen · ruckelfrei ab 24 Mbit/s)"], [20, " (max. · ab ~30 Mbit/s Leitung)"]].map(([m, t]) => opt(m, v.mbit, `${m} Mbit/s${t}`)).join("")}</select></label>
         <label class="text-slate-300">Max. Dateigröße <select id="mk-maxmb" class="${sel}">${[95, 90, 80, 60, 45].map((m) => opt(m, v.maxMb, `${m} MB${m === 95 ? " (Make Core 100 MB − Puffer)" : ""}`)).join("")}</select></label>
         <label class="text-slate-300">Stimme <select id="mk-tone" class="${sel}">${opt("energetic", v.tone, "Energiegeladenes Storytelling")}${opt("calm", v.tone, "Ruhig & sachlich")}</select></label>
       </div>

@@ -17,7 +17,7 @@ export type VideoConfig = {
   tone: "energetic" | "calm"; rotation: number; updatedAt: string | null;
 };
 export const DEFAULT_VIDEO: VideoConfig = {
-  templates: [...PRO_TEMPLATE_KEYS], fps: 30, mbit: 15, maxMb: SAFE_MB_MAX, tone: "energetic", rotation: 0, updatedAt: null,
+  templates: [...PRO_TEMPLATE_KEYS], fps: 30, mbit: 18, maxMb: SAFE_MB_MAX, tone: "energetic", rotation: 0, updatedAt: null,
 };
 
 /** Gespeicherte/übergebene Werte auf erlaubte Werte begrenzen. */
@@ -29,7 +29,7 @@ export function cleanVideoConfig(raw: any, prev: VideoConfig = DEFAULT_VIDEO): V
   return {
     templates: tpl.length ? tpl : [...PRO_TEMPLATE_KEYS],
     fps: Number(r.fps ?? prev.fps) === 60 ? 60 : 30,
-    mbit: Number.isFinite(mbit) ? Math.min(16, Math.max(14, Math.round(mbit))) : 15,
+    mbit: Number.isFinite(mbit) ? Math.min(20, Math.max(14, Math.round(mbit))) : 18,
     maxMb: Number.isFinite(maxMb) ? Math.min(SAFE_MB_MAX, Math.max(20, Math.round(maxMb))) : SAFE_MB_MAX,
     tone: (r.tone ?? prev.tone) === "calm" ? "calm" : "energetic",
     rotation: Math.max(0, Math.trunc(Number(r.rotation ?? prev.rotation) || 0)),

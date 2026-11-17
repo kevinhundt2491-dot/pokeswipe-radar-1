@@ -34,6 +34,9 @@ test("Pro-Videos: Bitrate hält 95 MB sicher ein und wird bei Übergröße reduz
     assert.ok(m <= 16 && estimateMb(sec, m) < SAFE_MB, `${sec}s → ${m} Mbit/s`);
   }
   assert.equal(bitrateFor(30, 15), 15); // bei 30 s bleibt die volle Qualität
+  assert.equal(bitrateFor(30, 18), 18); // 18 Mbit/s (Standard) passt bei 30 s unter 95 MB
+  assert.equal(bitrateFor(30, 20), 20); // 20 Mbit/s (Maximum) ebenfalls
+  assert.ok(estimateMb(30, 18) < 75 && estimateMb(30, 20) < SAFE_MB);
   const smaller = shrinkBitrate(15, 110 * MB);
   assert.ok(smaller < 15 * (95 / 110));
 });
@@ -70,7 +73,7 @@ test("Pro-Videos: Beschreibungstext mit Hook, CTA zu pokeswipe-radar.de und Hash
 
 test("Pro-Videos: Einstellungen werden begrenzt, Rotation wechselt Vorlage und Hook", () => {
   const c = cleanVideoConfig({ fps: 120, mbit: 40, maxMb: 300, tone: "x", templates: ["radar", "foo", "market"] });
-  assert.equal(c.fps, 30); assert.equal(c.mbit, 16); assert.equal(c.maxMb, 95); assert.equal(c.tone, "energetic");
+  assert.equal(c.fps, 30); assert.equal(c.mbit, 20); assert.equal(c.maxMb, 95); assert.equal(c.tone, "energetic");
   assert.deepEqual(c.templates, ["radar", "market"]);
   assert.deepEqual(cleanVideoConfig({ templates: [] }).templates, [...PRO_TEMPLATE_KEYS]);
   assert.deepEqual(rotationAt(c, 0), { template: "radar", variant: 0, index: 0 });
