@@ -56,10 +56,10 @@ const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length
  * Komplettes Skript in EINEM Take sprechen lassen, MP3 vollständig laden und als AudioBuffer dekodieren.
  * @returns {Promise<{ buffer: AudioBuffer, marks: {start:number,end:number}[], duration: number, words: number, mp3: Blob }>}
  */
-export async function loadNarration(lines, ac) {
-  const key = lines.join("\n");
+export async function loadNarration(lines, ac, { tone = "calm", speed = 1 } = {}) {
+  const key = `${tone}|${speed}|${lines.join("\n")}`;
   if (voiceCache.has(key)) return voiceCache.get(key);
-  const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines, speed: 1 } });
+  const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines, speed, tone } });
   if (!res?.audio || !Array.isArray(res.marks) || res.marks.length !== lines.length) throw new Error("Sprachausgabe unvollständig");
   const bytes = b64ToBuf(res.audio);
   const mp3 = new Blob([bytes.slice(0)], { type: "audio/mpeg" });
@@ -88,7 +88,7 @@ function cuesFor(key, marks, D) {
 // Bildquellen
 // ---------------------------------------------------------------------------
 /** Live-DOM-to-Canvas: echte DOM-Snapshots der Stage mit bis zu 30 FPS. */
-async function domSource(stage, onStatus) {
+export async function domSource(stage, onStatus) {
   const cap = new DomCapture(stage.win, { width: VIEW_W, height: VIEW_H, outW: OUT_W, outH: OUT_H });
   onStatus?.("Bereite Live-DOM-Aufnahme vor (Stylesheets, Schriften, Kartenbilder) …");
   await cap.prepare();

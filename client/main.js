@@ -30,6 +30,7 @@ import { cartApi, routeCart, injectCartButton, refreshCartBadge } from "./cart.j
 import { initPwa, pwaApi, wrapEnablePush, afterLoginPwa } from "./pwa.js";
 import { searchCatalog, searchThumb, searchMeta, isAbort } from "./search.js";
 import { complianceApi, billingPortalButton } from "./compliance.js";
+import { makeAdminApi } from "./make-admin.js";
 import { tradingApi, tradeDetailHtml, routeTrading } from "./trading.js";
 import { syncAdminTools, openGenerator, initLazyAdminTools } from "./lazy.js";
 import { valuationApi, loadValuation } from "./valuation.js";
@@ -1157,7 +1158,7 @@ async function openAdmin() {
         ${tile("Aktive Inserate", Number(stats.active_listings) || 0)}
         ${tile("Abgeschlossene Tausche", Number(stats.completed_trades) || 0)}
       </div>
-      <div class="flex flex-wrap gap-2">${btn("🧾 DAC7-Meldung & BZSt-Export", "PS.openDac7Admin()", "bg-slate-800 text-white")}${btn("🧩 Set-Vollständigkeit", "PS.openSetCompleteness()", "bg-slate-800 text-white")}${btn("⚙️ Jobs & Fehler", "PS.openOps()", "bg-slate-800 text-white")}</div>
+      <div class="flex flex-wrap gap-2">${btn("🧾 DAC7-Meldung & BZSt-Export", "PS.openDac7Admin()", "bg-slate-800 text-white")}${btn("🧩 Set-Vollständigkeit", "PS.openSetCompleteness()", "bg-slate-800 text-white")}${btn("⚙️ Jobs & Fehler", "PS.openOps()", "bg-slate-800 text-white")}${btn("🎬 Make.com & Auto-Reels", "PS.openMakeAdmin()", "bg-slate-800 text-white")}</div>
       <h4 class="text-sm font-black text-white">Offene Meldungen (${reports.length})</h4>
       <div class="space-y-1.5 max-h-80 overflow-y-auto text-xs">
         ${reports.length ? reports.map((r) => `<div class="bg-slate-900 rounded-xl p-2.5 border border-slate-800">
@@ -1244,6 +1245,7 @@ window.PS = {
   ...cartApi,
   ...pwaApi,
   ...complianceApi,
+  ...makeAdminApi,
   ...tradingApi,
   enablePush: wrapEnablePush(featureApi.enablePush),
   openPost: (id) => { history.replaceState(null, "", `/?tab=community&post=${Number(id)}`); routeCommunity(); },

@@ -11,6 +11,12 @@ import { toast, hooks, state, api } from "./core.js";
 import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
 import { recordLive, previewLive, loadNarration, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
+import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
+import { PRO_TEMPLATES, templateByKey, proCaption, proScript, checkProScript, estimateMb, bitrateFor, sceneTimes, SAFE_MB, PRO_MIN_S, PRO_MAX_S } from "./reel-pro.js";
+import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
+import { lookFor, cardImageUrl, pickCoverCard } from "./reel-pro.js";
+import { sameOriginImageUrl } from "./dom-capture.js";
+import { ProCompositor, loadProFonts } from "./reel-compositor.js";
 import { SCENARIOS, LENGTHS, WORD_LIMITS, scriptFor, checkScript, buildCaption, captionFile } from "./reel-scripts.js";
 
 // Die 10 Episoden = die 10 Live-Szenarien
@@ -86,8 +92,16 @@ const HOOK_KEY = "pokeswipe.autoReels.webhook";
 // und greift, solange in diesem Browser nichts anderes gespeichert ist. Wird das Feld geleert, bleibt
 // das als "" gespeichert und Reels werden wieder lokal heruntergeladen.
 const getHook = () => load(HOOK_KEY, "");
+// Zeitpunkt der letzten Änderung in diesem Browser – neuere Werte aus der Admin-Zentrale haben Vorrang
+const HOOK_TS_KEY = "pokeswipe.autoReels.webhookAt";
+const TOKEN_TS_KEY = "pokeswipe.autoReels.tokenAt";
+
+// Zielplattformen (Feld "platforms" für den Router im Make-Szenario). Vorgabe kommt aus der Admin-Zentrale.
+let platforms = new Set(PLATFORMS.map(([id]) => id));
+let makeServer = null; // { url, token, platforms, source, updatedAt } vom Server
 function validHook(u) {
-  try { const x = new URL(u); return x.protocol === "https:" ? x.href : null; } catch { return null; }
+  // Nur Make.com-Ziele: andere Hosts blockiert die Content-Security-Policy (connect-src https://*.make.com)
+  try { const x = new URL(u); return x.protocol === "https:" && /\.make\.com$/i.test(x.hostname) ? x.href : null; } catch { return null; }
 }
 
 // Reel-Länge (bestimmt das Skript: 15 s = 32–36 Wörter, 30 s = 65–72 Wörter)
@@ -132,6 +146,7 @@ const fmt = (t, D) => `${t.toFixed(1).replace(".", ",")} / ${D.toFixed(1).replac
 
 /** Dateiname (ohne in Windows/macOS/Drive verbotene Zeichen). */
 function fileBase(ep) {
+  if (ep.pro) return `Pro ${ep.pro.n} - ${ep.title} (${ep.pro.fps} FPS)`.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
   return `Episode ${ep.n} - ${ep.title} (Live ${reelLen}s)`.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
 }
 
@@ -140,14 +155,14 @@ function hookState() {
   const raw = ui.hook.value.trim();
   if (!raw) return { url: null };
   const url = validHook(raw);
-  return url ? { url } : { error: "Die eingetragene Webhook-URL ist ungültig (nur https:// erlaubt). Bitte korrigieren oder das Feld leeren." };
+  return url ? { url } : { error: "Die eingetragene Webhook-URL ist ungültig (nur https://…make.com-Adressen erlaubt). Bitte korrigieren oder das Feld leeren." };
 }
 
 function build() {
   if (built) return;
   built = true;
   const style = document.createElement("style");
-  style.textContent = CSS;
+  style.textContent = CSS + PRO_CSS;
   document.head.append(style);
   const el = document.createElement("div");
   el.id = "auto-reels"; el.hidden = true;
@@ -158,6 +173,7 @@ function build() {
         <button type="button" class="ar-x" data-ar="close" aria-label="Schließen">✕</button></div>
       <div class="ar-body">
         <div class="ar-col">
+          ${PRO_HTML}
           <div class="ar-bar">
             <label for="ar-len" style="font-size:13px;font-weight:800">Länge pro Reel:</label>
             <select id="ar-len">${LENGTHS.map((s) => `<option value="${s}"${s === reelLen ? " selected" : ""}>${s} Sekunden (${WORD_LIMITS[s][0]}–${WORD_LIMITS[s][1]} Wörter)</option>`).join("")}</select>
@@ -166,6 +182,8 @@ function build() {
             <label for="ar-hook">🔗 Make.com Webhook-URL</label>
             <input id="ar-hook" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hook.eu1.make.com/…">
             <small id="ar-hook-info"></small>
+            <span style="font-size:13px;font-weight:800">📲 Plattformen (Feld <code>platforms</code>):</span>
+            <div class="ar-row" id="ar-plats">${PLATFORMS.map(([id, label]) => `<label style="display:flex;gap:4px;align-items:center;cursor:pointer;font-weight:700"><input type="checkbox" data-plat="${id}" style="width:16px;height:16px;accent-color:#ffcb05" checked> ${label}</label>`).join("")}</div>
             <label for="ar-token">🔐 Sicherheits-Token (Feld <code>token</code>)</label>
             <div class="ar-row"><input id="ar-token" type="text" autocomplete="off" spellcheck="false" placeholder="leer = kein Token senden">
               <button type="button" class="ar-btn" data-ar="token-new" title="Neuen Token erzeugen">🎲</button>
@@ -224,7 +242,7 @@ function build() {
   const saveHook = () => {
     const raw = ui.hook.value.trim(), ok = !raw || validHook(raw);
     ui.hook.classList.toggle("bad", !ok);
-    if (ok) save(HOOK_KEY, raw);
+    if (ok) { save(HOOK_KEY, raw); save(HOOK_TS_KEY, new Date().toISOString()); }
     updateHookInfo();
   };
   ui.hook.addEventListener("input", saveHook);
@@ -241,18 +259,27 @@ function build() {
   ui.voiceTest = el.querySelector("#ar-voice-test");
   ui.voiceTest.addEventListener("click", testVoice);
   ui.token.value = getToken();
-  ui.token.addEventListener("input", () => { save(TOKEN_KEY, ui.token.value.trim()); save(TOKEN_MANUAL_KEY, "1"); });
+  ui.token.addEventListener("input", () => { save(TOKEN_KEY, ui.token.value.trim()); save(TOKEN_MANUAL_KEY, "1"); save(TOKEN_TS_KEY, new Date().toISOString()); });
+  ui.plats = el.querySelector("#ar-plats");
+  ui.plats.addEventListener("change", (e) => {
+    const box = e.target.closest("[data-plat]");
+    if (!box) return;
+    if (box.checked) platforms.add(box.dataset.plat); else platforms.delete(box.dataset.plat);
+    e.stopPropagation();
+  });
   ui.len.addEventListener("change", () => { reelLen = Number(ui.len.value) === 15 ? 15 : 30; save(LEN_KEY, String(reelLen)); updateSizeInfo(); renderList(); });
   ui.mbit.addEventListener("change", () => { mbit = Math.max(8, Number(ui.mbit.value) || 8); save(BITRATE_KEY, String(mbit)); updateSizeInfo(); });
   ui.limit.addEventListener("change", () => { limitMb = Number(ui.limit.value) || 100; save(LIMIT_KEY, String(limitMb)); updateSizeInfo(); });
   stage = new LiveStage(ui.host);
   renderList();
+  renderPro();
   el.addEventListener("click", async (e) => {
     const btn = e.target.closest("[data-ar]");
     if (e.target === el && mode === "idle") return close();
     if (!btn) return;
     const act = btn.dataset.ar, n = Number(btn.dataset.n);
     if (act === "close") close();
+    if (btn.dataset.pro) return onProClick(btn);
     if (act === "all") generateAll();
     if (act === "stop") { stopAll = true; if (mode === "preview") endPreview(); setStatus(mode === "rec" ? "Abbruch nach der laufenden Episode …" : "■ Gestoppt."); }
     if (act === "preview") startPreview(EPISODES[n - 1]);
@@ -266,7 +293,12 @@ function build() {
     }
     if (act === "sel-all") { EPISODES.forEach((ep) => batchSel.add(ep.n)); renderList(); }
     if (act === "sel-none") { batchSel.clear(); renderList(); }
-    if (act === "token-new") { ui.token.value = newToken(); save(TOKEN_KEY, ui.token.value); save(TOKEN_MANUAL_KEY, "1"); setStatus("🔐 Neuer Token erzeugt – den Filter im Make-Szenario entsprechend anpassen.", "ok"); }
+    if (act === "token-new") { ui.token.value = newToken(); save(TOKEN_KEY, ui.token.value); save(TOKEN_MANUAL_KEY, "1"); save(TOKEN_TS_KEY, new Date().toISOString()); setStatus("🔐 Neuer Token erzeugt – den Filter im Make-Szenario entsprechend anpassen (oder den Token in der Admin-Zentrale hinterlegen).", "ok"); }
+    if (act === "hook-admin" && makeServer) {
+      ui.hook.value = makeServer.url || ""; save(HOOK_KEY, ui.hook.value); save(HOOK_TS_KEY, new Date().toISOString());
+      if (makeServer.token) { ui.token.value = makeServer.token; save(TOKEN_KEY, makeServer.token); save(TOKEN_MANUAL_KEY, ""); }
+      ui.hook.classList.remove("bad"); updateHookInfo(); setStatus("✓ Webhook-Einstellungen aus der Admin-Zentrale übernommen.", "ok");
+    }
     if (act === "token-copy") {
       const ok = await copyText(ui.token.value.trim());
       if (ok) setStatus("📋 Token kopiert – im Make-Filter einfügen.", "ok");
@@ -294,6 +326,13 @@ function fit() { fitStage(ui.host, Math.min(window.innerHeight * 0.72, 760)); }
 function updateHookInfo() {
   const raw = ui.hook.value.trim();
   ui.hookInfo.classList.toggle("warn", !!raw && !validHook(raw));
+  const differs = makeServer && (validHook(raw) || "") !== (makeServer.url || "");
+  if (differs) {
+    ui.hookInfo.classList.add("warn");
+    ui.hookInfo.innerHTML = `⚠️ Weicht von der Admin-Zentrale ab (${makeServer.url ? "dort ist eine andere URL hinterlegt" : "dort ist der Versand ausgeschaltet"}). <button type="button" class="ar-btn" data-ar="hook-admin" style="padding:3px 8px;font-size:11px">Admin-Wert übernehmen</button>`;
+    updateSizeInfo();
+    return;
+  }
   ui.hookInfo.textContent = !raw
     ? "Keine URL eingetragen → fertige Reels (MP4 + .txt-Beschreibung) werden lokal heruntergeladen."
     : validHook(raw)
@@ -328,13 +367,27 @@ async function checkVoice() {
   try { voiceReady = await api("/api/admin/voiceover/status"); }
   catch (e) { voiceReady = { ready: false, error: e?.message || "Netzwerkfehler" }; }
   applyMakeDefaults(voiceReady?.make);
+  applyProDefaults(voiceReady?.make);
   updateVoiceInfo();
 }
-/** Make.com-Vorgaben vom Server übernehmen, solange im Browser nichts Eigenes eingetragen wurde. */
+/** Make.com-Vorgaben vom Server übernehmen: wenn im Browser nichts Eigenes steht oder die Admin-Zentrale neuer ist. */
 function applyMakeDefaults(make) {
-  if (!make || !ui.hook || ui.hook.disabled) return;
-  if (make.url && load(HOOK_KEY, null) === null && !ui.hook.value.trim()) { ui.hook.value = make.url; updateHookInfo(); }
-  if (make.token && load(TOKEN_MANUAL_KEY, "") !== "1" && ui.token.value !== make.token) { ui.token.value = make.token; save(TOKEN_KEY, make.token); }
+  if (!make || !ui.hook || ui.hook.disabled || mode === "rec") return;
+  makeServer = make;
+  const newer = (k) => !!make.updatedAt && make.updatedAt > load(k, "");
+  if (load(HOOK_KEY, null) === null || newer(HOOK_TS_KEY)) {
+    ui.hook.value = make.url || ""; ui.hook.classList.remove("bad");
+    if (make.updatedAt) { save(HOOK_KEY, ui.hook.value); save(HOOK_TS_KEY, make.updatedAt); }
+  }
+  if (make.token && (load(TOKEN_MANUAL_KEY, "") !== "1" || newer(TOKEN_TS_KEY)) && ui.token.value !== make.token) {
+    ui.token.value = make.token; save(TOKEN_KEY, make.token); save(TOKEN_MANUAL_KEY, "");
+    if (make.updatedAt) save(TOKEN_TS_KEY, make.updatedAt);
+  }
+  if (Array.isArray(make.platforms) && make.platforms.length) {
+    platforms = new Set(make.platforms);
+    ui.plats?.querySelectorAll("[data-plat]").forEach((b) => { b.checked = platforms.has(b.dataset.plat); });
+  }
+  updateHookInfo();
 }
 let testAudio = null;
 async function testVoice() {
@@ -361,6 +414,7 @@ function setBusy(b) {
   ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceTest.disabled = b;
   ui.root.querySelectorAll('[data-ar^="sel-"],[data-ar^="token-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll('button:not([data-ar="copy"]),input').forEach((x) => { x.disabled = b; });
+  ui.root.querySelectorAll('[data-pro]').forEach((x) => { x.disabled = b; });
   ui.host.classList.toggle("busy", b);
 }
 
@@ -436,12 +490,16 @@ function keep(ep, res, cap, txt, { click = false, sent = false } = {}) {
 // Fehler beim Versand. retry = gefahrlos wiederholbar (Make hat das Reel sicher NICHT angenommen),
 // unconfirmed = Datei wurde komplett hochgeladen, aber die Antwort fehlt → evtl. schon angekommen, NICHT wiederholen.
 class HookError extends Error {
-  constructor(msg, { retry = false, unconfirmed = false } = {}) { super(msg); this.retry = retry; this.unconfirmed = unconfirmed; }
+  constructor(msg, { retry = false, unconfirmed = false, status = null } = {}) { super(msg); this.retry = retry; this.unconfirmed = unconfirmed; this.status = status; }
+}
+/** Ergebnis eines Uploads im Protokoll der Admin-Zentrale vermerken (ohne URL/Token). */
+function reportDelivery(r) {
+  api("/api/admin/make/report", { method: "POST", body: r }).catch(() => { /* Protokoll ist optional */ });
 }
 // Diese Antworten bedeuten "nicht verarbeitet" (überlastet/Gateway) – ein neuer Versuch erzeugt keinen Doppel-Post.
 const RETRY_STATUS = new Set([429, 502, 503, 504]);
 
-function postToWebhook(url, ep, res, cap, txt, uploadId, onProgress) {
+function postToWebhook(url, ep, res, cap, txt, uploadId, onProgress, extra = {}) {
   const base = fileBase(ep);
   const name = `${base}.${res.ext}`;
   const form = new FormData();
@@ -450,9 +508,10 @@ function postToWebhook(url, ep, res, cap, txt, uploadId, onProgress) {
   form.append("caption_file", new Blob([txt], { type: "text/plain;charset=utf-8" }), `${base}.txt`);
   form.append("title", cap.title);
   form.append("caption", cap.caption);
+  form.append("description", cap.caption); // gleicher Text, eindeutiger Name für YouTube/Facebook-Module
   form.append("hashtags", cap.hashtags.join(" "));
   form.append("hashtags_json", JSON.stringify(cap.hashtags));
-  form.append("meta", JSON.stringify({ title: cap.title, caption: cap.caption, hashtags: cap.hashtags, hook: cap.hook, body: cap.body, facts: res.facts }));
+  form.append("meta", JSON.stringify({ title: cap.title, caption: cap.caption, hashtags: cap.hashtags, hook: cap.hook, body: cap.body, facts: res.facts, platforms: PLATFORMS.map(([id]) => id).filter((id) => platforms.has(id)) }));
   // Zusatzfelder
   form.append("filename", name);
   form.append("episode", String(ep.n));
@@ -465,6 +524,15 @@ function postToWebhook(url, ep, res, cap, txt, uploadId, onProgress) {
   form.append("mime_type", res.blob.type || `video/${res.ext}`);
   form.append("size_bytes", String(res.blob.size));
   form.append("upload_id", uploadId); // bleibt bei Wiederholungen gleich → Make kann Duplikate erkennen
+  const plats = PLATFORMS.map(([id]) => id).filter((id) => platforms.has(id));
+  form.append("platforms", plats.join(",")); // z. B. "instagram,tiktok,youtube,facebook" → Router-Filter "enthält"
+  form.append("platforms_json", JSON.stringify(plats));
+  form.append("is_test", "0");
+  form.append("source", "pokeswipe-radar.de");
+  form.append("created_at", new Date().toISOString());
+  for (const [k, v] of Object.entries(extra)) {
+    if (v instanceof Blob) form.append(k, v, v.name || k); else if (v != null) form.append(k, String(v));
+  }
   const token = ui.token.value.trim();
   if (token) form.append("token", token);
   return new Promise((resolve, reject) => {
@@ -476,8 +544,7 @@ function postToWebhook(url, ep, res, cap, txt, uploadId, onProgress) {
     x.upload.onload = () => { uploaded = true; };
     x.onload = () => {
       if (x.status >= 200 && x.status < 300) return resolve(name);
-      if (x.status === 413) return reject(new HookError("Datei zu groß für den Webhook (413) – Qualität/Länge reduzieren oder Make-Limit prüfen"));
-      reject(new HookError(`Webhook antwortet mit ${x.status}`, { retry: RETRY_STATUS.has(x.status) }));
+      reject(new HookError(`Webhook antwortet mit ${x.status}: ${explainMakeStatus(x.status)}`, { retry: RETRY_STATUS.has(x.status), status: x.status }));
     };
     const fail = (what) => reject(uploaded
       ? new HookError(`${what} nach vollständigem Upload – Eingang bei Make unbestätigt`, { unconfirmed: true })
@@ -489,10 +556,10 @@ function postToWebhook(url, ep, res, cap, txt, uploadId, onProgress) {
 }
 
 /** Wiederholt nur, wenn sicher ist, dass Make das Reel nicht bekommen hat – so entstehen keine Doppel-Posts. */
-async function sendWithRetry(url, ep, res, cap, txt, onProgress) {
+async function sendWithRetry(url, ep, res, cap, txt, onProgress, extra) {
   const uploadId = `ep${ep.n}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   for (let attempt = 1; ; attempt++) {
-    try { return await postToWebhook(url, ep, res, cap, txt, uploadId, onProgress); }
+    try { return await postToWebhook(url, ep, res, cap, txt, uploadId, onProgress, extra); }
     catch (e) {
       if (!e.retry || attempt >= 3) throw e;
       setStatus(`↻ ${e.message} – neuer Versuch ${attempt + 1}/3 für Episode ${ep.n} …`, "err");
@@ -521,6 +588,7 @@ async function generateAll(list = EPISODES) {
   const hs = hookState();
   if (hs.error) { ui.hook.focus(); return setStatus(`⚠️ ${hs.error}`, "err"); }
   const hook = hs.url;
+  if (hook && !platforms.size) return setStatus("⚠️ Bitte mindestens eine Plattform für Make.com auswählen (oder die Webhook-URL leeren).", "err");
   if (hook && estMb() > limitMb && !confirm(`Geschätzt ≈ ${estMb().toFixed(0)} MB pro Reel – das liegt über dem eingestellten Make-Limit von ${limitMb} MB.\n\nZu große Reels werden nicht gesendet, sondern lokal heruntergeladen. Trotzdem starten?\n(Tipp: Qualität oder Länge reduzieren.)`)) return;
   previewToken++;
   if (previewRun) { stage.abort(); try { await previewRun; } catch { /* abgebrochen */ } previewRun = null; }
@@ -568,6 +636,7 @@ async function generateAll(list = EPISODES) {
       const info = `${res.duration.toFixed(1).replace(".", ",")} s, ${res.fps} FPS`;
       if (hook && res.ext === "mp4" && res.blob.size > limitMb * MB) {
         const name = keep(ep, res, cap, txt, { click: true });
+        reportDelivery({ ok: false, episode: ep.n, sizeMb: res.blob.size / MB, message: `Nicht gesendet: ${mb} MB über dem Make-Limit von ${limitMb} MB` });
         setStatus(`⚠️ ${name} ist ${mb} MB groß – über dem Make-Limit von ${limitMb} MB, daher nicht gesendet, sondern (mit .txt) heruntergeladen.`, "err");
         await new Promise((r) => setTimeout(r, 1500));
       } else if (hook && res.ext === "mp4") {
@@ -575,9 +644,11 @@ async function generateAll(list = EPISODES) {
           setStatus(`📤 Episode ${ep.n} wird an Make.com gesendet (${mb} MB, ${info}) …`);
           const name = await sendWithRetry(hook, ep, res, cap, txt, (p) => { ui.time.textContent = `📤 Ep. ${ep.n} · ${Math.round(p * 100)} %`; });
           keep(ep, res, cap, txt, { sent: true }); sent++;
+          reportDelivery({ ok: true, episode: ep.n, sizeMb: res.blob.size / MB, message: `${name} angenommen` });
           setStatus(`✓ ${name} (${mb} MB, ${info}) samt Beschreibung an Make.com übergeben.`, "ok");
         } catch (e) {
           const name = keep(ep, res, cap, txt, { click: true });
+          reportDelivery({ ok: false, episode: ep.n, status: e.status, sizeMb: res.blob.size / MB, message: e.message });
           setStatus(e.unconfirmed
             ? `❔ ${e.message} – kein erneuter Versand (vermeidet Doppel-Posts). ${name} wurde zur Sicherheit zusätzlich heruntergeladen; bitte in Make prüfen, ob es angekommen ist.`
             : `⚠️ Webhook fehlgeschlagen (${e.message}) – ${name} wurde stattdessen heruntergeladen.`, "err");
@@ -605,6 +676,224 @@ async function generateAll(list = EPISODES) {
   if (stopAll) setStatus(`■ Abgebrochen – ${ok} von ${list.length} Live-Reels ${where}.`, ok ? "ok" : "err");
   else if (failed) setStatus(`⚠️ ${ok} von ${list.length} Live-Reels ${where}, ${failed} fehlgeschlagen – einzeln über ⏺ erneut aufnehmen.`, "err");
   else setStatus(`🎉 Fertig! ${ok} Live-Reel${ok === 1 ? "" : "s"} ${where} – jeweils mit Titel, Beschreibung und Hashtags.`, "ok");
+}
+
+
+// ---------------------------------------------------------------------------
+// Pro-Videos: 5 Szenen (Cover → Fokus-Zoom → Nutzen → Vertrauen → Endscreen) statt Bildschirmaufnahme
+// ---------------------------------------------------------------------------
+const PRO_CSS = `
+#auto-reels .ar-pro{display:flex;flex-direction:column;gap:8px;background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(27,36,68,.9));border:1px solid rgba(167,139,250,.5);border-radius:14px;padding:12px}
+#auto-reels .ar-pro b.t{font-family:var(--font-display,"Lilita One",sans-serif);font-weight:400;font-size:19px}
+#auto-reels .ar-pro small{font-size:12px;color:var(--ink-soft,#b9b7c9)}
+#auto-reels .ar-pro ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+#auto-reels .ar-pro li{background:rgba(19,26,51,.85);padding:7px 9px}
+#auto-reels .ar-pro li.next{border-color:#ffcb05}
+#auto-reels button.ar-pro-go{background:#a78bfa;border-color:#a78bfa;color:#1a1420;font-weight:900;flex:1}
+`;
+const PRO_HTML = `
+  <div class="ar-pro" id="ar-pro">
+    <b class="t">🎬 Pro-Videos · 5 Szenen · 20–30 s</b>
+    <small id="ar-pro-spec">Lade Video-Einstellungen …</small>
+    <div class="ar-bar">
+      <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="next">🔁 Nächstes Pro-Video (Rotation)</button>
+      <button type="button" class="ar-btn" data-ar="pro" data-pro="all">🚀 Alle aktiven Vorlagen</button>
+    </div>
+    <ul id="ar-pro-list"></ul>
+    <small>Cover mit Hook-Schlagzeile (0–2 s, zugleich Vorschaubild) → Fokus-Zoom auf die echte App → „Warum das genial ist“ mit Feature-Badges → Vertrauen &amp; Praxis-Mehrwert → Endscreen „${esc("Jetzt kostenlos testen auf pokeswipe-radar.de")}“. Untertitel im sicheren Mittelbereich. Einstellungen: Admin-Zentrale → 🎬 Make.com &amp; Auto-Reels.</small>
+  </div>`;
+const proResults = new Map(); // Vorlage -> { url, name, size, sent, cap, txt, txtUrl, txtName, thumbUrl }
+let proCfg = { templates: PRO_TEMPLATES.map((t) => t.key), fps: 30, mbit: 15, maxMb: SAFE_MB, tone: "energetic" };
+let proNext = null; // { template, variant } vom Server
+
+function proMaxMb() { return Math.min(proCfg.maxMb || SAFE_MB, Math.floor(limitMb * 0.95)); }
+
+function renderPro(states = {}) {
+  const spec = ui.root?.querySelector("#ar-pro-spec");
+  if (!spec) return;
+  const est = estimateMb(PRO_MAX_S, bitrateFor(PRO_MAX_S, proCfg.mbit, proMaxMb()));
+  spec.textContent = `1080×1920 · H.264 High · ${proCfg.fps} FPS · bis ${proCfg.mbit} Mbit/s · AAC 192 kbit/s Stereo · Stimme ${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"} · Größen-Garantie ≤ ${proMaxMb()} MB (≈ ${est.toFixed(0)} MB bei 30 s)`;
+  ui.root.querySelector("#ar-pro-list").innerHTML = PRO_TEMPLATES.map((tpl, i) => {
+    const on = proCfg.templates.includes(tpl.key), r = proResults.get(tpl.key), st = states[tpl.key];
+    const icon = { on: "⏺", ok: "✅", err: "⚠️", wait: "⏳" }[st] || (r ? "✅" : on ? "🎞️" : "⏸");
+    const words = checkProScript(proScript(tpl, 0).say).words;
+    const isNext = proNext?.template === tpl.key;
+    const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ MP4</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> ${r.sent ? "📤 an Make gesendet" : ""}</span></div></div>` : "";
+    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${on ? "" : " · in der Admin-Zentrale deaktiviert"}</small></span>
+      <span class="ar-acts"><button type="button" data-ar="pro" data-pro="one" data-k="${tpl.key}" title="Nur diese Vorlage aufnehmen">⏺</button></span>${out}</li>`;
+  }).join("");
+}
+
+function applyProDefaults(make) {
+  if (make?.video) proCfg = { ...proCfg, ...make.video };
+  if (make?.next) proNext = make.next;
+  renderPro();
+}
+
+async function onProClick(btn) {
+  if (mode !== "idle") return;
+  const what = btn.dataset.pro;
+  if (what === "one") return generatePro([{ tpl: templateByKey(btn.dataset.k), variant: proNext?.template === btn.dataset.k ? proNext.variant : 0 }]);
+  if (what === "all") return generatePro(PRO_TEMPLATES.filter((t) => proCfg.templates.includes(t.key)).map((tpl) => ({ tpl, variant: 0 })));
+  if (what === "next") {
+    let pick = null;
+    try { pick = await api("/api/admin/make/video/next", { method: "POST", body: {} }); } catch { pick = proNext; }
+    const tpl = templateByKey(pick?.template) || PRO_TEMPLATES[0];
+    await generatePro([{ tpl, variant: pick?.variant || 0 }]);
+    proNext = { template: proCfg.templates[(Number(pick?.index ?? -1) + 1) % proCfg.templates.length], variant: 0 };
+    renderPro();
+  }
+}
+
+const LOOK_KEY = "pokeswipe.pro.look"; // Zähler für Farb-/Layout-Rotation der Startbilder
+const RECENT_KEY = "pokeswipe.pro.recentCards"; // zuletzt genutzte Kartenmotive (max. 40)
+const recentCards = () => { try { return JSON.parse(load(RECENT_KEY, "[]")) || []; } catch { return []; } };
+const rememberCard = (id) => save(RECENT_KEY, JSON.stringify([id, ...recentCards().filter((x) => x !== id)].slice(0, 40)));
+
+async function coverCards(n) {
+  try {
+    const ex = recentCards().slice(0, 40).join(",");
+    const r = await api(`/api/admin/reel-cover-cards?n=${Math.min(24, n)}${ex ? `&exclude=${encodeURIComponent(ex)}` : ""}`);
+    return Array.isArray(r?.cards) ? r.cards : [];
+  } catch { return []; }
+}
+
+/** Kartenbild über das eigene Image CDN laden (gleicher Ursprung → Canvas bleibt exportierbar). */
+async function loadCardImage(card) {
+  const url = sameOriginImageUrl(cardImageUrl(card.image), 700);
+  if (!url) return null;
+  try {
+    const img = new Image();
+    img.decoding = "async"; img.src = url;
+    await img.decode();
+    return img;
+  } catch { return null; }
+}
+
+const jpeg = (canvas) => new Promise((r) => canvas.toBlob((b) => r(b), "image/jpeg", 0.92));
+
+async function generatePro(list) {
+  if (mode === "rec" || !list.length) return;
+  if (recLock.owner) return setStatus("⚠️ Das Reel Studio nimmt gerade auf – bitte warten.", "err");
+  const { mime } = pickMime();
+  if (mime === null || typeof ui.canvas.captureStream !== "function") return setStatus("⚠️ Dieser Browser kann nicht aufnehmen. Bitte aktuelles Chrome oder Edge verwenden.", "err");
+  const ac = unlockAudio(); // im Klick-Handler entsperren
+  if (voiceOn && !ac) return setStatus("⚠️ Dieser Browser kann keinen Ton mit aufnehmen – bitte Chrome oder Edge verwenden.", "err");
+  if (voiceOn && !voiceReady?.ready) await checkVoice();
+  if (voiceOn && !voiceReady?.ready) return setStatus("⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt) – Start abgebrochen. Alternativ das Voiceover ausschalten.", "err");
+  const hs = hookState();
+  if (hs.error) { ui.hook.focus(); return setStatus(`⚠️ ${hs.error}`, "err"); }
+  const hook = hs.url;
+  if (hook && !platforms.size) return setStatus("⚠️ Bitte mindestens eine Plattform für Make.com auswählen (oder die Webhook-URL leeren).", "err");
+  previewToken++;
+  if (previewRun) { stage.abort(); try { await previewRun; } catch { /* abgebrochen */ } previewRun = null; }
+  mode = "rec"; recLock.owner = "auto"; stopAll = false; setBusy(true); ui.time.classList.add("rec"); fit();
+  try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; }
+  const states = Object.fromEntries(list.map(({ tpl }) => [tpl.key, "wait"]));
+  renderPro(states);
+  const maxMb = proMaxMb();
+  // echte Kartenmotive mit Live-Preisen – jedes Video bekommt ein anderes, zuletzt genutzte werden übersprungen
+  setStatus("🃏 Lade echte Kartenmotive und Live-Preise für die Startbilder …");
+  let pool = await coverCards(list.length + 4);
+  let ok = 0, sent = 0;
+  for (let i = 0; i < list.length && !stopAll; i++) {
+    const { tpl, variant } = list[i];
+    const look = lookFor(Number(load(LOOK_KEY, "0")) || 0); // Farbe + Layout rotieren je Video
+    const pick = pickCoverCard(pool, recentCards());
+    if (pick) pool = pool.filter((c) => c !== pick);
+    const coverCard = pick ? { ...pick, img: await loadCardImage(pick) } : null;
+    const n = PRO_TEMPLATES.indexOf(tpl) + 1;
+    states[tpl.key] = "on"; renderPro(states); setBusy(true);
+    try {
+      const script = proScript(tpl, variant);
+      let voice = null, speed = 1;
+      if (voiceOn) {
+        setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
+        try { ({ take: voice, speed } = await loadProNarration(script.say, ac, proCfg.tone)); }
+        catch (e) { throw new Error(`Voiceover fehlgeschlagen (${e.message})`); }
+        const sec = voice.duration + 0.85;
+        setStatus(`🎙️ Stimme fertig: ${sec.toFixed(1).replace(".", ",")} s (Tempo ${speed.toFixed(2).replace(".", ",")})${sec < PRO_MIN_S || sec > PRO_MAX_S ? " – außerhalb 20–30 s, Tempo-Spielraum ausgeschöpft" : ""} – lade die Live-Website …`);
+      }
+      let res = null;
+      while (!res && !stopAll) {
+        await waitVisible();
+        if (!wake || wake.released) { try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; } }
+        res = await recordProSafe({
+          stage, tpl, variant, look, coverCard, voice, mbit: proCfg.mbit, fps: proCfg.fps, maxMb, canvas: ui.canvas,
+          onStatus: (m) => setStatus(`Pro ${n} (${i + 1}/${list.length}): ${m}`),
+          onTick: (t, D) => { ui.time.innerHTML = `<span class="ls-rec-dot"></span>Pro ${n} · ${fmt(t, D)}`; ui.bar.style.width = `${((i + t / D) / list.length) * 100}%`; },
+        });
+        if (!res && !stopAll) setStatus(`⏸ Tab war verdeckt – „${tpl.label}“ wird neu aufgenommen, sobald der Tab wieder sichtbar ist …`, "err");
+      }
+      if (!res) break;
+      // nächstes Video bekommt eine andere Farbe/Layout und ein anderes Kartenmotiv
+      save(LOOK_KEY, String(look.index + 1));
+      if (pick) rememberCard(pick.id);
+      // Vorschaubild = exakt Frame 0 der Aufnahme (Rückfall: gleiches Motiv ohne Live-Ansicht neu zeichnen)
+      const thumb = res.thumb?.size ? res.thumb : await renderCoverThumb(tpl, script, look, coverCard);
+      const cap = proCaption(tpl, variant, res.facts);
+      const ep = { n: 100 + n, key: `pro-${tpl.key}`, title: tpl.label, pro: { n, fps: proCfg.fps } };
+      const txt = captionFile(ep, cap, { voiceover: res.lines.join(" "), recorded: new Date().toLocaleString("de-DE"), mode: `Pro-Video, ${res.fps} FPS, ${res.mbit} Mbit/s` });
+      const mb = (res.blob.size / MB).toFixed(1);
+      const name = `${fileBase(ep)}.${res.ext}`;
+      thumb.name = `${fileBase(ep)} - Cover.jpg`;
+      const extra = {
+        thumbnail: thumb, thumb_offset_ms: 0, cover_headline: res.cover, cover_badge: script.badge, cover_color: look.color, cover_accent: look.accent,
+        cover_layout: look.layout, cover_card_id: pick?.id || "", cover_card_name: pick?.name || "", cover_card_price_eur: pick?.price ?? "", video_mode: "pro", video_template: tpl.key, video_template_label: tpl.label,
+        hook_variant: variant, fps: res.fps, video_bitrate_mbit: res.mbit, audio_bitrate_kbps: 192, resolution: "1080x1920", aspect_ratio: "9:16",
+        max_mb: maxMb, scenes_json: JSON.stringify(res.scenes.map((s) => ({ key: s.key, start: +s.start.toFixed(2), end: +s.end.toFixed(2) }))),
+      };
+      const keepPro = (sentOk) => {
+        const old = proResults.get(tpl.key);
+        if (old) [old.url, old.txtUrl, old.thumbUrl].forEach((u) => URL.revokeObjectURL(u));
+        const txtBlob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+        const r = { url: URL.createObjectURL(res.blob), name, size: res.blob.size, sent: sentOk, cap, txt, txtName: `${fileBase(ep)}.txt`, txtUrl: URL.createObjectURL(txtBlob), thumbUrl: URL.createObjectURL(thumb) };
+        proResults.set(tpl.key, r);
+        if (!sentOk) { download(res.blob, name); setTimeout(() => download(txtBlob, r.txtName), 500); setTimeout(() => download(thumb, thumb.name), 1000); }
+      };
+      const info = `${res.duration.toFixed(1).replace(".", ",")} s, ${res.fps} FPS, ${res.mbit} Mbit/s${res.attempts > 1 ? `, ${res.attempts}. Versuch` : ""}`;
+      if (hook && res.ext === "mp4") {
+        try {
+          setStatus(`📤 „${tpl.label}“ wird an Make.com gesendet (${mb} MB, ${info}) …`);
+          await sendWithRetry(hook, ep, res, cap, txt, (p) => { ui.time.textContent = `📤 Pro ${n} · ${Math.round(p * 100)} %`; }, extra);
+          keepPro(true); sent++;
+          reportDelivery({ ok: true, episode: ep.n, sizeMb: res.blob.size / MB, message: `${name} angenommen (Pro-Video)` });
+          setStatus(`✓ ${name} (${mb} MB, ${info}) samt Cover und Beschreibung an Make.com übergeben.`, "ok");
+        } catch (e) {
+          keepPro(false);
+          reportDelivery({ ok: false, episode: ep.n, status: e.status, sizeMb: res.blob.size / MB, message: e.message });
+          setStatus(e.unconfirmed ? `❔ ${e.message} – kein erneuter Versand. ${name} wurde zusätzlich heruntergeladen; bitte in Make prüfen.` : `⚠️ Webhook fehlgeschlagen (${e.message}) – ${name} wurde stattdessen heruntergeladen.`, "err");
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      } else {
+        keepPro(false);
+        setStatus(`✓ ${name} (${mb} MB, ${info}) + Cover + .txt heruntergeladen${hook ? " (WebM wird nicht an Make.com gesendet)" : ""}.`, hook ? "err" : "ok");
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+      states[tpl.key] = "ok"; ok++;
+    } catch (e) {
+      states[tpl.key] = "err";
+      setStatus(`⚠️ ${tpl.label}: ${e?.name === "StageAbort" ? "abgebrochen" : e.message}`, "err");
+    }
+    renderPro(states);
+  }
+  try { await wake?.release(); } catch { /* egal */ }
+  wake = null;
+  mode = "idle"; recLock.owner = null; ui.time.classList.remove("rec"); ui.time.textContent = "Live-Stage bereit"; setBusy(false);
+  ui.bar.style.width = "100%";
+  renderPro(Object.fromEntries(Object.entries(states).filter(([, s]) => s === "err")));
+  const failed = Object.values(states).filter((s) => s === "err").length;
+  const where = sent && sent === ok ? "an Make.com gesendet" : sent ? `fertig (${sent} an Make.com, ${ok - sent} heruntergeladen)` : "heruntergeladen";
+  setStatus(failed ? `⚠️ ${ok} von ${list.length} Pro-Videos ${where}, ${failed} fehlgeschlagen.` : `🎉 ${ok} Pro-Video${ok === 1 ? "" : "s"} ${where} – mit Cover, Untertiteln, Beschreibung und Hashtags.`, failed ? "err" : "ok");
+}
+
+/** Rückfall-Vorschaubild (nur falls Frame 0 nicht exportiert werden konnte): gleiches Cover-Motiv. */
+async function renderCoverThumb(tpl, script, look, coverCard) {
+  await loadProFonts();
+  const c = document.createElement("canvas"); c.width = OUT_W; c.height = OUT_H;
+  const comp = new ProCompositor({ tpl, cover: script.cover, badge: script.badge, look, coverCard, scenes: sceneTimes([], 26), captions: [] });
+  comp.draw(c.getContext("2d", { alpha: false }), 0, null);
+  return (await jpeg(c)) || new Blob([], { type: "image/jpeg" });
 }
 
 function open() {
