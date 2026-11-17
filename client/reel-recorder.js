@@ -60,6 +60,8 @@ export async function loadNarration(lines, ac, { tone = "calm", speed = 1 } = {}
   const key = `${tone}|${speed}|${lines.join("\n")}`;
   if (voiceCache.has(key)) return voiceCache.get(key);
   const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines, speed, tone } });
+  // Lange Takes werden gestreamt (Status 200 sofort) – ein Fehler steht dann im Feld "error"
+  if (res?.error) throw new Error(res.error);
   if (!res?.audio || !Array.isArray(res.marks) || res.marks.length !== lines.length) throw new Error("Sprachausgabe unvollständig");
   const bytes = b64ToBuf(res.audio);
   const mp3 = new Blob([bytes.slice(0)], { type: "audio/mpeg" });

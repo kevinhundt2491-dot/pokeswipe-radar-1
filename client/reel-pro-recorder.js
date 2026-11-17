@@ -23,7 +23,11 @@ export async function loadProNarration(lines, ac, tone = "energetic") {
   let speed = 1.04;
   let take = await loadNarration(lines, ac, { tone, speed });
   const next = speedFor(take.duration, speed);
-  if (next !== speed) { speed = next; take = await loadNarration(lines, ac, { tone, speed }); }
+  if (next !== speed) {
+    // Zweiter Take nur zur Feinanpassung der Länge – scheitert er, bleibt der erste (fertige) Take
+    try { take = await loadNarration(lines, ac, { tone, speed: next }); speed = next; }
+    catch (e) { console.warn("Pro-Voiceover: Tempo-Anpassung fehlgeschlagen, nutze ersten Take", e); }
+  }
   return { take, speed, seconds: VO_LEAD + take.duration + TAIL };
 }
 
@@ -169,15 +173,17 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
  */
 export async function recordProSafe(o) {
   const maxMb = o.maxMb || SAFE_MB;
-  let mbit = o.mbit;
+  let mbit = o.mbit, last = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     const res = await recordPro({ ...o, mbit, maxMb });
     if (!res) return null;
-    if (res.blob.size <= maxMb * MB) return { ...res, attempts: attempt };
+    last = { ...res, attempts: attempt };
+    if (res.blob.size <= maxMb * MB) return last;
     mbit = shrinkBitrate(res.mbit, res.blob.size, maxMb);
-    o.onStatus?.(`⚖️ ${(res.blob.size / MB).toFixed(1)} MB liegt über ${maxMb} MB – nehme mit ${mbit} Mbit/s neu auf …`);
+    if (attempt < 3) o.onStatus?.(`⚖️ ${(res.blob.size / MB).toFixed(1)} MB liegt über ${maxMb} MB – nehme mit ${mbit} Mbit/s neu auf …`);
   }
-  throw new Error(`Das Video bleibt trotz reduzierter Bitrate über ${maxMb} MB – bitte 30 FPS wählen.`);
+  // Fertiges Video nie verwerfen: es wird trotzdem heruntergeladen, nur nicht an Make.com gesendet.
+  return { ...last, oversize: true };
 }
 
 export { PRO_MIN_S, PRO_MAX_S };

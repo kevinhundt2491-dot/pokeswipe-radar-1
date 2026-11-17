@@ -27,6 +27,8 @@ export const toneSettings = (tone: unknown) => (tone === "energetic" ? ENERGETIC
 // Bewusst eng gehalten, damit die Sprecherin immer wie ein normaler Muttersprachler klingt.
 export const SPEED_MIN = 0.9, SPEED_MAX = 1.12;
 const NARRATION_MAX_CHARS = 900;
+// Ein 30-s-Take mit Zeitstempeln kann bei ElevenLabs deutlich länger als 20 s dauern
+const NARRATION_TIMEOUT_MS = 75_000;
 // Wortlimit der Live-Reels: 32–36 Wörter (15 s) bzw. 65–72 Wörter (30 s) – mehr wird nicht gesprochen,
 // damit die Stimme entspannt und vollständig bis zum letzten Wort durchspricht.
 export const NARRATION_MAX_WORDS = 72;
@@ -112,24 +114,51 @@ export function marksFromAlignment(lines: string[], al: any): { marks: Mark[]; d
   return { duration, marks: lines.map((l, i) => ({ start: (offsets[i] / total) * duration, end: ((offsets[i] + l.length) / total) * duration })) };
 }
 
+/** Fehlertext von ElevenLabs lesbar machen (z. B. "quota_exceeded" statt nur "401"). */
+async function elevenError(res: Response) {
+  let detail = "";
+  try {
+    const raw = await res.text();
+    try {
+      const j: any = JSON.parse(raw);
+      const d = j?.detail ?? j;
+      detail = typeof d === "string" ? d : [d?.status, d?.message].filter(Boolean).join(": ");
+    } catch { detail = raw; }
+  } catch { /* ohne Details */ }
+  detail = String(detail || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  const quota = /quota|credits|limit/i.test(detail);
+  const hint = quota ? " – ElevenLabs-Kontingent aufgebraucht (Zeichen/Credits im ElevenLabs-Konto aufladen)"
+    : res.status === 401 ? " – API-Schlüssel ungültig oder ohne Berechtigung für Text-to-Speech"
+    : res.status === 429 ? " – Rate-Limit/zu viele gleichzeitige Anfragen"
+    : res.status === 422 ? " – Text oder Stimme abgelehnt" : "";
+  const err: any = new Error(`ElevenLabs antwortet mit ${res.status}${hint}${detail ? ` (${detail})` : ""}`);
+  err.retry = !quota && (res.status === 429 || res.status >= 500);
+  return err;
+}
+
 /** Komplettes Skript in einem Take sprechen (mit Zeitstempeln pro Zeichen). */
 async function narrate(key: string, lines: string[], speed: number, settings = VOICE_SETTINGS): Promise<Narration> {
   const text = lines.join(" ");
-  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(MATILDA.id)}/with-timestamps?output_format=mp3_44100_128`, {
-    method: "POST",
-    headers: { "xi-api-key": key, "Content-Type": "application/json", Accept: "application/json" },
-    // Netlify Server muss innerhalb von 20 s antworten
-    signal: AbortSignal.timeout(18_000),
-    body: JSON.stringify({ text, model_id: EL_MODEL, voice_settings: { ...settings, speed }, seed: SEED }),
-  });
-  if (!res.ok) {
-    const hint = res.status === 401 ? " – API-Schlüssel ungültig" : res.status === 429 ? " – Kontingent/Rate-Limit erreicht" : res.status === 422 ? " – Text oder Stimme abgelehnt" : "";
-    throw new Error(`ElevenLabs antwortet mit ${res.status}${hint}`);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(MATILDA.id)}/with-timestamps?output_format=mp3_44100_128`, {
+        method: "POST",
+        headers: { "xi-api-key": key, "Content-Type": "application/json", Accept: "application/json" },
+        // Die Antwort an den Browser wird gestreamt (siehe Route) – daher darf ein langer 30-s-Take länger dauern
+        signal: AbortSignal.timeout(NARRATION_TIMEOUT_MS),
+        body: JSON.stringify({ text, model_id: EL_MODEL, voice_settings: { ...settings, speed }, seed: SEED }),
+      });
+      if (!res.ok) throw await elevenError(res);
+      const j: any = await res.json();
+      if (!j?.audio_base64) throw new Error("Leere Sprachdatei erhalten");
+      const { marks, duration } = marksFromAlignment(lines, j.alignment || j.normalized_alignment);
+      return { audio: j.audio_base64, duration, marks, speed };
+    } catch (e: any) {
+      const transient = e?.retry || e?.name === "TypeError"; // TypeError = Netzwerkfehler von fetch
+      if (attempt >= 2 || !transient) throw e;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   }
-  const j: any = await res.json();
-  if (!j?.audio_base64) throw new Error("Leere Sprachdatei erhalten");
-  const { marks, duration } = marksFromAlignment(lines, j.alignment || j.normalized_alignment);
-  return { audio: j.audio_base64, duration, marks, speed };
 }
 
 async function sha(s: string) {
@@ -175,15 +204,28 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
       const hit = (await store.get(id, { type: "json" })) as Narration | null;
       if (hit?.audio) return c.json({ ...hit, cached: true });
     } catch { /* Cache optional */ }
-    let n: Narration;
-    try { n = await narrate(key, lines, sp, settings); }
-    catch (e: any) {
-      log.error("voiceover", "Voiceover-Fehler", { err: e });
-      const msg = e?.name === "TimeoutError" ? "Zeitüberschreitung beim Sprachdienst" : e?.message || "unbekannt";
-      return c.json({ error: `Sprachausgabe fehlgeschlagen: ${msg}` }, 502);
-    }
-    try { await store.setJSON(id, n, { metadata: { voice: MATILDA.id, speed: sp } }); } catch { /* Cache optional */ }
-    return c.json({ ...n, cached: false });
+    // Netlify Server muss Status + Header innerhalb von 20 s senden: deshalb sofort 200 schicken und die
+    // eigentliche JSON-Antwort nachliefern (führende Leerzeichen halten die Verbindung offen, JSON bleibt gültig).
+    const enc = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(ctrl) {
+        const ping = setInterval(() => { try { ctrl.enqueue(enc.encode(" ")); } catch { /* geschlossen */ } }, 5000);
+        ctrl.enqueue(enc.encode(" "));
+        let out: any;
+        try {
+          const n = await narrate(key, lines, sp, settings);
+          try { await store.setJSON(id, n, { metadata: { voice: MATILDA.id, speed: sp } }); } catch { /* Cache optional */ }
+          out = { ...n, cached: false };
+        } catch (e: any) {
+          log.error("voiceover", "Voiceover-Fehler", { err: e });
+          const msg = e?.name === "TimeoutError" ? "Zeitüberschreitung beim Sprachdienst (ElevenLabs hat nicht rechtzeitig geantwortet)" : e?.message || "unbekannt";
+          out = { error: `Sprachausgabe fehlgeschlagen: ${msg}` };
+        } finally { clearInterval(ping); }
+        ctrl.enqueue(enc.encode(JSON.stringify(out)));
+        ctrl.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
   });
 
   app.post("/api/admin/voiceover", auth, adminOnly, async (c: any) => {
