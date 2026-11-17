@@ -1,6 +1,6 @@
 // PokeSwipe & Radar – Phase 2 im Browser: Live Flip-Radar (echte eBay-Einzelangebote), Verkaufspreise & PSA-Werte
 // mit 30/90-Tage-Charts und Grading-ROI-Rechner sowie die Admin-Ansicht für eBay-Sync und Sealed-Preise.
-import { $, esc, jsArg, safeUrl, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl, input, btn, areaChart } from "./core.js";
+import { $, esc, jsArg, safeUrl, eur, toast, cm, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl, input, btn, areaChart } from "./core.js";
 import { gradingRoi, GRADE_LABEL, SEALED_SOURCE_LABEL } from "../server/flip-logic.ts";
 
 const FLAG = { de: "🇩🇪", en: "🇬🇧", ja: "🇯🇵" };
@@ -100,7 +100,7 @@ function dealCard(d, paid) {
   const main = d.source === "community-listing"
     ? `<button onclick="PS.requestTrade(${Number(d.listingId)})" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">🤝 Anfragen</button>`
     : link ? `<a href="${esc(link)}" target="_blank" rel="noopener sponsored" class="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-1.5 rounded-xl">${d.source === "ebay" ? "🛒 Zum Angebot*" : "🔎 eBay-Suche*"}</a>` : "";
-  const cmLink = d.source === "cardmarket-low" && window.buildCardmarketUrl ? `<a href="${esc(window.buildCardmarketUrl(d.targetName))}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl">Cardmarket</a>` : "";
+  const cmLink = d.source === "cardmarket-low" ? `<a href="${esc(cm(d.targetName))}" target="_blank" rel="noopener" class="bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl">Cardmarket</a>` : "";
   const saving = d.refPrice && d.total ? d.refPrice - d.total : 0;
   return `<div class="poke-glass rounded-2xl p-3 flex gap-3 ${sniper ? "border-2 border-yellow-400/60" : ""}">
     <img src="${esc(cdn(img || FALLBACK_IMG, 160))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" alt="" class="w-20 h-28 object-contain rounded-lg bg-slate-950 shrink-0" />

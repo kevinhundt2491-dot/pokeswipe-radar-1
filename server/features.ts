@@ -205,6 +205,18 @@ const PARTNERS = [
   { id: "tag", name: "TAG Grading", env: "AFF_TAG_URL", url: "https://taggrading.com/", tagline: "Digitaler Report mit Fotos jeder gefundenen Schwachstelle.", features: ["Digitaler Report", "Objektive Bewertung", "Transparente Fehlerbilder"] },
 ];
 
+/**
+ * Ziel-URL eines Grading-Partners: der Partner-Link aus AFF_…_URL, sofern gesetzt und gültig (https),
+ * sonst die offizielle Startseite des Anbieters als Fallback – die Buttons funktionieren also immer.
+ */
+function partnerTarget(p: (typeof PARTNERS)[number]) {
+  const raw = String(process.env[p.env] || "").trim();
+  if (raw) {
+    try { if (new URL(raw).protocol === "https:") return { url: raw, affiliate: true }; } catch {}
+  }
+  return { url: p.url, affiliate: false };
+}
+
 // ---------------------------------------------------------------------------
 // Sealed-Startkatalog (ohne Preise – Referenzpreise pflegt der Admin)
 // ---------------------------------------------------------------------------
@@ -536,7 +548,7 @@ export function registerFeatures(app: any, h: {
   // --------------------------- Grading-Partner -----------------------------
   app.get("/api/partners", (c: any) => {
     c.header("Cache-Control", "public, max-age=600");
-    return c.json({ partners: PARTNERS.map(({ env, url, ...p }) => ({ ...p, link: `/api/go/${p.id}`, affiliate: Boolean(process.env[env]) })) });
+    return c.json({ partners: PARTNERS.map(({ env, url, ...p }) => ({ ...p, link: `/api/go/${p.id}`, officialUrl: url, affiliate: partnerTarget({ env, url, ...p }).affiliate })) });
   });
 
   app.get("/api/go/:partner", async (c: any) => {
@@ -550,10 +562,9 @@ export function registerFeatures(app: any, h: {
         console.warn("Klick nicht gezählt", e);
       }
     }
-    const target = process.env[p.env] || p.url;
     c.header("Cache-Control", "no-store");
     c.header("Referrer-Policy", "no-referrer-when-downgrade");
-    return c.redirect(target.startsWith("https://") ? target : p.url, 302);
+    return c.redirect(partnerTarget(p).url, 302);
   });
 
   app.get("/api/admin/affiliate", auth, adminOnly, async (c: any) => {

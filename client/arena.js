@@ -2,7 +2,7 @@
 // Speist den Swipe-Stapel direkt aus dem mehrsprachigen Live-Katalog (de/en/ja), aus Tausch-Inseraten und der
 // Wunschliste. Filter: Sprache, Set, Seltenheit, Preisspanne, Wunschliste, „Nur Unter-Marktwert-Deals“.
 // Ohne Verbindung bleibt der feste Chase-Katalog aus index.html als Stapel aktiv.
-import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl, btn, sparkline } from "./core.js";
+import { $, esc, jsArg, eur, toast, cm, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl, btn, sparkline } from "./core.js";
 import { updatePrefs, encodePrefParam, prefSummary, sanitizeScores, COLD_START_SWIPES } from "../server/arena-logic.ts";
 import { haptic } from "./native.js";
 
@@ -435,7 +435,7 @@ export async function openPrint(id) {
         ${btn("💼 Zur Sammlung", `PS.addPrintToPortfolio(${jsArg(p.id)})`, "bg-emerald-500 text-slate-950")}
         ${p.baseCardId ? btn("🔔 Preisalarm & Wunschliste", `PS.openCard(${jsArg(p.baseCardId)})`, "bg-yellow-400 text-slate-950") : btn("💎 PSA-Werte & Verkäufe", `PS.openComps("print", ${jsArg(p.id)})`, "bg-slate-800 text-purple-300")}
         <a href="${esc(window.buildEbayUrl ? window.buildEbayUrl(q, "bin", `print-${p.lang}`) : "#")}" target="_blank" rel="noopener sponsored" class="bg-blue-600 text-white font-black py-2.5 px-3 rounded-xl text-xs text-center">🛒 eBay*</a>
-        <a href="${esc(window.buildCardmarketUrl ? window.buildCardmarketUrl(p.name) : "#")}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-black py-2.5 px-3 rounded-xl text-xs text-center">📊 Cardmarket</a>
+        <a href="${esc(cm(p.name))}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-black py-2.5 px-3 rounded-xl text-xs text-center">📊 Cardmarket</a>
       </div>
       ${related?.length ? `<div class="space-y-1.5"><p class="text-xs font-black text-white">🌍 Andere Sprachen</p>
         <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">${related.map((r) => `
