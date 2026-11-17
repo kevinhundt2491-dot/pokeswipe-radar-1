@@ -409,6 +409,17 @@
       return true;
     }
     window.setSwipeDeck = setSwipeDeck;
+    /** Eine Karte (z. B. frisch gescannt) ganz oben in den Stapel legen – der restliche Stapel bleibt erhalten. */
+    window.prependSwipeCard = (item) => {
+      if (!item) return false;
+      const id = item.key || item.id;
+      const n = activeDeck.length;
+      const rest = n ? activeDeck.slice(swipeIdx % n).concat(activeDeck.slice(0, swipeIdx % n)) : [];
+      activeDeck = [item, ...rest.filter((c) => (c.key || c.id) !== id)];
+      swipeIdx = 0;
+      renderSwipeCard();
+      return true;
+    };
     window.currentSwipeItem = () => (activeDeck.length ? activeDeck[swipeIdx % activeDeck.length] : null);
 
     function renderSwipeLoading() {

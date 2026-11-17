@@ -61,6 +61,8 @@ const LIVE_SCAN_KEYS = [
   "liveScanDetails", "liveScanPhoto", "liveScanDismiss", "liveScanVariant", "liveScanClear", "liveScanAdminRun", "openLiveScanner",
   "liveScanRecognize", "liveScanLearn", "liveScanSell", "liveScanSellAll", "liveScanQuickList",
   // Profi-Upgrade: Auslöser, Galerie, Alternativen, Zustand/Variante, Serien-Scan, KI-Auto
+  // Turbo-Upgrade: Foto-Scan im Swiper/in der Sammlung, Sprung in den Swiper, optionaler KI-Tiefenscan
+  "liveScanPhotoQuick", "liveScanSwiper", "liveScanDeepScan",
   "liveScanShutter", "liveScanUpload", "liveScanPick", "liveScanCondition", "liveScanFinish", "liveScanNext", "liveScanSeriesMode", "liveScanAutoAi",
   "quickListSet", "quickListPhoto", "quickListGo", "quickListPrice", "quickListUse", "quickListStrategy", "quickListConditionAll", "quickListRemove", "quickListSubmit",
   "quickListPreview", "quickListCancel", "quickListUndo",
@@ -93,6 +95,21 @@ export const loadScanner = once(async () => {
 
 export const lazyLiveScanApi = Object.fromEntries(LIVE_SCAN_KEYS.map((k) => [k, (...args) =>
   loadScanner().then((m) => (m.liveScanApi[k] ? m.liveScanApi[k](...args) : null)).catch(failed("Der Live-Scanner"))]));
+
+/**
+ * „Foto aufnehmen / Bild hochladen“ im Swiper und in der Sammlung: Datei-Felder mit data-photo-scan="swipe|portfolio"
+ * (auch in nachgeladenen Bereichen, daher per Delegation). Lädt den Scanner erst beim ersten Foto.
+ */
+export function initPhotoScanInputs() {
+  document.addEventListener("change", (e) => {
+    const el = e.target;
+    const target = el?.dataset?.photoScan;
+    if (!target) return;
+    const f = el.files?.[0];
+    el.value = "";
+    if (f) lazyLiveScanApi.liveScanPhotoQuick(f, target);
+  });
+}
 
 /** Unter-Reiter „Live-Scanner“ wurde geöffnet */
 export const onLiveScanShownLazy = () => loadScanner().then((m) => m.onLiveScanShown()).catch(failed("Der Live-Scanner"));

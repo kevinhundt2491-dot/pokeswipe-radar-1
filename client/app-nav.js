@@ -62,6 +62,8 @@ function injectHeads() {
       seg = segmentHtml("market", [["buy", "🛒 Marktplatz", "PS.marketMode('buy')"], ["trade", "🤝 Tausch-Hub", "PS.marketMode('trade')"], ["mine", "📦 Meine Verkäufe", "PS.marketMode('mine')"]], marketMode());
     } else if (tab === "swipe") {
       seg = `<div class="flex gap-1.5 overflow-x-auto no-scrollbar text-xs font-black">
+        <label class="shrink-0 cursor-pointer bg-cyan-400 text-slate-950 px-3 py-2 rounded-xl" title="Karte fotografieren – wird ohne KI erkannt und oben im Swiper gezeigt">📸 Foto aufnehmen<input data-photo-scan="swipe" type="file" accept="image/*" capture="environment" class="hidden" /></label>
+        <label class="shrink-0 cursor-pointer bg-slate-900 border border-cyan-400/60 text-cyan-200 px-3 py-2 rounded-xl" title="Kartenfoto aus der Galerie">🖼️ Bild hochladen<input data-photo-scan="swipe" type="file" accept="image/*" class="hidden" /></label>
         <button type="button" onclick="PS.arenaQuickDeals()" class="shrink-0 bg-yellow-400 text-slate-950 px-3 py-2 rounded-xl">🔥 Nur Deals swipen</button>
         <button type="button" onclick="PS.showSub('flip', 'deals')" class="shrink-0 bg-slate-900 border border-slate-700 text-emerald-200 px-3 py-2 rounded-xl">📡 Top-Flip-Deals</button>
         <button type="button" onclick="PS.showSub('swipe', 'search')" class="shrink-0 bg-slate-900 border border-slate-700 text-white px-3 py-2 rounded-xl">🔎 Kartensuche</button>
