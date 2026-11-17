@@ -13,6 +13,7 @@ import { registerGrowth, notifyWishlistListing } from "./growth.ts";
 import { registerCollector } from "./collector.ts";
 import { registerDrops } from "./drops.ts";
 import { registerVoiceover } from "./voiceover.ts";
+import { registerMake } from "./make.ts";
 import { registerLegal, LEGAL_VERSION } from "./legal.ts";
 import { registerCatalog } from "./catalog.ts";
 import { registerSeo } from "./seo.ts";
@@ -1105,6 +1106,7 @@ registerFlip(app, { auth, adminOnly, body });
 registerScanIndex(app, { auth, adminOnly });
 registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
+registerMake(app, { auth, adminOnly, body }); // Make.com-Webhook für Auto-Reels (Admin-Zentrale)
 registerOps(app, { auth, adminOnly }); // Betrieb: Job-Läufe, Circuits & Fehlerprotokoll für Admins
 
 // Öffentliche (nicht geheime) Client-Konfiguration. Der Firebase-Web-API-Schlüssel ist laut Firebase kein

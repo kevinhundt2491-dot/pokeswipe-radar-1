@@ -7,6 +7,8 @@
 import { getStore } from "@netlify/blobs";
 import { rateLimit } from "./util.ts";
 import { log } from "./log.ts";
+import { makeConfig, videoConfig } from "./make.ts";
+import { rotationAt } from "./reel-video-logic.ts";
 
 const MAX_LINES = 12, MAX_CHARS = 320;
 // Feste Sprecherin für alle Reels: Matilda (ElevenLabs-Premade, über eleven_multilingual_v2 auf Hochdeutsch)
@@ -16,6 +18,11 @@ const EL_MODEL = "eleven_multilingual_v2";
 // Ruhige, natürliche Sprechweise: hohe Stabilität gegen schwankende Betonung, style = 0 (keine
 // künstliche Übertreibung), normales Tempo (speed 1.0) – Tempo wird im Client NICHT verändert.
 const VOICE_SETTINGS = { stability: 0.6, similarity_boost: 0.78, style: 0, use_speaker_boost: true, speed: 1.0 };
+// Pro-Videos: begeistertes Storytelling – mehr Ausdruck (style) und lebendigere Betonung (niedrigere Stabilität),
+// Tonhöhe und Klang der Stimme bleiben gleich.
+const ENERGETIC_SETTINGS = { stability: 0.36, similarity_boost: 0.8, style: 0.45, use_speaker_boost: true, speed: 1.0 };
+export type Tone = "calm" | "energetic";
+export const toneSettings = (tone: unknown) => (tone === "energetic" ? ENERGETIC_SETTINGS : VOICE_SETTINGS);
 // Erlaubter Tempo-Spielraum (ElevenLabs "speed" ändert das Tempo OHNE die Tonhöhe zu verfälschen).
 // Bewusst eng gehalten, damit die Sprecherin immer wie ein normaler Muttersprachler klingt.
 export const SPEED_MIN = 0.9, SPEED_MAX = 1.12;
@@ -32,7 +39,6 @@ export function countWords(text: string | string[]) {
 const SEED = 20261115;
 // Bisheriges Make.com-Szenario als Rückfall, bis MAKE_WEBHOOK_URL in Netlify gesetzt ist.
 // Liegt nur auf dem Server und wird ausschließlich an Admins ausgeliefert.
-const DEFAULT_MAKE_WEBHOOK = "https://hook.eu1.make.com/pb4ym0nehyg8xdj8l6sobvyr0jwldhkt";
 
 type Ctx = { prev?: string; next?: string };
 type Provider = { id: string; voice: string; tts: (text: string, ctx?: Ctx) => Promise<ArrayBuffer> };
@@ -107,14 +113,14 @@ export function marksFromAlignment(lines: string[], al: any): { marks: Mark[]; d
 }
 
 /** Komplettes Skript in einem Take sprechen (mit Zeitstempeln pro Zeichen). */
-async function narrate(key: string, lines: string[], speed: number): Promise<Narration> {
+async function narrate(key: string, lines: string[], speed: number, settings = VOICE_SETTINGS): Promise<Narration> {
   const text = lines.join(" ");
   const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(MATILDA.id)}/with-timestamps?output_format=mp3_44100_128`, {
     method: "POST",
     headers: { "xi-api-key": key, "Content-Type": "application/json", Accept: "application/json" },
     // Netlify Server muss innerhalb von 20 s antworten
     signal: AbortSignal.timeout(18_000),
-    body: JSON.stringify({ text, model_id: EL_MODEL, voice_settings: { ...VOICE_SETTINGS, speed }, seed: SEED }),
+    body: JSON.stringify({ text, model_id: EL_MODEL, voice_settings: { ...settings, speed }, seed: SEED }),
   });
   if (!res.ok) {
     const hint = res.status === 401 ? " – API-Schlüssel ungültig" : res.status === 429 ? " – Kontingent/Rate-Limit erreicht" : res.status === 422 ? " – Text oder Stimme abgelehnt" : "";
@@ -132,17 +138,21 @@ async function sha(s: string) {
 }
 const b64 = (buf: ArrayBuffer) => Buffer.from(buf).toString("base64");
 
+/** Make.com-Ziel für den Generator: Admin-Zentrale → MAKE_WEBHOOK_URL/MAKE_WEBHOOK_TOKEN → Alt-Wert. */
+async function makeForGenerator() {
+  try {
+    const m = await makeConfig();
+    const video = await videoConfig();
+    return { url: m.url, token: m.token, platforms: m.platforms, source: m.urlSource, updatedAt: m.updatedAt, video, next: rotationAt(video) };
+  } catch { return { url: null, token: null, platforms: [], source: null, updatedAt: null, video: null, next: null }; }
+}
+
 export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
-  app.get("/api/admin/voiceover/status", auth, adminOnly, (c: any) => {
+  app.get("/api/admin/voiceover/status", auth, adminOnly, async (c: any) => {
     const p = provider();
     c.header("Cache-Control", "no-store");
     const voices = p ? EL_VOICES : [];
-    // Make.com-Ziel kommt aus den Netlify-Umgebungsvariablen (nicht mehr fest im öffentlichen Browser-Code)
-    const hook = String(process.env.MAKE_WEBHOOK_URL || DEFAULT_MAKE_WEBHOOK).trim();
-    let makeUrl: string | null = null;
-    try { makeUrl = hook && new URL(hook).protocol === "https:" ? new URL(hook).href : null; } catch { makeUrl = null; }
-    const makeToken = String(process.env.MAKE_WEBHOOK_TOKEN || "").trim().slice(0, 200) || null;
-    return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null, voices, defaultVoice: p?.voice || null, make: { url: makeUrl, token: makeToken } });
+    return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null, voices, defaultVoice: p?.voice || null, make: await makeForGenerator() });
   });
 
   // Ganzes Reel-Skript als ein durchgehender Take (Matilda) + Zeitstempel je Satz
@@ -159,13 +169,14 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     if (words > NARRATION_MAX_WORDS) return c.json({ error: `Sprechertext zu lang (${words} Wörter, höchstens ${NARRATION_MAX_WORDS}).` }, 400);
     const sp = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(b.speed) || 1)) * 100) / 100;
     const store = getStore("voiceover");
-    const id = await sha(`narration:v1|${EL_MODEL}|${MATILDA.id}|${JSON.stringify(VOICE_SETTINGS)}|${sp}|${JSON.stringify(lines)}`);
+    const settings = toneSettings(b.tone);
+    const id = await sha(`narration:v1|${EL_MODEL}|${MATILDA.id}|${JSON.stringify(settings)}|${sp}|${JSON.stringify(lines)}`);
     try {
       const hit = (await store.get(id, { type: "json" })) as Narration | null;
       if (hit?.audio) return c.json({ ...hit, cached: true });
     } catch { /* Cache optional */ }
     let n: Narration;
-    try { n = await narrate(key, lines, sp); }
+    try { n = await narrate(key, lines, sp, settings); }
     catch (e: any) {
       log.error("voiceover", "Voiceover-Fehler", { err: e });
       const msg = e?.name === "TimeoutError" ? "Zeitüberschreitung beim Sprachdienst" : e?.message || "unbekannt";
