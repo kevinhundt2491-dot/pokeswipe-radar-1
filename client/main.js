@@ -434,9 +434,9 @@ async function openCard(cardId) {
           <p class="text-slate-400">${esc(card.setName)} • ${esc(card.id)}</p>
           <p class="text-2xl font-black text-emerald-400">${price ? eur(price) : "Kein Preis"}</p>
           <p class="text-slate-400">Cardmarket-Trend${ch30 !== null ? ` • <span class="${ch30 >= 0 ? "text-emerald-400" : "text-rose-400"} font-bold">${pct(ch30)} (30 Tage)</span>` : ""}</p>
-          <p class="text-slate-500">Ø 7 T: ${card.avg7 ? eur(card.avg7) : "–"} • Ø 30 T: ${card.avg30 ? eur(card.avg30) : "–"} • ab ${card.low ? eur(card.low) : "–"}</p>
+          <p class="text-slate-500">Ø 7 T: ${card.avg7 ? eur(card.avg7) : "–"} • Ø 30 T: ${card.avg30 ? eur(card.avg30) : "–"} • CM-Tiefstpreis (alle Zustände): ${card.low ? eur(card.low) : "–"}</p>
           ${priceInfo ? `<p class="text-[10px] ${priceInfo.stale || priceInfo.degraded ? "text-amber-300" : "text-slate-500"}">🕒 Zuletzt aktualisiert: ${esc(priceInfo.freshness)}${priceInfo.degraded ? " (aus der PokeSwipe-Datenbank)" : ""}</p>` : ""}
-          ${Number(card.reverseTrend || card.reverseAvg) ? `<p class="text-purple-200 font-bold">✨ Reverse Holo: ${eur(Number(card.reverseTrend || card.reverseAvg))}${card.reverseLow ? ` <span class="text-slate-500 font-normal">• ab ${eur(Number(card.reverseLow))}</span>` : ""}</p>` : ""}
+          ${Number(card.reverseTrend || card.reverseAvg) ? `<p class="text-purple-200 font-bold">✨ Reverse Holo: ${eur(Number(card.reverseTrend || card.reverseAvg))}${card.reverseLow ? ` <span class="text-slate-500 font-normal">• CM-Tiefstpreis ${eur(Number(card.reverseLow))}</span>` : ""}</p>` : ""}
           ${variantsOf(card.variants).length < VARIANT_KEYS.length ? `<p class="text-slate-500">Varianten: ${variantsOf(card.variants).map((v) => esc(VARIANT_LABEL[v])).join(", ")}</p>` : ""}
           <div class="flex gap-1.5 pt-1">
             <a href="${cm(card.name)}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold px-2.5 py-1 rounded-lg">Cardmarket ↗</a>

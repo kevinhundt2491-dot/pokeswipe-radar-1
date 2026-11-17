@@ -31,13 +31,18 @@ export function dealRating(price, market) {
 
 /**
  * Preis-Etikett als HTML. size: "sm" (Vorschaubild), "md" (Scanner-HUD) oder "lg" (Swipe-Karte).
- * opts: { price, market, condition, shippingCents, label }
+ * opts: { price, market, condition, shippingCents, label, dealPct, note }
+ * dealPct: bereits verifizierter Rabatt (z. B. echtes Live-Angebot vs. Cardmarket-Trend) – ersetzt die Ampel aus market.
+ * note: kurze Quellenangabe unter dem Preis (z. B. „Live bei eBay“).
  */
-export function priceTagHtml({ price, market = null, condition = "", shippingCents = 0, label = "" } = {}, size = "md") {
+export function priceTagHtml({ price, market = null, condition = "", shippingCents = 0, label = "", dealPct = 0, note = "" } = {}, size = "md") {
   const p = Number(price);
   if (!(p > 0)) return "";
   const cond = CONDITION_INFO[condition];
-  const deal = dealRating(p, market);
+  const verifiedPct = Math.round(Number(dealPct) || 0);
+  const deal = verifiedPct > 0
+    ? { tone: "deal", pct: verifiedPct, label: `🔥 ${verifiedPct} % unter Markt`, cls: "bg-emerald-400 text-slate-950" }
+    : dealRating(p, market);
   const big = size === "lg", small = size === "sm";
   const priceCls = big ? "text-xl sm:text-2xl" : small ? "text-[11px]" : "text-sm";
   const ship = Number(shippingCents) > 0 ? `+ ${eur(Number(shippingCents) / 100)} Versand` : "";
@@ -48,8 +53,9 @@ export function priceTagHtml({ price, market = null, condition = "", shippingCen
       <span class="${priceCls} leading-none">${eur(p)}</span>
       ${cond ? `<span class="${cond.cls} ${small ? "text-[8px] px-1" : "text-[10px] px-1.5"} rounded font-black leading-tight" title="${esc(cond.label)}">${esc(cond.short)}</span>` : ""}
     </span>
-    ${!small && (deal || ship) ? `<span class="flex flex-wrap gap-1">
+    ${!small && (deal || ship || note) ? `<span class="flex flex-wrap gap-1">
       ${deal ? `<span class="${deal.cls} text-[10px] font-black px-1.5 py-0.5 rounded-md shadow">${esc(deal.label)}</span>` : ""}
+      ${note ? `<span class="bg-slate-950/85 text-slate-200 text-[10px] font-bold px-1.5 py-0.5 rounded-md">${esc(note)}</span>` : ""}
       ${ship ? `<span class="bg-slate-950/85 text-slate-200 text-[10px] font-bold px-1.5 py-0.5 rounded-md">${esc(ship)}</span>` : ""}
     </span>` : ""}
   </div>`;
