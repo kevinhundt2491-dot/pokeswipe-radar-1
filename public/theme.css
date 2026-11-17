@@ -122,6 +122,9 @@ header.dex-header button:hover { background-color: rgba(26, 20, 32, 0.8) !import
   overflow: hidden;
   isolation: isolate;
 }
+/* Hinweis-Leisten (Speicher-Hinweis, App-Installieren) tragen .fixed UND .poke-glass – fixed muss gewinnen,
+   sonst landen sie im Seitenfluss und verbreitern die Seite auf dem Handy. */
+.poke-glass.fixed { position: fixed; }
 /* Holo-Schimmer, der beim Hovern über die Karte wandert */
 .poke-glass::after {
   content: "";
@@ -292,7 +295,9 @@ footer { font-family: var(--font-body); }
 /* ---------- Kompakter Kopfbereich auf dem Handy ---------- */
 @media (max-width: 640px) {
   header.dex-header > div { flex-wrap: nowrap !important; }
-  header.dex-header > div > div:last-child { flex-wrap: nowrap !important; gap: 0.3rem !important; }
+  /* Die Button-Gruppe nutzt den Platz neben dem Logo und bricht rechtsbündig in eine zweite Zeile um,
+     statt die Seite breiter als den Bildschirm zu machen (sonst zoomt das Handy heraus / seitliches Wischen). */
+  header.dex-header > div > div:last-child { flex: 1 1 auto; min-width: 0; flex-wrap: wrap !important; justify-content: flex-end; gap: 0.3rem !important; }
   header.dex-header #v2-swipe-limit-badge, header.dex-header [data-dex="push"] { display: none !important; }
   header.dex-header .dex-lens { width: 38px; height: 38px; border-width: 3px; }
   header.dex-header .dex-title { font-size: 1.05rem !important; }
