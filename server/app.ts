@@ -513,7 +513,7 @@ app.get("/api/listings", async (c) => {
   const like = `%${q.replace(/[%_\\]/g, "")}%`;
   const list = rows(await db.execute(sql`
     SELECT l.id, l.card_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.created_at, l.user_id,
-      l.status, l.sealed_product_id, (l.boosted_until > now()) AS boosted, l.boosted_until,
+      l.status, l.sealed_product_id, l.print_id, l.portfolio_item_id, (l.boosted_until > now()) AS boosted, l.boosted_until,
       (l.buy_now AND p.stripe_account_ready) AS buy_now, l.shipping_cents, l.condition, l.variant, l.lang,
       p.display_name AS seller, p.public_profile AS seller_public,
       (p.plan = 'pro' AND p.plan_until > now()) AS verified,
