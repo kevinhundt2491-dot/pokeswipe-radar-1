@@ -22,6 +22,7 @@ import { registerIntlCatalog, printForPortfolio } from "./intl-catalog.ts";
 import { registerIntegrations, webhookSecrets, recordWebhook } from "./integrations.ts";
 import { registerFlip } from "./flip.ts";
 import { registerScanIndex } from "./scan-index.ts";
+import { registerQuickList } from "./quick-list.ts";
 import { registerCommunity, afterCommunityReport, applyModeration, isBlockedBetween, COMMUNITY_TARGETS } from "./community.ts";
 import { registerProfiles } from "./profiles.ts";
 import { psttgNotice } from "./dac7.ts";
@@ -561,8 +562,15 @@ app.post("/api/listings", auth, async (c) => {
     const cardName = str(it.card ?? it.cardName, 120);
     const price = money(it.price);
     if (!cardName || price === null) continue;
-    let cardId: string | null = null, image = "", sealedProductId: number | null = null;
-    if (it.cardId && CARD_ID_RE.test(String(it.cardId))) {
+    let cardId: string | null = null, image = "", sealedProductId: number | null = null, printId: string | null = null, printLang = "";
+    if (it.printId) {
+      // Englischer/japanischer Druck (z. B. aus dem Live-Scanner): Bild & Sprache vom Druck, Live-Preis über die deutsche Partnerkarte
+      const print = await printForPortfolio(str(it.printId, 50));
+      if (print) {
+        printId = print.id; printLang = print.lang; image = print.image;
+        if (print.baseCardId && CARD_ID_RE.test(print.baseCardId)) cardId = print.baseCardId;
+      }
+    } else if (it.cardId && CARD_ID_RE.test(String(it.cardId))) {
       const card = await getCard(String(it.cardId));
       if (card) { cardId = card.id; image = card.image; }
     } else if (it.sealedProductId) {
@@ -576,7 +584,7 @@ app.post("/api/listings", auth, async (c) => {
     const shippingCents = buyNow ? int(it.shippingCents, 0, MARKET_MAX_SHIPPING_CENTS, 0) : 0;
     const condition = CONDITIONS[String(it.condition || "")] ? String(it.condition) : "";
     // Phase 5: Sprache des Drucks für den DE/EN/JP-Filter in Händler-Shops
-    const lang = ["de", "en", "ja"].includes(String(it.lang)) ? String(it.lang) : "de";
+    const lang = printLang || (["de", "en", "ja"].includes(String(it.lang)) ? String(it.lang) : "de");
     // Phase 6: Kartenvariante und optionale Verknüpfung mit einem eigenen Portfolio-Eintrag (für strukturierte Tausche)
     const variant = sealedProductId ? "normal" : parseVariant(it.variant);
     if (!variant) return c.json({ error: `„${cardName}“: unbekannte Kartenvariante.` }, 400);
@@ -589,7 +597,7 @@ app.post("/api/listings", auth, async (c) => {
       portfolioItemId = own.id;
     }
     const [row] = await db.insert(listings).values({
-      userId: user.id, cardId, sealedProductId, cardName, image, price, buyNow, shippingCents, condition, lang, variant, portfolioItemId,
+      userId: user.id, cardId, sealedProductId, printId, cardName, image, price, buyNow, shippingCents, condition, lang, variant, portfolioItemId,
       want: str(it.want, 120) || "Tausch / Gebot",
       city: str(it.city, 60) || profile.city || "Deutschland",
     }).returning();
@@ -1104,6 +1112,7 @@ registerViral(app, { auth, body, ensureCode: ensureReferralCode });
 registerIntlCatalog(app, { auth, adminOnly });
 registerFlip(app, { auth, adminOnly, body });
 registerScanIndex(app, { auth, adminOnly });
+registerQuickList(app, { auth, body }); // Schnell-Inserieren aus dem Scanner: faire Preisvorschläge für viele Karten
 registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
 registerMake(app, { auth, adminOnly, body }); // Make.com-Webhook für Auto-Reels (Admin-Zentrale)

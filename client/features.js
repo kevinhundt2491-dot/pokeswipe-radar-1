@@ -181,6 +181,7 @@ async function handleScan(file, { forceAi = false } = {}) {
             <span><span class="block font-black text-white">${esc(i.name)} ${esc(i.number || "")}</span>
             <span class="block text-slate-400">${esc(i.setName || "")}</span><span class="block text-emerald-400 font-black">${i.price ? eur(i.price) : "–"}</span></span>
           </button>
+          <button onclick="PS.scanSell(${jsArg(i.key)}, 'confirm')" class="w-full bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 font-black py-2.5 rounded-xl">🏷️ Direkt inserieren – fairer Preis ist schon eingetragen</button>
           <button onclick="PS.scanAskAi()" class="w-full text-[11px] text-slate-400 underline">Falsche Karte? KI-Scan starten</button>
         </div>`;
         return;
@@ -196,10 +197,13 @@ async function handleScan(file, { forceAi = false } = {}) {
     }
     box.innerHTML = `<p class="text-xs text-slate-300">Erkannt: <strong class="text-white">${esc(r.detected.name)}</strong>${r.detected.number ? ` • Nr. ${esc(r.detected.number)}${r.detected.total ? "/" + esc(r.detected.total) : ""}` : ""} – tippe auf die passende Karte:</p>
       <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">${r.candidates.map((c) => `
-        <button onclick="PS.scanPick(${jsArg(`card:${c.id}`)}, 'ai')" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-2 text-center">
-          <img src="${esc(cdn(c.image || FALLBACK_IMG, 200))}" onerror="this.src='${FALLBACK_IMG}'" class="h-28 mx-auto object-contain" loading="lazy" />
-          <p class="text-[11px] font-bold text-white truncate">${esc(c.name)}</p><p class="text-[10px] text-slate-400">${esc(c.id)}</p>
-        </button>`).join("")}</div>`;
+        <div class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-2 text-center space-y-1">
+          <button onclick="PS.scanPick(${jsArg(`card:${c.id}`)}, 'ai')" class="w-full">
+            <img src="${esc(cdn(c.image || FALLBACK_IMG, 200))}" onerror="this.src='${FALLBACK_IMG}'" class="h-28 mx-auto object-contain" loading="lazy" />
+            <p class="text-[11px] font-bold text-white truncate">${esc(c.name)}</p><p class="text-[10px] text-slate-400">${esc(c.id)}</p>
+          </button>
+          <button onclick="PS.scanSell(${jsArg(`card:${c.id}`)}, 'ai')" class="w-full bg-emerald-500 text-slate-950 text-[10px] font-black py-1.5 rounded-lg">🏷️ Inserieren</button>
+        </div>`).join("")}</div>`;
     window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
     if (r.candidates.length === 1) PS().openCard(r.candidates[0].id);
   } catch (e) {
@@ -217,6 +221,18 @@ function scanPick(key, source) {
   const [kind, ...rest] = String(key).split(":");
   const id = rest.join(":");
   if (kind === "print") PS().openPrint?.(id); else PS().openCard(id);
+}
+
+/** Karte aus dem Foto-Scan direkt inserieren (Schnell-Inserieren mit fairem Preis), Fingerabdruck lernen. */
+async function scanSell(key, source) {
+  if (!requireLogin()) return;
+  if (scanProbe) lazyLiveScanApi.liveScanLearn(key, scanProbe, source).catch?.(() => {});
+  try {
+    const { items } = await api(`/api/scan/lookup?keys=${encodeURIComponent(key)}`);
+    // Noch nicht im eigenen Katalog: Detailansicht lädt die Karte nach und bietet dort „Inserieren“ an
+    if (!items?.length) { scanPick(key, source); return; }
+    lazyLiveScanApi.liveScanQuickList(items);
+  } catch (e) { handleError(e); }
 }
 
 /** Lokales Ergebnis verwerfen und doch die KI fragen. */
@@ -938,7 +954,7 @@ function tidyLayout() {
 // Start
 // ===========================================================================
 export const featureApi = {
-  enablePush, disablePush, openScanner, openPhotoScanner, scanFile: (file) => handleScan(file), scanPick, scanAskAi, openSet, trackSet, untrackSet,
+  enablePush, disablePush, openScanner, openPhotoScanner, scanFile: (file) => handleScan(file), scanPick, scanSell, scanAskAi, openSet, trackSet, untrackSet,
   ...lazyLiveScanApi,
   ...collectorApi,
   sealedKind: (k) => { sealedKind = k; renderSealed(); },
