@@ -8,7 +8,7 @@ import { rows } from "./util.ts";
 /** Alle geplanten Jobs (Namen wie in runJob verwendet) – auch ohne bisherigen Lauf in der Übersicht. */
 export const SCHEDULED_JOBS = [
   "restock-radar", "catalog-import", "catalog-intl-import", "scan-hash-index", "flip-radar-sync",
-  "price-tracker", "update-sealed-prices", "growth-jobs", "market-escrow", "ops-watchdog",
+  "price-tracker", "update-sealed-prices", "growth-jobs", "market-escrow", "ops-watchdog", "billing-reconcile",
 ] as const;
 
 export async function jobsOverview() {

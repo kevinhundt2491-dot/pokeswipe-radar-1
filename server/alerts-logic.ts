@@ -53,7 +53,7 @@ export function spikeAlerts(counts: ScopeCount[]): Alert[] {
 /** Takt der geplanten Jobs in Minuten (wie in netlify/functions/*.mts) */
 export const JOB_INTERVAL_MIN: Record<string, number> = {
   "restock-radar": 2, "catalog-import": 10, "catalog-intl-import": 10, "scan-hash-index": 10, "flip-radar-sync": 10,
-  "price-tracker": 60, "update-sealed-prices": 180, "growth-jobs": 60, "market-escrow": 15, "ops-watchdog": 10,
+  "price-tracker": 60, "update-sealed-prices": 180, "growth-jobs": 60, "market-escrow": 15, "ops-watchdog": 10, "billing-reconcile": 60,
 };
 
 export type JobState = { name: string; lastRunAt: Date | string | null; lastStatus: string | null };

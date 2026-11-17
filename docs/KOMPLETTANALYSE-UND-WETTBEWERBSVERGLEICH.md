@@ -42,7 +42,14 @@ Vor dem 22.11.2026 muss aber unbedingt der Abo-Befund in Kapitel 2.1 erledigt we
 - In der App-Datenbank stehen **alle Profile auf „Free“**: kein Abo verknüpft, keine Zahlung protokolliert, Testphase als nicht genutzt markiert. Die Nutzer sehen ihre Pro-Vorteile also nicht. Weil die Testphase nicht als genutzt markiert ist, kann dieselbe Person erneut eine Testphase starten.
 - Der Code selbst ist korrekt: Nach dem Checkout wird die Zahlung genau einmal gebucht, das Abo verknüpft und die Testphase markiert. Bei einem Tarifwechsel wird das alte Abo automatisch gekündigt. Am wahrscheinlichsten wurden die Datenbankeinträge nachträglich zurückgesetzt, etwa bei Tests oder einem Daten-Reset. Am 22.11. würde die erste bezahlte Rechnung das Profil wieder verknüpfen, aber die überzähligen Abos würden trotzdem abgebucht.
 
-**Zu tun (Stripe-Dashboard → Kunden → Abonnements):**
+**Behoben im Code (17.11.2026):** Ein neuer stündlicher Job „billing-reconcile“ gleicht alle laufenden Stripe-Abos mit der App ab:
+Pro Kunde bleibt genau ein Abo (bezahlt vor Testphase, höherer Tarif, bereits verknüpftes, sonst das älteste), alle weiteren werden
+sofort gekündigt, in der Testphase ohne Abbuchung. Das Profil wird mit Kunde, Abo und Tarif neu verknüpft, und die Testphase wird als genutzt markiert.
+Der Checkout fragt jetzt vor jedem Kauf direkt bei Stripe nach laufenden Abos, verknüpft sie und blockiert ein zweites gleiches Abo und eine zweite Testphase.
+Manuell lässt sich der Abgleich als Admin über `POST /api/admin/billing/reconcile` starten (`?dryRun=1` zeigt nur die geplanten Änderungen).
+Damit der Abgleich vor dem 22.11. greift, muss die Änderung bis dahin live gehen.
+
+**Ursprünglich empfohlen (Stripe-Dashboard → Kunden → Abonnements), nach dem Deploy nur noch zur Kontrolle:**
 1. Die überzähligen Pro-Testabos sofort kündigen. Pro Kunde darf höchstens eines übrig bleiben. Echte Testkäufe am besten alle kündigen.
 2. Danach in der App einmal ab- und wieder anmelden und prüfen, ob der Tarif stimmt.
 3. Empfehlung für später: eine zusätzliche Sperre im Checkout, die vor dem Kauf bei Stripe nachsieht, ob der Kunde schon ein laufendes Abo hat. Bisher prüft die Sperre nur die App-Datenbank.
