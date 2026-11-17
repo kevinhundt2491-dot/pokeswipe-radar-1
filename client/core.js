@@ -32,7 +32,9 @@ const toast = (title, body = "", link = "") => {
   toast._t = setTimeout(() => box.classList.add("hidden"), 6500);
 };
 const ebay = (q) => (window.buildEbayUrl ? window.buildEbayUrl(q, "bin") : "#");
-const cm = (q) => (window.buildCardmarketUrl ? window.buildCardmarketUrl(q) : "#");
+/** Offizielle Cardmarket-Kartensuche – Fallback, falls das Tracking-Skript (Partner-ID) noch nicht geladen ist. */
+const cmFallback = (q) => (q ? `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(String(q).slice(0, 120))}` : "https://www.cardmarket.com/de/Pokemon");
+const cm = (q) => (window.buildCardmarketUrl ? window.buildCardmarketUrl(q) : cmFallback(q));
 const FALLBACK_IMG = "/card-fallback.svg";
 /** Kartenbild über das Netlify Image CDN: passend verkleinert und als WebP/AVIF ausgeliefert. */
 const CDN_HOSTS = ["assets.tcgdex.net", "images.pokemontcg.io", "raw.githubusercontent.com"];

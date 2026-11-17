@@ -473,7 +473,7 @@ async function loadPartners() {
       <p class="text-sm font-black text-white">${esc(p.name)}</p>
       <p class="text-slate-300 flex-1">${esc(p.tagline)}</p>
       <div class="flex flex-wrap gap-1">${(Array.isArray(p.features) ? p.features : []).map((f) => `<span class="bg-slate-800 text-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold">${esc(f)}</span>`).join("")}</div>
-      ${safeUrl(p.link) ? `<a href="${esc(safeUrl(p.link))}" target="_blank" rel="noopener sponsored" class="block text-center bg-yellow-400 text-slate-950 font-black py-2 rounded-xl mt-1">Zu ${esc(p.name)}${p.affiliate ? "*" : ""} ↗</a>` : ""}
+      ${safeUrl(p.link || p.officialUrl) ? `<a href="${esc(safeUrl(p.link || p.officialUrl))}" target="_blank" rel="noopener sponsored" class="block text-center bg-yellow-400 text-slate-950 font-black py-2 rounded-xl mt-1">Zu ${esc(p.name)}${p.affiliate ? "*" : ""} ↗</a>` : ""}
     </div>`).join("");
   } catch {}
 }
