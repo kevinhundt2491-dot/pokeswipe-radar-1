@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run build:css && npm run build:js && npm run build:worker",
+    "build": "npm run build:css && npm run build:js && npm run build:worker && npm run build:ocr",
     "db:generate": "drizzle-kit generate",
     "test": "node --test \"tests/*.test.ts\"",
     "typecheck": "tsc -p .",
@@ -16,7 +16,8 @@
     "cap:ios": "npx cap open ios",
     "cap:android": "npx cap open android",
     "test:e2e": "playwright test",
-    "test:e2e:live": "playwright test"
+    "test:e2e:live": "playwright test",
+    "build:ocr": "node scripts/copy-ocr-assets.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
@@ -26,11 +27,13 @@
     "@netlify/functions": "^6.1.1",
     "@netlify/identity": "^2.0.1",
     "@netlify/server": "^0.1.6",
+    "@tesseract.js-data/eng": "^1.0.0",
     "drizzle-orm": "^1.0.0-beta.22",
     "hono": "^4.13.18",
     "jpeg-js": "^0.4.4",
     "mp4-muxer": "^5.2.2",
     "stripe": "^23.1.0",
+    "tesseract.js": "^7.0.0",
     "web-push": "^4.0.0"
   },
   "devDependencies": {

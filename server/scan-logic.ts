@@ -255,8 +255,7 @@ const polyArea = (q: Pt[]) => Math.abs(q.reduce((s, p, i) => { const n = q[(i + 
  * Kartenkanten im Bild finden. Liefert die 4 Ecken (oben links, oben rechts, unten rechts, unten links), eine Konfidenz
  * und die Bildschärfe. Ohne sichere Kanten: Führungsrahmen als Fallback (found = false).
  */
-export function detectCard(g: Gray, guide: Guide): { corners: Pt[]; found: boolean; confidence: number; sharpness: number } {
-  const gr = sobel(g);
+export function detectCard(g: Gray, guide: Guide, gr: { gx: Float32Array; gy: Float32Array; mean: number } = sobel(g)): { corners: Pt[]; found: boolean; confidence: number; sharpness: number } {
   const gw = guide.x1 - guide.x0, gh = guide.y1 - guide.y0;
   const band = Math.max(4, Math.min(gw, gh) * 0.13);
   const sides = (["top", "right", "bottom", "left"] as const).map((sd) => edgeCandidates(gr, g.w, g.h, sd, guide, band));
@@ -724,8 +723,16 @@ export function scaleQuad(q: Pt[], k: number): Pt[] {
   const cx = q.reduce((s, p) => s + p[0], 0) / q.length, cy = q.reduce((s, p) => s + p[1], 0) / q.length;
   return q.map(([x, y]) => [cx + (x - cx) * k, cy + (y - cy) * k] as Pt);
 }
+/** Viereck um seinen Mittelpunkt drehen (Grad) – Ersatz-Zuschnitte für schief gehaltene Karten. */
+export function rotateQuad(q: Pt[], deg: number): Pt[] {
+  const cx = q.reduce((s, p) => s + p[0], 0) / q.length, cy = q.reduce((s, p) => s + p[1], 0) / q.length;
+  const a = (deg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  return q.map(([x, y]) => [cx + (x - cx) * c - (y - cy) * s, cy + (x - cx) * s + (y - cy) * c] as Pt);
+}
+/** Neigungen, die ohne gefundene Kanten probiert werden */
+export const TILT_ANGLES = [-5, 5, -9, 9];
 /** Ohne erkannte Kanten werden diese Skalierungen des Führungsrahmens probiert (Karte kleiner gehalten, Toploader-Rand). */
-export const FALLBACK_SCALES = [1, 0.93, 0.86];
+export const FALLBACK_SCALES = [1, 0.93, 0.86, 0.76, 0.66];
 
 /** Mittlere Eckenbewegung zweier Vierecke relativ zur Breite – Grundlage der Stabilitäts-Erkennung. */
 export function quadMotion(a: Pt[] | null | undefined, b: Pt[] | null | undefined): number {

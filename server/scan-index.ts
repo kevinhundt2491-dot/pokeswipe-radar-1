@@ -237,6 +237,27 @@ export async function buildIndex(lang: Lang) {
   };
 }
 
+/**
+ * Text-Index einer Sprache für die Erkennung ohne KI (Name + Sammlernummer, alle Katalogkarten – auch ohne
+ * Fingerabdruck). Zeilen „key⇥name⇥localId⇥total⇥setCode“; der Worker sucht darin unscharf nach dem gelesenen Namen
+ * und exakt nach der Nummer („199/165“, „TG12“, „SVP 085“).
+ */
+export async function buildTextIndexPayload(lang: Lang) {
+  const list = lang === "de"
+    ? rows(await db.execute(sql`
+        SELECT 'card:' || c.id AS key, c.name, COALESCE(c.local_id, '') AS local_id, COALESCE(s.card_count_official, 0) AS total,
+          COALESCE(NULLIF(s.abbreviation, ''), c.set_id, '') AS code
+        FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id ORDER BY c.id`))
+    : rows(await db.execute(sql`
+        SELECT 'print:' || p.id AS key, p.name, p.local_id, COALESCE(ps.card_count_official, 0) AS total,
+          COALESCE(NULLIF(p.set_code, ''), p.set_id, '') AS code
+        FROM card_prints p LEFT JOIN print_sets ps ON ps.lang = p.lang AND ps.id = p.set_id
+        WHERE p.lang = ${lang} ORDER BY p.id`));
+  const clean = (v: unknown) => String(v ?? "").replace(/[\t\n\r]+/g, " ").trim();
+  const t = list.map((r: any) => [clean(r.key), clean(r.name), clean(r.local_id), Number(r.total) || 0, clean(r.code)].join("\t")).join("\n");
+  return { lang, count: list.length, t, builtAt: new Date().toISOString() };
+}
+
 // ---------------------------------------------------------------------------
 // Phase 9: Selbstlernender Index (Stufe 2 des Hybrid-Scanners)
 // ---------------------------------------------------------------------------
@@ -359,6 +380,16 @@ export function registerScanIndex(app: any, { auth, adminOnly }: { auth: any; ad
     if (!(LANGS as readonly string[]).includes(lang)) return c.json({ error: "Unbekannte Sprache" }, 400);
     if (!(await rateLimit(`scanidx:${clientIp(c)}`, 20, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
     const idx = await buildIndex(lang as Lang);
+    publicCache(c, "data", { sMaxAge: 3600, swr: 86_400, varyQuery: ["lang"] });
+    return c.json(idx);
+  });
+
+  // Text-Index (Name + Sammlernummer) für die Live-Erkennung ohne KI – vom CDN und offline vom Service Worker gehalten
+  app.get("/api/scan/text-index", async (c: any) => {
+    const lang = String(c.req.query("lang") || "de");
+    if (!(LANGS as readonly string[]).includes(lang)) return c.json({ error: "Unbekannte Sprache" }, 400);
+    if (!(await rateLimit(`scantxt:${clientIp(c)}`, 20, 60_000))) return c.json({ error: "Zu viele Anfragen." }, 429);
+    const idx = await buildTextIndexPayload(lang as Lang);
     publicCache(c, "data", { sMaxAge: 3600, swr: 86_400, varyQuery: ["lang"] });
     return c.json(idx);
   });

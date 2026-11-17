@@ -36,7 +36,7 @@ import { searchCatalog, searchThumb, searchMeta, isAbort } from "./search.js";
 import { complianceApi, billingPortalButton } from "./compliance.js";
 import { makeAdminApi } from "./make-admin.js";
 import { tradingApi, tradeDetailHtml, routeTrading } from "./trading.js";
-import { syncAdminTools, openGenerator, initLazyAdminTools } from "./lazy.js";
+import { syncAdminTools, openGenerator, initLazyAdminTools, initPhotoScanInputs } from "./lazy.js";
 import { valuationApi, loadValuation } from "./valuation.js";
 import { initNativePlatform, nativeApi } from "./native.js";
 import { initPayments, routePayments, paymentsApi } from "./payments.js";
@@ -639,7 +639,15 @@ function injectPortfolioDash() {
       <button id="ps-pf-search-go" class="bg-emerald-500 text-slate-950 font-black px-4 rounded-xl">Suchen</button></div>
       <div id="ps-pf-results" class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-72 overflow-y-auto"></div></div>`;
     scan.before(s.firstElementChild);
-    const go = () => searchCards($("ps-pf-search").value.trim(), "ps-pf-results");
+    // Foto aufnehmen / Bild hochladen: Karte ohne KI erkennen und mit einem Tipp in die Sammlung
+    const photo = document.createElement("div");
+    photo.innerHTML = `<div class="bg-slate-950 p-3 rounded-2xl border border-cyan-400/40 text-xs flex flex-wrap items-center gap-2">
+      <p class="flex-1 min-w-[10rem] text-slate-300"><strong class="text-white">📸 Karte per Foto hinzufügen</strong> – Name und Nummer werden in unter einer Sekunde auf dem Gerät erkannt.</p>
+      <label class="cursor-pointer bg-cyan-400 text-slate-950 font-black px-3 py-2 rounded-xl">📸 Foto aufnehmen<input data-photo-scan="portfolio" type="file" accept="image/*" capture="environment" class="hidden" /></label>
+      <label class="cursor-pointer bg-slate-800 text-white font-black px-3 py-2 rounded-xl">🖼️ Bild hochladen<input data-photo-scan="portfolio" type="file" accept="image/*" class="hidden" /></label>
+      <button type="button" onclick="PS.openLiveScanner()" class="bg-slate-800 text-white font-black px-3 py-2 rounded-xl">⚡ Live-Scanner</button></div>`;
+    $("ps-pf-search")?.closest("div.bg-slate-950")?.before(photo.firstElementChild);
+    const go =() => searchCards($("ps-pf-search").value.trim(), "ps-pf-results");
     $("ps-pf-search-go").onclick = go;
     $("ps-pf-search").addEventListener("keydown", (e) => e.key === "Enter" && go());
   }
@@ -1347,6 +1355,7 @@ async function boot() {
   overrideMarket();
   initFeatures();
   initLazyAdminTools();
+  initPhotoScanInputs(); // „Foto aufnehmen / Bild hochladen“ im Swiper und in der Sammlung
   initShell();
   initAppNav(); // Mobile-First: 5 Hauptbereiche, Seitenköpfe mit Zurück, Marktplatz-Tabs, Profil-Bereich
   initArena();

@@ -29,6 +29,8 @@ let lastLoadAt = 0;
 let setCache = {};
 let drawerOpen = false;
 let usingLive = false;
+/** Frisch gescannte Karte: bleibt oben im Stapel, auch wenn der Stapel danach (neu) geladen wird */
+let pinnedScan = null;
 
 function loadFilters() {
   try {
@@ -102,6 +104,7 @@ async function flushEvents() {
 }
 
 function onSwipe(item, dir) {
+  if (pinnedScan && item?.key === pinnedScan.key) pinnedScan = null;
   if (!item || item.kind === "listing" && dir === "detail") return;
   // Haptik: Merken spürbar, Weiter leicht; echte Unter-Marktwert-Deals mit Erfolgs-Feedback
   if (dir === "right") haptic(Number(item.cm) > 0 && Number(item.price) > 0 && Number(item.price) <= Number(item.cm) * 0.85 ? "success" : "medium");
@@ -264,6 +267,7 @@ export async function reloadDeck() {
       return;
     }
     usingLive = window.setSwipeDeck?.(res.items, false) || false;
+    if (pinnedScan) window.prependSwipeCard?.(pinnedScan);
     retryCount = 0;
     const listings = res.items.filter((i) => i.kind === "listing").length;
     const scanned = res.items.filter((i) => i.scanned && i.photo).length;
@@ -687,6 +691,26 @@ async function buyOffer(listingId) {
 }
 
 /** Vom Flip-Radar, nach dem Inserieren oder per Link: Swipe-Reiter im Marktplatz-Modus öffnen. */
+/**
+ * Gescannte Karte (Live-Scanner / Foto-Scan, Format von /api/scan/lookup) oben in den Swiper legen und den Swiper öffnen:
+ * Marktpreis, Preis-Ampel und Live-Angebote erscheinen wie bei jeder anderen Karte.
+ */
+function showScanned(info) {
+  if (!info?.key) return;
+  const isPrint = info.kind === "print";
+  pinnedScan = toDeckItem({
+    kind: "card", key: info.id, lang: info.lang || "de",
+    printId: isPrint ? info.id : null, cardId: isPrint ? info.baseCardId || null : info.id,
+    name: info.name, altName: info.altName || "", number: info.number || "", setName: info.setName || "", setCode: info.setCode || "",
+    rarity: info.rarity || "", price: info.price ?? null, image: info.image || "", source: "scan",
+  });
+  try { window.switchTab?.("swipe"); } catch {}
+  if (!window.prependSwipeCard?.(pinnedScan)) window.setSwipeDeck?.([pinnedScan], false);
+  setStatus(`📸 Gescannt: ${info.name}${info.number ? ` ${info.number}` : ""} liegt oben im Stapel – Marktpreis und Deals siehst du direkt an der Karte.`, "ok");
+  haptic("success");
+  try { document.getElementById("swipe-img")?.scrollIntoView({ behavior: "smooth", block: "center" }); } catch {}
+}
+
 function openMarketSwipe(preset = {}) {
   filters = { ...filters, market: true, set: "", ...preset };
   saveFilters();
@@ -718,6 +742,7 @@ export const arenaApi = {
   arenaMarket: (mode = "") => openMarketSwipe(mode === "deals" ? { market: false, deals: true } : { deals: false }),
   openPrint,
   addPrintToPortfolio,
+  arenaShowScanned: showScanned,
 };
 
 export function initArena() {

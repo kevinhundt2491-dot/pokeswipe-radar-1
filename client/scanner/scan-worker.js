@@ -7,11 +7,17 @@ import {
   rgbaToGray, resize, detectCard, normalizeCard, cardHashes, topMatches, decide, homography, warp, readNumber,
   parseNumberText, glyphVector, splitIndexId, localNumber, decodeBase64, unpackWords, NUMBER_STRIPS, WORDS, SCORE_STRONG,
   normalizeContrast, glareRatio, colorSignature, colorDistance, colorPenalty, wordsToHex, GLARE_HIGH,
-  suppressGlare, focusScore, sharpen, scaleQuad, FALLBACK_SCALES,
+  suppressGlare, focusScore, sharpen, scaleQuad, FALLBACK_SCALES, sobel, rotateQuad, TILT_ANGLES,
 } from "../../server/scan-logic.ts";
+import { buildTextIndex, decideText } from "../../server/scan-text-logic.ts";
 
 const idx = { keys: [], langs: [], localNum: new Int32Array(0), total: new Int32Array(0), words: new Uint32Array(0), colors: [], count: 0, perLang: {}, learned: 0 };
 let glyphs = null;
+/** Text-Index (Name + Sammlernummer aller Katalogkarten) für die Erkennung ohne KI */
+let textIdx = null;
+let langsOrder = ["de", "en", "ja"];
+/** Letzte Bild-Treffer (Fingerabdruck) – bestätigen bzw. entscheiden zwischen Text-Treffern */
+let lastHash = { at: 0, cands: [] };
 let textDetector = null;
 let busy = false;
 
@@ -64,6 +70,20 @@ async function loadIndex(langs) {
   return { count, perLang, learned };
 }
 
+/** Text-Index je Sprache laden (parallel zum Fingerabdruck-Index; fehlt er, läuft der Scanner trotzdem). */
+async function loadTextIndex(langs) {
+  const parts = await Promise.all(langs.map(async (lang) => {
+    try {
+      const res = await fetch(`/api/scan/text-index?lang=${encodeURIComponent(lang)}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return { lang, t: String(data.t || "") };
+    } catch { return null; }
+  }));
+  textIdx = buildTextIndex(parts.filter(Boolean));
+  return textIdx.rows.length;
+}
+
 // ---------------------------------------------------------------------------
 // Ziffern-Vorlagen (einmalig mit OffscreenCanvas gezeichnet; mehrere Schriften, normal und schmal)
 // ---------------------------------------------------------------------------
@@ -108,6 +128,21 @@ async function platformOcr(strip) {
   return null;
 }
 
+/** Ersatz-Rahmen für die Kantensuche: kleiner (0,8 / 0,64) und um ±12 % verschoben – alle im Bild. */
+function searchGuides(g, w, h) {
+  const cx = (g.x0 + g.x1) / 2, cy = (g.y0 + g.y1) / 2, gw = g.x1 - g.x0, gh = g.y1 - g.y0;
+  const out = [];
+  for (const k of [0.8, 0.64]) {
+    for (const [dx, dy] of [[0, 0], [-0.12, 0], [0.12, 0], [0, -0.1], [0, 0.1]]) {
+      const x0 = cx - (gw * k) / 2 + dx * gw, y0 = cy - (gh * k) / 2 + dy * gh;
+      const q = { x0, y0, x1: x0 + gw * k, y1: y0 + gh * k };
+      if (q.x0 >= 2 && q.y0 >= 2 && q.x1 <= w - 2 && q.y1 <= h - 2) out.push(q);
+      if (k === 0.8 && out.length > 3) break; // Großer Rahmen: Mitte + 3 Verschiebungen genügen
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Ein Kamerabild auswerten
 // ---------------------------------------------------------------------------
@@ -118,7 +153,17 @@ async function analyse(msg) {
   const sw = Math.round(msg.w / 2), sh = Math.round(msg.h / 2);
   const small = resize(frame, sw, sh);
   const g = msg.guide;
-  const det = detectCard(small, { x0: g.x0 / 2, y0: g.y0 / 2, x1: g.x1 / 2, y1: g.y1 / 2 });
+  const half = { x0: g.x0 / 2, y0: g.y0 / 2, x1: g.x1 / 2, y1: g.y1 / 2 };
+  // Nachsichtige Ausrichtung: Kanten erst am Rahmen suchen, dann an kleineren/verschobenen Rahmen (Karte weiter weg,
+  // schief oder neben der Mitte gehalten). Der Gradient wird nur einmal berechnet.
+  const grad = sobel(small);
+  let det = detectCard(small, half, grad);
+  if (!det.found) {
+    for (const guide of searchGuides(half, small.w, small.h)) {
+      const alt = detectCard(small, guide, grad);
+      if (alt.found) { det = alt; break; }
+    }
+  }
   let corners = det.corners.map(([x, y]) => [x * 2, y * 2]);
   const tDetect = performance.now();
   if (!idx.count) return { type: "result", reqId: msg.reqId, ms: performance.now() - t0, found: det.found, corners, sharpness: det.sharpness, empty: true };
@@ -142,14 +187,27 @@ async function analyse(msg) {
   // Toploader/Sleeve-Rand) und die mit dem besten Treffer nehmen – früher wurde nur der Führungsrahmen genutzt.
   let ev = evaluate(corners);
   if (!det.found) {
-    for (const k of FALLBACK_SCALES.slice(1)) {
-      const alt = evaluate(scaleQuad(det.corners, k).map(([x, y]) => [x * 2, y * 2]));
-      if ((alt.matches[0]?.score ?? 999) < (ev.matches[0]?.score ?? 999)) ev = alt;
+    const best = () => ev.matches[0]?.score ?? 999;
+    const tryQuad = (q) => { const alt = evaluate(q.map(([x, y]) => [x * 2, y * 2])); if ((alt.matches[0]?.score ?? 999) < best()) ev = alt; };
+    for (const k of FALLBACK_SCALES.slice(1)) tryQuad(scaleQuad(det.corners, k));
+    // Schief oder neben der Mitte gehalten: gedrehte (±5°/±9°) und verschobene Zuschnitte – nur solange kein klarer Treffer
+    if (best() > SCORE_STRONG) {
+      const base = scaleQuad(det.corners, 0.93);
+      for (const deg of TILT_ANGLES) { tryQuad(rotateQuad(base, deg)); if (best() <= SCORE_STRONG) break; }
+    }
+    if (best() > SCORE_STRONG) {
+      const base = scaleQuad(det.corners, 0.9), w = base[1][0] - base[0][0];
+      const h = base[3][1] - base[0][1];
+      outer: for (const [dx, dy] of [[-0.08, 0], [0.08, 0], [-0.15, 0.04], [0.15, 0.04], [-0.15, -0.04], [0.15, -0.04], [0, 0.07], [0, -0.07]]) for (const deg of [0, -7, 7]) {
+        tryQuad(rotateQuad(base.map(([x, y]) => [x + dx * w, y + dy * h]), deg));
+        if (best() <= SCORE_STRONG) break outer;
+      }
     }
     corners = ev.quad;
   }
   const { glare, probe, color, matches } = ev;
   const tMatch = performance.now();
+  lastHash = { at: Date.now(), cands: matches.slice(0, 12).map((m) => ({ key: idx.keys[m.i], score: m.score })) };
 
   // Kartennummer nur lesen, wenn der Hash allein nicht eindeutig ist (spart Zeit bei klaren Treffern) – beim
   // Auslösen (Auto-Capture / Auslöser) immer, mit nachgeschärftem, kontrastnormalisiertem Streifen
@@ -188,8 +246,21 @@ self.onmessage = async (e) => {
   if (msg.type === "init") {
     if (!glyphs) { try { glyphs = buildGlyphs(); } catch { glyphs = []; } }
     try { if (!textDetector && typeof self.TextDetector === "function") textDetector = new self.TextDetector(); } catch { textDetector = null; }
-    const r = await loadIndex(Array.isArray(msg.langs) && msg.langs.length ? msg.langs : ["de"]);
-    postMessage({ type: "ready", ...r, ocr: glyphs.length ? (textDetector ? "text-detector" : "templates") : textDetector ? "text-detector" : "none" });
+    const langs = Array.isArray(msg.langs) && msg.langs.length ? msg.langs : ["de"];
+    langsOrder = langs;
+    const [r, textCount] = await Promise.all([loadIndex(langs), loadTextIndex(langs)]);
+    postMessage({ type: "ready", ...r, textCount, ocr: glyphs.length ? (textDetector ? "text-detector" : "templates") : textDetector ? "text-detector" : "none" });
+    return;
+  }
+  // Gelesener Text (Name + Nummer) → Karte. Bild-Treffer der letzten 1,5 s (bzw. des Fotos) bestätigen/entscheiden.
+  if (msg.type === "text") {
+    const t0 = performance.now();
+    let d = null;
+    try {
+      const hash = msg.useHash !== false && Date.now() - lastHash.at < 1500 ? lastHash.cands : [];
+      d = textIdx ? decideText(textIdx, String(msg.text || ""), hash, langsOrder) : null;
+    } catch (err) { d = null; }
+    postMessage({ type: "text-result", reqId: msg.reqId, ms: performance.now() - t0, ...(d || { accepted: false, strength: "none", keys: [], candidates: [] }) });
     return;
   }
   if (msg.type === "frame") {
