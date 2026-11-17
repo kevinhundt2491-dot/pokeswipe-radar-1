@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 // @ts-ignore – Client-Modul ohne Typen
-import { PRO_TEMPLATES, proScript, checkProScript, sceneTimes, choreoMarks, bitrateFor, shrinkBitrate, estimateMb, speedFor, captionChunks, proCaption, SAFE_MB, MB, DOMAIN } from "../client/reel-pro.js";
+import { PRO_TEMPLATES, proScript, checkProScript, sceneTimes, choreoMarks, bitrateFor, shrinkBitrate, estimateMb, speedFor, secondsFor, captionChunks, proCaption, templateByKey, SAFE_MB, MB, DOMAIN } from "../client/reel-pro.js";
 import { cleanVideoConfig, rotationAt, PRO_TEMPLATE_KEYS, DEFAULT_VIDEO } from "../server/reel-video-logic.ts";
 
-test("Pro-Videos: 5 Vorlagen, je 5 Sätze, Wortlimit für 20–30 s, Server-Grenze 72 Wörter", () => {
+test("Pro-Videos: alle Vorlagen, je 5 Sätze, Wortlimit für 20–30 s, Server-Grenze 72 Wörter", () => {
   assert.deepEqual(PRO_TEMPLATES.map((t: any) => t.key), [...PRO_TEMPLATE_KEYS]);
   for (const t of PRO_TEMPLATES) for (const v of [0, 1]) {
     const s = proScript(t, v);
@@ -115,4 +115,23 @@ test("Startbilder: Kartenmotiv wechselt, Bild-URL und Preisverlauf sind brauchba
   assert.equal(pickCoverCard([], []), null);
   assert.deepEqual(coverHistory({ history: [5], avg30: 10, avg7: 12, price: 11 }), [10, 12, 11]);
   assert.deepEqual(coverHistory({ history: [1, 2, 3], avg30: 10 }), [1, 2, 3]);
+});
+
+test("Pro-Video „Scannen & Verkaufen“: 15–20 s, 8 Mbit/s, Promo-Link START30 und eigener Endscreen", () => {
+  const t = templateByKey("scansell");
+  assert.ok(t);
+  assert.deepEqual(secondsFor(t), [15, 20]);
+  assert.deepEqual(secondsFor(templateByKey("overview")), [20, 30]);
+  assert.equal(t.mbit, 8);
+  const s = proScript(t, 0);
+  assert.equal(s.cover, "Pokémon-Karten verkaufen in 10 Sekunden?! 🤯⚡");
+  assert.ok(s.say[0].startsWith("Pokémon-Karten verkaufen war noch nie so schnell"));
+  assert.ok(/Gratis-Wochen/.test(s.say[4]) && s.show[4].includes(DOMAIN));
+  const c = proCaption(t, 0, { card: "Glurak ex" });
+  assert.ok(c.caption.includes("https://pokeswipe-radar.de/?promo=START30"));
+  assert.ok(/Freunde einladen/.test(c.caption));
+  assert.ok(c.hashtags.includes("#PokemonVerkaufen"));
+  // Tempo für die kurze Vorlage: 22 s Sprechzeit → schneller (höchstens 1,12), 15–20 s bleibt unverändert
+  assert.ok(speedFor(22, 1.04, [15, 20]) > 1.04 && speedFor(22, 1.04, [15, 20]) <= 1.12);
+  assert.equal(speedFor(17, 1.04, [15, 20]), 1.04);
 });

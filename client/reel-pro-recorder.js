@@ -19,7 +19,7 @@ import { ProCompositor, loadProFonts } from "./reel-compositor.js";
 import { exactMp4Support, ExactMp4Writer } from "./reel-mp4.js";
 import {
   proScript, checkProScript, sceneTimes, choreoMarks, captionChunks, bitrateFor, shrinkBitrate, speedFor, audibleEnd, frameGrid,
-  SAFE_MB, MB, AUDIO_KBPS, PRO_MIN_S, PRO_MAX_S, PRO_LEAD, END_FADE,
+  secondsFor, SAFE_MB, MB, AUDIO_KBPS, PRO_MIN_S, PRO_MAX_S, PRO_LEAD, END_FADE,
 } from "./reel-pro.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
@@ -33,10 +33,11 @@ const NO_VOICE_S = 26;
  * Sprecherin für eine Pro-Vorlage laden und das Tempo so wählen, dass das Video 20–30 s lang wird.
  * @returns {Promise<{ take: object, speed: number, seconds: number }>}
  */
-export async function loadProNarration(lines, ac, tone = "energetic") {
-  let speed = 1.04;
+export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S]) {
+  // Kurze Vorlagen (z. B. 15–20 s) starten gleich mit dem schnellsten natürlichen Tempo
+  let speed = range[1] <= 20 ? 1.12 : 1.04;
   let take = await loadNarration(lines, ac, { tone, speed });
-  const next = speedFor(speechSeconds(take), speed);
+  const next = speedFor(speechSeconds(take), speed, range);
   if (next !== speed) {
     // Zweiter Take nur zur Feinanpassung der Länge – scheitert er, bleibt der erste (fertige) Take
     try { take = await loadNarration(lines, ac, { tone, speed: next }); speed = next; }
@@ -99,7 +100,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
 
   // ---- 1. Zeitplan aus der vollständig dekodierten Sprecherin ----
   const speech = voice ? speechSeconds(voice) : 0; // exactAudioDuration (gemessen an den Samples)
-  const { frames: N, duration: D } = frameGrid(voice ? PRO_LEAD + speech + END_FADE : NO_VOICE_S, fps);
+  const { frames: N, duration: D } = frameGrid(voice ? PRO_LEAD + speech + END_FADE : Math.min(NO_VOICE_S, secondsFor(tpl)[1]), fps);
   const shift = (m) => ({ start: PRO_LEAD + m.start, end: PRO_LEAD + m.end });
   const marks = voice ? voice.marks.map(shift) : estimateMarks(script.say, D);
   const wordMarks = voice?.wordMarks ? voice.wordMarks.map((ws) => ws.map(shift)) : null;

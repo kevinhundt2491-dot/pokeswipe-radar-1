@@ -143,6 +143,45 @@ export const PRO_TEMPLATES = [
     body: ["Dein komplettes Portfolio live mit aktuellen Marktpreisen – Gewinner, Verlierer und Gesamtwert auf einen Blick.",
       "Der Release-Kalender erinnert dich an jedes neue Set, damit du keinen Drop mehr verpasst."],
   },
+  {
+    // Verkäufer-Video: Karte scannen → fairer Marktpreis → mit 1 Klick live (Käuferschutz + DHL-Label) → Promo-CTA.
+    // Kürzer (Ziel 15–20 s) und mit eigener Bitrate (8 Mbit/s), eigenem Endscreen und Promo-Link START30.
+    key: "scansell", label: "Karten scannen & in Sekunden verkaufen", choreo: "scansell", tab: "scan",
+    title: "Pokémon-Karten scannen & in Sekunden verkaufen",
+    accent: "#34d399",
+    seconds: [15, 20], mbit: 8,
+    hooks: [
+      { badge: "VERKÄUFER-HACK", cover: "Pokémon-Karten verkaufen in 10 Sekunden?! 🤯⚡", say: "Pokémon-Karten verkaufen war noch nie so schnell!" },
+      { badge: "SCAN & VERKAUF", cover: "Scannen, Preis, live: Verkauft in 10 Sekunden ⚡", say: "Pokémon-Karten verkaufen war noch nie so schnell!" },
+    ],
+    lines: [
+      { say: "Auf PokeSwipe Radar hältst du einfach deine Kamera drauf, die App erkennt deine Karte sofort und schlägt dir direkt den fairen Marktpreis vor." },
+      { say: "Und mit einem Klick ist dein Inserat live!" },
+      { say: "Mit Käuferschutz und automatischem DHL-Etikett." },
+    ],
+    cta: {
+      say: "Hol dir jetzt deinen kostenlosen Pro-Testmonat über den Link, und lade deine Freunde ein für noch mehr Gratis-Wochen!",
+      show: "Jetzt 1 Monat Pro GRATIS testen & Freunde einladen! 👇🔗 pokeswipe-radar.de",
+      button: "1 Monat Pro GRATIS testen",
+      tagline: "Jetzt 1 Monat Pro GRATIS & Freunde einladen! 👇",
+      link: "pokeswipe-radar.de/?promo=START30",
+      sub: "🤝 Jeder eingeladene Freund = extra Gratis-Wochen Pro",
+    },
+    link: "https://pokeswipe-radar.de/?promo=START30",
+    highlight: "1. Karte scannen 📸 • 2. Fairer Marktpreis sofort da 💰",
+    headings: { benefit: "3. Mit 1 Klick inserieren 🚀", trust: "Inkl. Käuferschutz & DHL-Label 📦" },
+    stats: [["📸", "Scannen"], ["💰", "Fairer Preis"], ["🚀", "1 Klick live"]],
+    badges: ["📸 Erkennung direkt auf dem Handy", "💰 Fairer Marktpreis, sofort editierbar", "🚀 Mit 1 Klick live", "🃏 Sofort im Swipe-Radar"],
+    trust: ["🔒 Stripe-Käuferschutz", "📦 DHL-Etikett per Klick aus der Bestellung", "💶 Geld sicher nach Erhalt", "🇩🇪 Deutscher Sammler-Marktplatz"],
+    tags: ["#PokemonVerkaufen", "#PokemonKartenVerkaufen", "#TCGDeutschland", "#PokemonSammler"],
+    body: ["📸 Karte scannen – die App erkennt sie sofort direkt auf dem Handy.",
+      "💰 Fairer Marktpreis ist schon eingetragen (Cardmarket + echte Verkäufe) und lässt sich mit einem Tipp ändern.",
+      "🚀 Mit 1 Klick live im deutschen Marktplatz – inklusive Stripe-Käuferschutz und automatischem DHL-Versandetikett 📦"],
+    captionCta: [
+      "🎁 1 Monat PokeSwipe Pro GRATIS: https://pokeswipe-radar.de/?promo=START30",
+      "🤝 Freunde einladen = für jeden Freund extra Gratis-Wochen Pro obendrauf!",
+    ],
+  },
 ];
 
 /**
@@ -177,7 +216,7 @@ export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || nu
 /** Die 5 Sätze einer Vorlage. variant wählt die Hook-Schlagzeile (rotiert). */
 export function proScript(tpl, variant = 0) {
   const hook = tpl.hooks[Math.abs(variant) % tpl.hooks.length];
-  const all = [{ say: hook.say, show: hook.say }, ...tpl.lines, CTA_LINE].map((l) => ({ say: l.say, show: l.show || l.say }));
+  const all = [{ say: hook.say, show: hook.say }, ...tpl.lines, tpl.cta || CTA_LINE].map((l) => ({ say: l.say, show: l.show || l.say }));
   return { cover: hook.cover, badge: hook.badge, say: all.map((l) => l.say), show: all.map((l) => l.show) };
 }
 
@@ -252,11 +291,17 @@ export function shrinkBitrate(mbit, sizeBytes, maxMb = SAFE_MB) {
 }
 export const estimateMb = (seconds, mbit) => ((mbit + AUDIO_KBPS / 1000) * seconds) / 8 * 1.05 * (1e6 / MB);
 
+/** Ziellänge einer Vorlage in Sekunden [min, max] (Standard 20–30 s, z. B. „scansell“ 15–20 s). */
+export function secondsFor(tpl) {
+  const s = Array.isArray(tpl?.seconds) ? tpl.seconds : null;
+  return s && s[0] > 0 && s[1] > s[0] ? [s[0], s[1]] : [PRO_MIN_S, PRO_MAX_S];
+}
+
 /** Sprechtempo für die Ziellänge: Dauer bei Tempo 1 → Tempo im erlaubten Bereich (0,9–1,12). */
-export function speedFor(duration, speed) {
+export function speedFor(duration, speed, [min, max] = [PRO_MIN_S, PRO_MAX_S]) {
   const total = duration + PRO_PAD; // Vorlauf + Ausblenden
-  if (total > PRO_MAX_S) return Math.min(1.12, Math.round(speed * (total / (PRO_MAX_S - 0.5)) * 100) / 100);
-  if (total < PRO_MIN_S) return Math.max(0.9, Math.round(speed * (total / (PRO_MIN_S + 0.5)) * 100) / 100);
+  if (total > max) return Math.min(1.12, Math.round(speed * (total / (max - 0.5)) * 100) / 100);
+  if (total < min) return Math.max(0.9, Math.round(speed * (total / (min + 0.5)) * 100) / 100);
   return speed;
 }
 
@@ -303,15 +348,15 @@ const HASH_BASE = ["#PokemonTCG", "#PokemonKarten", "#PokeSwipeRadar", "#Pokemon
 /** Deutscher Social-Media-Text für Make.com: starker Einstieg, Nutzen, CTA zu pokeswipe-radar.de, Hashtags. */
 export function proCaption(tpl, variant = 0, facts = {}) {
   const { cover } = proScript(tpl, variant);
-  const emoji = { overview: "🚀", radar: "📡", swipe: "👆", market: "🛡️", portfolio: "📈" }[tpl.key] || "🔥";
-  const hook = `${cover} ${emoji}`;
+  const emoji = { overview: "🚀", radar: "📡", swipe: "👆", market: "🛡️", portfolio: "📈", scansell: "" }[tpl.key] ?? "🔥";
+  const hook = emoji ? `${cover} ${emoji}` : cover;
   const card = String(facts?.card || "").replace(/\s+/g, " ").trim().slice(0, 40);
   const body = [...tpl.body, ...(card ? [`Im Video live dabei: ${card}.`] : [])];
   const seen = new Set();
   const hashtags = [...HASH_BASE, ...tpl.tags, "#TCGDeals", "#PokemonDeutschland"]
     .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 10);
-  const cta = `👉 ${CTA_TEXT} – Link in der Bio!`;
+  const cta = tpl.captionCta?.length ? tpl.captionCta : [`👉 ${CTA_TEXT} – Link in der Bio!`];
   const title = `${tpl.title} | PokeSwipe Radar`.slice(0, 100);
-  const caption = [hook, "", ...body, "", cta, "", hashtags.join(" ")].join("\n");
+  const caption = [hook, "", ...body, "", ...cta, "", hashtags.join(" ")].join("\n");
   return { title, hook, body, hashtags, caption };
 }

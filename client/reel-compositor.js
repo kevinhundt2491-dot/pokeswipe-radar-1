@@ -22,6 +22,7 @@ const HIGHLIGHT = {
   swipe: "👆 Swipe-Entdecker in Aktion",
   market: "🛡️ Marktplatz mit Käuferschutz",
   portfolio: "📈 Portfolio-Wertentwicklung live",
+  scansell: "📸 Scannen → 💰 Preis → 🚀 Live",
 };
 const XFADE = 0.35; // weicher Übergang (s)
 
@@ -140,9 +141,11 @@ export class ProCompositor {
     ctx.restore();
   }
 
-  #pill(ctx, text, x, y, { size = 34, bg = "rgba(12,16,34,0.82)", fg = "#f3efe4", border = this.accent, align = "center" } = {}) {
+  #pill(ctx, text, x, y, { size = 34, bg = "rgba(12,16,34,0.82)", fg = "#f3efe4", border = this.accent, align = "center", maxW = SAFE.right - SAFE.left } = {}) {
     ctx.save();
     ctx.font = `800 ${size}px ${BODY}`;
+    // lange Texte (z. B. Schritt-Overlays) verkleinern, damit die Pille im sicheren Bereich bleibt
+    while (size > 20 && ctx.measureText(text).width + size * 1.3 > maxW) { size -= 2; ctx.font = `800 ${size}px ${BODY}`; }
     const w = ctx.measureText(text).width + size * 1.3, h = size * 1.75;
     const x0 = align === "center" ? x - w / 2 : x;
     rr(ctx, x0, y - h / 2, w, h, h / 2);
@@ -354,13 +357,13 @@ export class ProCompositor {
     ctx.translate(CX, y + h / 2 + bob); ctx.rotate(tilt); ctx.scale(push, push); ctx.translate(-CX, -(y + h / 2));
     this.#phone(ctx, live, x, y, w, h, this.zoom, 1, { spot: f ? { x: f.x, y: f.y, a: clamp((this.zoom - 1.14) / 0.4), t } : null });
     ctx.restore();
-    this.#pill(ctx, HIGHLIGHT[this.tpl.key] || this.tpl.label, CX, 250, { size: 36 });
+    this.#pill(ctx, this.tpl.highlight || HIGHLIGHT[this.tpl.key] || this.tpl.label, CX, 250, { size: 36 });
   }
 
   /** 3 · Nutzen: kleine Live-Ansicht + animierte Feature-Badges und Kennzahlen. */
   sceneBenefit(ctx, t, p, live) {
     this.#backdrop(ctx, t);
-    this.#heading(ctx, "Warum das genial ist 💡", 290, p, 70);
+    this.#heading(ctx, this.tpl.headings?.benefit || "Warum das genial ist 💡", 290, p, 70);
     // Kennzahlen
     const stats = this.tpl.stats || [];
     const sw = 250, gap = 20, total = stats.length * sw + (stats.length - 1) * gap;
@@ -413,7 +416,7 @@ export class ProCompositor {
       ctx.drawImage(this.blur, 0, 0, W, H); ctx.restore();
       ctx.fillStyle = "rgba(7,10,24,0.55)"; ctx.fillRect(0, 0, W, H);
     }
-    this.#heading(ctx, "Darum lieben Sammler PokeSwipe Radar", 300, p, 64);
+    this.#heading(ctx, this.tpl.headings?.trust || "Darum lieben Sammler PokeSwipe Radar", 300, p, 64);
     (this.tpl.trust || []).forEach((txt, i) => {
       const a = ease((p - 0.06 - i * 0.13) * 4.5);
       if (a <= 0) return;
@@ -451,18 +454,26 @@ export class ProCompositor {
     ctx.beginPath(); ctx.arc(CX, cy, 26, 0, Math.PI * 2); ctx.fillStyle = this.accent; ctx.fill();
     this.#logo(ctx, CX, 930, 84);
     ctx.font = `800 40px ${BODY}`; ctx.fillStyle = "#cfd3ea"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("Die All-in-One-App für Pokémon-Sammler", CX, 1030);
+    const cta = this.tpl.cta || null;
+    if (cta?.tagline) {
+      const ft = fitText(ctx, cta.tagline, (n) => `900 ${n}px ${BODY}`, SAFE.right - SAFE.left, 2, 46, 30);
+      ctx.font = `900 ${ft.size}px ${BODY}`; ctx.fillStyle = "#ffffff";
+      ft.lines.forEach((l, i) => ctx.fillText(l, CX, 1030 + (i - (ft.lines.length - 1) / 2) * ft.size * 1.15));
+    } else ctx.fillText("Die All-in-One-App für Pokémon-Sammler", CX, 1030);
     // pulsierender Button
     const s = 1 + Math.sin(t * 5) * 0.025;
     ctx.save(); ctx.translate(CX, 1190); ctx.scale(s, s);
     const bw = SAFE.right - SAFE.left - 20, bh = 150;
     ctx.shadowColor = this.accent; ctx.shadowBlur = 50;
     rr(ctx, -bw / 2, -bh / 2, bw, bh, 75); ctx.fillStyle = "#ffcb05"; ctx.fill(); ctx.shadowBlur = 0;
-    ctx.font = `900 50px ${BODY}`; ctx.fillStyle = "#1a1420"; ctx.fillText("Jetzt kostenlos testen", 0, 4);
+    const btn = cta?.button || "Jetzt kostenlos testen";
+    const bf = fitText(ctx, btn, (n) => `900 ${n}px ${BODY}`, bw - 60, 1, 50, 30).size;
+    ctx.font = `900 ${bf}px ${BODY}`; ctx.fillStyle = "#1a1420"; ctx.fillText(btn, 0, 4);
     ctx.restore();
-    this.#pill(ctx, `🌐 ${DOMAIN}`, CX, 1350, { size: 50, border: this.accent });
+    this.#pill(ctx, `🔗 ${cta?.link || DOMAIN}`, CX, 1350, { size: 50, border: this.accent });
     ctx.font = `700 30px ${BODY}`; ctx.fillStyle = "#9aa0bf";
-    ctx.fillText(CTA_TEXT, CX, 1450);
+    ctx.fillText(cta?.sub || CTA_TEXT, CX, 1450);
+    if (cta) { ctx.font = `800 30px ${BODY}`; ctx.fillStyle = this.accent; ctx.fillText("👇 Link in der Bio & im angehefteten Kommentar", CX, 1515); }
     ctx.restore();
   }
 

@@ -340,6 +340,71 @@ export const CHOREO = {
     ],
   },
 
+  // 11) Scannen & Verkaufen (Pro-Video „scansell“): Live-Scanner erkennt eine echte Katalogkarte, echter Marktpreis +
+  // fairer Preisvorschlag im Schnell-Inserieren, 1 Klick → Erfolgsansicht mit Käuferschutz & DHL-Etikett.
+  // In der Stage legt „Inserieren“ KEIN echtes Inserat an (Demo-Modus in quick-list.js).
+  scansell: {
+    async setup(s) {
+      try { s.win.PS?.showSub?.("scan", "live"); } catch {}
+      await s.waitFor(() => s.$("#ps-ls-stage"), 15_000, "Live-Scanner lädt nicht").catch(() => {});
+      let info = null;
+      try { info = await s.win.PS?.liveScanDemoPrepare?.(); } catch (e) { console.warn("Scan-Demo:", e); }
+      if (info) { s.fact("card", info.name); if (Number(info.price) > 0) s.fact("price", `${Number(info.price).toFixed(2).replace(".", ",")} €`); }
+      const st = s.$("#ps-ls-stage");
+      if (st) { const r = st.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 70)); }
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 300, timeoutMs: 5000 });
+    },
+    beats: [
+      // Kamera auf die Karte → Laser-Scan → „Erkannt“ mit Marktpreis
+      async (s, d) => {
+        const card = s.$("#ps-ls-demo-card");
+        if (card) { const { x, y } = s.center(card); await s.moveFinger(x + 60, y + 90, 350); }
+        s.hideFinger();
+        await s.win.PS?.liveScanDemoScan?.(Math.max(700, Math.min(1500, d * 1000 * 0.6)));
+        await s.idle({ quietMs: 200, timeoutMs: 1500 });
+        const hud = s.$("#ps-ls-hud");
+        if (hud) await s.spotlight(hud.firstElementChild || hud);
+      },
+      // „Verkaufen“ → Schnell-Inserieren mit fairem, editierbarem Preisvorschlag
+      async (s, d) => {
+        const hud = s.$("#ps-ls-hud");
+        s.$$(".ps-reel-spot").forEach((el) => el.classList.remove("ps-reel-spot"));
+        const sell = hud ? s.byText("button", /Verkaufen/, hud) : null;
+        if (!sell) return s.sleep(d * 1000);
+        await s.tap(sell, { reveal: false });
+        await s.waitFor(() => { const i = s.$('[id^="ql-price-"]'); return i && String(i.value || "").trim(); }, 8000).catch(() => {});
+        await s.idle({ quietMs: 200, timeoutMs: 2500 });
+        const price = s.$('[id^="ql-price-"]');
+        if (price) {
+          const { x, y } = s.center(price);
+          await s.moveFinger(x, y, 420);
+          await s.spotlight(price);
+          s.fact("fair", price.value);
+        }
+      },
+      // 1 Klick: Inserat live (Demo-Erfolgsansicht)
+      async (s, d) => {
+        s.$$(".ps-reel-spot").forEach((el) => el.classList.remove("ps-reel-spot"));
+        const btn = s.$("#ql-submit");
+        if (!btn) return s.sleep(d * 1000);
+        await s.tap(btn);
+        await s.waitFor(() => s.$("#ql-done-protect"), 4000).catch(() => {});
+        await s.idle({ quietMs: 200, timeoutMs: 1500 });
+      },
+      // Käuferschutz & DHL-Etikett hervorheben
+      async (s, d) => {
+        const box = s.$("#ql-done-protect");
+        if (!box) return s.sleep(d * 1000);
+        const { x, y } = s.center(box);
+        await s.moveFinger(x, y, 400);
+        await s.spotlight(box);
+        await s.sleep(Math.min(1200, d * 400));
+        s.hideFinger();
+      },
+    ],
+  },
+
   // 10) App-Tour: Swipe → Flip-Radar → Sammlung über die echte Bottom-Navigation
   tour: {
     setup: showArena,
