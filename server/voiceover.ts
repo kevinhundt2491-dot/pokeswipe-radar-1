@@ -176,12 +176,26 @@ async function makeForGenerator() {
   } catch { return { url: null, token: null, platforms: [], source: null, updatedAt: null, video: null, next: null }; }
 }
 
+/** Verbleibende ElevenLabs-Credits (best effort – null, wenn der Schlüssel das Konto nicht lesen darf). */
+async function elevenCredits(key: string) {
+  try {
+    const r = await fetch("https://api.elevenlabs.io/v1/user/subscription", { headers: { "xi-api-key": key, Accept: "application/json" }, signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const limit = Number(j?.character_limit), used = Number(j?.character_count);
+    if (!Number.isFinite(limit) || !Number.isFinite(used)) return null;
+    const reset = Number(j?.next_character_count_reset_unix);
+    return { limit, used, remaining: Math.max(0, limit - used), resetAt: Number.isFinite(reset) && reset > 0 ? new Date(reset * 1000).toISOString() : null, tier: j?.tier ? String(j.tier).slice(0, 40) : null };
+  } catch { return null; }
+}
+
 export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
   app.get("/api/admin/voiceover/status", auth, adminOnly, async (c: any) => {
     const p = provider();
     c.header("Cache-Control", "no-store");
     const voices = p ? EL_VOICES : [];
-    return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null, voices, defaultVoice: p?.voice || null, make: await makeForGenerator() });
+    const [make, credits] = await Promise.all([makeForGenerator(), p ? elevenCredits(process.env.ELEVENLABS_API_KEY as string) : null]);
+    return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null, voices, defaultVoice: p?.voice || null, credits, make });
   });
 
   // Ganzes Reel-Skript als ein durchgehender Take (Matilda) + Zeitstempel je Satz

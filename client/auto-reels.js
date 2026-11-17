@@ -360,8 +360,16 @@ function updateVoiceInfo() {
       : voiceReady.error
         ? `⚠️ Sprachdienst-Status konnte nicht geprüft werden (${voiceReady.error}). Bitte als Admin anmelden und die Seite neu laden.`
         : voiceReady.ready
-          ? "✓ Matilda (ElevenLabs) wird vor jeder Aufnahme komplett erzeugt; jedes Reel läuft exakt so lange wie ihre Stimme (+ 0,5 s), alle Live-Klicks und Swipes folgen ihren Sätzen."
+          ? creditText() + "✓ Matilda (ElevenLabs) wird vor jeder Aufnahme komplett erzeugt; jedes Reel läuft exakt so lange wie ihre Stimme (+ 0,5 s), alle Live-Klicks und Swipes folgen ihren Sätzen."
           : "⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt). Mit eingeschaltetem Voiceover startet der Generator erst, wenn der Schlüssel gesetzt ist – es werden keine Reels ohne Sprecherin gesendet.";
+}
+const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString("de-DE"); } catch { return ""; } };
+/** ElevenLabs-Credits als Hinweis (leer, wenn unbekannt). */
+function creditText() {
+  const cr = voiceReady?.credits;
+  if (!cr) return "";
+  const reset = cr.resetAt ? ` – wird am ${fmtDate(cr.resetAt)} aufgefüllt` : "";
+  return `${cr.remaining < 1500 ? "⚠️ " : ""}ElevenLabs: ${cr.remaining.toLocaleString("de-DE")} von ${cr.limit.toLocaleString("de-DE")} Credits übrig${reset}. `;
 }
 async function checkVoice() {
   try { voiceReady = await api("/api/admin/voiceover/status"); }
@@ -791,6 +799,18 @@ async function generatePro(list) {
   if (voiceOn && !voiceReady?.ready) return setStatus(voiceReady?.error
     ? `⚠️ Sprachdienst nicht erreichbar (${voiceReady.error}) – Start abgebrochen. Alternativ das Voiceover ausschalten.`
     : "⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt) – Start abgebrochen. Alternativ das Voiceover ausschalten.", "err");
+  if (voiceOn) {
+    await checkVoice(); // aktuelle Credits holen
+    const cr = voiceReady?.credits;
+    // ElevenLabs berechnet ca. 1 Credit je Zeichen; jede Vorlage braucht mindestens einen kompletten Take
+    const need = list.map(({ tpl }) => proScript(tpl, 0).say.join(" ").length);
+    if (cr && need.length && cr.remaining < Math.min(...need)) {
+      const reset = cr.resetAt ? ` Das Kontingent wird am ${fmtDate(cr.resetAt)} wieder aufgefüllt.` : "";
+      return setStatus(`⚠️ ElevenLabs-Credits reichen nicht: noch ${cr.remaining} übrig, ein Pro-Video braucht ca. ${Math.min(...need)}.${reset} Bitte im ElevenLabs-Konto Credits aufladen bzw. den Tarif erhöhen – oder das Voiceover ausschalten (dann nur Musik).`, "err");
+    }
+    const total = need.reduce((a, b) => a + b, 0);
+    if (cr && cr.remaining < total) setStatus(`⚠️ ElevenLabs-Credits reichen nur für einen Teil (${cr.remaining} übrig, ca. ${total} nötig) – die übrigen Videos werden ohne Sprecherin aufgenommen.`, "err");
+  }
   const hs = hookState();
   if (hs.error) { ui.hook.focus(); return setStatus(`⚠️ ${hs.error}`, "err"); }
   const hook = hs.url;
