@@ -7,6 +7,7 @@ import {
   rgbaToGray, resize, detectCard, normalizeCard, cardHashes, topMatches, decide, homography, warp, readNumber,
   parseNumberText, glyphVector, splitIndexId, localNumber, decodeBase64, unpackWords, NUMBER_STRIPS, WORDS, SCORE_STRONG,
   normalizeContrast, glareRatio, colorSignature, colorDistance, colorPenalty, wordsToHex, GLARE_HIGH,
+  suppressGlare, focusScore, sharpen, scaleQuad, FALLBACK_SCALES,
 } from "../../server/scan-logic.ts";
 
 const idx = { keys: [], langs: [], localNum: new Int32Array(0), total: new Int32Array(0), words: new Uint32Array(0), colors: [], count: 0, perLang: {}, learned: 0 };
@@ -118,28 +119,46 @@ async function analyse(msg) {
   const small = resize(frame, sw, sh);
   const g = msg.guide;
   const det = detectCard(small, { x0: g.x0 / 2, y0: g.y0 / 2, x1: g.x1 / 2, y1: g.y1 / 2 });
-  const corners = det.corners.map(([x, y]) => [x * 2, y * 2]);
+  let corners = det.corners.map(([x, y]) => [x * 2, y * 2]);
   const tDetect = performance.now();
   if (!idx.count) return { type: "result", reqId: msg.reqId, ms: performance.now() - t0, found: det.found, corners, sharpness: det.sharpness, empty: true };
+  const rgba = msg.data instanceof ArrayBuffer ? new Uint8ClampedArray(msg.data) : msg.data;
 
-  const card = normalizeCard(frame, corners);
-  const glare = glareRatio(card);
-  const probe = cardHashes(card);
-  const color = colorSignature(msg.data instanceof ArrayBuffer ? new Uint8ClampedArray(msg.data) : msg.data, msg.w, msg.h, corners);
-  // Farb-Abgleich: gelernte Zeilen tragen eine Farb-Signatur – stark abweichende Farben bekommen einen Zuschlag
-  const matches = topMatches(probe, idx.words, idx.count, 18)
-    .map((m) => (idx.colors[m.i] ? { ...m, score: m.score + colorPenalty(colorDistance(color, idx.colors[m.i])) } : m))
-    .sort((a, b) => a.score - b.score)
-    .slice(0, 14);
+  // Eine Kandidaten-Lage auswerten: entzerren → Spiegelungen unterdrücken → Fingerabdruck → Farb-Abgleich → Top-Treffer
+  const evaluate = (quad) => {
+    const raw = normalizeCard(frame, quad);
+    const glare = glareRatio(raw);
+    // Holo-/Sleeve-Glanz: helle Flecken durch die Umgebung ersetzen, sonst kippen viele Hash-Bits
+    const card = glare > 0.004 ? suppressGlare(raw) : raw;
+    const probe = cardHashes(card);
+    const color = colorSignature(rgba, msg.w, msg.h, quad);
+    const matches = topMatches(probe, idx.words, idx.count, 18)
+      .map((m) => (idx.colors[m.i] ? { ...m, score: m.score + colorPenalty(colorDistance(color, idx.colors[m.i])) } : m))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 14);
+    return { quad, raw, glare, probe, color, matches, focus: focusScore(raw) };
+  };
+  // Kanten sicher gefunden: exakter Zuschnitt. Sonst mehrere Rahmen-Größen probieren (Karte kleiner gehalten,
+  // Toploader/Sleeve-Rand) und die mit dem besten Treffer nehmen – früher wurde nur der Führungsrahmen genutzt.
+  let ev = evaluate(corners);
+  if (!det.found) {
+    for (const k of FALLBACK_SCALES.slice(1)) {
+      const alt = evaluate(scaleQuad(det.corners, k).map(([x, y]) => [x * 2, y * 2]));
+      if ((alt.matches[0]?.score ?? 999) < (ev.matches[0]?.score ?? 999)) ev = alt;
+    }
+    corners = ev.quad;
+  }
+  const { glare, probe, color, matches } = ev;
   const tMatch = performance.now();
 
-  // Kartennummer nur lesen, wenn der Hash allein nicht eindeutig ist (spart Zeit bei klaren Treffern)
+  // Kartennummer nur lesen, wenn der Hash allein nicht eindeutig ist (spart Zeit bei klaren Treffern) – beim
+  // Auslösen (Auto-Capture / Auslöser) immer, mit nachgeschärftem, kontrastnormalisiertem Streifen
   let ocr = null;
-  if (msg.ocr && (matches[0]?.score ?? 99) > SCORE_STRONG) {
+  if (msg.ocr && (msg.capture || (matches[0]?.score ?? 99) > SCORE_STRONG)) {
     const H = homography(corners);
     for (const box of NUMBER_STRIPS) {
-      // Kontrast normalisieren: Spiegelungen und dunkle Räume stören die Ziffern-Erkennung sonst stark
-      const strip = normalizeContrast(warp(frame, H, 252, 72, box));
+      // Kontrast normalisieren + nachschärfen: Spiegelungen, dunkle Räume und leichte Unschärfe stören die Ziffern sonst stark
+      const strip = sharpen(normalizeContrast(warp(frame, H, 252, 72, box)));
       ocr = (await platformOcr(strip)) || (glyphs?.length ? readNumber(strip, glyphs) : null);
       if (ocr) { ocr.strip = box.key; break; }
     }
@@ -152,14 +171,14 @@ async function analyse(msg) {
   return {
     type: "result", reqId: msg.reqId,
     ms: performance.now() - t0, msDetect: tDetect - t0, msMatch: tMatch - tDetect,
-    found: det.found, confidence: det.confidence, sharpness: det.sharpness, corners,
+    found: det.found, confidence: det.confidence, sharpness: det.sharpness, focus: Math.round(ev.focus * 100) / 100, corners,
     accepted: d.accepted, byNumber: d.byNumber, score: d.score, margin: d.margin,
     best: d.best >= 0 ? idx.keys[d.best] : null,
     group,
     glare: Math.round(glare * 1000) / 1000, glareHigh: glare > GLARE_HIGH,
     // Fingerabdruck dieses Bildes – wird beim Übernehmen an den lernenden Index geschickt
     probe: { artP: wordsToHex(probe[0], probe[1]), artD: wordsToHex(probe[2], probe[3]), fullP: wordsToHex(probe[4], probe[5]), color },
-    candidates: matches.slice(0, 6).map((m) => ({ key: idx.keys[m.i], lang: idx.langs[m.i], score: Math.round(m.score) })),
+    candidates: matches.slice(0, 8).map((m) => ({ key: idx.keys[m.i], lang: idx.langs[m.i], score: Math.round(m.score) })),
     ocr: ocr ? { num: ocr.num, total: ocr.total, text: ocr.text, conf: Math.round((ocr.conf || 0) * 100) / 100, via: ocr.via || "templates" } : null,
   };
 }

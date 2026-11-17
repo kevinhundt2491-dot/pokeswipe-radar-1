@@ -1,5 +1,7 @@
 
-import Anthropic from "@anthropic-ai/sdk";
+import { visionIdentify, catalogCandidates, visionScan, parseImageDataUrl } from "./scan-vision.ts";
+import { rankCandidates, finishToVariant } from "./scan-vision-logic.ts";
+import { lookup } from "./scan-index.ts";
 import { and, desc, eq, sql, asc, inArray } from "drizzle-orm";
 import {
   db, profiles, cards, portfolioItems, pushSubscriptions, trackedSets, sealedProducts, sealedPriceHistory,
@@ -52,7 +54,7 @@ export async function trialEligible(profile: Profile) {
   return !paid;
 }
 
-async function scansToday(userId: string) {
+export async function scansToday(userId: string) {
   const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(cardScans)
     .where(and(eq(cardScans.userId, userId), sql`${cardScans.createdAt} > now() - interval '1 day'`));
   return Number(r?.n ?? 0);
@@ -324,50 +326,81 @@ export function registerFeatures(app: any, h: {
       return c.json({ error: limitMsg, upgrade: true, shareBonus: true }, 402);
     }
 
-    const ai = new Anthropic();
-    const msg = await ai.messages.create({
-      model: "claude-haiku-5-5",
-      max_tokens: 300,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: m[1] as "image/jpeg", data: m[2] } },
-          { type: "text", text: 'Das Foto zeigt eine Pokémon-Sammelkarte. Antworte NUR mit JSON: {"name": "Kartenname wie aufgedruckt (ohne HP)", "number": "Kartennummer vor dem Schrägstrich, z. B. 199", "total": "Zahl nach dem Schrägstrich", "language": "de|en|ja|other", "isPokemonCard": true|false}. Unbekannte Werte als leeren String.' },
-        ],
-      }],
-    }).catch(async (e: unknown) => {
-      // Fehlgeschlagener KI-Aufruf verbraucht keinen Scan
+    // Scanner-Upgrade: Gemini Vision (Rückfall Claude) liest den vollständigen Fingerabdruck der Karte
+    // (Name, Nummer inkl. TG/GG/SVP, KP, Seltenheit, Illustrator, Variante); Fehlschlag verbraucht keinen Scan
+    const vision = await visionIdentify(m[1], m[2]).catch(async (e: unknown) => {
       await db.delete(cardScans).where(eq(cardScans.id, reservation)).catch(() => {});
       throw e;
     });
-    const text = msg.content.map((p: any) => (p.type === "text" ? p.text : "")).join("");
-    let parsed: any = {};
-    try { parsed = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch {}
-    const name = str(parsed.name, 80).replace(/\s*-?\s*ex$/i, (x) => x).trim();
-    const number = normNum(str(parsed.number, 12));
-    await db.update(cardScans).set({ result: `${name} ${number}`.trim().slice(0, 120) }).where(eq(cardScans.id, reservation));
-    if (!parsed.isPokemonCard || !name) return c.json({ found: false, message: "Keine Pokémon-Karte erkannt. Bitte Karte gerade, hell und formatfüllend fotografieren." });
+    const det = vision.card;
+    // Früher wurde der Name nicht normalisiert (das Entfernen des „-ex“-Zusatzes war wirkungslos) und Nummern wie
+    // „TG15/TG30“ oder „SVP 085“ gingen verloren – jetzt übernimmt das die gemeinsame Scanner-Logik
+    const name = str(det?.name, 80);
+    const number = normNum(det?.local || "");
+    await db.update(cardScans).set({ result: `${name} ${det?.number || ""}`.trim().slice(0, 120) }).where(eq(cardScans.id, reservation));
+    if (!det?.isPokemonCard || (!name && !det.local)) return c.json({ found: false, message: "Keine Pokémon-Karte erkannt. Bitte Karte gerade, hell und formatfüllend fotografieren." });
 
-    const baseName = name.replace(/\s+(ex|EX|GX|V|VMAX|VSTAR)$/u, "").trim();
-    let list = await searchTcgdex("de", name);
-    if (!list.length && baseName !== name) list = await searchTcgdex("de", baseName);
-    if (!list.length) list = await searchTcgdex("en", name);
-    const byNumber = number ? list.filter((x: any) => normNum(x.localId) === number) : [];
-    const totalHint = str(parsed.total, 6);
-    let ranked = byNumber.length ? byNumber : list;
+    // 1. Eigener Katalog (fehlertolerant: Trigramm-Namenssuche + Nummer + KP/Illustrator/Seltenheit)
+    const ranked = rankCandidates(det, await catalogCandidates(det).catch(() => []), 8);
+    const local = ranked.filter((r) => r.key.startsWith("card:")).map((r) => r.key.slice(5));
+    const localRows = local.length ? await db.select({ id: cards.id, name: cards.name, localId: cards.localId, image: cards.image }).from(cards).where(inArray(cards.id, local)) : [];
+    const localCands = local.map((id) => localRows.find((r) => r.id === id)).filter(Boolean).map((x: any) => ({ id: x.id, name: x.name, localId: x.localId || "", image: x.image || "" }));
+    const items = ranked.length ? await lookup(ranked.slice(0, 6).map((r) => r.key)).catch(() => []) : [];
+
+    // 2. TCGdex-Suche als Ergänzung (Karten, die noch nicht im eigenen Katalog sind)
+    let list: any[] = [];
+    if (localCands.length < 3 && name) {
+      const baseName = name.replace(/[\s-]+(ex|EX|GX|V|VMAX|VSTAR)$/u, "").replace(/^Mega[\s-]+/i, "").trim();
+      list = await searchTcgdex(det.language === "en" ? "en" : "de", name);
+      if (!list.length && baseName !== name) list = await searchTcgdex("de", baseName);
+      if (!list.length && det.nameEn && det.nameEn !== name) list = await searchTcgdex("en", det.nameEn);
+      if (!list.length) list = await searchTcgdex("en", name);
+    }
+    const byNumber = number ? list.filter((x: any) => normNum(x.localId) === number || normNum(x.localId) === normNum(det.local)) : [];
+    const totalHint = str(det.total, 6);
+    let remote = byNumber.length ? byNumber : list;
     if (byNumber.length > 1 && totalHint) {
       const totals = await Promise.all(byNumber.slice(0, 6).map(async (x: any) => {
         const set = await fetchSet(String(x.id).split("-").slice(0, -1).join("-"));
         return { x, ok: set && String(set.cardCount?.official) === totalHint };
       }));
       const matched = totals.filter((t) => t.ok).map((t) => t.x);
-      if (matched.length) ranked = matched;
+      if (matched.length) remote = matched;
     }
+    const seen = new Set(localCands.map((x) => x.id));
+    const candidates = [
+      ...localCands,
+      ...remote.filter((x: any) => !seen.has(x.id)).map((x: any) => ({ id: x.id, name: x.name, localId: x.localId, image: x.image ? `${x.image}/low.webp` : "" })),
+    ].slice(0, 8);
     return c.json({
-      found: ranked.length > 0,
-      detected: { name, number, total: totalHint },
-      candidates: ranked.slice(0, 8).map((x: any) => ({ id: x.id, name: x.name, localId: x.localId, image: x.image ? `${x.image}/low.webp` : "" })),
+      found: candidates.length > 0 || items.length > 0,
+      detected: { name, number: det.local || "", total: totalHint, variant: finishToVariant(det.finish), rarity: det.rarity, hp: det.hp, language: det.language },
+      model: vision.model,
+      candidates,
+      items,
     });
+  });
+
+  // ------------------- Live-Scanner Stufe 3: KI-Vision (Top-Treffer) -------------------
+  // Zugeschnittenes Kartenbild aus dem Live-Scanner (Auto-Capture/Auslöser) → Gemini Vision → Katalog → Top 3 + Preis
+  app.post("/api/scan/vision", auth, async (c: any) => {
+    const user = c.get("user"), plan: PlanId = c.get("plan");
+    if (!(await rateLimit(`scanv:${user.id}`, 10, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
+    const limit = await scanLimit(user.id, plan);
+    const limitMsg = `Tageslimit für KI-Scans erreicht: ${limit} heute (Tarif ${PLANS[plan].label}). Die Erkennung auf dem Gerät läuft weiter ohne Limit.`;
+    if ((await scansToday(user.id)) >= limit) return c.json({ error: limitMsg, upgrade: true, shareBonus: true }, 402);
+    const img = parseImageDataUrl((await body(c)).image);
+    if (!img) return c.json({ error: "Bitte ein Kartenfoto (JPG/PNG, max. ca. 1,5 MB) senden." }, 400);
+    const reservation = await reserveScan(user.id, limit);
+    if (!reservation) return c.json({ error: limitMsg, upgrade: true, shareBonus: true }, 402);
+    try {
+      const r = await visionScan(img.mime, img.b64);
+      await db.update(cardScans).set({ result: `${r.detected?.name || ""} ${r.detected?.number || ""}`.trim().slice(0, 120) }).where(eq(cardScans.id, reservation));
+      return c.json(r);
+    } catch (e) {
+      await db.delete(cardScans).where(eq(cardScans.id, reservation)).catch(() => {});
+      throw e;
+    }
   });
 
   // ---------------------------- Set-Fortschritt ----------------------------

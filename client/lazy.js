@@ -60,6 +60,8 @@ const LIVE_SCAN_KEYS = [
   "liveScanStart", "liveScanStop", "liveScanTorch", "liveScanLang", "liveScanAdd", "liveScanAddAll", "liveScanWish", "liveScanFlip",
   "liveScanDetails", "liveScanPhoto", "liveScanDismiss", "liveScanVariant", "liveScanClear", "liveScanAdminRun", "openLiveScanner",
   "liveScanRecognize", "liveScanLearn", "liveScanSell", "liveScanSellAll", "liveScanQuickList",
+  // Profi-Upgrade: Auslöser, Galerie, Alternativen, Zustand/Variante, Serien-Scan, KI-Auto
+  "liveScanShutter", "liveScanUpload", "liveScanPick", "liveScanCondition", "liveScanFinish", "liveScanNext", "liveScanSeriesMode", "liveScanAutoAi",
   "quickListSet", "quickListPhoto", "quickListGo", "quickListPrice", "quickListUse", "quickListStrategy", "quickListConditionAll", "quickListRemove", "quickListSubmit",
   "quickListPreview", "quickListCancel", "quickListUndo",
   // nur in der Pro-Video-Aufnahme (Live-Stage) vorhanden – sonst liefern sie null
