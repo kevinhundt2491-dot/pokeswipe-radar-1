@@ -300,6 +300,8 @@ type LookupRow = {
   key: string; kind: "card" | "print"; id: string; lang: string; name: string; altName: string; setName: string; setCode: string;
   number: string; image: string; rarity: string; price: number | null; priceSource: string; psa10: number | null; psa10Source: string;
   baseCardId: string | null;
+  /** Scanner-Upgrade: Reverse-Holo-Preis (Cardmarket, nur deutsche Karten) und eBay-Spanne (Verkäufe der letzten 90 Tage, roh) */
+  reversePrice?: number | null; ebayLow?: number | null; ebayHigh?: number | null; ebayMedian?: number | null; ebaySales?: number;
 };
 
 /** Name, Bild, Marktpreis und PSA-10-Wert für erkannte Karten (ein Aufruf für alle Sprachvarianten). */
@@ -308,15 +310,19 @@ export async function lookup(keys: string[]): Promise<LookupRow[]> {
   const printIds = keys.filter((k) => k.startsWith("print:")).map((k) => k.slice(6));
   const out: LookupRow[] = [];
   const psa = async (kind: string, id: string) => {
-    const [g] = rows(await db.execute(sql`SELECT median_90::float AS med, ask_low::float AS ask FROM grade_values WHERE target_kind = ${kind} AND target_id = ${id} AND grade_key = 'psa10' LIMIT 1`));
-    if (g?.med) return { v: Number(g.med), src: "sold" };
-    if (g?.ask) return { v: Number(g.ask), src: "ask" };
-    return { v: null, src: "" };
+    // PSA 10 und Rohkarten-Verkäufe (eBay-Spanne) in einer Abfrage
+    const list = rows(await db.execute(sql`SELECT grade_key, median_90::float AS med, ask_low::float AS ask, low_90::float AS low, high_90::float AS high, sample_90 AS n
+      FROM grade_values WHERE target_kind = ${kind} AND target_id = ${id} AND grade_key IN ('psa10', 'raw') LIMIT 2`));
+    const g = list.find((r: any) => r.grade_key === "psa10"), raw = list.find((r: any) => r.grade_key === "raw");
+    const ebay = raw && Number(raw.n) > 0 ? { ebayLow: raw.low ?? null, ebayHigh: raw.high ?? null, ebayMedian: raw.med ?? null, ebaySales: Number(raw.n) || 0 } : {};
+    if (g?.med) return { v: Number(g.med), src: "sold", ebay };
+    if (g?.ask) return { v: Number(g.ask), src: "ask", ebay };
+    return { v: null, src: "", ebay };
   };
   if (cardIds.length) {
     const list = rows(await db.execute(sql`
       SELECT c.id, c.name, c.set_name, COALESCE(NULLIF(s.abbreviation, ''), c.set_id, '') AS set_code, c.local_id, s.card_count_official AS total,
-        c.image, c.rarity, COALESCE(c.trend, c.avg, c.low)::float AS price
+        c.image, c.rarity, COALESCE(c.trend, c.avg, c.low)::float AS price, COALESCE(c.reverse_trend, c.reverse_avg)::float AS reverse_price
       FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id WHERE c.id IN (${sql.join(cardIds.map((i) => sql`${i}`), sql`, `)})`));
     for (const r of list) {
       const p = await psa("card", r.id);
@@ -324,6 +330,7 @@ export async function lookup(keys: string[]): Promise<LookupRow[]> {
         key: `card:${r.id}`, kind: "card", id: String(r.id), lang: "de", name: String(r.name), altName: "", setName: String(r.set_name || ""),
         setCode: String(r.set_code || ""), number: r.local_id && /^\d+$/.test(r.local_id) && Number(r.total) > 0 ? `${r.local_id}/${r.total}` : String(r.local_id || ""),
         image: String(r.image || ""), rarity: String(r.rarity || ""), price: r.price ?? null, priceSource: "cardmarket", psa10: p.v, psa10Source: p.src, baseCardId: String(r.id),
+        reversePrice: r.reverse_price ?? null, ...p.ebay,
       });
     }
   }
@@ -338,7 +345,7 @@ export async function lookup(keys: string[]): Promise<LookupRow[]> {
         key: `print:${r.id}`, kind: "print", id: String(r.id), lang: String(r.lang), name: String(r.name), altName: String(r.alt_name || ""),
         setName: String(r.set_name || ""), setCode: String(r.set_code || ""), number: String(r.number || ""), image: String(r.image || ""),
         rarity: String(r.rarity || ""), price: r.price ?? null, priceSource: String(r.price_source || ""), psa10: p.v, psa10Source: p.src,
-        baseCardId: r.base_card_id ? String(r.base_card_id) : null,
+        baseCardId: r.base_card_id ? String(r.base_card_id) : null, ...p.ebay,
       });
     }
   }

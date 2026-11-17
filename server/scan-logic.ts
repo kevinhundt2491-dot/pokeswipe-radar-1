@@ -650,3 +650,90 @@ export function decide(
   const accepted = byNumber || (lead.score <= SCORE_ACCEPT && margin >= MARGIN_MIN);
   return { accepted, group: group.map((g) => g.i), best: lead.i, score: lead.score, margin, byNumber };
 }
+
+// ---------------------------------------------------------------------------
+// Scanner-Upgrade: Spiegelungen, Schärfe, Nachschärfen, Ersatz-Zuschnitte
+// ---------------------------------------------------------------------------
+/**
+ * Spiegelungen (Holo-Folie, Toploader, Sleeve) unterdrücken: fast weiße Pixel werden durch den Mittelwert der
+ * nicht gespiegelten Nachbarschaft (Box-Radius r) ersetzt. Die Referenzbilder haben keine Spiegelungen –
+ * ohne diese Korrektur verschieben helle Flecken den pHash/dHash des Artworks und der Treffer geht verloren.
+ */
+export function suppressGlare(g: Gray, threshold = 245, r = 6): Gray {
+  const { w, h, d } = g;
+  let glare = 0;
+  for (let i = 0; i < d.length; i++) if (d[i] >= threshold) glare++;
+  if (!glare || glare === d.length) return g;
+  // Integralbilder über Summe und Anzahl der NICHT gespiegelten Pixel
+  const W = w + 1;
+  const sum = new Float64Array(W * (h + 1)), cnt = new Uint32Array(W * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let rs = 0, rc = 0;
+    for (let x = 0; x < w; x++) {
+      const v = d[y * w + x];
+      if (v < threshold) { rs += v; rc++; }
+      sum[(y + 1) * W + x + 1] = sum[y * W + x + 1] + rs;
+      cnt[(y + 1) * W + x + 1] = cnt[y * W + x + 1] + rc;
+    }
+  }
+  const out = new Float32Array(d);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (d[i] < threshold) continue;
+    let rr = r, s = 0, c = 0;
+    // Große Glanzflächen: Radius schrittweise vergrößern, bis genug echte Nachbarn gefunden sind
+    for (let k = 0; k < 4 && c < 4; k++, rr *= 2) {
+      const x0 = Math.max(0, x - rr), y0 = Math.max(0, y - rr), x1 = Math.min(w, x + rr + 1), y1 = Math.min(h, y + rr + 1);
+      s = sum[y1 * W + x1] - sum[y0 * W + x1] - sum[y1 * W + x0] + sum[y0 * W + x0];
+      c = cnt[y1 * W + x1] - cnt[y0 * W + x1] - cnt[y1 * W + x0] + cnt[y0 * W + x0];
+    }
+    out[i] = c ? s / c : d[i];
+  }
+  return { w, h, d: out };
+}
+
+/**
+ * Schärfemaß einer normierten Karte (mittlerer Betrag des Laplace-Operators). Unabhängig von der Kamera-Auflösung,
+ * weil immer auf NORM_W × NORM_H gemessen wird – Grundlage für die Auto-Auslösung („scharf und ruhig“).
+ */
+export function focusScore(g: Gray): number {
+  const { w, h, d } = g;
+  let s = 0, n = 0;
+  for (let y = 1; y < h - 1; y += 1) for (let x = 1; x < w - 1; x += 1) {
+    const i = y * w + x;
+    s += Math.abs(4 * d[i] - d[i - 1] - d[i + 1] - d[i - w] - d[i + w]);
+    n++;
+  }
+  return n ? s / n : 0;
+}
+
+/** Unscharfe Maske (3×3): hebt Kanten der Sammlernummer hervor, bevor die Ziffern gelesen werden. */
+export function sharpen(g: Gray, amount = 0.8): Gray {
+  const { w, h, d } = g;
+  const out = new Float32Array(d);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    const blur = (d[i - w - 1] + d[i - w] + d[i - w + 1] + d[i - 1] + d[i] + d[i + 1] + d[i + w - 1] + d[i + w] + d[i + w + 1]) / 9;
+    out[i] = Math.max(0, Math.min(255, d[i] + amount * (d[i] - blur)));
+  }
+  return { w, h, d: out };
+}
+
+/** Viereck um seinen Mittelpunkt skalieren (Ersatz-Zuschnitte, wenn die Kartenkanten nicht sicher gefunden wurden). */
+export function scaleQuad(q: Pt[], k: number): Pt[] {
+  const cx = q.reduce((s, p) => s + p[0], 0) / q.length, cy = q.reduce((s, p) => s + p[1], 0) / q.length;
+  return q.map(([x, y]) => [cx + (x - cx) * k, cy + (y - cy) * k] as Pt);
+}
+/** Ohne erkannte Kanten werden diese Skalierungen des Führungsrahmens probiert (Karte kleiner gehalten, Toploader-Rand). */
+export const FALLBACK_SCALES = [1, 0.93, 0.86];
+
+/** Mittlere Eckenbewegung zweier Vierecke relativ zur Breite – Grundlage der Stabilitäts-Erkennung. */
+export function quadMotion(a: Pt[] | null | undefined, b: Pt[] | null | undefined): number {
+  if (!a || !b || a.length !== 4 || b.length !== 4) return 1;
+  const width = Math.max(1, Math.hypot(a[1][0] - a[0][0], a[1][1] - a[0][1]));
+  let s = 0;
+  for (let i = 0; i < 4; i++) s += Math.hypot(a[i][0] - b[i][0], a[i][1] - b[i][1]);
+  return s / 4 / width;
+}
+/** Bewegung unter diesem Anteil der Kartenbreite gilt als „ruhig gehalten“. */
+export const STABLE_MOTION = 0.025;

@@ -1,31 +1,66 @@
-// PokeSwipe & Radar – Live-Kamera-Scanner (Phase 3): Rückkamera mit Rahmenführung und Taschenlampe, Erkennung im Web Worker
-// direkt auf dem Gerät und Live-HUD mit Name, Sprache, Marktpreis, PSA-10-Wert und 1-Tap-Aktionen.
+// PokeSwipe & Radar – Live-Kamera-Scanner (Phase 3, Profi-Upgrade): Rückkamera in hoher Auflösung mit Dauer-Autofokus,
+// Tap-to-Focus und Taschenlampe, animierter Karten-Sucher (63 × 88 mm) mit Live-Status, Auto-Capture bei ruhiger, scharfer
+// Karte, großer Auslöser, Galerie-Import, Erkennung im Web Worker direkt auf dem Gerät, KI-Vision als Rückfall,
+// Top-3-Alternativen, Zustands-/Varianten-Schnellwahl mit Preisanpassung und Serien-Scan für ganze Stapel.
 import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, requireLogin } from "../core.js";
-import { SCORE_STRONG } from "../../server/scan-logic.ts";
-import { haptic } from "../native.js";
+import { SCORE_STRONG, SCORE_ACCEPT, quadMotion, STABLE_MOTION } from "../../server/scan-logic.ts";
+import { CONDITION_FACTORS } from "../../server/variant-logic.ts";
+import { haptic, isNative } from "../native.js";
 import { openQuickList, quickListApi } from "./quick-list.js";
 import { priceTagHtml } from "../price-tag.js";
 
-// Hybrid-Scanner (Phase 9):
-//  Stufe 1 – Erkennung auf dem Gerät (Kanten, Entzerrung, Kontrast-Normalisierung, pHash/dHash + Farb-Signatur, Nummern-OCR)
+// Hybrid-Scanner (Phase 9 + Profi-Upgrade):
+//  Stufe 1 – Erkennung auf dem Gerät (Kanten, Entzerrung, Spiegelungs-Unterdrückung, Kontrast-Normalisierung,
+//            pHash/dHash + Farb-Signatur, nachgeschärfte Nummern-OCR)
 //  Stufe 2 – lernender Index: wer eine erkannte Karte übernimmt, schickt den Fingerabdruck an /api/scan/learn
-//  Stufe 3 – KI-Foto-Scan nur, wenn die lokale Erkennung unsicher ist (Knopf erscheint erst dann) oder auf Wunsch
+//  Stufe 3 – KI-Vision (/api/scan/vision, Gemini mit Claude-Rückfall) auf dem zugeschnittenen Kartenbild, nur wenn die
+//            lokale Erkennung unsicher ist – automatisch (abschaltbar) oder per Auslöser
 /** Ohne sicheren Treffer so lange warten, bevor der KI-Knopf hervorgehoben wird */
 const AI_OFFER_AFTER_MS = 3500;
 
 const FLAG = { de: "🇩🇪", en: "🇬🇧", ja: "🇯🇵" };
 const LANG_LABEL = { de: "Deutsch", en: "Englisch", ja: "Japanisch" };
 const LANGS_KEY = "ps_scan_langs";
+const PREFS_KEY = "ps_scan_prefs";
 const CARD_RATIO = 63 / 88;
-const FRAME_W = 520;
+/**
+ * Breite des Ausschnitts für die Live-Erkennung. Früher 520 px: die Sammlernummer war dann nur ~10 px hoch und
+ * für die Ziffern-Erkennung zu unscharf. 720 px verdoppelt fast die Pixel der Nummer bei weiterhin ~30–60 ms je Bild.
+ */
+const FRAME_W = 720;
+/** Auslöser/Auto-Capture: Einzelbild in voller Schärfe (wird nie verworfen) */
+const CAPTURE_W = 1100;
 const MIN_INTERVAL_MS = 90;
+/** Auto-Capture: so viele ruhige, scharfe Bilder in Folge, dann wird ausgelöst */
+const STABLE_FRAMES = 4;
+const CAPTURE_COOLDOWN_MS = 2200;
+/** Ohne Karte so viele Bilder in Folge → Karte gilt als entfernt (Serien-Scan, Auto-KI wieder frei) */
+const GONE_FRAMES = 5;
+/** Knapper Hash-Treffer, der über mehrere Bilder gleich bleibt, wird mit Alternativen angezeigt */
+const NEAR_FRAMES = 3;
+
+const CONDS = ["NM", "EX", "GD", "LP", "PL"];
+const COND_LABEL = { NM: "Near Mint", EX: "Excellent", GD: "Good", LP: "Light Played", PL: "Played" };
+const FINISHES = [["normal", "Normal"], ["reverse_holo", "Reverse Holo"], ["holo", "Holo"]];
 
 const sc = {
   stream: null, track: null, worker: null, ready: false, loadingIndex: false, indexCount: 0, perLang: {}, ocrMode: "none",
   running: false, torch: false, timer: 0, canvas: null, ctx: null, lastSent: 0, frames: 0, msSum: 0,
   geometry: null, streakKey: null, streak: 0, current: null, currentAt: 0, info: new Map(), series: [], status: null,
   langs: readLangs(), lastProbe: null, unsureSince: 0, glare: false, pending: new Map(), reqSeq: 0, learned: new Set(),
+  // Profi-Upgrade: Stabilität, Auto-Capture, Serien-Scan, Zustand/Variante
+  prevCorners: null, stable: 0, focusMax: 0, gone: 0, capturing: false, lastCaptureAt: 0, autoAiUsed: false,
+  nearKey: null, nearCount: 0, suppress: null, caps: {}, focusTimer: 0, uiState: "",
+  prefs: readPrefs(),
 };
+
+function readPrefs() {
+  const def = { condition: "NM", series: false, autoAi: true };
+  try { return { ...def, ...(JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}) }; } catch { return def; }
+}
+function savePrefs() {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(sc.prefs)); } catch {}
+}
 
 function readLangs() {
   try {
@@ -40,45 +75,96 @@ function readLangs() {
 // ---------------------------------------------------------------------------
 // Oberfläche
 // ---------------------------------------------------------------------------
+/** Animationen des Suchers (Laser, Ecken-Puls, Auslöse-Blitz, Fokus-Ring) – eigene Keyframes, unabhängig von Tailwind. */
+const SCANNER_CSS = `
+#ps-ls-guide{transition:border-color .2s,box-shadow .2s}
+#ps-ls-guide .ps-ls-corner{position:absolute;width:26px;height:26px;border-color:#fff;border-style:solid;border-width:0;transition:border-color .2s}
+#ps-ls-guide .ps-ls-corner.tl{top:-3px;left:-3px;border-top-width:5px;border-left-width:5px;border-top-left-radius:14px}
+#ps-ls-guide .ps-ls-corner.tr{top:-3px;right:-3px;border-top-width:5px;border-right-width:5px;border-top-right-radius:14px}
+#ps-ls-guide .ps-ls-corner.bl{bottom:-3px;left:-3px;border-bottom-width:5px;border-left-width:5px;border-bottom-left-radius:14px}
+#ps-ls-guide .ps-ls-corner.br{bottom:-3px;right:-3px;border-bottom-width:5px;border-right-width:5px;border-bottom-right-radius:14px}
+#ps-ls-guide[data-state="ready"] .ps-ls-corner{border-color:#fbbf24}
+#ps-ls-guide[data-state="ready"]{box-shadow:0 0 22px 2px rgba(251,191,36,.45)}
+#ps-ls-guide[data-state="hit"] .ps-ls-corner{border-color:#34d399}
+#ps-ls-guide[data-state="hit"]{box-shadow:0 0 28px 4px rgba(52,211,153,.75)}
+#ps-ls-guide[data-state="search"] .ps-ls-corner{animation:psLsBreath 1.6s ease-in-out infinite}
+#ps-ls-laser{position:absolute;left:4%;right:4%;height:3px;border-radius:3px;background:#22d3ee;box-shadow:0 0 14px 4px rgba(34,211,238,.7);animation:psLsLaser 2.2s ease-in-out infinite}
+#ps-ls-guide:not([data-state="search"]) #ps-ls-laser{display:none}
+#ps-ls-progress{position:absolute;left:0;bottom:-10px;height:4px;border-radius:4px;background:#fbbf24;width:0;transition:width .12s linear}
+#ps-ls-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+#ps-ls-flash.on{animation:psLsFlash .45s ease-out}
+.ps-ls-focus{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid #fbbf24;border-radius:12px;pointer-events:none;animation:psLsFocus .9s ease-out forwards}
+#ps-ls-shutter{width:76px;height:76px;border-radius:9999px;border:5px solid #fff;background:radial-gradient(circle,#22d3ee 0 52%,rgba(15,23,42,.9) 54%);box-shadow:0 8px 24px rgba(0,0,0,.45)}
+#ps-ls-shutter:active{transform:scale(.94)}
+#ps-ls-shutter[data-busy="1"]{animation:psLsBreath .8s ease-in-out infinite}
+@keyframes psLsLaser{0%,100%{top:6%}50%{top:92%}}
+@keyframes psLsBreath{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes psLsFlash{0%{opacity:.85}100%{opacity:0}}
+@keyframes psLsFocus{0%{transform:scale(1.5);opacity:1}60%{transform:scale(1);opacity:1}100%{transform:scale(1);opacity:0}}
+@media (prefers-reduced-motion:reduce){#ps-ls-laser,#ps-ls-guide .ps-ls-corner,#ps-ls-flash.on{animation:none!important}}
+`;
+
+const chip = (on) => `text-[11px] font-black px-2.5 py-1.5 rounded-lg ${on ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-300"}`;
+
 export function liveScanPanelHtml() {
   return `<div id="ps-live-scan" class="poke-glass rounded-3xl p-3 sm:p-5 space-y-3 border-2 border-cyan-400/40">
+    <style>${SCANNER_CSS}</style>
     <div class="flex flex-wrap items-start justify-between gap-2">
       <div>
-        <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚡ Live-Scanner · auf dem Gerät</span>
-        <h2 class="text-base sm:text-lg font-black text-white mt-1">Karte vor die Kamera halten – Preis in unter 1 Sekunde</h2>
-        <p class="text-xs text-slate-300">Die Erkennung läuft direkt auf deinem Handy: kein Foto-Upload, keine Wartezeit, kein Scan-Limit.</p>
+        <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚡ Live-Scanner · auf dem Gerät + KI</span>
+        <h2 class="text-base sm:text-lg font-black text-white mt-1">Karte in den Rahmen halten – Scanner löst automatisch aus</h2>
+        <p class="text-xs text-slate-300">Ruhig halten genügt: Rahmen wird gelb, dann grün – Preis, Zustand und 1-Tap-Aktionen erscheinen sofort. Deutsch, Englisch und Japanisch.</p>
       </div>
       <div class="flex flex-wrap gap-1" role="group" aria-label="Sprachen für die Erkennung">
         ${["de", "en", "ja"].map((l) => `<button type="button" data-scan-lang="${l}" onclick="PS.liveScanLang('${l}')" class="ps-chip text-xs font-black px-2.5 py-1 rounded-lg"></button>`).join("")}
       </div>
     </div>
     <p id="ps-ls-index" class="text-[11px] text-slate-400">Lade Scanner-Status …</p>
-    <div id="ps-ls-stage" class="relative mx-auto w-full max-w-md aspect-[3/4] rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 select-none">
+    <div id="ps-ls-stage" class="relative mx-auto w-full max-w-md aspect-[3/4] rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 select-none touch-manipulation">
       <video id="ps-ls-video" class="absolute inset-0 w-full h-full object-cover hidden" playsinline muted autoplay></video>
+      <img id="ps-ls-still" alt="Hochgeladenes Kartenfoto" class="absolute inset-0 w-full h-full object-contain bg-slate-950 hidden" />
       <div id="ps-ls-idle" class="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p class="text-4xl" aria-hidden="true">📷</p>
-        <p class="text-xs text-slate-300">Die Rückkamera wird nur genutzt, solange der Scanner offen ist. Fotos bleiben auf deinem Gerät – nur wenn du eine Karte inserierst, kannst du das Scan-Foto ans Inserat hängen.</p>
+        <p class="text-xs text-slate-300">Die Rückkamera wird nur genutzt, solange der Scanner offen ist. Fotos bleiben auf deinem Gerät – nur bei unsicherer Erkennung prüft die KI den Kartenausschnitt, und nur wenn du inserierst, hängt das Scan-Foto am Inserat.</p>
         <button onclick="PS.liveScanStart()" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">⚡ Kamera starten</button>
+        <label class="cursor-pointer text-xs font-bold text-cyan-200 underline">🖼️ oder Foto aus der Galerie wählen<input id="ps-ls-file-idle" data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
       </div>
       <div id="ps-ls-mask" class="absolute pointer-events-none hidden" style="box-shadow:0 0 0 9999px rgba(2,6,23,.55);border-radius:14px"></div>
-      <div id="ps-ls-guide" class="absolute pointer-events-none hidden rounded-[14px] border-2 border-white/70 transition-colors"></div>
+      <div id="ps-ls-guide" data-state="search" class="absolute pointer-events-none hidden rounded-[14px] border-2 border-white/40">
+        <span class="ps-ls-corner tl"></span><span class="ps-ls-corner tr"></span><span class="ps-ls-corner bl"></span><span class="ps-ls-corner br"></span>
+        <div id="ps-ls-laser"></div><div id="ps-ls-progress"></div>
+      </div>
       <svg id="ps-ls-quad" class="absolute inset-0 w-full h-full pointer-events-none hidden" aria-hidden="true"><polygon points="" fill="rgba(52,211,153,.12)" stroke="#34d399" stroke-width="3" stroke-linejoin="round"/></svg>
-      <p id="ps-ls-hint" class="absolute top-2 inset-x-2 text-center text-[11px] font-bold text-white drop-shadow hidden"></p>
+      <div id="ps-ls-flash"></div>
+      <p id="ps-ls-hint" role="status" class="absolute top-2 left-1/2 -translate-x-1/2 max-w-[78%] text-center text-[12px] font-black text-white bg-slate-950/75 backdrop-blur px-3 py-1 rounded-full shadow hidden"></p>
       <div id="ps-ls-tools" class="absolute top-2 right-2 flex flex-col gap-1.5 hidden">
         <button id="ps-ls-torch" onclick="PS.liveScanTorch()" class="hidden w-10 h-10 rounded-full bg-slate-900/80 text-white text-lg" aria-label="Taschenlampe" aria-pressed="false">🔦</button>
         <button onclick="PS.liveScanStop()" class="w-10 h-10 rounded-full bg-slate-900/80 text-white text-lg" aria-label="Kamera beenden">✕</button>
       </div>
-      <p id="ps-ls-perf" class="ps-pro-only absolute top-2 left-2 text-[10px] font-mono text-emerald-300 bg-slate-950/70 rounded px-1.5 py-0.5 hidden"></p>
-      <div id="ps-ls-hud" class="absolute inset-x-2 bottom-2 hidden" aria-live="polite"></div>
+      <p id="ps-ls-perf" class="ps-pro-only absolute top-10 left-2 text-[10px] font-mono text-emerald-300 bg-slate-950/70 rounded px-1.5 py-0.5 hidden"></p>
+      <div id="ps-ls-hud" class="absolute inset-x-2 bottom-2 hidden max-h-[88%] overflow-y-auto" aria-live="polite"></div>
     </div>
-    <div class="flex flex-wrap justify-center gap-2 text-xs">
-      <button id="ps-ls-ai" onclick="PS.liveScanPhoto()" class="bg-slate-800 text-white font-bold px-3 py-2 rounded-xl" title="Nur nötig, wenn die Erkennung auf dem Gerät unsicher ist (z. B. starke Spiegelung, Sleeve, Promo)">📸 Nicht erkannt? KI-Foto-Scan</button>
-      <button onclick="PS.showSub('scan', 'camera')" class="bg-slate-800 text-white font-bold px-3 py-2 rounded-xl">🔎 Suche ohne Kamera</button>
+    <div class="flex items-center justify-center gap-5">
+      <label class="cursor-pointer w-12 h-12 rounded-full bg-slate-800 text-white text-xl flex items-center justify-center" title="Foto aus der Galerie" aria-label="Foto aus der Galerie importieren">🖼️<input id="ps-ls-file" data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
+      <button id="ps-ls-shutter" onclick="PS.liveScanShutter()" aria-label="Auslösen – Karte jetzt scannen" title="Auslösen (zusätzlich zur Auto-Erkennung)"></button>
+      <button id="ps-ls-torch2" onclick="PS.liveScanTorch()" class="w-12 h-12 rounded-full bg-slate-800 text-white text-xl" aria-label="Taschenlampe / Blitz" aria-pressed="false" title="Taschenlampe">🔦</button>
+    </div>
+    <div class="flex flex-wrap justify-center gap-1.5">
+      <button id="ps-ls-series-mode" onclick="PS.liveScanSeriesMode()" class="${chip(false)}" aria-pressed="false" title="Stapel durchscannen: jede Karte landet in der Liste, der Scanner ist sofort für die nächste bereit">🔁 Serien-Scan</button>
+      <button id="ps-ls-autoai" onclick="PS.liveScanAutoAi()" class="${chip(false)}" aria-pressed="false" title="Ist die Erkennung auf dem Gerät unsicher, prüft die KI den Kartenausschnitt automatisch (zählt als KI-Scan)">🤖 KI-Auto</button>
+      <button id="ps-ls-ai" onclick="PS.liveScanPhoto()" class="text-[11px] bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg" title="Nur nötig, wenn die Erkennung auf dem Gerät unsicher ist (z. B. starke Spiegelung, Sleeve, Promo)">📸 Nicht erkannt? KI-Scan</button>
+      <button onclick="PS.showSub('scan', 'camera')" class="text-[11px] bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg">🔎 Suche ohne Kamera</button>
     </div>
     <div id="ps-ls-series" class="space-y-2"></div>
-    <p class="text-[10px] text-slate-500">Tipp: Karte flach halten, Rahmen ausfüllen, Spiegelungen vermeiden – bei wenig Licht die Taschenlampe nutzen. Gleiche Motive in mehreren Sprachen lassen sich im Ergebnis umschalten.</p>
+    <p class="text-[10px] text-slate-500">Tipp: Karte flach halten und den Rahmen ausfüllen. Auf das Bild tippen stellt dort scharf. Bei Holo-Glanz Karte leicht kippen oder Sleeve abnehmen, bei wenig Licht die Taschenlampe nutzen. Gleiche Motive in mehreren Sprachen und ähnliche Treffer lassen sich im Ergebnis umschalten.</p>
     <div id="ps-ls-admin"></div>
   </div>`;
+}
+
+function renderToggles() {
+  const set = (id, on) => { const b = $(id); if (b) { b.className = chip(on); b.setAttribute("aria-pressed", String(on)); } };
+  set("ps-ls-series-mode", !!sc.prefs.series);
+  set("ps-ls-autoai", !!sc.prefs.autoAi);
 }
 
 function renderLangChips() {
@@ -143,58 +229,129 @@ function loadIndex() {
   ensureWorker().postMessage({ type: "init", langs: sc.langs });
 }
 
+/** Rückkamera mit hoher Auflösung; fällt bei zu strengen Vorgaben stufenweise auf einfachere Anfragen zurück. */
+async function openCamera() {
+  const tries = [
+    { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+    { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    { facingMode: "environment" },
+    true,
+  ];
+  let last = null;
+  for (const video of tries) {
+    try { return await navigator.mediaDevices.getUserMedia({ audio: false, video }); } catch (e) {
+      last = e;
+      if (e?.name === "NotAllowedError" || e?.name === "SecurityError") break;
+    }
+  }
+  throw last;
+}
+
+/**
+ * Dauer-Autofokus, -Belichtung und -Weißabgleich, soweit die Kamera sie kann. Früher wurde nur „focusMode“ blind
+ * gesetzt – auf vielen Android-Geräten scheiterte damit die ganze Anfrage und die Kamera blieb im Fix-Fokus (unscharfe Nummern).
+ */
+async function tuneTrack(track) {
+  const caps = typeof track.getCapabilities === "function" ? track.getCapabilities() || {} : {};
+  sc.caps = caps;
+  const has = (k, v) => Array.isArray(caps[k]) && caps[k].includes(v);
+  for (const c of [
+    has("focusMode", "continuous") ? { focusMode: "continuous" } : null,
+    has("exposureMode", "continuous") ? { exposureMode: "continuous" } : null,
+    has("whiteBalanceMode", "continuous") ? { whiteBalanceMode: "continuous" } : null,
+  ].filter(Boolean)) {
+    try { await track.applyConstraints({ advanced: [c] }); } catch {}
+  }
+  // Ohne Fähigkeits-Abfrage (ältere Browser): trotzdem versuchen
+  if (!caps.focusMode) { try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {} }
+  return caps;
+}
+
+/** Tap-to-Focus: Fokus-/Belichtungspunkt an die angetippte Stelle, danach zurück zum Dauer-Autofokus. */
+async function tapFocus(ev) {
+  if (!sc.running || !sc.track) return;
+  if (ev.target.closest("button, a, input, label, #ps-ls-hud")) return;
+  const stage = $("ps-ls-stage");
+  const r = stage.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  const ring = document.createElement("div");
+  ring.className = "ps-ls-focus";
+  ring.style.left = `${x}px`; ring.style.top = `${y}px`;
+  stage.appendChild(ring);
+  setTimeout(() => ring.remove(), 950);
+  haptic("select");
+  const caps = sc.caps || {};
+  const has = (k, v) => Array.isArray(caps[k]) && caps[k].includes(v);
+  const point = { x: Math.max(0, Math.min(1, x / r.width)), y: Math.max(0, Math.min(1, y / r.height)) };
+  const adv = {};
+  if (caps.pointsOfInterest !== undefined || "pointsOfInterest" in caps) adv.pointsOfInterest = [point];
+  if (has("focusMode", "single-shot")) adv.focusMode = "single-shot";
+  else if (has("focusMode", "manual") && caps.focusDistance) adv.focusMode = "continuous";
+  try { if (Object.keys(adv).length) await sc.track.applyConstraints({ advanced: [adv] }); } catch {}
+  clearTimeout(sc.focusTimer);
+  sc.focusTimer = setTimeout(() => {
+    if (sc.track && has("focusMode", "continuous")) sc.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+  }, 2500);
+  // Neuer Fokus → Stabilitäts-Zähler und Schärfe-Referenz neu aufbauen
+  sc.stable = 0;
+}
+
 async function start() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    toast("📷 Keine Kamera verfügbar", "Dein Browser erlaubt hier keinen Kamerazugriff. Nutze den KI-Foto-Scan oder die Suche.");
+    toast("📷 Keine Kamera verfügbar", "Dein Browser erlaubt hier keinen Kamerazugriff. Wähle ein Foto aus der Galerie oder nutze die Suche.");
     return;
   }
   if (sc.running) return;
   try {
-    sc.stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-    });
+    sc.stream = await openCamera();
   } catch (e) {
     const denied = e?.name === "NotAllowedError" || e?.name === "SecurityError";
-    toast(denied ? "📷 Kamera nicht erlaubt" : "📷 Kamera nicht verfügbar", denied ? "Erlaube den Kamerazugriff in den Browser-Einstellungen oder nutze den KI-Foto-Scan." : "Keine passende Kamera gefunden.");
+    toast(denied ? "📷 Kamera nicht erlaubt" : "📷 Kamera nicht verfügbar", denied ? "Erlaube den Kamerazugriff in den Browser-Einstellungen – oder wähle ein Foto aus der Galerie (🖼️)." : "Keine passende Kamera gefunden. Wähle ein Foto aus der Galerie (🖼️).");
     return;
   }
   sc.track = sc.stream.getVideoTracks()[0];
-  try { await sc.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
+  const caps = await tuneTrack(sc.track);
   const video = $("ps-ls-video");
   video.srcObject = sc.stream;
   try { await video.play(); } catch {}
-  const caps = typeof sc.track.getCapabilities === "function" ? sc.track.getCapabilities() : {};
   $("ps-ls-torch")?.classList.toggle("hidden", !caps.torch);
+  const t2 = $("ps-ls-torch2");
+  if (t2) { t2.disabled = !caps.torch; t2.classList.toggle("opacity-40", !caps.torch); t2.title = caps.torch ? "Taschenlampe" : "Diese Kamera/dieser Browser unterstützt keine Taschenlampe"; }
   sc.torch = false;
+  $("ps-ls-still")?.classList.add("hidden");
   ["ps-ls-video", "ps-ls-mask", "ps-ls-guide", "ps-ls-quad", "ps-ls-hint", "ps-ls-tools", "ps-ls-perf"].forEach((id) => $(id)?.classList.remove("hidden"));
   $("ps-ls-idle")?.classList.add("hidden");
   sc.running = true; sc.frames = 0; sc.msSum = 0; sc.streak = 0; sc.streakKey = null;
+  sc.stable = 0; sc.focusMax = 0; sc.gone = 0; sc.prevCorners = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0;
   if (!sc.ready && !sc.loadingIndex) loadIndex();
   layout();
-  hint(sc.ready ? "Karte in den Rahmen halten" : "⏳ Lade Karten-Index …");
+  setUi("search", sc.ready ? "📇 Karte in den Rahmen halten" : "⏳ Lade Karten-Index …");
   tick();
 }
 
 function stop() {
   sc.running = false;
   clearTimeout(sc.timer);
+  clearTimeout(sc.focusTimer);
   try { sc.stream?.getTracks().forEach((t) => t.stop()); } catch {}
   sc.stream = null; sc.track = null;
   const video = $("ps-ls-video");
   if (video) video.srcObject = null;
-  ["ps-ls-video", "ps-ls-mask", "ps-ls-guide", "ps-ls-quad", "ps-ls-hint", "ps-ls-tools", "ps-ls-perf", "ps-ls-hud"].forEach((id) => $(id)?.classList.add("hidden"));
+  ["ps-ls-video", "ps-ls-mask", "ps-ls-guide", "ps-ls-quad", "ps-ls-hint", "ps-ls-tools", "ps-ls-perf", "ps-ls-hud", "ps-ls-still"].forEach((id) => $(id)?.classList.add("hidden"));
   $("ps-ls-idle")?.classList.remove("hidden");
 }
 
 async function toggleTorch() {
-  if (!sc.track) return;
+  if (!sc.track) { toast("🔦 Kamera starten", "Die Taschenlampe lässt sich nutzen, sobald die Kamera läuft."); return; }
   try {
     await sc.track.applyConstraints({ advanced: [{ torch: !sc.torch }] });
     sc.torch = !sc.torch;
-    const b = $("ps-ls-torch");
-    if (b) { b.setAttribute("aria-pressed", String(sc.torch)); b.classList.toggle("bg-yellow-400", sc.torch); b.classList.toggle("bg-slate-900/80", !sc.torch); }
-  } catch { toast("🔦 Nicht möglich", "Diese Kamera unterstützt keine Taschenlampe."); }
+    for (const id of ["ps-ls-torch", "ps-ls-torch2"]) {
+      const b = $(id);
+      if (b) { b.setAttribute("aria-pressed", String(sc.torch)); b.classList.toggle("bg-yellow-400", sc.torch); b.classList.toggle(id === "ps-ls-torch" ? "bg-slate-900/80" : "bg-slate-800", !sc.torch); }
+    }
+    sc.focusMax = 0; // neue Beleuchtung → Schärfe-Referenz neu
+  } catch { toast("🔦 Nicht möglich", "Diese Kamera unterstützt keine Taschenlampe. Tipp: Karte näher ans Licht halten."); }
 }
 
 /** Rahmen im Anzeigebereich und passender Ausschnitt im Videobild (object-fit: cover beachtet). */
@@ -231,6 +388,23 @@ function hint(text) {
   if (el) el.textContent = text || "";
 }
 
+/** Sucher-Zustand: search (weiß, Laser) → ready (gelb, „ruhig halten“) → hit (grün, „Erkannt!“) */
+function setUi(stateName, text, progress = 0) {
+  const g = $("ps-ls-guide");
+  if (g && sc.uiState !== stateName) { g.dataset.state = stateName; sc.uiState = stateName; }
+  const bar = $("ps-ls-progress");
+  if (bar) bar.style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+  if (text !== undefined) hint(text);
+}
+
+/** Erfolg: Scan-Blitz + kurzes Vibrieren (Handy) bzw. natives Haptik-Feedback in der App */
+function successFeedback() {
+  const f = $("ps-ls-flash");
+  if (f) { f.classList.remove("on"); void f.offsetWidth; f.classList.add("on"); }
+  if (isNative()) haptic("success");
+  else { try { navigator.vibrate?.(40); } catch {} }
+}
+
 function tick() {
   if (!sc.running) return;
   const panel = $("ps-live-scan");
@@ -238,7 +412,7 @@ function tick() {
   if (!panel || panel.offsetParent === null || document.hidden) { stop(); return; }
   const video = $("ps-ls-video");
   const now = performance.now();
-  if (sc.ready && video.readyState >= 2 && now - sc.lastSent >= MIN_INTERVAL_MS) {
+  if (sc.ready && !sc.capturing && video.readyState >= 2 && now - sc.lastSent >= MIN_INTERVAL_MS) {
     const g = sc.geometry && sc.geometry.vw === video.videoWidth ? sc.geometry : layout();
     if (g) {
       g.vw = video.videoWidth;
@@ -259,20 +433,42 @@ function tick() {
 // Ergebnisse
 // ---------------------------------------------------------------------------
 function drawQuad(r) {
-  const g = sc.geometry, poly = document.querySelector("#ps-ls-quad polygon"), guide = $("ps-ls-guide");
+  const g = sc.geometry, poly = document.querySelector("#ps-ls-quad polygon");
   if (!g || !poly) return;
   if (r.found && r.corners) {
     const pts = r.corners.map(([x, y]) => `${(x / g.k + g.sx0) * g.s + g.offX},${(y / g.k + g.sy0) * g.s + g.offY}`).join(" ");
     poly.setAttribute("points", pts);
   } else poly.setAttribute("points", "");
-  guide?.classList.toggle("border-emerald-400", !!r.accepted);
-  guide?.classList.toggle("border-white/70", !r.accepted);
 }
 
 /** Bevorzugte Sprachvariante: Reihenfolge der gewählten Sprachen. */
 function orderGroup(group) {
   const rank = (l) => { const i = sc.langs.indexOf(l); return i < 0 ? 9 : i; };
   return [...group].sort((a, b) => rank(a.lang) - rank(b.lang));
+}
+
+/**
+ * Stabilitäts-Erkennung für die Auto-Auslösung: Kartenecken bewegen sich kaum (< 2,5 % der Kartenbreite) und das Bild
+ * ist scharf (Laplace-Schärfe nahe am besten zuletzt gesehenen Wert – unabhängig von Kamera und Licht).
+ */
+function trackStability(m) {
+  if (!m.found) {
+    sc.gone++; sc.prevCorners = null; sc.stable = 0; sc.autoArmed = true;
+    if (sc.gone >= GONE_FRAMES) { sc.suppress = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0; }
+    return;
+  }
+  sc.gone = 0;
+  const motion = quadMotion(sc.prevCorners, m.corners);
+  sc.prevCorners = m.corners;
+  const f = Number(m.focus) || 0;
+  sc.focusMax = Math.max(sc.focusMax * 0.985, f);
+  const sharp = f >= sc.focusMax * 0.72 && (m.sharpness ?? 99) >= 5;
+  if (motion < STABLE_MOTION && sharp) sc.stable++;
+  else {
+    // Deutlich bewegt (Karte gewechselt/neu ausgerichtet) → Auto-Auslösung wieder scharf schalten
+    if (motion > STABLE_MOTION * 3) sc.autoArmed = true;
+    sc.stable = 0;
+  }
 }
 
 function onWorker(m) {
@@ -288,60 +484,121 @@ function onWorker(m) {
     sc.learnedCount = m.learned || 0;
     sc.readyWaiters?.splice(0).forEach((r) => r());
     renderIndexLine();
-    if (sc.running) hint(sc.indexCount ? "Karte in den Rahmen halten" : "Noch keine Karten im Index – nutze den KI-Foto-Scan.");
+    if (sc.running) setUi("search", sc.indexCount ? "📇 Karte in den Rahmen halten" : "Noch keine Karten im Index – Auslöser nutzt die KI.");
     return;
   }
   if (m.type !== "result" || !sc.running) return;
   if (m.error) return;
   sc.frames++; sc.msSum += m.ms || 0;
   const perf = $("ps-ls-perf");
-  if (perf) perf.textContent = `⚡ ${Math.round(m.ms || 0)} ms · Ø ${Math.round(sc.msSum / sc.frames)} ms${m.found ? " · Kanten ✓" : ""}${m.ocr ? ` · Nr. ${m.ocr.text}` : ""}${m.score != null && Number.isFinite(m.score) ? ` · d=${Math.round(m.score)}` : ""}`;
+  if (perf) perf.textContent = `⚡ ${Math.round(m.ms || 0)} ms · Ø ${Math.round(sc.msSum / sc.frames)} ms${m.found ? " · Kanten ✓" : ""}${m.ocr ? ` · Nr. ${m.ocr.text}` : ""}${m.score != null && Number.isFinite(m.score) ? ` · d=${Math.round(m.score)}` : ""}${m.focus ? ` · f=${m.focus}` : ""}`;
   drawQuad(m);
-  if (m.empty) { hint("Noch keine Karten im Index – nutze den KI-Foto-Scan."); return; }
+  if (m.empty) { setUi("search", "Noch keine Karten im Index – Auslöser nutzt die KI."); return; }
   sc.glare = Boolean(m.glareHigh);
-  if (!m.accepted) {
-    sc.streak = 0; sc.streakKey = null;
-    if (m.found && !sc.unsureSince) sc.unsureSince = Date.now();
-    offerAi(m.found && (sc.glare || Date.now() - sc.unsureSince > AI_OFFER_AFTER_MS));
-    if (Date.now() - sc.currentAt > 2500) hint(sc.glare ? "✨ Spiegelung erkannt – Karte leicht kippen oder Sleeve abnehmen" : m.sharpness < 6 ? "Etwas mehr Licht oder ruhiger halten" : m.found ? "Erkenne Karte …" : "Karte in den Rahmen halten");
+  trackStability(m);
+  const hitFresh = sc.current && !sc.current.loading && Date.now() - sc.currentAt < 1800;
+  if (m.accepted) {
+    sc.unsureSince = 0;
+    offerAi(false);
+    if (m.probe) sc.lastProbe = { ...m.probe, at: Date.now() };
+    const group = orderGroup(m.group || []);
+    const keys = group.map((g) => g.key);
+    const same = sc.streakKey && keys.some((k) => sc.streakKey.includes(k));
+    sc.streak = same ? sc.streak + 1 : 1;
+    sc.streakKey = keys;
+    // Klarer Treffer (oder passende Kartennummer) sofort, sonst nach zwei übereinstimmenden Bildern
+    if (m.byNumber || m.score <= SCORE_STRONG || sc.streak >= 2) {
+      if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte in den Rahmen legen"); return; }
+      if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); setUi("hit", "✅ Erkannt!"); return; }
+      if (!sc.capturing) showHit(group, m, capturePhoto(m.corners));
+      return;
+    }
+    setUi("ready", "✋ Perfekt, ruhig halten …", Math.max(0.5, sc.stable / STABLE_FRAMES));
     return;
   }
-  sc.unsureSince = 0;
-  offerAi(false);
-  if (m.probe) sc.lastProbe = { ...m.probe, at: Date.now() };
-  const group = orderGroup(m.group || []);
-  const keys = group.map((g) => g.key);
-  const same = sc.streakKey && keys.some((k) => sc.streakKey.includes(k));
-  sc.streak = same ? sc.streak + 1 : 1;
-  sc.streakKey = keys;
-  // Klarer Treffer (oder passende Kartennummer) sofort, sonst nach zwei übereinstimmenden Bildern
-  if (!(m.byNumber || m.score <= SCORE_STRONG || sc.streak >= 2)) return;
-  if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); return; }
-  showHit(group, m);
+  sc.streak = 0; sc.streakKey = null;
+  if (m.found && !sc.unsureSince) sc.unsureSince = Date.now();
+  offerAi(m.found && (sc.glare || Date.now() - sc.unsureSince > AI_OFFER_AFTER_MS));
+  if (!sc.capturing && !hitFresh) {
+    if (!m.found) setUi("search", sc.glare ? "✨ Spiegelung – Karte leicht kippen oder Sleeve abnehmen" : "📇 Karte in den Rahmen halten");
+    else if (sc.glare) setUi("ready", "✨ Spiegelung erkannt – Karte leicht kippen", sc.stable / STABLE_FRAMES);
+    else if ((m.sharpness ?? 99) < 5) setUi("ready", sc.caps?.torch && !sc.torch ? "💡 Zu dunkel – Taschenlampe 🔦 antippen" : "💡 Etwas mehr Licht oder ruhiger halten", 0);
+    else setUi("ready", "✋ Perfekt, ruhig halten …", sc.stable / STABLE_FRAMES);
+  }
+  maybeAutoCapture(m);
+}
+
+/** Auto-Capture: Karte liegt ruhig und scharf im Rahmen, die schnelle Live-Erkennung ist aber noch unsicher → auslösen. */
+function maybeAutoCapture(m) {
+  if (sc.capturing || !sc.autoArmed || sc.stable < STABLE_FRAMES || !m.found || m.accepted) return;
+  if (sc.current && Date.now() - sc.currentAt < 1500) return;
+  if (Date.now() - sc.lastCaptureAt < CAPTURE_COOLDOWN_MS) return;
+  capture({ auto: true });
 }
 
 async function fetchInfo(keys) {
   const missing = keys.filter((k) => !sc.info.has(k));
   if (missing.length) {
     try {
-      const { items } = await api(`/api/scan/lookup?keys=${encodeURIComponent(missing.join(","))}`);
+      const { items } = await api(`/api/scan/lookup?keys=${encodeURIComponent(missing.slice(0, 8).join(","))}`);
       for (const it of items) sc.info.set(it.key, it);
     } catch {}
   }
   return keys.map((k) => sc.info.get(k)).filter(Boolean);
 }
 
+/** Einzelbild an den Worker (mit Antwort-ID – wird nie verworfen). */
+function workerFrame(msg, timeoutMs = 8000) {
+  const reqId = `f${++sc.reqSeq}`;
+  return new Promise((resolve) => {
+    sc.pending.set(reqId, resolve);
+    ensureWorker().postMessage({ type: "frame", reqId, ...msg }, [msg.data]);
+    setTimeout(() => { if (sc.pending.delete(reqId)) resolve({}); }, timeoutMs);
+  });
+}
+
 /**
- * Echtes Foto der erkannten Karte aus dem Kamerabild (Rahmenbereich, Kartenformat, ca. 50 KB JPEG).
- * Bleibt auf dem Gerät, bis der Nutzer die Karte inseriert und das Foto anhängt.
+ * Exakter Zuschnitt auf den Kartenrahmen (erkannte Ecken + 3 % Rand) als JPEG in hoher Qualität. Früher bekam die KI
+ * das ganze Kamerabild inkl. Hintergrund und Hand – die Karte war darin oft nur ein Drittel der Fläche.
  */
-function capturePhoto() {
+function cropToCard(src, corners, max = 900, quality = 0.9) {
+  try {
+    const W = src.width, H = src.height;
+    let x0 = 0, y0 = 0, x1 = W, y1 = H;
+    if (Array.isArray(corners) && corners.length === 4) {
+      const xs = corners.map((p) => p[0]), ys = corners.map((p) => p[1]);
+      x0 = Math.min(...xs); x1 = Math.max(...xs); y0 = Math.min(...ys); y1 = Math.max(...ys);
+      const mx = (x1 - x0) * 0.03, my = (y1 - y0) * 0.03;
+      x0 = Math.max(0, x0 - mx); y0 = Math.max(0, y0 - my); x1 = Math.min(W, x1 + mx); y1 = Math.min(H, y1 + my);
+    }
+    const w = x1 - x0, h = y1 - y0;
+    if (!(w > 40 && h > 40)) return src.toDataURL("image/jpeg", quality);
+    const s = Math.min(1, max / Math.max(w, h));
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(w * s); cv.height = Math.round(h * s);
+    const ctx = cv.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(src, x0, y0, w, h, 0, 0, cv.width, cv.height);
+    return cv.toDataURL("image/jpeg", quality);
+  } catch { return null; }
+}
+
+/**
+ * Echtes Foto der erkannten Karte aus dem Kamerabild (Kartenrahmen, ca. 50 KB JPEG) – mit erkannten Ecken exakt
+ * auf die Karte, sonst der Führungsrahmen. Bleibt auf dem Gerät, bis der Nutzer die Karte inseriert und das Foto anhängt.
+ */
+function capturePhoto(corners = null) {
   try {
     const video = $("ps-ls-video"), g = sc.geometry;
     if (!video?.videoWidth || !g) return null;
-    const gd = g.guide;
-    const vx0 = g.sx0 + gd.x0 / g.k, vy0 = g.sy0 + gd.y0 / g.k;
-    const vw = (gd.x1 - gd.x0) / g.k, vh = (gd.y1 - gd.y0) / g.k;
+    let vx0, vy0, vw, vh;
+    if (Array.isArray(corners) && corners.length === 4) {
+      const xs = corners.map((p) => g.sx0 + p[0] / g.k), ys = corners.map((p) => g.sy0 + p[1] / g.k);
+      vx0 = Math.min(...xs); vy0 = Math.min(...ys); vw = Math.max(...xs) - vx0; vh = Math.max(...ys) - vy0;
+    } else {
+      const gd = g.guide;
+      vx0 = g.sx0 + gd.x0 / g.k; vy0 = g.sy0 + gd.y0 / g.k; vw = (gd.x1 - gd.x0) / g.k; vh = (gd.y1 - gd.y0) / g.k;
+    }
     // kleiner Rand, damit die Kartenkanten (Zustand!) mit drauf sind
     const mx = vw * 0.04, my = vh * 0.04;
     const x0 = Math.max(0, vx0 - mx), y0 = Math.max(0, vy0 - my);
@@ -351,85 +608,255 @@ function capturePhoto() {
     const cv = document.createElement("canvas");
     cv.width = W; cv.height = H;
     cv.getContext("2d").drawImage(video, x0, y0, w, h, 0, 0, W, H);
-    const url = cv.toDataURL("image/jpeg", 0.8);
+    const url = cv.toDataURL("image/jpeg", 0.85);
     return url.length < 400_000 ? url : cv.toDataURL("image/jpeg", 0.6);
   } catch { return null; }
 }
 
-async function showHit(group, m) {
-  const keys = group.map((g) => g.key).slice(0, 6);
-  sc.current = { key: keys[0], keys, info: null, probe: m.probe || null, photo: capturePhoto() };
-  sc.currentAt = Date.now();
-  haptic("success");
-  hint("✅ Erkannt");
-  window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
-  renderHud({ loading: true });
+/**
+ * Auslöser (manuell oder Auto-Capture): Einzelbild in höherer Auflösung, Nummer immer lesen (nachgeschärft).
+ * Sicher → Treffer. Unsicher → KI-Vision auf dem exakt zugeschnittenen Kartenbild (manuell immer, automatisch einmal
+ * je Karte, wenn „KI-Auto“ an ist) – sonst die nächstbesten Treffer zur Auswahl.
+ */
+async function capture({ auto = false } = {}) {
+  if (sc.capturing) return;
+  if (!sc.running) { if (!auto) start(); return; }
+  const video = $("ps-ls-video");
+  const g = sc.geometry || layout();
+  if (!g || !video?.videoWidth) return;
+  if (!sc.ready && !auto && !state.user) { toast("⏳ Einen Moment", "Der Karten-Index lädt noch …"); return; }
+  sc.capturing = true; sc.autoArmed = false; sc.lastCaptureAt = Date.now();
+  const sh = $("ps-ls-shutter");
+  if (sh) sh.dataset.busy = "1";
+  setUi("ready", auto ? "📸 Auto-Scan …" : "📸 Scanne …", 1);
+  try {
+    const W = Math.max(FRAME_W, Math.min(CAPTURE_W, Math.round(g.sw))), f = W / g.W, H = Math.round(g.H * f);
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(video, g.sx0, g.sy0, g.sw, g.sh, 0, 0, W, H);
+    const guide = { x0: g.guide.x0 * f, y0: g.guide.y0 * f, x1: g.guide.x1 * f, y1: g.guide.y1 * f };
+    const guideQuad = [[guide.x0, guide.y0], [guide.x1, guide.y0], [guide.x1, guide.y1], [guide.x0, guide.y1]];
+    const m = sc.ready ? await workerFrame({ w: W, h: H, data: ctx.getImageData(0, 0, W, H).data.buffer, guide, ocr: true, capture: true }) : {};
+    const liveCorners = m.found ? m.corners.map(([x, y]) => [x / f, y / f]) : null;
+    const photo = capturePhoto(liveCorners);
+    if (m.probe) sc.lastProbe = { ...m.probe, at: Date.now() };
+    if (m.accepted) {
+      const group = orderGroup(m.group || []);
+      const keys = group.map((x) => x.key);
+      if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte in den Rahmen legen"); return; }
+      if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); setUi("hit", "✅ Erkannt!"); return; }
+      await showHit(group, m, photo);
+      return;
+    }
+    const wantAi = Boolean(state.user) && (!auto || (sc.prefs.autoAi && !sc.autoAiUsed));
+    if (wantAi) {
+      sc.autoAiUsed = true;
+      await runVision(cropToCard(cv, m.found ? m.corners : guideQuad), { probe: m.probe || null, photo });
+      return;
+    }
+    if (!(await showNear(m, photo, auto)) && !auto) {
+      if (!state.user) { toast("🤔 Nicht sicher erkannt", "Melde dich an, dann prüft die KI unsichere Karten automatisch – oder halte die Karte gerader und näher."); }
+      offerAi(true);
+    }
+  } catch (e) {
+    if (!auto) handleError(e);
+  } finally {
+    sc.capturing = false;
+    if (sh) delete sh.dataset.busy;
+  }
+}
+
+/** Unsichere Hash-Treffer als Auswahl zeigen („Meinst du …?“) statt nichts. */
+async function showNear(m, photo, auto) {
+  const limit = auto ? SCORE_ACCEPT + 8 : SCORE_ACCEPT + 18;
+  const seen = new Set();
+  const keys = (m.candidates || []).filter((c) => c.score <= limit && !seen.has(c.key) && seen.add(c.key)).map((c) => c.key).slice(0, 4);
+  if (!keys.length) {
+    setUi("ready", sc.glare ? "✨ Spiegelung – Karte leicht kippen und erneut auslösen" : "🤔 Nicht sicher – Karte gerader halten oder näher ran", 0);
+    return false;
+  }
   const infos = await fetchInfo(keys);
-  if (!sc.current || sc.current.keys !== keys) return;
-  if (!infos.length) { sc.current = null; renderHud(null); return; }
-  sc.current.variants = infos;
-  sc.current.info = infos[0];
-  sc.current.key = infos[0].key;
-  sc.current.byNumber = m.byNumber;
-  addToSeries(infos[0]);
+  if (!infos.length) return false;
+  presentHit({ info: infos[0], variants: [infos[0]], alts: infos.slice(1, 4), probe: m.probe || null, photo, unsure: true });
+  return true;
+}
+
+/** Stufe 3: KI-Vision auf dem zugeschnittenen Kartenbild (Gemini, Rückfall Claude) → Top-Treffer + Alternativen + Variante. */
+async function runVision(dataUrl, { probe = null, photo = null } = {}) {
+  if (!dataUrl) return false;
+  if (!requireLogin()) return false;
+  const prev = sc.current;
+  setUi("ready", "🤖 KI erkennt Karte & Variante …", 1);
+  renderHud({ loading: true, text: "🤖 KI-Vision liest Name, Nummer, KP, Seltenheit und Variante …" });
+  let r;
+  try {
+    r = await api("/api/scan/vision", { method: "POST", body: { image: dataUrl } });
+  } catch (e) {
+    renderHud(prev?.info ? prev : null);
+    setUi("search", "📇 Karte in den Rahmen halten");
+    handleError(e);
+    return false;
+  }
+  window.PS?.refreshMe?.();
+  if (!r?.found || !r.items?.length) {
+    renderHud(prev?.info ? prev : null);
+    const d = r?.detected;
+    setUi("search", d?.name ? `🤔 „${d.name}${d.number ? ` ${d.number}` : ""}“ nicht im Katalog` : "🤔 Keine Karte erkannt – gerader halten oder näher ran");
+    toast("🤖 KI-Scan", d?.name ? `Erkannt: ${d.name} ${d.number || ""} – aber noch nicht im Katalog. Probiere die Suche.` : "Keine Pokémon-Karte erkannt. Karte gerade, hell und formatfüllend halten.");
+    return false;
+  }
+  for (const it of r.items) sc.info.set(it.key, it);
+  const [main, ...rest] = r.items;
+  const finish = ["reverse_holo", "holo"].includes(r.detected?.variant) ? r.detected.variant : "normal";
+  presentHit({
+    info: main, variants: [main], alts: rest.slice(0, 3), probe, photo, unsure: !r.clear, source: "ai", finish,
+    aiNote: [r.detected?.rarityLabel, r.detected?.hp ? `${r.detected.hp} KP` : "", r.detected?.illustrator ? `Illus. ${r.detected.illustrator}` : ""].filter(Boolean).join(" · "),
+  });
+  return true;
+}
+
+/** Treffer anzeigen: Scan-Blitz + Vibration, Status „Erkannt!“, HUD mit Preis, Alternativen, Zustand und Aktionen. */
+function presentHit(cur) {
+  const info = cur.info;
+  sc.current = {
+    key: info.key, keys: [...new Set([...(cur.variants || [info]).map((v) => v.key), ...(cur.alts || []).map((a) => a.key)])],
+    info, variants: cur.variants || [info], alts: cur.alts || [], probe: cur.probe || null, photo: cur.photo || null,
+    unsure: Boolean(cur.unsure), source: cur.source || "device", byNumber: Boolean(cur.byNumber), aiNote: cur.aiNote || "",
+    finish: cur.finish || "normal", condition: sc.prefs.condition || "NM",
+  };
+  sc.currentAt = Date.now();
+  successFeedback();
+  setUi("hit", cur.unsure ? "🤔 Fast sicher – bitte bestätigen" : "✅ Erkannt!");
+  window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
+  if (!cur.unsure) addToSeries(info);
+  // Serien-Scan: dieselbe Karte nicht erneut melden, bis sie aus dem Rahmen genommen wurde
+  if (sc.prefs.series) sc.suppress = sc.current.keys;
   renderHud(sc.current);
 }
 
+async function showHit(group, m, photo = null) {
+  const keys = group.map((g) => g.key).slice(0, 5);
+  // Top-Alternativen: nächstbeste andere Karten aus der Hash-Suche (z. B. andere Drucke/Varianten desselben Motivs)
+  const seen = new Set(keys);
+  const altKeys = (m.candidates || []).filter((c) => c.score <= SCORE_ACCEPT + 22 && !seen.has(c.key) && seen.add(c.key)).map((c) => c.key).slice(0, 3);
+  const token = Symbol("hit");
+  sc.current = { key: keys[0], keys, info: null, loading: token, probe: m.probe || null, photo: photo || capturePhoto(m.corners) };
+  sc.currentAt = Date.now();
+  setUi("hit", "✅ Erkannt!");
+  renderHud({ loading: true });
+  const infos = await fetchInfo([...keys, ...altKeys]);
+  if (!sc.current || sc.current.loading !== token) return;
+  const variants = infos.filter((i) => keys.includes(i.key));
+  if (!variants.length) { sc.current = null; renderHud(null); return; }
+  presentHit({
+    info: variants[0], variants, alts: infos.filter((i) => altKeys.includes(i.key)), probe: m.probe || null, photo: sc.current.photo,
+    byNumber: m.byNumber, unsure: false,
+  });
+}
+
 const priceTxt = (i) => (i.price ? eur(i.price) : "–");
+/** Richtwert je Variante: Reverse Holo hat bei deutschen Karten einen eigenen Cardmarket-Preis. */
+const basePrice = (i, finish) => (finish === "reverse_holo" && Number(i.reversePrice) > 0 ? Number(i.reversePrice) : Number(i.price) || 0);
+/** Preis nach Zustand (gleiche Faktoren wie Portfolio und Marktplatz: EX 85 %, GD 70 %, LP 60 %, PL 45 %). */
+const condPrice = (i, finish, cond) => { const b = basePrice(i, finish); return b ? Math.round(b * (CONDITION_FACTORS[cond] ?? 1) * 100) / 100 : 0; };
+
+function ebayHtml(i) {
+  if (Number(i.ebayLow) > 0 && Number(i.ebayHigh) > 0) {
+    return `<div><p class="text-[9px] uppercase font-bold text-slate-500">eBay verkauft</p><p class="text-xs font-black text-sky-300 leading-none">${eur(i.ebayLow)}–${eur(i.ebayHigh)}</p>${i.ebaySales ? `<p class="text-[9px] text-slate-500">${Number(i.ebaySales)} Verkäufe</p>` : ""}</div>`;
+  }
+  const url = typeof window.buildEbayUrl === "function" ? window.buildEbayUrl(`Pokemon ${i.name} ${i.number || ""}`.trim(), "sold", "scanner") : "";
+  return url ? `<div><p class="text-[9px] uppercase font-bold text-slate-500">eBay</p><a href="${esc(url)}" target="_blank" rel="noopener sponsored" class="text-xs font-black text-sky-300 underline leading-none">Spanne ansehen ↗</a></div>` : "";
+}
 
 function renderHud(cur) {
   const hud = $("ps-ls-hud");
   if (!hud) return;
   if (!cur) { hud.classList.add("hidden"); hud.innerHTML = ""; return; }
   hud.classList.remove("hidden");
-  if (cur.loading) { hud.innerHTML = `<div class="bg-slate-950/90 backdrop-blur rounded-2xl p-3 text-xs font-bold text-emerald-300">✅ Erkannt – lade Marktpreis …</div>`; return; }
+  if (cur.loading) { hud.innerHTML = `<div class="bg-slate-950/90 backdrop-blur rounded-2xl p-3 text-xs font-bold text-emerald-300">${esc(cur.text || "✅ Erkannt – lade Marktpreis …")}</div>`; return; }
   const i = cur.info;
   const k = jsArg(i.key);
   const canWish = i.kind === "card" || !!i.baseCardId;
   const photo = cur.photo;
-  hud.innerHTML = `<div class="bg-slate-950/92 backdrop-blur rounded-2xl p-2.5 border border-emerald-400/60 shadow-2xl space-y-2">
+  const finish = cur.finish || "normal", cond = cur.condition || sc.prefs.condition || "NM";
+  const price = condPrice(i, finish, cond);
+  const alts = cur.alts || [], variants = cur.variants || [i];
+  const btnCls = (on) => `text-[10px] font-black px-2 py-1 rounded-lg ${on ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-200"}`;
+  hud.innerHTML = `<div class="bg-slate-950/92 backdrop-blur rounded-2xl p-2.5 border ${cur.unsure ? "border-yellow-400/70" : "border-emerald-400/60"} shadow-2xl space-y-2">
+    ${cur.unsure ? `<p class="text-[11px] font-black text-yellow-300">🤔 Meinst du diese Karte? Sonst unten die passende Alternative antippen.</p>` : ""}
     <div class="flex gap-2.5 items-start">
       <div class="relative shrink-0 flex gap-1">
         ${photo ? `<img src="${esc(photo)}" alt="Dein Scan-Foto" title="Dein Scan-Foto" class="w-12 h-16 object-cover rounded bg-slate-900 border border-cyan-400/60" />` : ""}
         <img src="${esc(cdn(i.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" class="w-12 h-16 object-contain rounded bg-slate-900" />
-        ${i.price ? `<div class="absolute -bottom-1.5 left-0 ps-price-tag-tilt">${priceTagHtml({ price: i.price }, "sm")}</div>` : ""}
+        ${price ? `<div class="absolute -bottom-1.5 left-0 ps-price-tag-tilt">${priceTagHtml({ price }, "sm")}</div>` : ""}
       </div>
       <div class="min-w-0 flex-1">
         <p class="text-sm font-black text-white leading-tight truncate">${esc(i.name)} <span class="text-slate-400 font-bold">${esc(i.number || "")}</span></p>
         <p class="text-[10px] text-slate-400 truncate">${FLAG[i.lang] || ""} ${esc(LANG_LABEL[i.lang] || i.lang)}${i.altName ? ` · 🇩🇪 ${esc(i.altName)}` : ""} · ${esc(i.setName)}${i.rarity ? ` · ${esc(i.rarity)}` : ""}</p>
-        <div class="flex items-end gap-3 mt-0.5">
-          <div><p class="text-[9px] uppercase font-bold text-slate-500">Marktpreis</p><p class="text-lg font-black text-emerald-400 leading-none">${priceTxt(i)}</p></div>
+        ${cur.source === "ai" ? `<p class="text-[9px] text-cyan-300 truncate">🤖 KI-Vision${cur.aiNote ? ` · ${esc(cur.aiNote)}` : ""}</p>` : cur.byNumber ? `<p class="text-[9px] text-emerald-300">🔢 per Sammlernummer bestätigt</p>` : ""}
+        <div class="flex items-end gap-3 mt-0.5 flex-wrap">
+          <div><p class="text-[9px] uppercase font-bold text-slate-500">Cardmarket ${esc(cond)}</p><p class="text-lg font-black text-emerald-400 leading-none">${price ? eur(price) : "–"}</p></div>
+          ${ebayHtml(i)}
           <div><p class="text-[9px] uppercase font-bold text-slate-500">PSA 10</p><p class="text-sm font-black text-purple-300 leading-none">${i.psa10 ? `${i.psa10Source === "ask" ? "ab " : ""}${eur(i.psa10)}` : "–"}</p></div>
         </div>
       </div>
       <button onclick="PS.liveScanDismiss()" class="text-slate-400 hover:text-white text-sm px-1" aria-label="Ergebnis schließen">✕</button>
     </div>
-    ${cur.variants.length > 1 ? `<div class="flex flex-wrap gap-1">${cur.variants.map((v) => `<button onclick="PS.liveScanVariant(${jsArg(v.key)})" class="text-[10px] font-black px-2 py-0.5 rounded-full ${v.key === i.key ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-200"}">${FLAG[v.lang] || ""} ${esc(v.setCode || v.setName || "")} ${esc(v.number || "")} · ${priceTxt(v)}</button>`).join("")}</div>` : ""}
+    ${variants.length > 1 ? `<div class="flex flex-wrap gap-1">${variants.map((v) => `<button onclick="PS.liveScanVariant(${jsArg(v.key)})" class="text-[10px] font-black px-2 py-0.5 rounded-full ${v.key === i.key ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-200"}">${FLAG[v.lang] || ""} ${esc(v.setCode || v.setName || "")} ${esc(v.number || "")} · ${priceTxt(v)}</button>`).join("")}</div>` : ""}
+    ${alts.length ? `<div><p class="text-[9px] uppercase font-bold text-slate-500 mb-0.5">Andere Treffer – antippen statt neu scannen</p><div class="grid grid-cols-3 gap-1">${alts.map((a) => `<button onclick="PS.liveScanPick(${jsArg(a.key)})" class="flex items-center gap-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg p-1 text-left min-w-0">
+        <img src="${esc(cdn(a.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" class="w-6 h-8 object-contain shrink-0" />
+        <span class="min-w-0"><span class="block text-[9px] font-black text-white truncate">${FLAG[a.lang] || ""} ${esc(a.name)}</span><span class="block text-[9px] text-slate-400 truncate">${esc(a.number || "")} ${esc(a.setCode || "")} · ${priceTxt(a)}</span></span></button>`).join("")}</div></div>` : ""}
+    <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Variante">
+      <span class="text-[9px] uppercase font-bold text-slate-500 w-14">Variante</span>
+      ${FINISHES.map(([f, l]) => `<button onclick="PS.liveScanFinish('${f}')" aria-pressed="${f === finish}" class="${btnCls(f === finish)}">${l}${f === "reverse_holo" && Number(i.reversePrice) > 0 ? ` · ${eur(i.reversePrice)}` : ""}</button>`).join("")}
+    </div>
+    <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Zustand">
+      <span class="text-[9px] uppercase font-bold text-slate-500 w-14">Zustand</span>
+      ${CONDS.map((c) => `<button onclick="PS.liveScanCondition('${c}')" aria-pressed="${c === cond}" title="${COND_LABEL[c]}" class="${btnCls(c === cond)}">${c}${basePrice(i, finish) ? ` ${eur(condPrice(i, finish, c))}` : ""}</button>`).join("")}
+    </div>
     <div class="grid grid-cols-[1fr_auto] gap-1.5">
-      <button onclick="PS.liveScanSell(${k})" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-xs font-black py-2.5 rounded-xl shadow truncate px-2">🏷️ Verkaufen${i.price ? ` · ${priceTxt(i)}` : ""}</button>
+      <button onclick="PS.liveScanSell(${k})" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-xs font-black py-2.5 rounded-xl shadow truncate px-2">🏷️ Verkaufen · im Marktplatz inserieren${price ? ` · ${eur(price)}` : ""}</button>
       <button onclick="PS.liveScanSell(${k}, 'instant')" title="1-Tap: fairer Preis, gemerkte Angaben, geht nach kurzem Countdown live" class="bg-yellow-400 text-slate-950 text-xs font-black px-3 py-2.5 rounded-xl shadow disabled:opacity-40">⚡ 1-Tap live</button>
     </div>
     <div class="grid grid-cols-4 gap-1.5">
-      <button onclick="PS.liveScanAdd(${k})" class="bg-emerald-500 text-slate-950 text-[11px] font-black py-2 rounded-xl">💼 Sammlung</button>
+      <button onclick="PS.liveScanAdd(${k})" class="bg-emerald-500 text-slate-950 text-[11px] font-black py-2 rounded-xl">💼 + Sammlung</button>
       <button onclick="PS.liveScanWish(${k})" ${canWish ? "" : 'disabled title="Wunschliste gibt es für deutsche und englische Karten"'} class="bg-rose-400 text-slate-950 text-[11px] font-black py-2 rounded-xl disabled:opacity-40">❤️ Wunsch</button>
       <button onclick="PS.liveScanFlip(${k})" class="bg-yellow-400 text-slate-950 text-[11px] font-black py-2 rounded-xl">📈 Flip-Check</button>
       <button onclick="PS.liveScanDetails(${k})" class="bg-slate-800 text-white text-[11px] font-black py-2 rounded-xl">ℹ️ Details</button>
     </div>
+    <button onclick="PS.liveScanNext()" class="w-full bg-slate-800 hover:bg-slate-700 text-cyan-200 text-xs font-black py-2 rounded-xl">➡️ Nächste Karte scannen${sc.prefs.series ? " (Serien-Scan)" : ""}${sc.series.length ? ` · ${sc.series.length} in der Liste` : ""}</button>
   </div>`;
 }
 
+/** Zustand/Variante des aktuellen Treffers (für Sammlung, Inserat und Serie). */
+function choiceFor(key) {
+  if (sc.current?.key === key) return { condition: sc.current.condition || sc.prefs.condition || "NM", variant: sc.current.finish || "normal" };
+  const s = sc.series.find((x) => x.key === key);
+  return { condition: s?.scanCondition || sc.prefs.condition || "NM", variant: s?.scanVariant || "normal" };
+}
+
 function addToSeries(info) {
-  if (sc.series[0]?.key === info.key) return;
-  info = { ...info, probe: sc.current?.probe || null, photo: sc.current?.photo || null };
+  const pick = { scanCondition: sc.current?.condition || sc.prefs.condition || "NM", scanVariant: sc.current?.finish || "normal" };
+  if (sc.series[0]?.key === info.key) { sc.series[0] = { ...sc.series[0], ...pick }; renderSeries(); return; }
+  info = { ...info, probe: sc.current?.probe || null, photo: sc.current?.photo || null, ...pick };
   sc.series = [info, ...sc.series.filter((s) => s.key !== info.key)].slice(0, 60);
   renderSeries();
+}
+
+/** Zustand/Variante im ersten Serien-Eintrag nachziehen, wenn er zum aktuellen Treffer gehört. */
+function syncSeriesHead() {
+  if (sc.current && sc.series[0]?.key === sc.current.key) {
+    sc.series[0] = { ...sc.series[0], scanCondition: sc.current.condition, scanVariant: sc.current.finish };
+    renderSeries();
+  }
 }
 
 function renderSeries() {
   const box = $("ps-ls-series");
   if (!box) return;
   if (!sc.series.length) { box.innerHTML = ""; return; }
-  const total = sc.series.reduce((s, x) => s + (Number(x.price) || 0), 0);
+  const total = sc.series.reduce((s, x) => s + (condPrice(x, x.scanVariant || "normal", x.scanCondition || "NM") || Number(x.price) || 0), 0);
   box.innerHTML = `<div class="flex items-center justify-between gap-2">
       <p class="text-xs font-black text-white">🗂️ In dieser Sitzung gescannt: ${sc.series.length} Karten • ${eur(total)}</p>
       <div class="flex flex-wrap justify-end gap-1.5"><button onclick="PS.liveScanSellAll()" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-lg">🏷️ Alle inserieren</button>
@@ -437,16 +864,20 @@ function renderSeries() {
       <button onclick="PS.liveScanAddAll()" class="bg-emerald-500 text-slate-950 text-[11px] font-black px-2.5 py-1.5 rounded-lg">💼 Alle zur Sammlung</button>
       <button onclick="PS.liveScanClear()" class="bg-slate-800 text-slate-300 text-[11px] font-bold px-2.5 py-1.5 rounded-lg">Leeren</button></div>
     </div>
-    <div class="grid grid-cols-3 sm:grid-cols-6 gap-1.5">${sc.series.map((s) => `
+    <div class="grid grid-cols-3 sm:grid-cols-6 gap-1.5">${sc.series.map((s) => {
+      const p = condPrice(s, s.scanVariant || "normal", s.scanCondition || "NM") || Number(s.price) || 0;
+      return `
       <button onclick="PS.liveScanDetails(${jsArg(s.key)})" class="bg-slate-900 border border-slate-800 hover:border-cyan-400 rounded-xl p-1.5 text-[10px] text-white text-center">
         <span class="relative block">
           <img src="${esc(s.photo || cdn(s.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" alt="" class="h-20 mx-auto ${s.photo ? "object-cover rounded" : "object-contain"}" />
           ${s.photo ? `<span class="absolute top-0 right-0 text-[8px] font-black bg-cyan-400 text-slate-950 px-1 rounded" title="Echtes Scan-Foto">📷</span>` : ""}
-          ${s.price ? `<span class="absolute -bottom-1 left-0 ps-price-tag-tilt">${priceTagHtml({ price: s.price }, "sm")}</span>` : ""}
+          ${p ? `<span class="absolute -bottom-1 left-0 ps-price-tag-tilt">${priceTagHtml({ price: p }, "sm")}</span>` : ""}
         </span>
         <span class="block truncate font-bold mt-1">${FLAG[s.lang] || ""} ${esc(s.name)}</span>
-      </button>`).join("")}</div>
-    <p class="text-[10px] text-slate-500">Tipp: Karten einfach nacheinander vor die Kamera halten – jede erkannte Karte landet hier mit Preis-Etikett und echtem Scan-Foto. Mit „Alle inserieren“ (oder ⚡ 1-Tap: faire Preise, geht nach kurzem Countdown von selbst live) erscheinen sie im Swipe-Radar, wo Käufer mit ❌, 🛒 Kaufen oder ❤️ reagieren.</p>`;
+        <span class="block text-[9px] text-slate-400">${esc(s.scanCondition || "NM")}${s.scanVariant && s.scanVariant !== "normal" ? ` · ${s.scanVariant === "reverse_holo" ? "Rev. Holo" : "Holo"}` : ""}</span>
+      </button>`;
+    }).join("")}</div>
+    <p class="text-[10px] text-slate-500">Tipp: Mit 🔁 Serien-Scan einfach Karte für Karte in den Rahmen legen – jede erkannte Karte landet hier mit Zustand, Preis-Etikett und echtem Scan-Foto. Mit „Alle inserieren“ (oder ⚡ 1-Tap: faire Preise, geht nach kurzem Countdown von selbst live) erscheinen sie im Swipe-Radar, wo Käufer mit ❌, 🛒 Kaufen oder ❤️ reagieren.</p>`;
 }
 
 /** KI-Knopf hervorheben, wenn die Erkennung auf dem Gerät unsicher ist (Stufe 3 nur bei Bedarf). */
@@ -463,7 +894,7 @@ function offerAi(on) {
 // Stufe 2: lernender Index
 // ---------------------------------------------------------------------------
 /** Fingerabdruck einer übernommenen Karte an den Server melden (einmal je Karte und Sitzung, ohne Bild). */
-function learn(key, probe, source = "confirm") {
+function learn(key, probe, source = sc.current?.source === "ai" && sc.current?.keys?.includes(key) ? "ai" : "confirm") {
   if (!state.user || !probe?.artP || !key) return;
   const id = `${key}|${probe.artP}`;
   if (sc.learned.has(id)) return;
@@ -484,6 +915,25 @@ function waitReady(timeoutMs = 12_000) {
   });
 }
 
+/** Foto (Data-URL) auf dem Gerät auswerten: Worker-Ergebnis + Canvas des Fotos (für den exakten Zuschnitt). */
+async function analyseImage(dataUrl) {
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
+  // 1100 px statt früher 900 px: mehr Pixel für die Sammlernummer
+  const scale = Math.min(1, 1100 / Math.max(img.width, img.height));
+  const W = Math.round(img.width * scale), H = Math.round(img.height * scale);
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, W, H);
+  // Rahmen: größtes Kartenformat, das ins Foto passt (Fotos sind meist formatfüllend)
+  const gh = Math.min(H * 0.92, (W * 0.92) / (63 / 88)), gw = gh * (63 / 88);
+  const guide = { x0: (W - gw) / 2, y0: (H - gh) / 2, x1: (W + gw) / 2, y1: (H + gh) / 2 };
+  const guideQuad = [[guide.x0, guide.y0], [guide.x1, guide.y0], [guide.x1, guide.y1], [guide.x0, guide.y1]];
+  const ready = (await waitReady()) && sc.indexCount;
+  const m = ready ? await workerFrame({ w: W, h: H, data: ctx.getImageData(0, 0, W, H).data.buffer, guide, ocr: true, capture: true }) : {};
+  return { m, cv, corners: m.found ? m.corners : guideQuad };
+}
+
 /**
  * Erkennt eine Karte auf einem Foto (Data-URL) komplett auf dem Gerät.
  * Ergebnis: { accepted, strong, key, info, probe } – bei unsicherem Ergebnis entscheidet der Aufrufer über die KI.
@@ -491,23 +941,7 @@ function waitReady(timeoutMs = 12_000) {
 async function recognizeImage(dataUrl) {
   try {
     if (!(await waitReady()) || !sc.indexCount) return { accepted: false, probe: null };
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
-    const scale = Math.min(1, 900 / Math.max(img.width, img.height));
-    const W = Math.round(img.width * scale), H = Math.round(img.height * scale);
-    const cv = document.createElement("canvas");
-    cv.width = W; cv.height = H;
-    const ctx = cv.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(img, 0, 0, W, H);
-    const data = ctx.getImageData(0, 0, W, H).data.buffer;
-    // Rahmen: größtes Kartenformat, das ins Foto passt (Fotos sind meist formatfüllend)
-    const gh = Math.min(H * 0.92, (W * 0.92) / (63 / 88)), gw = gh * (63 / 88);
-    const guide = { x0: (W - gw) / 2, y0: (H - gh) / 2, x1: (W + gw) / 2, y1: (H + gh) / 2 };
-    const reqId = `img${++sc.reqSeq}`;
-    const m = await new Promise((resolve) => {
-      sc.pending.set(reqId, resolve);
-      ensureWorker().postMessage({ type: "frame", reqId, w: W, h: H, data, guide, ocr: true }, [data]);
-      setTimeout(() => { if (sc.pending.delete(reqId)) resolve({}); }, 8000);
-    });
+    const { m } = await analyseImage(dataUrl);
     const strong = Boolean(m.accepted && (m.byNumber || m.score <= SCORE_STRONG) && !m.glareHigh);
     if (!strong) return { accepted: false, probe: m.probe || null, glare: Boolean(m.glareHigh) };
     const [info] = await fetchInfo(orderGroup(m.group || []).map((g) => g.key).slice(0, 4));
@@ -517,13 +951,56 @@ async function recognizeImage(dataUrl) {
   }
 }
 
+function fileToDataUrl(file, max = 1600) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      resolve(cv.toDataURL("image/jpeg", 0.92));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Bild nicht lesbar")); };
+    img.src = url;
+  });
+}
+
+/** Galerie-Import: Foto im Sucher zeigen → Erkennung auf dem Gerät → bei Unsicherheit KI-Vision auf dem Kartenausschnitt. */
+async function scanUpload(file) {
+  if (!file) return;
+  if (sc.running) stop();
+  let dataUrl;
+  try { dataUrl = await fileToDataUrl(file); } catch { toast("🖼️ Foto nicht lesbar", "Bitte ein JPG- oder PNG-Foto wählen."); return; }
+  const still = $("ps-ls-still");
+  if (still) { still.src = dataUrl; still.classList.remove("hidden"); }
+  $("ps-ls-idle")?.classList.add("hidden");
+  $("ps-ls-hint")?.classList.remove("hidden");
+  setUi("ready", "⚡ Erkenne Karte auf dem Foto …", 1);
+  try {
+    const { m, cv, corners } = await analyseImage(dataUrl);
+    const photo = cropToCard(cv, corners, 440, 0.85);
+    if (m.accepted) { await showHit(orderGroup(m.group || []), m, photo); return; }
+    if (state.user) { if (await runVision(cropToCard(cv, corners), { probe: m.probe || null, photo })) return; }
+    else if (await showNear(m, photo, false)) return;
+    else requireLogin();
+    setUi("ready", "🤔 Nicht erkannt – anderes Foto wählen oder Kamera starten", 0);
+  } catch (e) { handleError(e); }
+}
+
 // ---------------------------------------------------------------------------
 // Aktionen
 // ---------------------------------------------------------------------------
 const infoOf = (key) => sc.info.get(key) || sc.series.find((s) => s.key === key) || null;
 
-async function addOne(info) {
+async function addOne(info, choice = null) {
   const body = info.kind === "print" ? { printId: info.id } : { cardId: info.id };
+  // Zustand und Variante aus der Schnellwahl mitgeben (Binder zeigt dann den passenden Wert)
+  const c = choice || { condition: info.scanCondition || "NM", variant: info.scanVariant || "normal" };
+  if (CONDS.includes(c.condition)) body.condition = c.condition;
+  if (FINISHES.some(([f]) => f === c.variant)) body.variant = c.variant;
   await api("/api/portfolio", { method: "POST", body });
 }
 
@@ -531,11 +1008,13 @@ async function addToCollection(key) {
   const i = infoOf(key);
   if (!i || !requireLogin()) return;
   try {
-    await addOne(i);
+    const choice = choiceFor(key);
+    await addOne(i, choice);
     learn(key, probeFor(key));
+    confirmCurrent(key);
     haptic("success");
     window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
-    toast("💼 In deiner Sammlung", `${i.name} ${i.number || ""} – mit Live-Preis.`); window.PS?.loadPortfolio?.();
+    toast("💼 In deiner Sammlung", `${i.name} ${i.number || ""} (${choice.condition}) – mit Live-Preis.${sc.prefs.series ? " Nächste Karte in den Rahmen!" : ""}`); window.PS?.loadPortfolio?.();
   } catch (e) { handleError(e); }
 }
 
@@ -566,9 +1045,12 @@ function sellOne(key, mode = "") {
   const i = infoOf(key);
   if (!i || (!IS_STAGE && !requireLogin())) return;
   learn(key, probeFor(key));
+  confirmCurrent(key);
   // Scan-Foto mitgeben (Serie bzw. aktueller Treffer), damit Käufer im Swipe-Radar die echte Karte sehen
-  const photo = sc.series.find((s) => s.key === key)?.photo || (sc.current?.key === key ? sc.current.photo : null) || null;
-  openQuickList([{ ...i, photo, source: "scan" }], { instant: mode === "instant" });
+  const photo = (sc.current?.key === key ? sc.current.photo : null) || sc.series.find((s) => s.key === key)?.photo || null;
+  const choice = choiceFor(key);
+  // Zustand + Variante aus der Schnellwahl → Preisvorschlag im Schnell-Inserieren passt sofort (bleibt editierbar)
+  openQuickList([{ ...i, photo, source: "scan", condition: choice.condition.toLowerCase(), variant: choice.variant }], { instant: mode === "instant" });
 }
 
 /** Alle Karten der Scan-Serie auf einmal inserieren */
@@ -576,7 +1058,7 @@ function sellAll(mode = "") {
   if (!sc.series.length) { toast("Noch nichts gescannt", "Halte Karten nacheinander vor die Kamera – jede erkannte Karte landet in der Liste."); return; }
   if (!requireLogin()) return;
   for (const s of sc.series) learn(s.key, s.probe);
-  openQuickList([...sc.series].reverse().map((s) => ({ ...s, source: "scan" })), { instant: mode === "instant" });
+  openQuickList([...sc.series].reverse().map((s) => ({ ...s, source: "scan", condition: String(s.scanCondition || "NM").toLowerCase(), variant: s.scanVariant || "normal" })), { instant: mode === "instant" });
 }
 
 function flipCheck(key) {
@@ -594,6 +1076,8 @@ function details(key) {
 function photoScan() {
   const video = $("ps-ls-video");
   if (!sc.running || !video?.videoWidth) { window.PS?.openPhotoScanner?.(); return; }
+  // Neu: direkt KI-Vision auf dem exakt zugeschnittenen Kartenausschnitt (Ergebnis im Sucher, Top-Treffer + Alternativen)
+  if (state.user && sc.geometry) { forceVision(); return; }
   const cv = document.createElement("canvas");
   const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
   cv.width = Math.round(video.videoWidth * scale); cv.height = Math.round(video.videoHeight * scale);
@@ -606,6 +1090,28 @@ function photoScan() {
     window.PS?.showSub?.("scan", "camera");
     window.PS?.scanFile?.(new File([blob], "scan.jpg", { type: "image/jpeg" }));
   }, "image/jpeg", 0.9);
+}
+
+/** KI-Vision auf dem aktuellen Kamerabild erzwingen (Knopf „Nicht erkannt?“). */
+async function forceVision() {
+  if (sc.capturing) return;
+  const video = $("ps-ls-video"), g = sc.geometry;
+  sc.capturing = true;
+  try {
+    const W = Math.max(FRAME_W, Math.min(CAPTURE_W, Math.round(g.sw))), f = W / g.W, H = Math.round(g.H * f);
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    cv.getContext("2d").drawImage(video, g.sx0, g.sy0, g.sw, g.sh, 0, 0, W, H);
+    const corners = sc.prevCorners ? sc.prevCorners.map(([x, y]) => [x * f, y * f])
+      : [[g.guide.x0 * f, g.guide.y0 * f], [g.guide.x1 * f, g.guide.y0 * f], [g.guide.x1 * f, g.guide.y1 * f], [g.guide.x0 * f, g.guide.y1 * f]];
+    const probe = sc.lastProbe && Date.now() - sc.lastProbe.at < 8000 ? sc.lastProbe : null;
+    await runVision(cropToCard(cv, corners), { probe, photo: capturePhoto(sc.prevCorners) });
+  } finally { sc.capturing = false; }
+}
+
+/** Unsicheren Treffer bestätigen (Aktion ausgeführt) → in die Serie übernehmen. */
+function confirmCurrent(key) {
+  if (sc.current?.key === key && sc.current.unsure) { sc.current.unsure = false; addToSeries(sc.current.info); renderHud(sc.current); }
 }
 
 function setLang(l) {
@@ -684,7 +1190,7 @@ async function demoScan(ms = 1200) {
   if (frame) { frame.style.borderColor = "#34d399"; frame.style.boxShadow = "0 0 0 9999px rgba(2,6,23,.45),0 0 28px 4px rgba(52,211,153,.8)"; }
   if (hintEl) hintEl.textContent = "✅ Erkannt";
   const info = sc.demo.info;
-  sc.current = { key: info.key, keys: [info.key], info, variants: [info], probe: null, photo: null };
+  sc.current = { key: info.key, keys: [info.key], info, variants: [info], alts: [], probe: null, photo: null, finish: "normal", condition: sc.prefs.condition || "NM" };
   sc.currentAt = Date.now();
   addToSeries(info);
   renderHud(sc.current);
@@ -712,7 +1218,59 @@ export const liveScanApi = {
   liveScanRecognize: (dataUrl) => recognizeImage(dataUrl),
   /** Stufe 2 nach KI-Erkennung: Fingerabdruck mit der vom Nutzer bestätigten Karte verknüpfen */
   liveScanLearn: (key, probe, source = "ai") => learn(key, probe || window.__psScanProbe, source),
-  liveScanDismiss: () => { sc.current = null; sc.currentAt = 0; renderHud(null); hint("Karte in den Rahmen halten"); },
+  liveScanDismiss: () => {
+    sc.current = null; sc.currentAt = 0; renderHud(null);
+    if (!sc.running) { $("ps-ls-still")?.classList.add("hidden"); $("ps-ls-hint")?.classList.add("hidden"); $("ps-ls-idle")?.classList.remove("hidden"); }
+    setUi("search", "📇 Karte in den Rahmen halten");
+  },
+  /** Auslöser: Einzelbild in voller Schärfe (zusätzlich zur Auto-Erkennung); bei aus­geschalteter Kamera startet er sie */
+  liveScanShutter: () => capture({ auto: false }),
+  liveScanUpload: (file) => scanUpload(file),
+  /** Alternative aus „Andere Treffer“ übernehmen – nie neu scannen müssen */
+  liveScanPick: (key) => {
+    const cur = sc.current;
+    if (!cur?.alts) return;
+    const pick = cur.alts.find((a) => a.key === key);
+    if (!pick) return;
+    haptic("select");
+    const prev = cur.info;
+    cur.alts = [prev, ...cur.alts.filter((a) => a.key !== key)].slice(0, 3);
+    cur.info = pick; cur.key = pick.key; cur.variants = [pick]; cur.unsure = false;
+    // Falscher Treffer stand schon in der Serie → durch die gewählte Karte ersetzen (Foto/Fingerabdruck bleiben)
+    if (sc.series[0]?.key === prev.key) sc.series[0] = { ...pick, probe: sc.series[0].probe, photo: sc.series[0].photo, scanCondition: cur.condition, scanVariant: cur.finish };
+    else addToSeries(pick);
+    if (sc.prefs.series) sc.suppress = [...new Set([...(sc.suppress || []), pick.key])];
+    renderHud(cur); renderSeries();
+  },
+  /** Zustands-Schnellwahl (NM/EX/GD/LP/PL) mit direkter Preisanpassung; wird als Standard gemerkt */
+  liveScanCondition: (c) => {
+    if (!CONDS.includes(c)) return;
+    sc.prefs.condition = c; savePrefs();
+    if (sc.current?.info) { sc.current.condition = c; haptic("select"); renderHud(sc.current); syncSeriesHead(); }
+  },
+  /** Variante (Normal / Reverse Holo / Holo) – Reverse Holo nutzt den eigenen Cardmarket-Preis */
+  liveScanFinish: (f) => {
+    if (!FINISHES.some(([x]) => x === f) || !sc.current?.info) return;
+    sc.current.finish = f; haptic("select"); renderHud(sc.current); syncSeriesHead();
+  },
+  /** „Nächste Karte scannen“: Ergebnis schließen, aktuelle Karte bis zum Herausnehmen ignorieren, Kamera bereit */
+  liveScanNext: () => {
+    if (sc.current?.unsure && sc.current.info) { sc.current.unsure = false; addToSeries(sc.current.info); }
+    sc.suppress = sc.current?.keys || sc.suppress;
+    sc.current = null; sc.currentAt = 0; sc.stable = 0; sc.autoArmed = true; sc.autoAiUsed = false;
+    renderHud(null);
+    if (!sc.running) { $("ps-ls-still")?.classList.add("hidden"); start(); return; }
+    setUi("search", "🔁 Nächste Karte in den Rahmen halten");
+  },
+  liveScanSeriesMode: () => {
+    sc.prefs.series = !sc.prefs.series; savePrefs(); renderToggles();
+    toast(sc.prefs.series ? "🔁 Serien-Scan an" : "🔁 Serien-Scan aus", sc.prefs.series ? "Lege Karte für Karte in den Rahmen – jede erkannte Karte landet sofort in der Liste, doppelte werden übersprungen." : "Der Scanner zeigt wieder jede Karte einzeln.");
+    if (sc.current) renderHud(sc.current);
+  },
+  liveScanAutoAi: () => {
+    sc.prefs.autoAi = !sc.prefs.autoAi; savePrefs(); renderToggles();
+    toast(sc.prefs.autoAi ? "🤖 KI-Auto an" : "🤖 KI-Auto aus", sc.prefs.autoAi ? "Ist die Erkennung auf dem Gerät unsicher, prüft die KI den Kartenausschnitt automatisch (zählt als KI-Scan)." : "Die KI wird nur noch per Auslöser oder „Nicht erkannt?“ gefragt.");
+  },
   liveScanVariant: (key) => {
     if (!sc.current?.variants) return;
     const v = sc.current.variants.find((x) => x.key === key);
@@ -720,7 +1278,7 @@ export const liveScanApi = {
     sc.current.info = v; sc.current.key = v.key;
     haptic("select");
     // Scan-Foto und Fingerabdruck gehören zur fotografierten Karte, nicht zur Sprachvariante
-    sc.series = sc.series.map((s, idx) => (idx === 0 && sc.current.variants.some((x) => x.key === s.key) ? { ...v, probe: s.probe, photo: s.photo } : s));
+    sc.series = sc.series.map((s, idx) => (idx === 0 && sc.current.variants.some((x) => x.key === s.key) ? { ...v, probe: s.probe, photo: s.photo, scanCondition: s.scanCondition, scanVariant: s.scanVariant } : s));
     renderHud(sc.current); renderSeries();
   },
   liveScanClear: () => { sc.series = []; renderSeries(); },
@@ -744,11 +1302,19 @@ export const liveScanApi = {
 /** Beim Öffnen des Unter-Reiters: Status laden; Admin-Bereich nach dem Login. */
 export function onLiveScanShown() {
   renderLangChips();
+  renderToggles();
   loadStatus();
 }
 
 export function initLiveScanner() {
   renderLangChips();
+  renderToggles();
+  // Galerie-Import (beide Datei-Felder) und Tap-to-Focus – per Delegation, weil das Panel nachgeladen wird
+  document.addEventListener("change", (e) => {
+    const el = e.target;
+    if (el?.dataset?.lsUpload) { const f = el.files?.[0]; el.value = ""; scanUpload(f); }
+  });
+  document.addEventListener("click", (e) => { if (e.target?.closest?.("#ps-ls-stage")) tapFocus(e); });
   window.addEventListener("resize", () => { if (sc.running) layout(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden && sc.running) stop(); });
 }
