@@ -381,12 +381,9 @@
     // ===================================================================
     // 1. SWIPE-ARENA
     // ===================================================================
-    const swipeCatalog = REAL_CARDS.map((c) => ({
-      id: c.id, title: cardLabel(c), setTag: c.setTag, setFull: c.setFull, rarity: c.rarity,
-      get cm() { return c.trend; }, get price() { return c.low; }, img: c.img, query: c.query,
-    }));
-
-    let activeDeck = [...swipeCatalog];
+    // Der Swipe-Stapel kommt ausschließlich aus dem Live-Katalog (DE/EN/JP, client/arena.js → /api/swipe/deck).
+    // Die festen REAL_CARDS oben dienen nur noch als Beispiele (Test-Push, Rip-or-Keep) und landen NIE im Stapel.
+    let activeDeck = [];
     let swipeIdx = 0;
     let savedMatches = lsJSON("pokeswipe_matches_clean", []);
 
@@ -414,12 +411,25 @@
     window.setSwipeDeck = setSwipeDeck;
     window.currentSwipeItem = () => (activeDeck.length ? activeDeck[swipeIdx % activeDeck.length] : null);
 
+    function renderSwipeLoading() {
+      document.getElementById("swipe-rarity").textContent = "Live-Katalog";
+      document.getElementById("swipe-title").textContent = "Karten werden geladen …";
+      document.getElementById("swipe-set").textContent = "Pokémon TCG – Deutsch, Englisch & Japanisch";
+      ["swipe-cm", "swipe-price", "swipe-margin"].forEach((id) => { const el = document.getElementById(id); if (el) el.textContent = "–"; });
+      const kindEl = document.getElementById("swipe-kind");
+      if (kindEl) kindEl.classList.add("hidden");
+      const img = document.getElementById("swipe-img");
+      if (img && img.getAttribute("src") !== "/card-fallback.svg") img.src = "/card-fallback.svg";
+    }
+
     function renderSwipeCard() {
-      if (!activeDeck.length) activeDeck = [...swipeCatalog];
+      if (!activeDeck.length) return renderSwipeLoading();
       const item = activeDeck[swipeIdx % activeDeck.length];
       const isListing = item.kind === "listing";
-      const diff = Math.max(0, (item.cm || 0) - (item.price || 0));
-      const pct = item.cm ? Math.round((diff / item.cm) * 100) : 0;
+      // item.price ist nur ein echtes Angebot (Inserat bzw. verifiziertes Live-Angebot), sonst 0 – nie der Cardmarket-„ab“-Preis
+      const offer = Number(item.price) || 0;
+      const diff = offer > 0 && item.cm > offer ? item.cm - offer : 0;
+      const pct = diff > 0 ? Math.round((diff / item.cm) * 100) : 0;
 
       document.getElementById("swipe-rarity").textContent = item.rarity || "Karte";
       document.getElementById("swipe-title").textContent = item.title;
@@ -428,7 +438,7 @@
       if (langEl) langEl.textContent = SWIPE_LANG[item.lang || "de"] || SWIPE_LANG.de;
       const kindEl = document.getElementById("swipe-kind");
       if (kindEl) {
-        const label = isListing ? (item.boosted ? "🚀 Top-Inserat" : "🤝 Tausch-Inserat") : (item.dealPct >= 15 ? `🔥 ${item.dealPct} % unter Markt` : (item.wish ? "💛 Auf deiner Wunschliste" : ""));
+        const label = isListing ? (item.boosted ? "🚀 Top-Inserat" : "🤝 Tausch-Inserat") : (pct > 0 ? `🔥 ${pct} % unter Markt` : (item.wish ? "💛 Auf deiner Wunschliste" : ""));
         kindEl.textContent = label;
         kindEl.classList.toggle("hidden", !label);
       }
@@ -443,9 +453,10 @@
       const cmLabel = document.getElementById("swipe-cm-label");
       if (cmLabel) cmLabel.textContent = item.source === "tcgplayer" ? "Marktwert (TCGplayer, in €)" : "Marktwert (Cardmarket-Trend)";
       const priceLabel = document.getElementById("swipe-price-label");
-      if (priceLabel) priceLabel.textContent = isListing ? "Preis im Inserat" : "Günstigstes Angebot";
+      if (priceLabel) priceLabel.textContent = isListing ? "Preis im Inserat"
+        : offer > 0 ? (item.offerSource === "pokeswipe" ? "PokeSwipe-Angebot" : "Live-Angebot (eBay)") : "Kein günstigeres Live-Angebot";
       document.getElementById("swipe-cm").textContent = item.cm ? fmtEur(item.cm) : "–";
-      document.getElementById("swipe-price").textContent = item.price ? fmtEur(item.price) : "–";
+      document.getElementById("swipe-price").textContent = offer > 0 ? fmtEur(offer) : "–";
       document.getElementById("swipe-margin").textContent = diff > 0 ? `-${fmtEur(diff)} (-${pct}%)` : "–";
       const img = document.getElementById("swipe-img");
       delete img.dataset.fallback;
@@ -463,15 +474,8 @@
       if (left < 6 && typeof window.psArenaNeedMore === "function") { try { window.psArenaNeedMore(); } catch (e) {} }
     }
 
-    // Fester Chase-Katalog (Ausweich-Stapel ohne Verbindung) nach Set filtern
-    function filterSwipeDeck(tag) {
-      activeDeck = tag === "all" ? [...swipeCatalog] : swipeCatalog.filter(c => c.setTag === tag);
-      if (!activeDeck.length) activeDeck = [...swipeCatalog];
-      swipeIdx = 0;
-      renderSwipeCard();
-    }
-
     function nextSwipeCard(mode) {
+      if (!activeDeck.length) return;
       const item = activeDeck[swipeIdx % activeDeck.length];
       if (mode === "match") {
         if (!savedMatches.some(m => m.title === item.title)) {
@@ -1092,6 +1096,7 @@
 
     function addCurrentSwipeToPortfolio() {
       const item = activeDeck[swipeIdx % activeDeck.length];
+      if (!item) return;
       portfolio.unshift({ name: item.title, value: item.cm || 0, img: item.img });
       localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
       renderPortfolio();

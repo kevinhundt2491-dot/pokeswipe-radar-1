@@ -6,6 +6,7 @@ import { $, esc, jsArg, eur, toast, cm, cdn, FALLBACK_IMG, state, api, handleErr
 import { updatePrefs, encodePrefParam, prefSummary, sanitizeScores, COLD_START_SWIPES } from "../server/arena-logic.ts";
 import { haptic } from "./native.js";
 import { priceTagHtml, dealRating, CONDITION_INFO } from "./price-tag.js";
+import { priceDisplay } from "../server/price-display-logic.ts";
 
 const STORE_KEY = "ps_arena_filters";
 const PREF_KEY = "ps_arena_prefs";
@@ -142,8 +143,9 @@ async function resetTaste() {
   toast("🧠 Geschmack zurückgesetzt", "Die Arena lernt ab jetzt neu aus deinen Swipes.");
 }
 
-function deckQuery(excludeSeen = true) {
+function deckQuery(excludeSeen = true, withTotal = false) {
   const p = new URLSearchParams();
+  if (withTotal) p.set("count", "1");
   if (prefs.swipes) p.set("pw", encodePrefParam(prefs));
   p.set("lang", filters.langs.join(","));
   if (filters.set) p.set("set", filters.set);
@@ -186,7 +188,13 @@ function toDeckItem(it) {
     setFull: isListing ? `${setFull}${it.setName ? "" : "Tausch-Hub"}` : setFull,
     rarity: it.rarity || (isListing ? "Tausch-Inserat" : "Karte"),
     cm: Number(it.price) || 0,
-    price: Number(isListing ? it.offer : it.low) || 0,
+    // Nur echte Angebote: Inseratspreis bzw. verifiziertes Live-Angebot (eBay-Radar / PokeSwipe-Sofortkauf).
+    // Der Cardmarket-„ab“-Preis (it.low) ist nur eine Info und wird nie als Kaufpreis oder Rabatt angezeigt.
+    price: Number(it.offer) || 0,
+    offerSource: isListing ? "pokeswipe" : it.offerSource || null,
+    offerUrl: it.offerUrl || null,
+    offerListingId: it.offerListingId || null,
+    cmLow: Number(it.low) || 0,
     img: it.image || FALLBACK_IMG,
     query: `${it.name}${it.number ? ` ${it.number}` : ""}${ebayLangHint[it.lang] || ""}`.trim(),
     usd: it.usd || null,
@@ -222,7 +230,7 @@ async function fetchDeck(append) {
   while (loading) await new Promise((r) => setTimeout(r, 80));
   loading = true;
   try {
-    const res = await api(`/api/swipe/deck?${deckQuery(true)}`);
+    const res = await api(`/api/swipe/deck?${deckQuery(true, !append)}`);
     let items = (res.items || []).map(toDeckItem).filter((i) => i.img);
     // Alles schon gesehen? Dann ohne Ausschluss erneut mischen
     if (!items.length && seenList().length && !append) {
@@ -230,14 +238,19 @@ async function fetchDeck(append) {
       const again = await api(`/api/swipe/deck?${deckQuery(false)}`);
       items = (again.items || []).map(toDeckItem).filter((i) => i.img);
     }
-    return { items, wishlistEmpty: !!res.wishlistEmpty };
+    return { items, wishlistEmpty: !!res.wishlistEmpty, total: Number.isFinite(res.total) ? res.total : null };
   } finally {
     loading = false;
   }
 }
 
+const fmtCount = (n) => Number(n).toLocaleString("de-DE");
+let retryTimer = null;
+let retryCount = 0;
+
 export async function reloadDeck() {
-  setStatus("⏳ Lade passende Karten …");
+  clearTimeout(retryTimer); retryTimer = null;
+  setStatus("⏳ Lade Karten aus dem Live-Katalog …");
   try {
     const res = await fetchDeck(false);
     if (!res) return;
@@ -251,15 +264,22 @@ export async function reloadDeck() {
       return;
     }
     usingLive = window.setSwipeDeck?.(res.items, false) || false;
+    retryCount = 0;
     const listings = res.items.filter((i) => i.kind === "listing").length;
     const scanned = res.items.filter((i) => i.scanned && i.photo).length;
     setStatus(filters.market
       ? `🛒 ${listings} Inserate zum Durchswipen${scanned ? ` • ${scanned} mit echtem Scan-Foto` : ""}`
-      : `${res.items.length} Karten geladen${listings ? ` • ${listings} davon aus dem Tausch-Hub` : ""}`, "ok");
+      : res.total
+        ? `🃏 ${fmtCount(res.total)} passende Karten im Live-Katalog (${filters.langs.map((l) => LANGS.find((x) => x.lang === l)?.short || l).join("/")}) • wird beim Swipen automatisch nachgeladen${listings ? ` • ${listings} Tausch-Hub-Inserate dabei` : ""}`
+        : `${res.items.length} Karten geladen${listings ? ` • ${listings} davon aus dem Tausch-Hub` : ""}`, "ok");
   } catch (e) {
     // Wunschlisten-Filter ohne (gültigen) Login: Filter zurücksetzen und normal weiterswipen
     if (e.status === 401) { filters.wish = false; saveFilters(); renderFilterBar(); setStatus("Für den Wunschlisten-Filter bitte anmelden.", "warn"); return; }
-    setStatus("Live-Katalog gerade nicht erreichbar – du swipest die beliebtesten Chase-Karten.", "warn");
+    // Kein Ausweichen auf feste Demo-Karten: der echte Katalog wird mit wachsendem Abstand erneut geladen
+    retryCount++;
+    const wait = Math.min(30_000, 2000 * 2 ** Math.min(retryCount - 1, 4));
+    setStatus(`Live-Katalog gerade nicht erreichbar – neuer Versuch in ${Math.round(wait / 1000)} s …`, "warn");
+    retryTimer = setTimeout(() => { if (!document.hidden) reloadDeck(); else retryTimer = null; }, wait);
   }
 }
 
@@ -452,7 +472,7 @@ export async function openPrint(id) {
         <div class="bg-slate-950 rounded-2xl p-3 border border-indigo-500/40 space-y-1">
           <p class="font-black text-indigo-300">Cardmarket (EUR)</p>
           <p class="text-white font-bold">${p.cmTrend ? `Trend ${eur(p.cmTrend)}` : "kein Preis"}</p>
-          <p class="text-slate-400">ab ${p.cmLow ? eur(p.cmLow) : "–"} • Ø 7 T ${p.cmAvg7 ? eur(p.cmAvg7) : "–"} • Ø 30 T ${p.cmAvg30 ? eur(p.cmAvg30) : "–"}</p>
+          <p class="text-slate-400">CM-Tiefstpreis (alle Zustände) ${p.cmLow ? eur(p.cmLow) : "–"} • Ø 7 T ${p.cmAvg7 ? eur(p.cmAvg7) : "–"} • Ø 30 T ${p.cmAvg30 ? eur(p.cmAvg30) : "–"}</p>
         </div>
         <div class="bg-slate-950 rounded-2xl p-3 border border-sky-500/40 space-y-1">
           <p class="font-black text-sky-300">TCGplayer (USD)</p>
@@ -515,13 +535,23 @@ let lastBuyAt = 0;
 
 const totalOf = (item) => (Number(item.price) || 0) + (Number(item.shippingCents) || 0) / 100;
 
+/** Preisanzeige einer Katalogkarte (Etikett, Mittelzeile und Kauf-Knopf nutzen genau dieses Ergebnis). */
+export function catalogPrice(item) {
+  return priceDisplay({ market: item?.cm, offer: item?.price, offerSource: item?.offerSource });
+}
+
 function actionsHtml(item) {
   const isListing = item.kind === "listing";
   const round = "w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-2xl shadow-lg transition active:scale-90";
   let buyLabel, buyCls = "bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950";
   if (isListing && item.buyNow) buyLabel = `🛒 Kaufen · ${eur(totalOf(item))}`;
   else if (isListing) { buyLabel = "🤝 Anfragen / Kaufen"; buyCls = "bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950"; }
-  else buyLabel = Number(item.price) > 0 ? `🛒 Kaufen ab ${eur(item.price)}` : "🛒 Kaufen";
+  else {
+    // Gleiche Quelle wie Etikett und Mittelzeile: verifiziertes Live-Angebot oder Cardmarket-Trend
+    const pd = catalogPrice(item);
+    buyLabel = pd.buttonLabel;
+    if (pd.mode !== "offer") buyCls = "bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950";
+  }
   return `<div class="grid grid-cols-[auto_1fr_auto] gap-3 items-center">
       <button type="button" onclick="nextSwipeCard('skip')" class="${round} bg-slate-800 hover:bg-slate-700 border-2 border-slate-600 text-white" aria-label="Weiter (nicht interessiert)" title="Weiter">❌</button>
       <button type="button" onclick="PS.arenaBuy()" class="${buyCls} font-black py-3.5 rounded-2xl text-sm shadow-lg truncate px-2">${esc(buyLabel)}</button>
@@ -555,14 +585,20 @@ function paintSwipeExtras(item) {
   // Preis-Etikett: Inserat = Verkaufspreis + Zustand + Versand; Katalogkarte = günstigstes Angebot
   const tag = $("swipe-tag");
   if (tag) {
-    // Katalogkarte ohne Angebot: Marktwert als Etikett, damit jede Karte im Stapel ein Preisschild trägt
-    const offer = Number(item.price) || 0;
-    const price = offer > 0 || isListing ? offer : Number(item.cm) || 0;
-    tag.innerHTML = price > 0 ? priceTagHtml({
-      price, market: offer > 0 ? item.cm : null, condition: isListing ? item.condition : "",
-      shippingCents: isListing && item.buyNow ? item.shippingCents : 0,
-      label: isListing ? (item.buyNow ? "Sofort" : "Preis") : offer > 0 ? "ab" : "Markt",
-    }, "lg") : "";
+    if (isListing) {
+      const offer = Number(item.price) || 0;
+      tag.innerHTML = offer > 0 ? priceTagHtml({
+        price: offer, market: item.cm, condition: item.condition,
+        shippingCents: item.buyNow ? item.shippingCents : 0, label: item.buyNow ? "Sofort" : "Preis",
+      }, "lg") : "";
+    } else {
+      // Katalogkarte: „ab“ nur mit verifiziertem, günstigerem Live-Angebot – sonst der echte Marktwert (Cardmarket-Trend)
+      const pd = catalogPrice(item);
+      tag.innerHTML = pd.tagPrice ? priceTagHtml({
+        price: pd.tagPrice, label: pd.tagLabel, dealPct: pd.mode === "offer" ? pd.dealPct : 0,
+        note: pd.mode === "offer" ? (pd.offerSource === "pokeswipe" ? "PokeSwipe-Angebot" : "Live bei eBay") : "",
+      }, "lg") : "";
+    }
   }
   // Kennzeichen: frisch gescannt mit echtem Foto, Zustand ausgeschrieben
   const kind = $("swipe-kind");
@@ -617,7 +653,7 @@ async function openBuySheet(item) {
   const head = `<div class="flex gap-3 items-center">
       <img src="${esc(cdn(item.img || FALLBACK_IMG, 160))}" onerror="this.src='${FALLBACK_IMG}'" alt="" class="w-14 h-20 object-contain rounded" />
       <div class="min-w-0"><p class="text-sm font-black text-white">${esc(item.title)}</p><p class="text-[11px] text-slate-400">${esc(item.setFull || "")}</p>
-      ${item.cm ? `<p class="text-[11px] text-slate-300">Marktwert ${eur(item.cm)}</p>` : ""}</div></div>`;
+      ${item.cm ? `<p class="text-[11px] text-slate-300">Marktwert (${item.source === "tcgplayer" ? "TCGplayer" : "Cardmarket-Trend"}): ${eur(item.cm)}</p>` : ""}</div></div>`;
   modal("ps-swipe-buy", `<h3 class="text-base font-black text-white">🛒 Kaufen</h3>${head}<p class="text-yellow-400 text-xs font-bold text-center py-3">⏳ Suche Angebote mit Käuferschutz …</p>`);
   let offers = [];
   const cardId = item.cardId || (item.lang === "de" ? item.id : null);
@@ -635,7 +671,11 @@ async function openBuySheet(item) {
         <button type="button" onclick="PS.arenaBuyOffer(${Number(o.listingId)})" class="shrink-0 bg-cyan-400 text-slate-950 font-black text-xs px-3 py-2 rounded-xl">🛒 Kaufen</button>
       </div>`).join("")}</div>`
     : `<p class="text-xs text-slate-400">Gerade bietet kein PokeSwipe-Sammler diese Karte mit Sofort-Kauf an. Merke sie dir mit ❤️ – du bekommst eine Nachricht, sobald jemand sie inseriert.</p>`;
-  modal("ps-swipe-buy", `<h3 class="text-base font-black text-white">🛒 Kaufen</h3>${head}${list}${ext}`);
+  const pd = catalogPrice(item);
+  const live = pd.mode === "offer" && pd.offerSource === "ebay" && item.offerUrl
+    ? `<a href="${esc(item.offerUrl)}" target="_blank" rel="noopener sponsored" class="block bg-emerald-400 text-slate-950 font-black py-2.5 rounded-xl text-xs text-center">🛒 Live-Angebot bei eBay: ${esc(eur(pd.offer))} inkl. Versand${pd.dealPct ? ` (−${pd.dealPct} % unter Markt)` : ""}*</a>`
+    : "";
+  modal("ps-swipe-buy", `<h3 class="text-base font-black text-white">🛒 Kaufen</h3>${head}${live}${list}${ext}`);
 }
 
 async function buyOffer(listingId) {
@@ -685,7 +725,10 @@ export function initArena() {
   window.psArenaNeedMore = loadMore;
   window.psArenaMatch = onMatch;
   window.psArenaSwipe = onSwipe;
-  document.addEventListener("visibilitychange", () => { if (document.hidden) flushEvents(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) flushEvents();
+    else if (!usingLive && retryCount && !retryTimer) reloadDeck();
+  });
   window.addEventListener("ps:swipe-render", (e) => { markSeen(e.detail?.key); paintSwipeExtras(e.detail); });
   paintSwipeExtras(window.currentSwipeItem?.());
   // Arena erst laden, wenn sie sichtbar ist (spart Anfragen bei Direktlinks in andere Bereiche)

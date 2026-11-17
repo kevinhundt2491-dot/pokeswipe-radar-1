@@ -13,10 +13,11 @@ import type { PrefProfile } from "./arena-logic.ts";
 import { str, int, rows, rateLimit, clientIp } from "./util.ts";
 import { publicCache } from "./cache.ts";
 import { resilientFetch, markPartial, CircuitOpenError } from "./resilience.ts";
+import { discountVsMarket } from "./price-display-logic.ts";
 import {
   PRINT_LANGS, PRINT_ID_RE, TCGDEX_ID_RE, SET_ID_RE, LANG_LABEL, LANG_FLAG, RARITY_SQL, RARITY_LABEL, RARITY_BUCKETS, DEAL_MIN_PCT, DEAL_MIN_PRICE, HIT_MIN_PRICE_WITHOUT_RARITY,
   FX_FALLBACK, printId, splitPrintId, displayNumber, pickCardmarket, pickTcgplayer, choosePrice, parseEcbXml, parseDeckQuery,
-  normLang, rarityBucket, dealPct, toEur, DIGITAL_SERIES, estimatedPriority, releasePriority, type PrintLang, type Fx, type CatalogLang,
+  normLang, rarityBucket, toEur, DIGITAL_SERIES, estimatedPriority, releasePriority, type PrintLang, type Fx, type CatalogLang,
 } from "./intl-logic.ts";
 
 const TCGDEX = "https://api.tcgdex.net/v2";
@@ -335,7 +336,29 @@ function rarityWhere(opts: DeckOpts, col = sql`x.rarity`, priceCol = sql`x.price
   return sql`${include ? sql` AND ${col} ~* ${include}` : sql``}${exclude ? sql` AND (${col} IS NULL OR ${col} !~* ${exclude})` : sql``}`;
 }
 
-export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: PrefProfile | null = null) {
+/**
+ * Günstigstes verifiziertes Live-Angebot je Karte (Schlüssel = deutsche Karten-ID bzw. Druck-ID „en:…“/„ja:…“):
+ * aktive eBay-Sofortkauf-Angebote aus dem Flip-Radar (Rohkarte, nicht beschädigt/verdächtig, ≤ 36 h alt, passende Sprache)
+ * und kaufbare PokeSwipe-Sofortkauf-Inserate (Preis inkl. Versand).
+ */
+function liveOffersSql(userId: string | null) {
+  return sql`
+    SELECT DISTINCT ON (key) key, total::float AS offer, src AS offer_source, url AS offer_url, listing_id AS offer_listing_id FROM (
+      SELECT o.target_id AS key, o.total, 'ebay'::text AS src, o.item_url AS url, NULL::int AS listing_id
+      FROM market_offers o
+      WHERE o.target_kind IN ('card', 'print') AND o.status = 'active' AND o.buying_option = 'FIXED_PRICE' AND o.grade_key = 'raw'
+        AND NOT o.suspicious AND o.raw_condition <> 'dmg' AND o.total > 0 AND o.last_seen_at > now() - interval '36 hours'
+        AND (o.lang IS NULL OR o.lang = (CASE WHEN o.target_kind = 'card' THEN 'de' ELSE split_part(o.target_id, ':', 1) END))
+      UNION ALL
+      SELECT l.card_id, l.price + COALESCE(l.shipping_cents, 0) / 100.0, 'pokeswipe'::text, NULL::text, l.id
+      FROM listings l JOIN profiles p ON p.user_id = l.user_id
+      WHERE l.status = 'active' AND l.buy_now AND l.quantity > l.reserved AND p.stripe_account_ready AND NOT p.banned
+        AND l.card_id IS NOT NULL AND l.price > 0 AND COALESCE(l.variant, 'normal') = 'normal' AND COALESCE(l.lang, 'de') = 'de'
+        ${userId ? sql` AND l.user_id <> ${userId}` : sql``}
+    ) a ORDER BY key, total ASC`;
+}
+
+export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: PrefProfile | null = null, withTotal = false) {
   const langs = opts.langs;
   const hasDe = langs.includes("de");
   const printLangs = langs.filter((l) => l !== "de");
@@ -346,7 +369,8 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
   const wishWhere = opts.wishlist ? sql` AND x.card_id IN (SELECT card_id FROM wishlist_items WHERE user_id = ${userId})` : sql``;
   const setWhere = opts.set ? sql` AND x.lang = ${opts.set.lang} AND x.set_id = ${opts.set.id}` : sql``;
   const priceWhere = sql`${opts.min !== null && opts.min > 0 ? sql` AND x.price >= ${opts.min}` : sql``}${opts.max !== null ? sql` AND x.price <= ${opts.max}` : sql``}`;
-  const dealWhere = opts.deals ? sql` AND x.low > 0 AND x.price >= ${DEAL_MIN_PRICE} AND x.low <= x.price * ${(100 - DEAL_MIN_PCT) / 100}` : sql``;
+  // Deals nur mit verifiziertem Live-Angebot (eBay-Radar / PokeSwipe-Sofortkauf) – nie mit dem Cardmarket-„ab“-Preis
+  const dealWhere = opts.deals ? sql` AND v.offer > 0 AND x.price >= ${DEAL_MIN_PRICE} AND v.offer <= x.price * ${(100 - DEAL_MIN_PCT) / 100}` : sql``;
   const exclude = opts.exclude.filter((e) => !e.startsWith("l"));
   const excludeWhere = exclude.length ? sql` AND x.print_id NOT IN (${sql.join(exclude.map((e) => sql`${e}`), sql`, `)})` : sql``;
 
@@ -369,11 +393,25 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
 
   const want = opts.market ? 0 : opts.listings && !opts.set ? Math.ceil(opts.limit * 0.75) : opts.limit;
   const cards = parts.length ? rows(await db.execute(sql`
-    SELECT * FROM (${sql.join(parts, sql` UNION ALL `)}) x
+    WITH live AS (${liveOffersSql(userId)})
+    SELECT x.*, v.offer, v.offer_source, v.offer_url, v.offer_listing_id
+    FROM (${sql.join(parts, sql` UNION ALL `)}) x
+    LEFT JOIN live v ON v.key = x.print_id
     WHERE TRUE ${setWhere}${priceWhere}${dealWhere}${wishWhere}${excludeWhere}${rarityWhere(opts)}
     ORDER BY -ln(1 - random()) / (GREATEST(ln(COALESCE(x.price, 0) + 2), 0.6) * ${prefFactorSql(prefs)})
     LIMIT ${want}
   `)) : [];
+
+  // Gesamtzahl passender Katalogkarten (nur beim ersten Laden) – der Stapel selbst wird seitenweise nachgeladen
+  let total: number | null = null;
+  if (withTotal && parts.length) {
+    const [t] = rows(await db.execute(sql`
+      WITH live AS (${liveOffersSql(userId)})
+      SELECT count(*)::int AS n FROM (${sql.join(parts, sql` UNION ALL `)}) x
+      ${opts.deals ? sql`LEFT JOIN live v ON v.key = x.print_id` : sql``}
+      WHERE TRUE ${setWhere}${priceWhere}${dealWhere}${wishWhere}${rarityWhere(opts)}`));
+    total = Number(t?.n) || 0;
+  }
 
   // Tausch-Inserate (deutscher Markt) als eigene Karten im Stapel – mit Marktpreis-Vergleich
   let listingRows: any[] = [];
@@ -422,11 +460,17 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
       rarity: r.rarity ? String(r.rarity) : "",
       rarityBucket: rarityBucket(r.rarity),
       price: r.price ?? null,
+      // Cardmarket-Tiefstpreis (alle Zustände, nur Info) – NICHT als Angebot verwenden
       low: r.low ?? null,
+      // Verifiziertes Live-Angebot (eBay-Radar oder PokeSwipe-Sofortkauf) – einzige Grundlage für „Kaufen ab“ und Rabatt
+      offer: r.offer != null ? Number(r.offer) : null,
+      offerSource: r.offer != null ? String(r.offer_source) : null,
+      offerUrl: r.offer_source === "ebay" && r.offer_url ? String(r.offer_url) : null,
+      offerListingId: r.offer_listing_id != null ? Number(r.offer_listing_id) : null,
       avg30: r.avg30 ?? null,
       usd: r.usd ?? null,
       source: r.source || "cardmarket",
-      dealPct: dealPct(r.price, r.low),
+      dealPct: discountVsMarket(r.price, r.offer),
       wish: wishIds.includes(String(r.card_id || "")),
     })),
     ...listingRows.map((l: any) => ({
@@ -461,7 +505,7 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
       scanned: String(l.source || "") === "scan",
       fresh: Boolean(l.fresh),
       source: "listing",
-      dealPct: dealPct(l.market, l.price),
+      dealPct: discountVsMarket(l.market, l.price),
       wish: wishIds.includes(String(l.card_id || "")),
     })),
   ];
@@ -475,7 +519,7 @@ export async function buildDeck(opts: DeckOpts, userId: string | null, prefs: Pr
     if (step && (idx + 1) % step === 0 && li < listItems.length) out.push(listItems[li++]);
   });
   while (li < listItems.length) out.push(listItems[li++]);
-  return { items: out, wishlistEmpty: false };
+  return { items: out, wishlistEmpty: false, total };
 }
 
 async function setOptions(lang: CatalogLang) {
@@ -528,13 +572,13 @@ export function registerIntlCatalog(app: any, { auth, adminOnly }: { auth: any; 
 
   // Dynamischer Swipe-Stapel (öffentlich; mit Login zusätzlich Wunschlisten-Treffer)
   app.get("/api/swipe/deck", async (c: any) => {
-    if (!(await rateLimit(`deck:${clientIp(c)}`, 40, 60_000))) return c.json({ error: "Zu viele Anfragen. Bitte kurz warten." }, 429);
+    if (!(await rateLimit(`deck:${clientIp(c)}`, 90, 60_000))) return c.json({ error: "Zu viele Anfragen. Bitte kurz warten." }, 429);
     const opts = parseDeckQuery(c.req.query());
     const user = await verifyIdentityToken(c).catch(() => null);
     if (opts.wishlist && !user) return c.json({ error: "Für den Wunschlisten-Filter bitte anmelden.", login: true }, 401);
     // Preference-Learning: gelernte Vorlieben (Konto oder Gerät) gewichten die Zufallsauswahl
     const prefs = await deckPrefs(user?.id ?? null, c.req.query("pw"));
-    const deck = await buildDeck(opts, user?.id ?? null, prefs);
+    const deck = await buildDeck(opts, user?.id ?? null, prefs, c.req.query("count") === "1");
     c.header("Cache-Control", "private, no-store");
     return c.json({ ...deck, personalized: Boolean(prefs && prefs.swipes >= 5), filters: { ...opts, exclude: undefined } });
   });
