@@ -106,7 +106,7 @@ test("Belohnung: freigeschaltet → Gründer-Sammler-Hinweis auf der Startseite,
   await expect(page.locator("#home-invite")).toContainText("Gründer-Sammler · freigeschaltet");
   await expect(page.locator("#home-invite .ps-perk-on")).toHaveCount(3);
   await expect(page.locator("#home-chat-list .ps-founder-chip")).toHaveCount(1);
-  await page.evaluate(() => (window as any).PS.marketTab("all"));
+  await page.evaluate(() => { (window as any).PS.marketTab("all"); (window as any).PS.marketView("list"); });
   const tile = page.locator('#market-list [data-listing="9"]');
   await expect(tile.locator(".ps-founder-chip")).toBeVisible();
   await expect(tile).toContainText("NM");

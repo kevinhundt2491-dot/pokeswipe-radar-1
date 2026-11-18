@@ -6,9 +6,10 @@
   // (sichere Freischaltung erst nach bestätigter Zahlung, siehe server/app.ts → /api/billing/checkout).
   // =========================================================================
 
-  const FREE_DAILY_SWIPE_LIMIT = 15;
-  const FREE_PORTFOLIO_LIMIT = 15;
-  const FREE_WISHLIST_LIMIT = 2;
+  // Launch-Phase: großzügige Gast-/Gratis-Grenzen, damit jeder die App ausgiebig testen kann, bevor ein Limit greift
+  const FREE_DAILY_SWIPE_LIMIT = 100;
+  const FREE_PORTFOLIO_LIMIT = 300;
+  const FREE_WISHLIST_LIMIT = 20;
 
   // Pro-Status NUR aus der Server-Antwort (/api/me, geprüftes Login) – nicht aus localStorage,
   // sonst ließe er sich per Browser-Konsole fälschen. Kostenpflichtige Daten prüft zusätzlich der Server.
@@ -38,7 +39,7 @@
     if (isProUser()) return true;
     const rem = getRemainingFreeSwipes();
     if (rem <= 0) {
-      triggerSmartPush("🔒 Tageslimit erreicht (15/15 Swipes)", "Hol dir PRO (4,99 €/Mo) für unbegrenzte Swipes & Sniper-Deals!");
+      triggerSmartPush(`🔒 Tageslimit erreicht (${FREE_DAILY_SWIPE_LIMIT}/${FREE_DAILY_SWIPE_LIMIT} Swipes)`, "Hol dir PRO (4,99 €/Mo) für unbegrenzte Swipes & Sniper-Deals!");
       openModal("pro-modal");
       return false;
     }
@@ -162,7 +163,7 @@
   };
   window.addApiCardToPortfolio = function(cardTitle, imgUrl) {
     if (!isProUser() && portfolio.length >= FREE_PORTFOLIO_LIMIT) {
-      triggerSmartPush("🔒 Portfolio-Limit (15 Karten)", "Schalte PRO frei für unbegrenzte Portfolio-Karten!");
+      triggerSmartPush(`🔒 Portfolio-Limit (${FREE_PORTFOLIO_LIMIT} Karten)`, "Schalte PRO frei für unbegrenzte Portfolio-Karten!");
       openModal("pro-modal");
       return;
     }
@@ -671,7 +672,7 @@
   const origAddPortfolioItem = window.addPortfolioItem;
   window.addPortfolioItem = function() {
     if (!isProUser() && portfolio.length >= FREE_PORTFOLIO_LIMIT) {
-      triggerSmartPush("🔒 Gratis-Limit erreicht (15 Karten)", "Mit PRO (4,99 €) kannst du unbegrenzt viele Karten im Portfolio verwalten!");
+      triggerSmartPush(`🔒 Gratis-Limit erreicht (${FREE_PORTFOLIO_LIMIT} Karten)`, "Mit PRO (4,99 €) kannst du unbegrenzt viele Karten im Portfolio verwalten!");
       openModal("pro-modal");
       return;
     }
@@ -681,7 +682,7 @@
   const origAddCardByNumber = window.addCardByNumber;
   window.addCardByNumber = function() {
     if (!isProUser() && portfolio.length >= FREE_PORTFOLIO_LIMIT) {
-      triggerSmartPush("🔒 Gratis-Limit erreicht (15 Karten)", "Mit PRO (4,99 €) scannst du unbegrenzt viele Karten ins Portfolio!");
+      triggerSmartPush(`🔒 Gratis-Limit erreicht (${FREE_PORTFOLIO_LIMIT} Karten)`, "Mit PRO (4,99 €) scannst du unbegrenzt viele Karten ins Portfolio!");
       openModal("pro-modal");
       return;
     }
@@ -691,7 +692,7 @@
   const origAddWishlistRule = window.addWishlistRule;
   window.addWishlistRule = function() {
     if (!isProUser() && wishlist.length >= FREE_WISHLIST_LIMIT) {
-      triggerSmartPush("🔒 Gratis-Limit (2 Preis-Wächter)", "Schalte PRO frei für unbegrenzte Echtzeit-Preiswächter!");
+      triggerSmartPush(`🔒 Gratis-Limit (${FREE_WISHLIST_LIMIT} Preis-Wächter)`, "Schalte PRO frei für unbegrenzte Echtzeit-Preiswächter!");
       openModal("pro-modal");
       return;
     }

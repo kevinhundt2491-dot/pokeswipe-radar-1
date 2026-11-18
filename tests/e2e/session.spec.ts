@@ -87,6 +87,7 @@ test("Marktplatz: Karten-Raster ist sofort sichtbar, Kachel zeigt Set-Kürzel, Z
       { id: 8, card_id: "sv08-238", card_name: "Pikachu ex", price: 40, want: "Tausch gegen Mew", city: "Berlin", condition: "ex", user_id: "y", seller: "@Brock", buy_now: false },
     ] }),
   });
+  await page.addInitScript(() => localStorage.setItem("ps_market_view", "list")); // klassische Listenansicht
   await page.goto("/?tab=map");
   await appReady(page);
   const grid = page.locator("#market-list");
@@ -104,6 +105,36 @@ test("Marktplatz: Karten-Raster ist sofort sichtbar, Kachel zeigt Set-Kürzel, Z
   // Detail-Ansicht behält alle bisherigen Aktionen
   await grid.locator('[data-listing="7"] .ps-tile-more').click();
   await expect(page.locator("#ps-listing")).toContainText("Glurak ex");
+});
+
+test("Marktplatz-Binder: Angebote in Ordnerseiten, Tasche zeigt Zustand & Preis/Tausch, Einzelkarte mit Swipe-Navigation", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/listings": () => ({ listings: Array.from({ length: 11 }, (_, i) => ({
+      id: 100 + i, card_id: `sv03.5-${i + 1}`, card_name: `Karte ${i + 1}`, price: i === 1 ? 0 : 5 + i, want: i === 1 ? "Tausch" : "Verkauf", city: "Köln", condition: "nm", user_id: "x", seller: "@Ash", buy_now: i === 0,
+    })) }),
+  });
+  await page.goto("/?tab=map");
+  await appReady(page);
+  const binder = page.locator("#ps-market-binder");
+  await expect(binder).toBeVisible();
+  await expect(page.locator("#market-list")).toBeHidden();
+  const first = binder.locator('[data-mb-pageidx="0"] [data-mb-card]');
+  await expect(first).toHaveCount(await page.evaluate(() => (matchMedia("(min-width: 640px)").matches ? 9 : 4)));
+  await expect(binder.locator('[data-mb-card="100"]')).toContainText("NM");
+  await expect(binder.locator('[data-mb-card="101"]')).toContainText("Tausch");
+  await binder.locator('[data-mb-card="100"]').click();
+  const focus = page.locator("#ps-mb-card");
+  await expect(focus).toContainText("Karte 1");
+  await expect(focus).toContainText("Jetzt kaufen");
+  await expect(focus).toContainText("1:1 Tausch vorschlagen");
+  await expect(focus).toContainText("Verkäufer schreiben");
+  await expect(focus).toContainText("Cardmarket-Preis prüfen");
+  await focus.getByRole("button", { name: "Nächste Karte" }).click();
+  await expect(focus).toContainText("Karte 2");
+  await page.keyboard.press("Escape");
+  // Umschalter zur klassischen Listenansicht
+  await page.getByRole("button", { name: "☰ Liste" }).click();
+  await expect(page.locator("#market-list .ps-tile")).toHaveCount(11);
 });
 
 test("In-App-Browser (TikTok): Hinweis zum Öffnen im Standard-Browser, E-Mail-Login und Gast bleiben möglich", async ({ browser }) => {

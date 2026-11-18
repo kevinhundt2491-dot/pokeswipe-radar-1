@@ -24,7 +24,7 @@ export const PLANS: Record<PlanId, {
   submissions: number;
   fakeChecksPerMonth: number;
 }> = {
-  free: { label: "Free", priceCents: 0, yearlyPriceCents: 0, portfolio: 25, alerts: 3, wishlist: 20, listings: 5, sets: 1, scansPerDay: 3, freeBoostsPerMonth: 0, history: false, verified: false, shop: false, restockDelayMin: 15, restockFilters: false, gradedCards: 3, submissions: 1, fakeChecksPerMonth: 1 },
+  free: { label: "Free", priceCents: 0, yearlyPriceCents: 0, portfolio: 300, alerts: 3, wishlist: 20, listings: 5, sets: 1, scansPerDay: 3, freeBoostsPerMonth: 0, history: false, verified: false, shop: false, restockDelayMin: 15, restockFilters: false, gradedCards: 3, submissions: 1, fakeChecksPerMonth: 1 },
   premium: { label: "Premium", priceCents: 499, yearlyPriceCents: 4900, portfolio: 500, alerts: 50, wishlist: 300, listings: 40, sets: 10, scansPerDay: 40, freeBoostsPerMonth: 0, history: true, verified: false, shop: false, restockDelayMin: 0, restockFilters: false, gradedCards: 200, submissions: 20, fakeChecksPerMonth: 20 },
   pro: { label: "Pro Trader", priceCents: 999, yearlyPriceCents: 9900, portfolio: 5000, alerts: 500, wishlist: 2000, listings: 500, sets: 200, scansPerDay: 250, freeBoostsPerMonth: 3, history: true, verified: true, shop: true, restockDelayMin: 0, restockFilters: true, gradedCards: 5000, submissions: 500, fakeChecksPerMonth: 200 },
 };

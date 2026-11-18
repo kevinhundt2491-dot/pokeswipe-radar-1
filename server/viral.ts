@@ -9,6 +9,7 @@ import {
   isSelfReferral, referralLink, promoLink, normalizePromoCode, PROMO_RE, promoAvailable, validatePromoInput,
 } from "./referral-logic.ts";
 import { log } from "./log.ts";
+import { first50Active, withFirst50 } from "./first50-logic.ts";
 import { stripe } from "./billing.ts";
 import { notify } from "./prices.ts";
 import { berlinDay, validShareTarget } from "./logic.ts";
@@ -40,7 +41,9 @@ export async function shareBonusToday(userId: string) {
 
 /** Tageslimit für KI-Scans inkl. Teilen-Bonus. */
 export async function scanLimit(userId: string, plan: PlanId) {
-  return PLANS[plan].scansPerDay + (await shareBonusToday(userId));
+  // „Die ersten 50 Sammler“: während der 60 Gründer-Tage praktisch unbegrenzte Scans
+  const [p] = await db.select({ first50Until: profiles.first50Until }).from(profiles).where(eq(profiles.userId, userId)).limit(1);
+  return withFirst50(PLANS[plan].scansPerDay + (await shareBonusToday(userId)), first50Active(p));
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import { db, profiles, listings, marketOrders, orders, orderItems, cartItems } f
 import type { AuthUser } from "./auth.ts";
 import { stripe } from "./billing.ts";
 import { effectivePlan, type PlanId } from "./plans.ts";
+import { first50Active } from "./first50-logic.ts";
 import { LEGAL_VERSION } from "./legal.ts";
 import { notify } from "./prices.ts";
 import { isBlockedBetween } from "./community.ts";
@@ -47,12 +48,12 @@ async function cartLines(userId: string): Promise<CartLine[]> {
     SELECT ci.id AS cart_item_id, ci.quantity AS cart_qty, ci.price_cents_at_add, l.id AS listing_id, l.user_id AS seller_id, l.card_name, l.image,
       l.variant, l.condition, l.lang, l.card_id, l.status, l.buy_now, l.price::float AS price, l.shipping_cents, l.quantity, l.reserved,
       p.display_name AS seller_name, p.seller_type, p.stripe_account_ready, p.stripe_account_id, p.banned,
-      p.plan, p.plan_until, p.bonus_until, p.bonus_plan
+      p.plan, p.plan_until, p.bonus_until, p.bonus_plan, p.first50_until
     FROM cart_items ci JOIN listings l ON l.id = ci.listing_id JOIN profiles p ON p.user_id = l.user_id
     WHERE ci.user_id = ${userId} ORDER BY ci.created_at`));
   return list.map((r: any) => ({
     cartItemId: Number(r.cart_item_id), listingId: Number(r.listing_id), sellerId: String(r.seller_id), sellerName: String(r.seller_name),
-    sellerType: r.seller_type === "business" ? "business" : "private", sellerPlan: planOf(r),
+    sellerType: r.seller_type === "business" ? "business" : "private", sellerPlan: planOf(r), sellerFeeFree: first50Active({ first50Until: r.first50_until }),
     title: String(r.card_name), image: String(r.image || ""), variant: String(r.variant || "normal"), condition: String(r.condition || ""), lang: String(r.lang || "de"),
     cardId: r.card_id ? String(r.card_id) : null,
     unitCents: Math.round(Number(r.price) * 100), priceCentsAtAdd: Number(r.price_cents_at_add), shippingCents: Number(r.shipping_cents) || 0,

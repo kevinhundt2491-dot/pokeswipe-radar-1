@@ -259,7 +259,7 @@ export async function migrateGuestData({ userId, api, toast }) {
   const plan = guestMigrationPlan({ portfolio: local, done });
   if (!plan.portfolio.length) { ls.set(`ps_migrated_${userId}`, "1"); return 0; }
   try {
-    const r = await api("/api/portfolio/import", { method: "POST", body: { items: plan.portfolio.slice(0, 200) } });
+    const r = await api("/api/portfolio/import", { method: "POST", body: { items: plan.portfolio.slice(0, 300) } });
     // Nur wirklich übernommene Karten abhaken (Tarif-Limit → Rest beim nächsten Login bzw. nach Upgrade)
     ls.set(doneKey, JSON.stringify([...done, ...plan.portfolioKeys.slice(0, Number(r?.imported) || 0)].slice(-2000)));
     ls.set(`ps_migrated_${userId}`, "1");

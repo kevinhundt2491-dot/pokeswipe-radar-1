@@ -1052,6 +1052,15 @@
     // 5. PORTFOLIO & RECHNER
     // ===================================================================
     let portfolio = lsJSON("pokeswipe_portfolio_clean", []);
+    // Gast-Modus: Live-Scanner legt Karten im lokalen Test-Binder ab (wird beim Login automatisch ins Konto übernommen)
+    function psGuestBinderAdd(item) {
+      if (!item || typeof item !== "object") return portfolio.length;
+      portfolio.unshift(item);
+      localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(portfolio));
+      try { renderPortfolio(); } catch (e) {}
+      return portfolio.length;
+    }
+    window.psGuestBinderAdd = psGuestBinderAdd;
 
     function renderPortfolio() {
       const total = portfolio.reduce((sum, item) => sum + Number(item.value || 0), 0);

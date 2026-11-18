@@ -58,7 +58,7 @@ const bar = (v, max) => `<div class="h-2 bg-slate-800 rounded-full overflow-hidd
 const REWARD_LABEL = {
   paid_referral: "Gratismonat (zahlender Freund)", milestone_3: "Stufe 3", milestone_5: "Stufe 5", milestone_10: "Stufe 10", milestone_25: "Stufe 25",
   friend_referral: "Freund eingeladen", invited_bonus: "Einladungs-Geschenk", ms_starter: "🌱 Starter-Werber", ms_community: "🏗️ Community-Builder",
-  ms_vip: "💎 VIP-Sammler", promo: "🎬 Promo-Code", share_trial: "📲 App geteilt",
+  ms_vip: "💎 VIP-Sammler", promo: "🎬 Promo-Code", share_trial: "📲 App geteilt", first50: "🏆 Gründer-Platz (erste 50)",
 };
 
 function dashboardHtml(d) {
