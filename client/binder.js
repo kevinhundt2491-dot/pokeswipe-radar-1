@@ -483,7 +483,7 @@ function binderMarketSearch(name) {
   closeSetBinder();
   window.PS?.goMarket?.();
   const inp = $("market-search");
-  if (inp) { inp.value = String(name || "").slice(0, 80); try { window.renderMarket?.(); } catch {} }
+  if (inp) { inp.value = String(name || "").slice(0, 80); try { if (window.PS?.marketBrowse) window.PS.marketBrowse("search"); else window.renderMarket?.(); } catch {} }
 }
 
 /** Hinweis „fehlende Binder-Karte jetzt auf dem Marktplatz“ an/aus (geräteübergreifend in den Profil-Einstellungen). */
