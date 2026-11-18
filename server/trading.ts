@@ -371,10 +371,13 @@ export function registerTrading(app: any, { auth, body }: Hlp) {
     const b = await body(c);
     const listingId = int(b.listingId, 0, ID_MAX, 0);
     const matchId = int(b.matchId, 0, ID_MAX, 0);
-    if (!listingId && !matchId) return c.json({ error: "Bitte ein Inserat oder Match angeben." }, 400);
+    // Live-Online-Radar: Tauschangebot direkt aus der Binder-Vorschau (Karten aus der freigegebenen Sammlung des Partners)
+    const binderPartner = !listingId && !matchId ? str(b.partnerId, 80) : "";
+    if (!listingId && !matchId && !binderPartner) return c.json({ error: "Bitte ein Inserat oder Match angeben." }, 400);
+    if (binderPartner && binderPartner === user.id) return c.json({ error: "Das ist deine eigene Sammlung." }, 400);
 
     // Partner bestimmen
-    let partnerId = "";
+    let partnerId = binderPartner;
     let match: typeof tradeMatches.$inferSelect | undefined;
     if (matchId) {
       [match] = await db.select().from(tradeMatches).where(and(
@@ -392,8 +395,9 @@ export function registerTrading(app: any, { auth, body }: Hlp) {
       partnerId = anchor.userId;
     }
     if (await isBlockedBetween(user.id, partnerId)) return c.json({ error: "Tauschanfrage nicht möglich." }, 403);
-    const [partner] = await db.select({ banned: profiles.banned }).from(profiles).where(eq(profiles.userId, partnerId)).limit(1);
+    const [partner] = await db.select({ banned: profiles.banned, binderVisible: profiles.binderVisible }).from(profiles).where(eq(profiles.userId, partnerId)).limit(1);
     if (!partner || partner.banned) return c.json({ error: "Dieser Sammler ist nicht verfügbar." }, 404);
+    if (binderPartner && !partner.binderVisible) return c.json({ error: "Dieser Sammler zeigt seine Sammlung gerade nicht – frag ihn im Chat." }, 403);
 
     // Positionen: was ich gebe (aus meiner Sammlung/meinen Inseraten), was ich möchte (Inserate des Partners; Sammlungs-Karten nur aus einem Match)
     const give = await resolvePositions(b.give, user.id, true);
@@ -403,9 +407,9 @@ export function registerTrading(app: any, { auth, body }: Hlp) {
     const matchItems = new Set([match?.aWantsPortfolioItemId, match?.bWantsPortfolioItemId].filter(Boolean) as number[]);
     for (const w of wantRaw) {
       const pid = int(w?.portfolioItemId, 1, ID_MAX, 0);
-      if (pid && !matchItems.has(pid)) return c.json({ error: "Karten aus fremden Sammlungen sind nur über ein Match tauschbar." }, 403);
+      if (pid && !binderPartner && !matchItems.has(pid)) return c.json({ error: "Karten aus fremden Sammlungen sind nur über ein Match tauschbar." }, 403);
     }
-    const want = await resolvePositions(wantRaw, partnerId, matchItems.size > 0);
+    const want = await resolvePositions(wantRaw, partnerId, matchItems.size > 0 || Boolean(binderPartner));
     if (!Array.isArray(want)) return c.json({ error: want.error }, want.status);
     const cash = parseCash(b.cashCents, b.cashPayer);
     if ("error" in cash) return c.json({ error: cash.error }, 400);

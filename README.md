@@ -120,6 +120,20 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
     schließt bzw. pausiert die Treuhand-Bestellung); „Stripe-Webhook einrichten“ legt auch einen Connect-Endpunkt für
     `account.updated` an
 
+- **Creator-Programm & Outreach** – öffentliche Seite `/creator` (VIP-Creator-Pass = dauerhaft Pro + Creator-Badge, eigener
+  30-Tage-Code, Bewerbungsformular → Wunsch-Code als Entwurf, Admin-Mail über Resend). In der Admin-Zentrale „🎯 Creator-Finder &
+  Outreach“: Starter-Liste DACH mit Antwort-Score, 1-Klick-Recherche (YouTube-`/about`, TikTok, Instagram), Kontakt-Extraktor
+  `/api/admin/extract-creator-contact` (SSRF-geschützt, ruft YouTube/TikTok/Instagram bewusst nicht ab), automatischer Promo-Code je
+  Creator, Vorlagen A–D, „Freigeben & senden“ bzw. Warteschlange (max. 15 Mails/Tag, ≥ 3 Min. Abstand, Job `creator-outreach` alle
+  5 Min.), Follow-up nach 4 Tagen, Abmelde-Link + Sperrliste, DM-Kopieren, Viral-Hook-Generator (`server/creator*.ts`, `client/creator-admin.js`).
+  Optional: `OUTREACH_SENDER_NAME` (Absendername in den Vorlagen)
+- **Live-Online-Radar** – „🟢 X Sammler & Y Gäste gerade online“ über Firebase-Präsenz (`onDisconnect().remove()`, Herzschlag 45 s).
+  In Firebase stehen nur Gast-Nr., Bereich und eine Nonce; Name/Avatar/Badges liefert `/api/presence/members` nach Nonce-Abgleich
+  (`presence_claims`) – nicht fälschbar. Antippen öffnet die Binder-Vorschau (`/api/collectors/<id>/binder`) mit „Anschreiben“
+  (@Erwähnung im Live-Chat) und 1-Klick-Tauschangebot (Karte vorausgefüllt, `POST /api/trades` mit `partnerId`). Schalter
+  „Sammlung sichtbar“ (`profiles.binder_visible`, Standard an) im Profil und Set-Binder (`server/presence.ts`, `client/presence.js`).
+  **Wichtig:** die erweiterten Regeln aus `firebase/database.rules.json` in der Firebase-Konsole veröffentlichen
+
 ## Echte Karten & Preise
 
 Swipe-Arena, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten

@@ -79,11 +79,13 @@ async function openProfileSettings() {
   if (!requireLogin()) return;
   try {
     const s = await api("/api/me/public-profile");
+    const bv = await api("/api/me/binder-visibility").catch(() => ({ binderVisible: true }));
     const tgl = (id, on, label, sub) => `<label class="flex gap-2 items-start bg-slate-900 rounded-xl p-2.5 cursor-pointer"><input type="checkbox" id="${id}" ${on ? "checked" : ""} class="mt-0.5 accent-yellow-400"><span><strong class="text-white">${label}</strong><span class="block text-slate-400 text-[11px]">${sub}</span></span></label>`;
     modal("ps-profile-settings", `
       <h3 class="text-base font-black text-white">🌐 Öffentliches Sammler-Profil</h3>
       <p class="text-xs text-slate-300">Teile deine Sammlung unter <strong class="text-yellow-300 break-all">${esc(s.url)}</strong>. Angezeigt werden Sammlername, Stadt, Showcase (deine 12 wertvollsten Karten), Tausch-Ordner, Abzeichen und Pulls. <strong>Nie</strong> angezeigt werden E-Mail, Kaufpreise oder genaue Werte.</p>
       <div class="space-y-2 text-xs">
+        ${tgl("ps-pp-binder", bv.binderVisible !== false, "Meine Sammlung / Tausch-Karten für andere Sammler sichtbar machen", "Angemeldete Sammler sehen im Live-Chat & in „Gerade online“ deine Dubletten, Inserate und Highlights und können dir 1-Klick-Tauschangebote schicken. Nicht bei Google.")}
         ${tgl("ps-pp-public", s.publicProfile, "Profil öffentlich", "Auffindbar über den Link und bei Google. Jederzeit wieder privat schaltbar.")}
         ${tgl("ps-pp-wish", s.showWishlist, "Wunschliste zeigen", "Andere sehen, was du suchst, und können dir passende Karten anbieten.")}
         ${tgl("ps-pp-value", s.showValueTier, "Sammlungswert als Stufe zeigen", "Nur grob (z. B. „1.000 €+“), nie der genaue Betrag.")}
@@ -98,6 +100,10 @@ async function openProfileSettings() {
 async function saveProfileSettings() {
   try {
     await api("/api/me/public-profile", { method: "PUT", body: { publicProfile: $("ps-pp-public").checked, showWishlist: $("ps-pp-wish").checked, showValueTier: $("ps-pp-value").checked, bio: $("ps-pp-bio").value } });
+    if ($("ps-pp-binder")) {
+      await api("/api/me/binder-visibility", { method: "PUT", body: { binderVisible: $("ps-pp-binder").checked } });
+      if (state.me) state.me.binderVisible = $("ps-pp-binder").checked;
+    }
     closeModalEl("ps-profile-settings");
     toast("✅ Gespeichert", $("ps-pp-public")?.checked ? "Dein Profil ist öffentlich – teile den Link!" : "Dein Profil ist privat.");
     window.PS?.refreshMe?.();

@@ -83,6 +83,10 @@ export const profiles = pgTable("profiles", {
   cardUploads: integer("card_uploads").notNull().default(0),
   referralSignups: integer("referral_signups").notNull().default(0),
   founderAt: timestamp("founder_at", { withTimezone: true }),
+  // Live-Online-Radar: Sammlung / Tausch-Karten für andere angemeldete Sammler sichtbar (Binder-Vorschau, jederzeit abschaltbar)
+  binderVisible: boolean("binder_visible").notNull().default(true),
+  // Creator-Programm: verifiziertes „Creator“-Abzeichen (gesetzt bei Freigabe durch den Admin)
+  creatorAt: timestamp("creator_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("profiles_display_name_lower").on(t.displayName),
@@ -1467,3 +1471,82 @@ export const scanLearnVotes = pgTable("scan_learn_votes", {
   userId: text("user_id").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("scan_learn_votes_pk").on(t.hashId, t.userId)]);
+
+// ---------------------------------------------------------------------------
+// Creator-Programm: Bewerbungen (/creator), Creator-Finder & kontrollierter Outreach (Admin-Zentrale)
+// ---------------------------------------------------------------------------
+export const creatorApplications = pgTable("creator_applications", {
+  id: serial().primaryKey(),
+  channelName: text("channel_name").notNull(),
+  platform: text().notNull(), // youtube | tiktok | instagram | twitch | discord
+  channelUrl: text("channel_url").notNull().default(""),
+  followers: integer().notNull().default(0),
+  email: text().notNull(),
+  wishCode: text("wish_code").notNull().default(""),
+  promoId: integer("promo_id").references(() => promoCodes.id, { onDelete: "set null" }),
+  message: text().notNull().default(""),
+  status: text().notNull().default("new"), // new | approved | rejected
+  leadId: integer("lead_id"),
+  ipHash: text("ip_hash").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+}, (t) => [index("creator_applications_status").on(t.status, t.createdAt)]);
+
+export const creatorLeads = pgTable("creator_leads", {
+  id: serial().primaryKey(),
+  name: text().notNull(),
+  category: text().notNull().default("packopening"), // packopening | flohmarkt | micro | community | top
+  platform: text().notNull().default("youtube"),
+  channelUrl: text("channel_url").notNull().default(""),
+  followers: integer().notNull().default(0),
+  email: text().notNull().default(""),
+  socials: jsonb().notNull().default([]), // gefundene Social-Handles (Kontakt-Extraktor)
+  promoId: integer("promo_id").references(() => promoCodes.id, { onDelete: "set null" }),
+  promoCode: text("promo_code").notNull().default(""),
+  template: text().notNull().default("A"), // A | B | C | D
+  subject: text().notNull().default(""),
+  body: text().notNull().default(""),
+  customBody: boolean("custom_body").notNull().default(false),
+  status: text().notNull().default("ready"), // ready | queued | sent | replied | active | paused | optout
+  placeholder: boolean().notNull().default(false), // Platzhalter-Slot aus der Starter-Liste
+  source: text().notNull().default("manual"), // seed | manual | application
+  notes: text().notNull().default(""),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  followupSentAt: timestamp("followup_sent_at", { withTimezone: true }),
+  repliedAt: timestamp("replied_at", { withTimezone: true }),
+  lastError: text("last_error").notNull().default(""),
+  optoutToken: text("optout_token").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("creator_leads_status").on(t.status, t.scheduledAt), uniqueIndex("creator_leads_optout").on(t.optoutToken)]);
+
+// Versandprotokoll (Tageslimit & Abstand zwischen E-Mails)
+export const creatorOutreachLog = pgTable("creator_outreach_log", {
+  id: serial().primaryKey(),
+  leadId: integer("lead_id").references(() => creatorLeads.id, { onDelete: "set null" }),
+  kind: text().notNull().default("initial"), // initial | followup
+  email: text().notNull().default(""),
+  ok: boolean().notNull().default(false),
+  error: text().notNull().default(""),
+  resendId: text("resend_id").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("creator_outreach_log_created").on(t.createdAt)]);
+
+// Abgemeldete Adressen – erhalten nie wieder Outreach-Mails
+export const creatorSuppressions = pgTable("creator_suppressions", {
+  email: text().primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Live-Online-Radar: Zuordnung anonyme Firebase-Präsenz ↔ Konto (fälschungssicher über eine geheime Nonce,
+// die nur der Besitzer der Firebase-UID in seinen Präsenz-Eintrag schreiben kann)
+// ---------------------------------------------------------------------------
+export const presenceClaims = pgTable("presence_claims", {
+  nonce: text().primaryKey(),
+  fbUid: text("fb_uid").notNull(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("presence_claims_fb_user").on(t.fbUid, t.userId)]);

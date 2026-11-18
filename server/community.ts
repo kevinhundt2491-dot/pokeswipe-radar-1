@@ -112,7 +112,7 @@ const authorOf = (r: any, trust: Map<string, TrustInfo>) => {
   const t = trust.get(String(r.user_id)) ?? { score: 0, level: trustLevel(0) };
   return {
     id: String(r.user_id), name: String(r.display_name || "Sammler"), slug: profileSlug(r.display_name),
-    publicProfile: Boolean(r.public_profile), verified: Boolean(r.verified), founder: Boolean(r.founder), trust: t.score, level: t.level,
+    publicProfile: Boolean(r.public_profile), verified: Boolean(r.verified), founder: Boolean(r.founder), creator: Boolean(r.creator), trust: t.score, level: t.level,
   };
 };
 
@@ -420,7 +420,7 @@ export function registerCommunity(app: any, hlp: Hlp) {
     const blocked = await blockedIds(u?.id);
     const list = rows(await db.execute(sql`
       SELECT * FROM (
-        SELECT m.id, m.user_id, m.body, m.status, m.created_at, p.display_name, p.public_profile, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified, (p.founder_at IS NOT NULL) AS founder
+        SELECT m.id, m.user_id, m.body, m.status, m.created_at, p.display_name, p.public_profile, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified, (p.founder_at IS NOT NULL) AS founder, (p.creator_at IS NOT NULL) AS creator
         FROM chat_messages m JOIN profiles p ON p.user_id = m.user_id
         WHERE m.room = 'global' AND NOT p.banned AND m.id > ${after}
           AND (m.status = 'visible' ${u ? sql`OR (m.status = 'hidden' AND m.user_id = ${u.id})` : sql``})

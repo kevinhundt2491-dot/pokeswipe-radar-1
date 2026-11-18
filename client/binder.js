@@ -135,11 +135,27 @@ export async function renderFolders(force = false) {
   if (tools) tools.classList.toggle("hidden", !folders.length);
   syncDupesToggle();
   renderTotal(folders);
+  syncVisibilityToggle(box, grid);
   grid.innerHTML = folders.length
     ? folders.map(folderHtml).join("")
     : `<div class="col-span-full ps-empty text-xs text-slate-300 text-center py-5 space-y-2">
         <p>📒 Deine Set-Ordner entstehen automatisch: Scanne eine Karte – sie wird sofort in den passenden Set-Ordner einsortiert.</p>
         <button type="button" onclick="PS.openScanner()" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl">📷 Erste Karte scannen</button></div>`;
+}
+
+/** Live-Online-Radar: Privatsphäre-Schalter direkt im Set-Binder (Standard: sichtbar, jederzeit abschaltbar). */
+function syncVisibilityToggle(box, grid) {
+  let el = box.querySelector("[data-binder-visibility]");
+  if (!state.user || IS_STAGE) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement("label");
+    el.setAttribute("data-binder-visibility", "");
+    el.className = "flex items-center gap-2 text-[11px] text-slate-300 bg-slate-900/70 border border-slate-800 rounded-xl px-2.5 py-1.5 mb-2 cursor-pointer";
+    grid.insertAdjacentElement("beforebegin", el);
+  }
+  const on = state.me?.binderVisible !== false;
+  el.innerHTML = `<input type="checkbox" ${on ? "checked" : ""} onchange="PS.setBinderVisible(this.checked)" class="accent-yellow-400" />
+    <span><strong class="text-white">Meine Sammlung / Tausch-Karten für andere Sammler sichtbar machen</strong> <span class="text-slate-500">· für Binder-Vorschau & 1-Klick-Tausch im Live-Chat</span></span>`;
 }
 
 // ---------------------------------------------------------------------------

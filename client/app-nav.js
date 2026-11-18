@@ -257,6 +257,7 @@ export async function renderProfileHub() {
       row("🌐", m?.publicProfile ? "Mein öffentliches Profil" : "Profil öffentlich machen", m?.publicProfile ? `PS.openProfile(${esc(JSON.stringify(String(m?.profileSlug || "")))})` : "PS.openProfileSettings()", "", "text-yellow-300"),
       row("🔥", "Meine Matches", "PS.openMatches()"),
       row("⭐", "Gefolgt & Follower", "PS.openFollowing()"),
+      row("🟢", "Gerade online & Sammlung teilen", "PS.openOnlineList()", m?.binderVisible === false ? "Deine Sammlung ist privat" : "Deine Tausch-Karten sind für Sammler sichtbar"),
       row("🚫", "Blockierte Nutzer", "PS.openBlocks()", "", "text-slate-300"),
     ].join(""), { open: true }));
   }
@@ -292,8 +293,12 @@ export async function renderProfileHub() {
       ${row("🧾", "DAC7-Auswertung & BZSt-Export", "PS.openDac7Admin()", "Steuerdaten maskiert · Klartext nur im protokollierten BZSt-Export")}
       ${row("⚖️", "Marktplatz-Fälle", "PS.openMarketAdmin()", "Reklamationen, Prüfung ohne Versandnachweis")}
       ${row("🩺", "Betriebs-Wächter", "PS.openOps()", "Jobs, Fehler, Gesundheit")}
-      ${row("🎬", "Auto-Reels & Pro-Videos", "PS.closeAll(); PS.openGenerator()", "", "text-yellow-300")}`));
+      ${row("🎬", "Auto-Reels & Pro-Videos", "PS.closeAll(); PS.openGenerator()", "", "text-yellow-300")}
+      ${row("🎯", "Creator-Finder & Outreach", "PS.openCreatorAdmin()", "Starter-Liste, Kontakt-Extraktor, Promo-Codes, Resend-Warteschlange", "text-fuchsia-200")}`));
   }
+  sections.push(card("🎬 Für Creator", `
+    <p class="text-slate-300">YouTube, TikTok, Twitch oder Discord? Hol dir den kostenlosen VIP-Creator-Pass (dauerhaft Pro) und deinen eigenen Community-Code.</p>
+    ${link("🎬 Creator-Zugang & eigenen Code sichern", "/creator")}`));
   sections.push(card("⚖️ Rechtliches", `
     ${link("Impressum", "/rechtliches#impressum")}
     ${link("Datenschutzerklärung", "/datenschutz")}

@@ -59,6 +59,8 @@ import { registerValuation, pricesDegraded } from "./valuation.ts";
 import { freshnessLabel, isStale } from "./valuation-logic.ts";
 import { registerShipping } from "./shipping.ts";
 import { registerAlerts } from "./alerts.ts";
+import { registerCreator } from "./creator.ts";
+import { registerPresence } from "./presence.ts";
 
 type Profile = typeof profiles.$inferSelect;
 type Vars = { user: AuthUser; profile: Profile; plan: PlanId };
@@ -190,6 +192,8 @@ app.get("/api/me", auth, async (c) => {
     emailConfirmed: user.confirmed,
     profileSlug: profileSlug(profile.displayName),
     publicProfile: profile.publicProfile,
+    binderVisible: profile.binderVisible,
+    creator: Boolean(profile.creatorAt),
     sellerReady: profile.stripeAccountReady,
     // Phase 10: PStTG-Hinweis (ab 25 Verkäufen / 1.700 € im Jahr) – nur für Verkäufer mit Connect-Konto
     psttg: profile.stripeAccountId ? await psttgNotice(user.id).catch(() => null) : null,
@@ -1204,6 +1208,8 @@ registerConditionPrices(app); // Phase 8: Preise nach Zustand & Sold Comps aus d
 registerValuation(app); // Phase 9: eigene Preis-Pipeline (NM … Damaged, PSA 8/9/10) mit Stale-While-Revalidate
 registerShipping(app, { auth, body }); // Phase 8: DHL-Versandetiketten mit eigenen Händler-Zugangsdaten
 registerAlerts(app, { auth, adminOnly, body }); // Phase 8: Browser-Fehlerberichte, Testalarm, Alarm-Verlauf
+registerCreator(app, { auth, adminOnly, body }); // Creator-Programm: /creator-Bewerbung, Creator-Finder & Resend-Outreach (Admin)
+registerPresence(app, { auth, body }); // Live-Online-Radar: verifizierte Präsenz, Binder-Vorschau, Sichtbarkeits-Schalter
 registerSellerImport(app, { auth, adminOnly, body });
 registerNative(app, { auth, body });
 registerCatalog(app, { auth, adminOnly, body });

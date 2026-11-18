@@ -2,6 +2,7 @@
 // Ersetzt die früheren anonymen Firebase-Funktionen der Seite (publishWallPost, sendChatMessage, …) durch die
 // eigene API mit Login-Pflicht (Netlify Identity), serverseitigen Limits, Wort-/Link-Filter und Moderation.
 import { withRef } from "./referral.js";
+import { onlineDot } from "./presence.js";
 import { $, esc, jsArg, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
 
 const cm = {
@@ -18,6 +19,8 @@ const ago = (d) => {
 };
 const levelChip = (a) => a?.level ? `<span title="Vertrauensstufe: ${esc(a.level.label)} (${Number(a.trust) || 0}/100)" class="text-[10px] text-slate-400">${esc(a.level.icon)}</span>` : "";
 const authorBtn = (a) => `<button onclick="PS.openAuthor(${jsArg(a.id)}, ${jsArg(a.slug)}, ${a.publicProfile ? "true" : "false"})" class="font-black text-yellow-400 hover:text-yellow-300">${esc(a.name)}</button>${a.verified ? ' <span class="text-cyan-300 text-[10px]" title="Pro Trader">✔</span>' : ""}${a.founder ? ' <span class="ps-founder-chip" title="Verifizierter Gründer-Sammler">🏅 Gründer</span>' : ""} ${levelChip(a)}`;
+// Live-Chat: Autor öffnet die Binder-Vorschau (Live-Online-Radar), grüner Punkt + Badge, wenn gerade online
+const chatAuthor = (a) => `<button onclick="PS.openCollector(${jsArg(a.id)})" class="font-black text-yellow-400 hover:text-yellow-300" title="Binder & Tausch-Karten ansehen">${esc(a.name)}</button>${a.creator ? ' <span class="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-fuchsia-500/25 text-fuchsia-200" title="Verifizierter Creator">🎬 Creator</span>' : ""}${a.verified ? ' <span class="text-cyan-300 text-[10px]" title="Pro Trader">✔</span>' : ""}${a.founder ? ' <span class="ps-founder-chip" title="Verifizierter Gründer-Sammler">🏅 Gründer</span>' : ""} <span class="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-200" title="Registrierter Sammler">Sammler</span>${onlineDot(a.id)} ${levelChip(a)}`;
 const visibleCommunity = () => !$("view-community")?.classList.contains("hidden") && !document.hidden;
 // Live-Chat läuft auch, solange das Start-Dashboard (kompaktes Chat-Modul) sichtbar ist
 const visibleChat = () => !document.hidden && (!$("view-community")?.classList.contains("hidden") || !$("view-home")?.classList.contains("hidden"));
@@ -300,7 +303,7 @@ function renderChat() {
   if (!cm.chat.length) { box.innerHTML = `<p class="text-slate-500 text-center py-6">Noch keine Chat-Nachrichten. Schreibe die erste!</p>`; return; }
   box.innerHTML = cm.chat.map((m) => `
     <div class="bg-slate-900 border ${m.mine ? "border-yellow-400/30" : "border-slate-800"} rounded-xl px-3 py-2 flex gap-2 items-start">
-      <div class="flex-1 min-w-0 break-words">${authorBtn(m.author)}<span class="text-slate-200 ml-1" data-i18n-skip>${esc(m.body)}</span>
+      <div class="flex-1 min-w-0 break-words">${chatAuthor(m.author)}<span class="text-slate-200 ml-1" data-i18n-skip>${esc(m.body)}</span>
         ${m.pending ? '<span class="text-amber-300 text-[10px] ml-1">⏳ wird geprüft</span>' : ""}<span class="block text-[9px] text-slate-600">${ago(m.createdAt)}</span></div>
       ${m.mine || state.me?.isAdmin ? `<button onclick="PS.deleteChat(${m.id})" class="text-slate-600 hover:text-rose-400 text-[11px]" title="Löschen">✕</button>`
         : state.user ? `<button onclick="PS.report('chat', '${m.id}')" class="text-slate-600 hover:text-amber-300 text-[11px]" title="Melden">⚠</button>` : ""}
@@ -428,6 +431,8 @@ export function initCommunity() {
   mountUi();
   loadFeed();
   pollChat();
+  // Live-Online-Radar: Online-Punkte neu zeichnen, sobald jemand kommt oder geht
+  window.addEventListener("ps:online", () => { if (cm.chatRendered) renderChat(); });
   clearInterval(cm.chatTimer); clearInterval(cm.feedTimer);
   cm.chatTimer = setInterval(() => { if (visibleChat()) pollChat(); }, 4000);
   cm.feedTimer = setInterval(() => { if (visibleCommunity()) loadFeed({ quiet: true }); }, 45_000);

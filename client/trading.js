@@ -6,7 +6,7 @@ import { $, esc, jsArg, eur, toast, cdn, state, api, handleError, requireLogin, 
 
 const VARIANT_LABEL = { normal: "Normal", reverse_holo: "Reverse Holo", holo: "Holo", first_edition: "1st Edition", shadowless: "Shadowless", promo: "Promo" };
 const cents = (c) => eur((Number(c) || 0) / 100);
-const draft = { partnerId: "", listingId: 0, matchId: 0, want: [], give: new Map(), partnerName: "" };
+const draft = { partnerId: "", listingId: 0, matchId: 0, want: [], give: new Map(), partnerName: "", binderPartner: "" };
 
 function thumb(item, w = 80) {
   return `<img src="${esc(item.image ? cdn(item.image, w) : FALLBACK_IMG)}" onerror="this.src='${FALLBACK_IMG}'" class="w-9 h-12 object-contain rounded shrink-0" loading="lazy" />`;
@@ -114,6 +114,7 @@ async function openTradeComposer(partnerId, listingId, matchId = 0) {
   draft.partnerId = partnerId || listing?.user_id || draft.partnerId;
   draft.listingId = Number(listingId) || 0;
   draft.matchId = Number(matchId) || 0;
+  draft.binderPartner = "";
   if (listing) {
     api(`/api/listings/${listing.id}/view`, { method: "POST", body: {} }).catch(() => {});
     draft.partnerName = listing.seller;
@@ -181,6 +182,7 @@ async function sendTradeRequest() {
   const cashCents = Math.round(cashEur * 100);
   const body = {
     listingId: draft.listingId || undefined, matchId: draft.matchId || undefined,
+    partnerId: !draft.listingId && !draft.matchId && draft.binderPartner ? draft.binderPartner : undefined,
     want: draft.want.map((w) => (w.listingId ? { listingId: w.listingId } : { portfolioItemId: w.portfolioItemId })),
     give: [...draft.give].map(([portfolioItemId, quantity]) => ({ portfolioItemId, quantity })),
     cashCents, cashPayer: cashCents ? ($("ps-tr-payer")?.value || "from") : "",
@@ -196,6 +198,27 @@ async function sendTradeRequest() {
     if (e.data?.tradeId) { closeModalEl("ps-trade-req"); window.PS?.openTrades?.(e.data.tradeId); return; }
     handleError(e);
   }
+}
+
+/** Live-Online-Radar: Tauschangebot direkt aus der Binder-Vorschau eines Sammlers (Karte vorausgefüllt). */
+async function openBinderTrade(partnerId, partnerName, item) {
+  if (!requireLogin()) return;
+  if (!partnerId || !item) return;
+  closeModalEl("ps-collector");
+  draft.partnerId = partnerId;
+  draft.partnerName = partnerName || "";
+  draft.matchId = 0;
+  draft.listingId = Number(item.listingId) || 0;
+  draft.binderPartner = draft.listingId ? "" : partnerId;
+  draft.want = [{
+    listingId: draft.listingId || undefined, portfolioItemId: draft.listingId ? undefined : Number(item.portfolioItemId) || undefined,
+    name: item.name, image: item.image, variant: item.variant, condition: item.condition || "NM", lang: item.lang,
+    valueCents: Math.round((Number(item.market) || Number(item.price) || 0) * 100), quantity: 1,
+  }];
+  draft.give = new Map();
+  modal("ps-trade-req", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade deine Sammlung …</p>`, { wide: true });
+  const items = await ensurePortfolio();
+  renderComposer(items);
 }
 
 /** Startpunkt aus Tausch-Hub, Swipe-Details oder Kartenansicht. */
@@ -257,7 +280,7 @@ async function tradeShip(id) {
 
 export const tradingApi = {
   openMatchProposal, sendMatchProposal, dismissMatch, openMatchById, openMatches, openTradeComposer, toggleTradeGive,
-  tradeComposerRefresh: refreshBalance, sendTradeRequest, requestTrade, tradeShip,
+  tradeComposerRefresh: refreshBalance, sendTradeRequest, requestTrade, tradeShip, openBinderTrade,
 };
 
 /** Deep-Link /?tab=trades&match=<id> aus der Push-Mitteilung */
