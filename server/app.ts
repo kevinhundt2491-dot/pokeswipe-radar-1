@@ -38,6 +38,7 @@ import { registerDealsRadar } from "./deals-radar.ts";
 import { registerShops } from "./shops.ts";
 import { registerNative } from "./native.ts";
 import { profileSlug } from "./community-logic.ts";
+import { sanitizeAvatarUrl, mergePrefs, sanitizePrefs } from "./profile-prefs-logic.ts";
 import {
   itemUnitValue, availableVariants, normalizeVariant, normalizeCondition, parseVariant, VARIANT_LABELS, CONDITION_CODES, type VariantPrices,
 } from "./variant-logic.ts";
@@ -170,6 +171,9 @@ app.get("/api/me", auth, async (c) => {
     email: user.email,
     displayName: profile.displayName,
     city: profile.city,
+    // Profil-Upgrade: Avatar & Einstellungen dauerhaft im Konto (zusätzlich lokal zwischengespeichert)
+    avatarUrl: profile.avatarUrl || "",
+    prefs: sanitizePrefs(profile.uiPrefs),
     plan,
     planInfo: PLANS[plan],
     planUntil: profile.planUntil,
@@ -206,6 +210,12 @@ app.put("/api/me", auth, async (c) => {
     updates.displayName = name;
   }
   if (b.city !== undefined) updates.city = str(b.city, 60);
+  if (b.avatarUrl !== undefined) {
+    const avatar = sanitizeAvatarUrl(b.avatarUrl);
+    if (String(b.avatarUrl ?? "").trim() && !avatar) return c.json({ error: "Dieses Profilbild wird nicht unterstützt." }, 400);
+    updates.avatarUrl = avatar;
+  }
+  if (b.prefs !== undefined) updates.uiPrefs = mergePrefs(c.get("profile").uiPrefs, b.prefs);
   const shopError = await applyShopUpdates(b, c.get("profile"), c.get("plan"), updates);
   if (shopError) return c.json({ error: shopError }, 400);
   if (Object.keys(updates).length) await db.update(profiles).set(updates).where(eq(profiles.userId, user.id));

@@ -19,6 +19,8 @@ const ago = (d) => {
 const levelChip = (a) => a?.level ? `<span title="Vertrauensstufe: ${esc(a.level.label)} (${Number(a.trust) || 0}/100)" class="text-[10px] text-slate-400">${esc(a.level.icon)}</span>` : "";
 const authorBtn = (a) => `<button onclick="PS.openAuthor(${jsArg(a.id)}, ${jsArg(a.slug)}, ${a.publicProfile ? "true" : "false"})" class="font-black text-yellow-400 hover:text-yellow-300">${esc(a.name)}</button>${a.verified ? ' <span class="text-cyan-300 text-[10px]" title="Pro Trader">✔</span>' : ""} ${levelChip(a)}`;
 const visibleCommunity = () => !$("view-community")?.classList.contains("hidden") && !document.hidden;
+// Live-Chat läuft auch, solange das Start-Dashboard (kompaktes Chat-Modul) sichtbar ist
+const visibleChat = () => !document.hidden && (!$("view-community")?.classList.contains("hidden") || !$("view-home")?.classList.contains("hidden"));
 
 // ---------------------------------------------------------------------------
 // Status-Leiste: Login, E-Mail-Bestätigung, Vertrauensstufe, Feed-Umschalter
@@ -289,6 +291,8 @@ async function pollChat() {
 }
 
 function renderChat() {
+  // Start-Dashboard (client/home.js) zeigt die letzten Nachrichten kompakt
+  try { window.dispatchEvent(new CustomEvent("ps:chat", { detail: cm.chat })); } catch {}
   const box = $("chat-messages");
   if (!box) return;
   cm.chatRendered = true;
@@ -304,9 +308,10 @@ function renderChat() {
   if (atBottom || !cm.chatScrolled) { box.scrollTop = box.scrollHeight; cm.chatScrolled = true; }
 }
 
-async function sendChat() {
-  if (!requireLogin()) return;
-  const inp = $("chat-input");
+async function sendChat(inputId = "chat-input") {
+  // Lesen ohne Konto, Schreiben mit einem Klick-Login (Google, Facebook, E-Mail) – der Text bleibt im Feld stehen
+  if (!state.user) { window.PS?.renderLogin?.("Kurz anmelden und mitschreiben – dein Name bleibt gespeichert.", "login"); return; }
+  const inp = $(typeof inputId === "string" ? inputId : "chat-input");
   const text = (inp?.value || "").trim();
   if (!text) return;
   try {
@@ -386,6 +391,8 @@ export const communityApi = {
   feedMore: () => loadFeed({ more: true }),
   likePost, commentPost, deletePost, deleteComment, sharePost, blockUser, unblockUser, openBlocks, deleteChat,
   openModeration, moderate,
+  chatMessages: () => cm.chat.slice(),
+  homeChatSend: () => sendChat("home-chat-input"),
   openAuthor: (id, slug, isPublic) => (isPublic && window.PS?.openProfile ? window.PS.openProfile(slug) : window.PS?.openUser(id)),
   toastOk: (t) => toast(t, ""),
 };
@@ -422,7 +429,7 @@ export function initCommunity() {
   loadFeed();
   pollChat();
   clearInterval(cm.chatTimer); clearInterval(cm.feedTimer);
-  cm.chatTimer = setInterval(() => { if (visibleCommunity()) pollChat(); }, 4000);
+  cm.chatTimer = setInterval(() => { if (visibleChat()) pollChat(); }, 4000);
   cm.feedTimer = setInterval(() => { if (visibleCommunity()) loadFeed({ quiet: true }); }, 45_000);
-  document.addEventListener("visibilitychange", () => { if (visibleCommunity()) { pollChat(); loadFeed({ quiet: true }); } });
+  document.addEventListener("visibilitychange", () => { if (visibleCommunity()) { pollChat(); loadFeed({ quiet: true }); } else if (visibleChat()) pollChat(); });
 }

@@ -32,7 +32,7 @@ const RETURNING_QS = (() => { try { return RETURNING && !localStorage.getItem(QS
 const GOALS = {
   collect: {
     icon: "📚", title: "Sammeln", text: "Karten entdecken, Sammlung aufbauen und den Wert live verfolgen.",
-    tab: "swipe", mode: "simple", preset: { deals: false, wish: false, rarity: "hits", listings: true },
+    tab: "home", mode: "simple", preset: { deals: false, wish: false, rarity: "hits", listings: true },
     tip: "Tipp: Mit dem Live-Scanner landen deine Karten in Sekunden in „Meine Sammlung“.",
   },
   trade: {
@@ -429,10 +429,9 @@ function injectArenaEntry() {
 }
 
 export function initShell() {
-  // Markt/Community-Umschalter (wiederhergestellt) – zusätzlich zu den Marktplatz-Tabs aus client/app-nav.js
-  injectMarketSwitch();
-  injectArenaEntry();
-  injectHeaderModeSwitch();
+  // Entrümpelt: Markt/Community-Umschalter, Kopf-Ansichtsumschalter und der zweite „Deals swipen“-Einstieg im Radar
+  // sind entfallen – Hauptreiter, Unterreiter (client/app-nav.js) und das Profil-Menü decken sie genau einmal ab.
+  // (injectMarketSwitch, injectHeaderModeSwitch, injectArenaEntry bleiben für ältere Aufrufer erhalten.)
   renderQuickbar();
   renderDemoBanner();
   applyMode(getMode());
@@ -450,8 +449,7 @@ export function routeShell() {
   if (params.get("onboarding") === "1") return openOnboarding();
   if (params.get("quickstart") === "1") return openQuickstart();
   const deepLink = ["tab", "sub", "shop", "scan", "sealed", "card", "set", "reel", "drop", "pro"].some((k) => params.has(k)) || /^\/shop\//.test(location.pathname);
-  // Start ist immer „Entdecken“ (Swipe & Live-Deals) – auch in der Einsteiger-Ansicht ein fester Navigationspunkt
-  if (!localStorage.getItem(ONBOARD_KEY) && !RETURNING && !deepLink && !state.recovery && !state.invite) {
-    setTimeout(() => { if (!localStorage.getItem(ONBOARD_KEY) && !document.querySelector("#ps-account:not(.hidden)")) openQuickstart(); }, 900);
-  }
+  // Kein Pflicht-Dialog beim ersten Besuch: Neue Besucher sehen sofort Start-Dashboard, Scanner, Marktplatz und Chat.
+  // Der Quickstart steht als kleine Willkommens-Karte auf der Startseite (client/home.js) und über ❔ im Profil-Menü bereit.
+  void deepLink;
 }

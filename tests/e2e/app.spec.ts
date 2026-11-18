@@ -8,9 +8,11 @@ test("Startseite lädt ohne JavaScript-Fehler und zeigt die Hauptbereiche", asyn
   await page.goto("/");
   await appReady(page);
   await expect(page.locator("html")).toHaveAttribute("lang", "de");
-  // Desktop: Tab-Leiste (#tab-*), Mobil: untere Navigation (#mob-*) – je Bereich muss eine Schaltfläche sichtbar sein
-  // 5 Hauptbereiche: Entdecken · Scanner · Marktplatz · Radar · Profil (+ Sammlung als Schnellzugriff auf „Entdecken“)
-  for (const name of ["swipe", "scan", "map", "flip", "profile", "portfolio"]) await expect(page.locator(`[onclick="switchTab('${name}')"]:visible`).first()).toBeVisible();
+  // Desktop: Header-Navigation (#tab-*), Mobil: Tab-Leiste unten (#mob-*) – je Hauptreiter genau eine sichtbare Schaltfläche
+  // 5 Hauptreiter: Start · Scanner · Marktplatz · Sammlung · Community; Profil & Einstellungen über den Avatar oben rechts
+  for (const name of ["home", "scan", "map", "portfolio", "community"]) await expect(page.locator(`[onclick="switchTab('${name}')"]:visible`)).toHaveCount(1);
+  await expect(page.locator("#ps-bottom-nav .mob-nav:visible, #ps-top-nav .tab-btn:visible")).toHaveCount(5);
+  await expect(page.locator("#ps-profile-btn")).toBeVisible();
   await expect(page.getByRole("button", { name: /Karte scannen/ }).first()).toBeVisible();
   expect(errors()).toEqual([]);
 });
@@ -29,15 +31,34 @@ test("Tabs wechseln die Ansicht", async ({ page, baseURL }) => {
   // und die Ansicht würde nicht wechseln – der Test erkennt das weiterhin.
   await tab("scan").click({ force: true });
   await expect(page.locator("#view-scan")).toBeVisible();
-  await tab("swipe").click({ force: true });
-  await expect(page.locator("#view-swipe")).toBeVisible();
-  // Profil-Bereich mit Konto, Pro-Pass, Verkaufen und Rechtlichem
-  await tab("profile").click({ force: true });
+  await tab("home").click({ force: true });
+  await expect(page.locator("#view-home")).toBeVisible();
+  // Profil- & Einstellungs-Menü über den Avatar oben rechts: Konto, Pro-Pass, Verkaufen und Rechtliches
+  await page.locator("#ps-profile-btn").click({ force: true });
   await expect(page.locator("#view-profile")).toBeVisible();
   await expect(page.locator("#ps-profile-hub")).toContainText("Rechtliches");
-  // Marktplatz-Tabs
+  // Marktplatz: Unterreiter Alle Karten | Swipe-Tausch | Meine Inserate
   await tab("map").click({ force: true });
-  await expect(page.locator('#view-map [data-segment="market"]')).toBeVisible();
+  const market = page.locator('#view-map [data-segment="market"]');
+  await expect(market).toBeVisible();
+  await expect(market.locator("[data-seg]")).toHaveText([/Alle Karten/, /Swipe-Tausch/, /Meine Inserate/]);
+  await market.locator('[data-seg="swipe"]').click({ force: true });
+  await expect(page.locator("#view-swipe")).toBeVisible();
+  await expect(page.locator('#view-swipe [data-seg="swipe"]')).toHaveAttribute("aria-selected", "true");
+  // Sammlung: Mein Binder | Wunschliste | Preis-Radar
+  await tab("portfolio").click({ force: true });
+  const coll = page.locator('#view-portfolio [data-segment="collection"]');
+  await expect(coll.locator("[data-seg]")).toHaveText([/Mein Binder/, /Wunschliste/, /Preis-Radar/]);
+  await coll.locator('[data-seg="radar"]').click({ force: true });
+  await expect(page.locator("#view-flip")).toBeVisible();
+  // Community: Live-Chat | Pull-Wall
+  await tab("community").click({ force: true });
+  const com = page.locator('#view-community [data-segment="community"]');
+  await expect(com.locator("[data-seg]")).toHaveText([/Live-Chat/, /Pull-Wall/]);
+  await expect(page.locator("#chat-messages")).toBeVisible();
+  await com.locator('[data-seg="wall"]').click({ force: true });
+  await expect(page.locator("#pullwall-feed")).toBeAttached();
+  await expect(page.locator("#chat-messages")).toBeHidden();
 });
 
 test("Englische Oberfläche über ?lang=en, gemerkt und zurückschaltbar", async ({ page }) => {

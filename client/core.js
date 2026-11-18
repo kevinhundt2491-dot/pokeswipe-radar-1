@@ -86,16 +86,24 @@ function bearer() {
   } catch { return ""; }
 }
 
-async function api(path, { method = "GET", body } = {}) {
+async function api(path, { method = "GET", body, _retry = false } = {}) {
   // Schreibende Anfragen immer als JSON senden – der Server lehnt sonst ab (CSRF-Schutz, auch für DELETE ohne Inhalt)
   if (method !== "GET" && method !== "HEAD" && body === undefined) body = {};
   const headers = { Accept: "application/json", "Accept-Language": globalThis.psLang === "en" ? "en" : "de" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  // Dauerhaft angemeldet: abgelaufenes Zugangs-Token vor dem Aufruf erneuern (client/session.js)
+  try { await hooks.freshToken({ force: false }); } catch {}
   const token = bearer();
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(path, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
   let data = {};
   try { data = await res.json(); } catch {}
+  // 401 trotz gespeicherter Sitzung: einmal mit frisch erneuertem Token wiederholen, statt den Nutzer abzumelden
+  if (res.status === 401 && token && !_retry) {
+    let renewed = false;
+    try { renewed = await hooks.freshToken({ force: true }); } catch {}
+    if (renewed && bearer() && bearer() !== token) return api(path, { method, body, _retry: true });
+  }
   if (!res.ok) {
     const err = new Error(data.error || `Fehler ${res.status}`);
     err.status = res.status; err.upgrade = data.upgrade; err.data = data;
@@ -104,7 +112,7 @@ async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 
-const hooks = { openAccount: () => {}, openPro: () => {} };
+const hooks = { openAccount: () => {}, openPro: () => {}, freshToken: async () => false };
 
 function handleError(e) {
   if (e.status === 401) { hooks.openAccount(); return; }

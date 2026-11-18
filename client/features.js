@@ -813,12 +813,12 @@ const SUBTABS = {
     { key: "radar", label: "Sammler-Radar", match: (el) => el.querySelector("#radarMap") },
   ],
   community: [
-    { key: "feed", label: "Live-Community", fallback: true, match: () => false },
+    { key: "feed", label: "Beiträge & Chat", fallback: true, match: () => false },
     { key: "calendar", label: "Kalender & Events", match: (el) => el.id === "ps-calendar" },
     { key: "ranks", label: "Abzeichen & Bestenliste", match: (el) => el.id === "ps-ranks" },
   ],
   portfolio: [
-    { key: "overview", label: "Portfolio", fallback: true, match: () => false },
+    { key: "overview", label: "Übersicht", fallback: true, match: () => false },
     { key: "wishlist", label: "Wunschliste", match: (el) => el.id === "ps-wishlist" },
     { key: "graded", label: "🏅 Graded", match: (el) => el.id === "ps-graded" },
     { key: "sets", label: "Sets", match: (el) => el.id === "ps-sets" },
@@ -858,7 +858,9 @@ function buildSubtabs() {
       panels[target].appendChild(el);
     }
     const bar = document.createElement("div");
-    bar.className = "flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 sticky top-0 z-20";
+    // Zweite Ebene unter den Unterreitern (Segmented Control aus client/app-nav.js): kompakte, horizontal scrollbare Chips
+    bar.className = "ps-subchips flex gap-1.5 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1";
+    bar.dataset.subchips = view;
     bar.setAttribute("role", "tablist");
     bar.innerHTML = tabs.map((t) => `<button role="tab" data-subbtn="${t.key}" ${t.pro ? 'data-pro="1"' : ""} onclick="PS.showSub('${view}', '${t.key}')" class="shrink-0 px-3.5 py-2 rounded-xl text-xs font-black transition"></button>`).join("");
     tabs.forEach((t) => { bar.querySelector(`[data-subbtn="${t.key}"]`).textContent = t.label; });
@@ -881,10 +883,11 @@ export function showSub(view, key, { silent = false } = {}) {
   section.querySelectorAll("[data-sub]").forEach((p) => p.classList.toggle("hidden", p.dataset.sub !== key));
   section.querySelectorAll("[data-subbtn]").forEach((b) => {
     const on = b.dataset.subbtn === key;
-    b.className = `shrink-0 px-3.5 py-2 rounded-xl text-xs font-black transition ${b.dataset.pro ? "ps-pro-only " : ""}${on ? "bg-yellow-400 text-slate-950 shadow" : "bg-slate-900/90 text-slate-300 border border-slate-700 hover:text-white"}`;
+    b.className = `ps-subchip shrink-0 ${b.dataset.pro ? "ps-pro-only " : ""}`;
     b.setAttribute("aria-selected", on ? "true" : "false");
   });
   localStorage.setItem(`ps_sub_${view}`, key);
+  try { window.dispatchEvent(new CustomEvent("ps:sub", { detail: { view, key } })); } catch {}
   if (view === "map" && key === "radar") {
     setTimeout(() => { try { if (typeof mapInstance !== "undefined" && mapInstance) mapInstance.invalidateSize(); else window.initOrUpdateMap?.(); } catch {} }, 80);
   }
@@ -948,10 +951,12 @@ function tidyLayout() {
     radar: svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/>'),
     market: svg('<path d="M4 7h16l-1.5 9.5a2 2 0 0 1-2 1.5h-9a2 2 0 0 1-2-1.5z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/>'),
   };
-  // 5 Hauptbereiche (Mobile-First): Entdecken · Scanner & Sammlung · Marktplatz & Tausch · Radar · Profil
-  const names = { swipe: ["electric", "Entdecken"], scan: ["water", "Scanner & Sammlung"], map: ["psychic", "Marktplatz & Tausch"], flip: ["fire", "Radar"], profile: ["grass", "Profil"] };
-  const iconOf = { swipe: "swipe", scan: "scan", map: "market", flip: "radar", profile: "profile" };
-  const short = { scan: "Scanner", map: "Marktplatz" };
+  icons.home = svg('<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/>');
+  icons.community = svg('<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5"/>');
+  // 5 Hauptreiter: Start · Scanner · Marktplatz · Sammlung · Community (Profil über den Avatar oben rechts)
+  const names = { home: ["electric", "Start"], scan: ["water", "Scanner"], map: ["psychic", "Marktplatz"], portfolio: ["grass", "Sammlung"], community: ["fire", "Community"] };
+  const iconOf = { home: "home", scan: "scan", map: "market", portfolio: "portfolio", community: "community" };
+  const short = {};
   for (const [k, [type, label]] of Object.entries(names)) {
     const d = $(`tab-${k}`);
     if (d) { d.dataset.type = type; d.innerHTML = `<span class="ico">${icons[iconOf[k]]}</span><span>${label}</span>`; }
