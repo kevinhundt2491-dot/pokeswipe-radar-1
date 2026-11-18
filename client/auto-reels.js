@@ -12,7 +12,7 @@ import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
 import { recordLive, previewLive, loadNarration, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
 import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
-import { PRO_TEMPLATES, templateByKey, proCaption, proScript, checkProScript, estimateMb, bitrateFor, sceneTimes, secondsFor, SAFE_MB, PRO_MAX_S } from "./reel-pro.js";
+import { PRO_TEMPLATES, templateByKey, proCaption, proScript, checkProScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, SAFE_MB, PRO_MAX_S } from "./reel-pro.js";
 import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
 import { lookFor, cardImageUrl, pickCoverCard } from "./reel-pro.js";
 import { sameOriginImageUrl } from "./dom-capture.js";
@@ -707,11 +707,12 @@ const PRO_CSS = `
 `;
 const PRO_HTML = `
   <div class="ar-pro" id="ar-pro">
-    <b class="t">🎬 Pro-Videos · 5 Szenen · 15–30 s</b>
+    <b class="t">🎬 Pro-Videos · 15–30 s</b>
     <small id="ar-pro-spec">Lade Video-Einstellungen …</small>
     <div class="ar-bar">
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="next">🔁 Nächstes Pro-Video (Rotation)</button>
       <button type="button" class="ar-btn" data-ar="pro" data-pro="all">🚀 Alle aktiven Vorlagen</button>
+      <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="hook4" title="Schnäppchen-FOMO, Flohmarkt-Schutz und Tinder für Sammler nacheinander aufnehmen">🎯 Alle 3 Hook-Presets (15–17 s)</button>
     </div>
     <ul id="ar-pro-list"></ul>
     <small>Cover mit Hook-Schlagzeile (0–2 s, zugleich Vorschaubild) → Fokus-Zoom auf die echte App → „Warum das genial ist“ mit Feature-Badges → Vertrauen &amp; Praxis-Mehrwert → Endscreen „${esc("Jetzt kostenlos testen auf pokeswipe-radar.de")}“. Untertitel im sicheren Mittelbereich. Einstellungen: Admin-Zentrale → 🎬 Make.com &amp; Auto-Reels.</small>
@@ -753,6 +754,8 @@ async function onProClick(btn) {
   const what = btn.dataset.pro;
   if (what === "one") return generatePro([{ tpl: templateByKey(btn.dataset.k), variant: proNext?.template === btn.dataset.k ? proNext.variant : 0 }]);
   if (what === "all") return generatePro(PRO_TEMPLATES.filter((t) => proCfg.templates.includes(t.key)).map((tpl) => ({ tpl, variant: 0 })));
+  // Die 3 Hook-Presets immer gemeinsam – unabhängig davon, ob sie in der Rotation der Admin-Zentrale aktiv sind
+  if (what === "hook4") return generatePro(PRO_TEMPLATES.filter(isHook4).map((tpl) => ({ tpl, variant: 0 })));
   if (what === "next") {
     let pick = null;
     try { pick = await api("/api/admin/make/video/next", { method: "POST", body: {} }); } catch { pick = proNext; }
@@ -854,7 +857,7 @@ async function generatePro(list) {
       let voice = null, speed = 1, voiceFailed = null, voiceSec = 0;
       if (voiceOn) {
         setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
-        try { ({ take: voice, speed, seconds: voiceSec } = await loadProNarration(script.say, ac, proCfg.tone, secondsFor(tpl))); }
+        try { ({ take: voice, speed, seconds: voiceSec } = await loadProNarration(script.say, ac, proCfg.tone, secondsFor(tpl), tpl.maxSpeed || 1.12)); }
         catch (e) {
           // Kein Abbruch: das Video wird mit Musik (ohne Sprecherin) aufgenommen und heruntergeladen,
           // aber NICHT automatisch an Make.com gesendet. Der genaue Fehler steht unter der Karte.
@@ -899,7 +902,15 @@ async function generatePro(list) {
         cover_layout: look.layout, cover_card_id: pick?.id || "", cover_card_name: pick?.name || "", cover_card_price_eur: pick?.price ?? "", video_mode: "pro", video_template: tpl.key, video_template_label: tpl.label, promo_link: tpl.link || "",
         hook_variant: variant, fps: res.fps, video_bitrate_mbit: res.mbit, audio_bitrate_kbps: 192, resolution: "1080x1920", aspect_ratio: "9:16",
         max_mb: maxMb, scenes_json: JSON.stringify(res.scenes.map((s) => ({ key: s.key, start: +s.start.toFixed(2), end: +s.end.toFixed(2) }))),
+        ...(isHook4(tpl) ? {
+          video_format: "hook4", video_bitrate_mode: res.bitrateMode || "", comment_question: cap.question || "", target_seconds: secondsFor(tpl).join("-"),
+          speech_seconds: res.speech ? +res.speech.toFixed(2) : "", segments_json: JSON.stringify(res.timing), timing_ok: res.timing?.ok ? "1" : "0",
+        } : {}),
       };
+      if (res.timing && !res.timing.ok) {
+        const t = res.timing.rows.map((r) => `${r.key} ${r.start.toFixed(1)}–${r.end.toFixed(1)} s (Soll ${r.want.join("–")})`).join(" · ");
+        addNote(tpl.key, "info", `Länge ${res.timing.duration.toFixed(1).replace(".", ",")} s – Szenen folgen den echten Satz-Zeitstempeln der Sprecherin: ${t}.`);
+      }
       // 1) Fertiges Video IMMER sofort sichern: Ergebnis-Karte mit Download-Buttons + automatischer Download
       //    (MP4, .txt und Cover). Der Make.com-Versand ist danach nur noch ein optionaler Zusatz.
       const old = proResults.get(tpl.key);
@@ -965,7 +976,7 @@ async function generatePro(list) {
 async function renderCoverThumb(tpl, script, look, coverCard) {
   await loadProFonts();
   const c = document.createElement("canvas"); c.width = OUT_W; c.height = OUT_H;
-  const comp = new ProCompositor({ tpl, cover: script.cover, badge: script.badge, look, coverCard, scenes: sceneTimes([], 26), captions: [] });
+  const comp = new ProCompositor({ tpl, cover: script.cover, badge: script.badge, look, coverCard, scenes: sceneTimes([], isHook4(tpl) ? 17 : 26, scenesFor(tpl)), captions: [] });
   comp.draw(c.getContext("2d", { alpha: false }), 0, null);
   return (await jpeg(c)) || new Blob([], { type: "image/jpeg" });
 }

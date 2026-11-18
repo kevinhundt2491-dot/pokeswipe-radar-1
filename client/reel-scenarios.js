@@ -405,6 +405,109 @@ export const CHOREO = {
     ],
   },
 
+  // ---- Hook-Presets (4 Szenen: Hook → UI-Beweis → USP → Frage). Beats: 1 Hook · 2+3 UI-Beweis · 4 USP ----
+
+  // H1) Schnäppchen-FOMO: echter Live Flip-Radar – Live-Status, durch Echtzeit-Listings scrollen,
+  // bestes Angebot (grünes Rabatt-Badge) hervorheben, im USP-Teil per Klick die Verkaufspreise öffnen.
+  flipdeal: {
+    async setup(s) {
+      try { s.win.PS?.showSub?.("flip", "deals", { silent: true }); } catch {}
+      await CHOREO.flip.setup(s);
+    },
+    beats: [
+      async (s, d) => { await CHOREO.flip.beats[0](s, d); },
+      async (s, d) => {
+        const grid = s.$("#ps-flip-grid");
+        const span = grid ? Math.min(grid.getBoundingClientRect().height - VIEW_H * 0.5, VIEW_H * 1.2) : VIEW_H * 0.6;
+        s.hideFinger();
+        await s.scrollBy(Math.max(VIEW_H * 0.45, span), Math.max(900, d * 1000 * 0.8));
+      },
+      async (s, d) => {
+        const deal = bestFlipDeal(s);
+        if (!deal) return s.sleep(d * 1000);
+        await s.reveal(deal, { ms: 600, ratio: 0.38 });
+        await s.spotlight(deal);
+        s.fact("card", deal.querySelector("p.text-xs")?.textContent);
+        s.fact("pct", (deal.querySelector("span.rounded-full")?.textContent || "").replace(/[^\d,.%−-]/g, "").replace(/^[−-]/, ""));
+        s.fact("price", deal.querySelector("p.text-lg")?.textContent);
+        const { x, y } = s.center(deal);
+        await s.moveFinger(x, y, Math.min(700, d * 300));
+      },
+      async (s, d) => {
+        const deal = bestFlipDeal(s);
+        const btn = deal ? s.byText("button", /Verkaufspreise/, deal) || deal.querySelector("button") : null;
+        if (!btn) return s.sleep(d * 1000);
+        await s.sleep(Math.min(400, d * 100));
+        await s.tap(btn, { reveal: false });
+        await s.waitFor(() => s.openModal("ps-comps") && !/Lade Verkaufspreise/.test(s.openModal("ps-comps").textContent || ""), 6000).catch(() => {});
+        await s.idle({ quietMs: 200, timeoutMs: 2500 });
+      },
+    ],
+  },
+
+  // H2) Flohmarkt-Schutz: echter Live-Kartenscanner im Browser – Kamera-Ansicht im Hook,
+  // Laser-Scan + „Erkannt“ mit echtem Marktwert im UI-Beweis, Ergebnis bleibt im USP-Teil stehen.
+  fleascan: {
+    setup: (s) => CHOREO.scansell.setup(s),
+    beats: [
+      async (s, d) => {
+        const card = s.$("#ps-ls-demo-card");
+        if (card) { const { x, y } = s.center(card); await s.moveFinger(x + 60, y + 90, Math.min(600, d * 250)); }
+      },
+      async (s, d) => {
+        s.hideFinger();
+        await s.win.PS?.liveScanDemoScan?.(Math.max(700, Math.min(1500, d * 1000 * 0.6)));
+        await s.idle({ quietMs: 200, timeoutMs: 1500 });
+      },
+      async (s, d) => {
+        const hud = s.$("#ps-ls-hud");
+        if (hud) await s.spotlight(hud.firstElementChild || hud, Math.min(2200, d * 800));
+        else await s.sleep(d * 1000);
+      },
+      async (s, d) => { s.hideFinger(); await s.sleep(Math.min(1500, d * 400)); },
+    ],
+  },
+
+  // H3) Tinder für Sammler: echte Swipes (rechts im Hook, links/rechts im UI-Beweis), danach über die echte
+  // Navigation in den P2P-Tausch-Hub und weiter ins lokale Sammler-Radar.
+  chase: {
+    setup: showArena,
+    beats: [
+      async (s, d) => {
+        await s.sleep(Math.min(700, d * 250));
+        const t = s.text("#swipe-title");
+        await s.swipe(s.$("#swipe-img"), 1, 650);
+        await nextCardLoaded(s, t);
+      },
+      async (s, d) => {
+        let t = s.text("#swipe-title");
+        await s.swipe(s.$("#swipe-img"), -1, 560);
+        await nextCardLoaded(s, t);
+        if (d > 2.4) { t = s.text("#swipe-title"); await s.swipe(s.$("#swipe-img"), 1, 600); await nextCardLoaded(s, t); }
+      },
+      async (s) => {
+        const t = s.text("#swipe-title");
+        s.fact("card", t);
+        await s.swipe(s.$("#swipe-img"), 1, 650);
+        await nextCardLoaded(s, t);
+      },
+      async (s, d) => {
+        try { s.win.PS?.marketMode?.("trade"); } catch {}
+        try { s.win.switchTab?.("map"); } catch {}
+        await s.waitFor(() => (s.$("#market-list")?.children.length || 0) > 0, 4000).catch(() => {});
+        await s.idle({ quietMs: 200, timeoutMs: 2000 });
+        const list = s.$("#market-list");
+        if (list) { const r = list.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 150)); }
+        s.hideFinger();
+        await s.sleep(Math.min(1800, d * 450));
+        try { s.win.PS?.showSub?.("map", "radar"); } catch {}
+        await s.idle({ quietMs: 200, timeoutMs: 2000 });
+        const map = s.$("#radarMap");
+        if (map) { const r = map.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 120)); }
+      },
+    ],
+  },
+
   // 10) App-Tour: Swipe → Flip-Radar → Sammlung über die echte Bottom-Navigation
   tour: {
     setup: showArena,

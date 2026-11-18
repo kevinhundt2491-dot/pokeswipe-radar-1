@@ -19,7 +19,7 @@ import { ProCompositor, loadProFonts } from "./reel-compositor.js";
 import { exactMp4Support, ExactMp4Writer } from "./reel-mp4.js";
 import {
   proScript, checkProScript, sceneTimes, choreoMarks, captionChunks, bitrateFor, shrinkBitrate, speedFor, audibleEnd, frameGrid,
-  secondsFor, SAFE_MB, MB, AUDIO_KBPS, PRO_MIN_S, PRO_MAX_S, PRO_LEAD, END_FADE,
+  secondsFor, scenesFor, isHook4, segmentReport, SAFE_MB, MB, AUDIO_KBPS, PRO_MIN_S, PRO_MAX_S, PRO_LEAD, END_FADE,
 } from "./reel-pro.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
@@ -33,11 +33,11 @@ const NO_VOICE_S = 26;
  * Sprecherin für eine Pro-Vorlage laden und das Tempo so wählen, dass das Video 20–30 s lang wird.
  * @returns {Promise<{ take: object, speed: number, seconds: number }>}
  */
-export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S]) {
-  // Kurze Vorlagen (z. B. 15–20 s) starten gleich mit dem schnellsten natürlichen Tempo
-  let speed = range[1] <= 20 ? 1.12 : 1.04;
+export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S], cap = 1.12) {
+  // Kurze Vorlagen (z. B. 15–20 s) starten gleich mit dem schnellsten erlaubten Tempo (Hook-Presets: 1,2)
+  let speed = range[1] <= 20 ? cap : 1.04;
   let take = await loadNarration(lines, ac, { tone, speed });
-  const next = speedFor(speechSeconds(take), speed, range);
+  const next = speedFor(speechSeconds(take), speed, range, cap);
   if (next !== speed) {
     // Zweiter Take nur zur Feinanpassung der Länge – scheitert er, bleibt der erste (fertige) Take
     try { take = await loadNarration(lines, ac, { tone, speed: next }); speed = next; }
@@ -57,6 +57,12 @@ export function speechSeconds(take) {
 }
 
 function cuesFor(scenes) {
+  if (scenes[0]?.key === "hook") {
+    // Hook-Presets: Impact sofort auf Frame 0, Swipe/Pop im UI-Beweis, Klick-Pop im USP, Riser zur Frage
+    const [, p, u, a] = scenes;
+    return [[0.02, "impact"], [0.5, "pop"], [p.start, "cut"], [p.start + 0.4, "swipe"], [p.start + 1.6, "coin"],
+      [u.start, "cut"], [u.start + 0.7, "pop"], [a.start - 0.4, "riser"], [a.start, "finale"]];
+  }
   const [, f, b, t, c] = scenes;
   return [[0.02, "impact"], [f.start, "cut"], [f.start + 0.5, "swipe"], [b.start, "cut"], [b.start + 0.6, "pop"], [b.start + 1.4, "pop"],
     [t.start, "cut"], [t.start + 0.5, "coin"], [c.start, "riser"], [c.start + 0.05, "finale"]];
@@ -104,7 +110,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
   const shift = (m) => ({ start: PRO_LEAD + m.start, end: PRO_LEAD + m.end });
   const marks = voice ? voice.marks.map(shift) : estimateMarks(script.say, D);
   const wordMarks = voice?.wordMarks ? voice.wordMarks.map((ws) => ws.map(shift)) : null;
-  const scenes = sceneTimes(marks, D);
+  const scenes = sceneTimes(marks, D, scenesFor(tpl));
   const captions = captionChunks(script.show, marks, wordMarks);
   const useMbit = bitrateFor(D, mbit, maxMb);
   const cues = cuesFor(scenes), seed = tpl.key.length + variant;
@@ -116,6 +122,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
   const ac = audio || voice ? unlockAudio() : null;
   if (voice && !ac) throw new Error("Dieser Browser kann keinen Ton mit aufnehmen – für das Voiceover bitte Chrome oder Edge verwenden.");
 
+  let bitrateMode = "variable";
   let src = null, rec = null, sound = null, vstream = null, writer = null, painting = false, choreoRun = null, aborted = false, error = null;
   const onHide = () => { if (document.hidden) { aborted = true; stage.abort(); if (rec?.state === "recording") rec.stop(); } };
   try {
@@ -156,7 +163,14 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
     let done = null;
     let clock;
     if (exactCfg) {
-      writer = new ExactMp4Writer({ ...exactCfg, video: { ...exactCfg.video, bitrate: Math.round(useMbit * 1e6) } });
+      let vcfg = { ...exactCfg.video, bitrate: Math.round(useMbit * 1e6) };
+      // Hook-Presets: konstante 8 Mbit/s (VBR bleibt bei Grafik-lastigen Szenen sonst bei ≈ 4–5 Mbit/s) – Rückfall VBR
+      if (tpl.cbr) {
+        const cbr = { ...vcfg, bitrateMode: "constant" };
+        try { if ((await VideoEncoder.isConfigSupported(cbr)).supported) vcfg = cbr; } catch { /* VBR bleibt */ }
+      }
+      writer = new ExactMp4Writer({ ...exactCfg, video: vcfg });
+      bitrateMode = vcfg.bitrateMode || "variable";
       if (mixed) writer.addAudio(mixed);
       const startPerf = performance.now();
       clock = audioClock(ac) || (() => (performance.now() - startPerf) / 1000);
@@ -191,8 +205,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
             const k = Math.min(N - 1, Math.floor(now * fps + 1e-6));
             if (k > lastK) {
               const tk = k / fps;
-              const key = comp.sceneAt(tk).key;
-              if (key !== "cover" && key !== "cta") src.draw(lctx); // Live-Bild nur, wenn es zu sehen ist
+              if (comp.showsLive(tk)) src.draw(lctx); // Live-Bild nur, wenn es zu sehen ist
               comp.draw(ctx, tk, live);
               // Gegendruck: staut sich der Encoder, entfällt dieser Frame – die Zeitstempel bleiben trotzdem exakt
               if (k === 0 || k === N - 1 || writer.queue < 8) { writer.addFrame(canvas, k); encoded++; } else dropped++;
@@ -202,8 +215,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
             }
           } else {
             const t = clamp(now, 0, D);
-            const key = comp.sceneAt(t).key;
-            if (key !== "cover" && key !== "cta") src.draw(lctx);
+            if (comp.showsLive(t)) src.draw(lctx);
             comp.draw(ctx, t, live); encoded++;
             onTick?.(t, D);
             if (now >= D + 0.12) return resolve(); // letzter (schwarzer) Frame steht kurz, damit nichts abgeschnitten wird
@@ -214,7 +226,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
       requestAnimationFrame(paint);
     });
     onStatus?.(`⏺ Pro-Video „${tpl.label}“ läuft (${fps} FPS, ${useMbit} Mbit/s${exactCfg ? ", frame-genau" : ""}) – Tab sichtbar lassen …`);
-    choreoRun = runChoreo(stage, tpl.choreo, choreoMarks(scenes), () => Math.max(0, clock()), scenes[4].start);
+    choreoRun = runChoreo(stage, tpl.choreo, choreoMarks(scenes), () => Math.max(0, clock()), scenes[scenes.length - 1].start);
     // Wachhund: läuft die Uhr nicht weiter (z. B. Tab im Hintergrund), wird die Aufnahme verworfen statt zu hängen
     const startWall = performance.now();
     const watchdog = new Promise((_, reject) => {
@@ -247,7 +259,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
     return {
       blob, ext: extOf(type), mime: exactCfg ? `video/mp4;codecs=${exactCfg.video.codec},mp4a.40.2` : rec.mimeType || type, duration: D, facts: { ...stage.facts }, lines: script.say, cover: script.cover,
       fps: exactCfg ? fps : Math.round(encoded / Math.max(0.1, D)), liveFps: Math.round(src.rate()), capture: "pro", mbit: useMbit, scenes, thumb, badge: script.badge, look,
-      exact: !!exactCfg, frames: exactCfg ? N : encoded,
+      exact: !!exactCfg, frames: exactCfg ? N : encoded, bitrateMode: exactCfg ? bitrateMode : "recorder", speech, timing: isHook4(tpl) ? segmentReport(scenes, tpl.segments) : null,
     };
   } catch (e) {
     if (aborted && !error && /abgebrochen/.test(e?.message || "")) return null;
