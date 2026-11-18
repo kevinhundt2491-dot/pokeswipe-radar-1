@@ -4,16 +4,24 @@
 //     Bereits inserierte Doppelte werden erkannt und nicht erneut eingestellt.
 //   • Kartenauswahl ohne Blättern: Suchleiste (Name, Sammlernummer, Set) + Chips „Alle“ | „Nur Doppelte“ | „Nach Set“.
 // Reine Logik: server/duplicates-logic.ts (geprüft in tests/duplicates.test.ts).
-import { $, esc, eur, cdn, state, api, toast, handleError, requireLogin, FALLBACK_IMG } from "./core.js";
+import { $, esc, eur, cdn, state, api, toast, handleError, requireLogin, modal, closeModalEl, FALLBACK_IMG } from "./core.js";
 import { loadMyListings } from "./sell.js";
 import {
   ownedCards, duplicatePlan, dupeConfirmText, dupeListingPayloads, chunk, filterPickList, groupPickBySet, quantityBadge, PICK_FILTERS,
 } from "../server/duplicates-logic.ts";
 
-const pick = { query: "", filter: "all", busy: false, requested: false };
+const pick = { query: "", filter: "all", busy: false, requested: false, demo: null };
 const MAX_TILES = 60;
 
-const items = () => state.portfolio?.items || [];
+// Reel-Aufnahme (Live-Stage-iframe mit ?reel=1): „Meine Inserate“ zeigt den Demo-Ordner der Master-Vorlage – ohne Schreibzugriff.
+const IS_STAGE = (() => {
+  try { return window.self !== window.top && new URLSearchParams(location.search).get("reel") === "1"; } catch { return false; }
+})();
+
+const items = () => (pick.demo ? pick.demo.items : state.portfolio?.items || []);
+const myListings = () => (pick.demo ? pick.demo.listings : state.myListings || []);
+/** true, solange in der Aufnahme der Demo-Bestand angezeigt wird. */
+export const pickerDemoOn = () => !!pick.demo;
 
 function tileHtml(c) {
   const listedAll = c.spare > 0 && c.toList === 0;
@@ -61,12 +69,12 @@ export function renderListPicker() {
   const root = $("ps-list-picker");
   if (!root) return;
   // Sammlung einmalig nachladen (kein Endlos-Nachladen, falls die Anfrage scheitert)
-  if (state.user && !state.portfolio && !pick.requested) { pick.requested = true; window.PS?.loadPortfolio?.(); }
-  const cards = ownedCards(items(), state.myListings || []);
+  if (state.user && !state.portfolio && !pick.requested && !pick.demo) { pick.requested = true; window.PS?.loadPortfolio?.(); }
+  const cards = ownedCards(items(), myListings());
   const list = root.querySelector("[data-pick-list]");
   if (list) list.innerHTML = listHtml(filterPickList(cards, pick.query, pick.filter));
   root.querySelectorAll("[data-pick-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.pickFilter === pick.filter)));
-  const plan = duplicatePlan(items(), state.myListings || []);
+  const plan = duplicatePlan(items(), myListings());
   const btn = root.querySelector("[data-list-dupes]");
   if (btn) {
     btn.textContent = plan.copies ? `🏷️ Alle Doppelten inserieren (${plan.copies})` : "🏷️ Alle Doppelten inserieren";
@@ -82,6 +90,7 @@ export function renderListPicker() {
 
 /** 1-Klick: alle überzähligen Exemplare inserieren (immer 1 Exemplar im Set-Ordner behalten). */
 async function listAllDupes() {
+  if (pick.demo) return listAllDupesDemo();
   if (!requireLogin() || pick.busy) return;
   pick.busy = true;
   renderListPicker();
@@ -118,12 +127,70 @@ function pickSell(portfolioItemId) {
   window.PS?.sellPortfolioItem?.(Number(portfolioItemId));
 }
 
+// ---------------------------------------------------------------------------
+// Demo NUR für die Reel-Aufnahme (Master-Vorlage „Automatischer Binder & Bulk-Marktplatz“)
+// ---------------------------------------------------------------------------
+/** Demo-Bestand aus dem Demo-Set-Ordner übernehmen (PS.binderDemoInventory). ms = Dauer der Inserier-Animation. */
+function listPickerDemoStart({ ms = 1500 } = {}) {
+  if (!IS_STAGE) return null;
+  const inv = window.PS?.binderDemoInventory?.();
+  if (!inv?.items?.length) return null;
+  pick.demo = { items: inv.items, listings: inv.listings || [], ms: Math.max(300, Math.min(4000, Number(ms) || 1500)) };
+  pick.query = ""; pick.filter = "dupes";
+  const plan = duplicatePlan(items(), myListings());
+  renderListPicker();
+  return { copies: plan.copies, value: plan.value };
+}
+
+/**
+ * Bestätigung in der App statt window.confirm (der Browser-Dialog ist in der Aufnahme nicht sichtbar) –
+ * gleicher Text wie im echten Ablauf (dupeConfirmText).
+ */
+function demoConfirm(text) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; resolve(v); };
+    const el = modal("ps-dupes-confirm", `<h3 class="text-base font-black text-white">🏷️ Alle Doppelten inserieren</h3>
+      <p class="text-xs text-slate-200 leading-relaxed" data-dupes-text>${esc(text)}</p>
+      <div class="grid grid-cols-2 gap-2"><button type="button" data-dupes-cancel class="bg-slate-800 text-white font-black py-2.5 rounded-xl text-xs">Abbrechen</button>
+        <button type="button" data-dupes-confirm class="bg-gradient-to-r from-amber-300 to-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">Bestätigen</button></div>`, { onClose: () => finish(false) });
+    el.querySelector("[data-dupes-confirm]").onclick = () => { finish(true); closeModalEl("ps-dupes-confirm"); };
+    el.querySelector("[data-dupes-cancel]").onclick = () => closeModalEl("ps-dupes-confirm");
+  });
+}
+
+/** Demo-Ablauf: Bestätigen → alle überzähligen Exemplare nacheinander „online“ (Fortschritt im Button) → Bestätigungs-Toast. */
+async function listAllDupesDemo() {
+  if (pick.busy || !pick.demo) return;
+  const plan = duplicatePlan(items(), myListings());
+  if (!plan.copies) { toast("🏷️ Nichts zu inserieren", "Alle doppelten Karten sind bereits inseriert."); return; }
+  if (!(await demoConfirm(dupeConfirmText(plan)))) return;
+  pick.busy = true;
+  const payloads = dupeListingPayloads(plan), n = payloads.length, step = pick.demo.ms / n;
+  const bulk = [];
+  for (let k = 0; k < n; k++) {
+    await new Promise((r) => setTimeout(r, step));
+    if (!pick.demo) return;
+    const p = payloads[k];
+    pick.demo.listings = [...pick.demo.listings, { id: -200 - k, card_id: p.cardId || null, print_id: p.printId || null, status: "active", price: p.price }];
+    bulk.push({ cardId: p.cardId, price: p.price });
+    renderListPicker();
+    const btn = $("ps-list-picker")?.querySelector("[data-list-dupes]");
+    if (btn) btn.textContent = `🏷️ Inseriere … ${k + 1}/${n}`;
+  }
+  window.dispatchEvent(new CustomEvent("ps:reel-listed", { detail: bulk }));
+  toast("🏷️ Doppelte inseriert", `${n} Karte${n === 1 ? "" : "n"} zum Cardmarket-Preis online – je 1 Exemplar bleibt in deinem Set-Ordner.`);
+  pick.busy = false;
+  renderListPicker();
+}
+
 export function initListPicker() {
   window.addEventListener("ps:portfolio", renderListPicker);
   window.addEventListener("ps:my-listings", renderListPicker);
 }
 
 export const listPickerApi = {
+  ...(IS_STAGE ? { listPickerDemoStart } : {}),
   listAllDupes, pickSell, renderListPicker,
   pickSearch: (q) => { pick.query = String(q ?? "").slice(0, 80); renderListPicker(); },
   pickFilter: (k) => { pick.filter = PICK_FILTERS.some(([f]) => f === k) ? k : "all"; renderListPicker(); },

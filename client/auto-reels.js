@@ -713,6 +713,7 @@ const PRO_HTML = `
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="next">🔁 Nächstes Pro-Video (Rotation)</button>
       <button type="button" class="ar-btn" data-ar="pro" data-pro="all">🚀 Alle aktiven Vorlagen</button>
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="showcase" title="High-End-Showcase: Scanner, Set-Binder, Marktplatz, Live-Chat und Pro-Abo – exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s">🎬 Pro-Showcase (29 s · 60 FPS)</button>
+      <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="autobinder" data-master="autobinder" title="Master-Vorlage: Live-Scan → automatisch im Set-Binder → Doppelte zählen → alle Doppelten mit 1 Klick inserieren → Lücken kaufen – exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s, ElevenLabs-Voiceover">📒 Reel: Neuer automatischer Binder &amp; Bulk-Marktplatz-Power (29 s · 60 FPS)</button>
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="hook4" title="Schnäppchen-FOMO, Flohmarkt-Schutz und Tinder für Sammler nacheinander aufnehmen">🎯 Alle 3 Hook-Presets (15–17 s)</button>
     </div>
     <ul id="ar-pro-list"></ul>
@@ -756,7 +757,9 @@ async function onProClick(btn) {
   if (what === "one") return generatePro([{ tpl: templateByKey(btn.dataset.k), variant: proNext?.template === btn.dataset.k ? proNext.variant : 0 }]);
   if (what === "all") return generatePro(ALL_TEMPLATES.filter((t) => proCfg.templates.includes(t.key)).map((tpl) => ({ tpl, variant: 0 })));
   // High-End-Showcase immer einzeln per Klick – unabhängig von der Rotation der Admin-Zentrale
-  if (what === "showcase") return generatePro(ALL_TEMPLATES.filter(isShowcase).map((tpl) => ({ tpl, variant: proNext?.template === tpl.key ? proNext.variant : 0 })));
+  if (what === "showcase") return generatePro(ALL_TEMPLATES.filter((t) => isShowcase(t) && !t.master).map((tpl) => ({ tpl, variant: proNext?.template === tpl.key ? proNext.variant : 0 })));
+  // Master-Vorlage „Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power“ – direkt per Klick, unabhängig von der Rotation
+  if (what === "autobinder") return generatePro([{ tpl: templateByKey("autobinder"), variant: proNext?.template === "autobinder" ? proNext.variant : 0 }]);
   // Die 3 Hook-Presets immer gemeinsam – unabhängig davon, ob sie in der Rotation der Admin-Zentrale aktiv sind
   if (what === "hook4") return generatePro(PRO_TEMPLATES.filter(isHook4).map((tpl) => ({ tpl, variant: 0 })));
   if (what === "next") {
@@ -857,10 +860,10 @@ async function generatePro(list) {
     states[tpl.key] = "on"; renderPro(states); setBusy(true);
     try {
       const script = proScript(tpl, variant);
-      let voice = null, speed = 1, voiceFailed = null, voiceSec = 0;
+      let voice = null, speed = 1, voiceFailed = null, voiceSec = 0, voiceFit = null;
       if (voiceOn) {
         setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
-        try { ({ take: voice, speed, seconds: voiceSec } = await loadProNarration(script.say, ac, tpl.tone || proCfg.tone, secondsFor(tpl), tpl.maxSpeed || 1.12, { format: tpl.format || "" })); }
+        try { ({ take: voice, speed, seconds: voiceSec, fitted: voiceFit = null } = await loadProNarration(script.say, ac, tpl.tone || proCfg.tone, secondsFor(tpl), tpl.maxSpeed || 1.12, { format: tpl.voiceFormat || tpl.format || "", startSpeed: tpl.startSpeed || 0, fit: tpl.fitVoice || null })); }
         catch (e) {
           // Kein Abbruch: das Video wird mit Musik (ohne Sprecherin) aufgenommen und heruntergeladen,
           // aber NICHT automatisch an Make.com gesendet. Der genaue Fehler steht unter der Karte.
@@ -874,7 +877,7 @@ async function generatePro(list) {
         if (voice) {
           const sec = voiceSec; // exakte Videolänge: Vorlauf + gemessene Sprechdauer + 0,8 s Ausblenden
           const [lo, hi] = secondsFor(tpl);
-          setStatus(`🎙️ Stimme fertig: ${sec.toFixed(1).replace(".", ",")} s (Tempo ${speed.toFixed(2).replace(".", ",")})${sec < lo || sec > hi ? ` – außerhalb ${lo}–${hi} s, Tempo-Spielraum ausgeschöpft` : ""} – lade die Live-Website …`);
+          setStatus(`🎙️ Stimme fertig: ${sec.toFixed(1).replace(".", ",")} s (Tempo ${speed.toFixed(2).replace(".", ",")})${sec < lo || sec > hi ? ` – außerhalb ${lo}–${hi} s, Tempo-Spielraum ausgeschöpft` : ""}${voiceFit ? ` · für exakt ${hi} s angepasst (Pausen −${voiceFit.pausesSaved.toFixed(1).replace(".", ",")} s${voiceFit.stretch > 1 ? `, Raffung ${Math.round((voiceFit.stretch - 1) * 100)} %` : ""}, Tonhöhe unverändert)` : ""} – lade die Live-Website …`);
         }
       }
       let res = null;
@@ -912,6 +915,7 @@ async function generatePro(list) {
         ...(isShowcase(tpl) ? {
           video_format: "showcase", video_bitrate_mode: res.bitrateMode || "", target_seconds: String(tpl.exact), duration_seconds: +res.duration.toFixed(3),
           speech_seconds: res.speech ? +res.speech.toFixed(2) : "", spec_json: JSON.stringify(res.spec), spec_ok: res.spec?.ok ? "1" : "0",
+          ...(tpl.master ? { video_master: "1", voice_fit_json: voiceFit ? JSON.stringify(voiceFit) : "" } : {}),
         } : {}),
       };
       if (res.spec && !res.spec.ok) {
@@ -1025,11 +1029,13 @@ function close() {
 const HASHES = ["#generator", "#auto-reels"];
 
 /** Generator öffnen – mit klarer Rückmeldung, falls nicht (als Admin) angemeldet. */
-export function openAutoReels() {
+export function openAutoReels({ focus = "" } = {}) {
   if (IN_STAGE) return;
   if (isAdmin()) {
     if (!HASHES.includes(location.hash)) history.replaceState(null, "", "#generator");
-    return open();
+    open();
+    if (focus) focusPro(focus);
+    return;
   }
   if (!state.user) return hooks.openAccount("Der Auto-Reels-Generator ist nur für Admins – bitte mit deinem Admin-Konto anmelden.");
   if (!state.me) return; // Konto lädt noch – syncAutoReels() öffnet danach automatisch
@@ -1037,6 +1043,16 @@ export function openAutoReels() {
 }
 
 /** Beim Start bzw. bei Anker-Wechsel: /#generator öffnet den Generator. */
+/** Vorlage im Generator hervorheben (z. B. Master-Vorlage aus dem Reel Studio): Button in den Blick, kurz aufleuchten. */
+function focusPro(key) {
+  const btn = ui.root?.querySelector(`[data-master="${CSS.escape(String(key))}"]`) || ui.root?.querySelector(`[data-pro="one"][data-k="${CSS.escape(String(key))}"]`);
+  if (!btn) return;
+  btn.scrollIntoView({ block: "center", behavior: "smooth" });
+  btn.style.outline = "3px solid #38bdf8"; btn.style.outlineOffset = "3px";
+  setTimeout(() => { btn.style.outline = ""; btn.style.outlineOffset = ""; }, 4000);
+  try { btn.focus({ preventScroll: true }); } catch { /* egal */ }
+}
+
 export function routeAutoReels() {
   if (!IN_STAGE && HASHES.includes(location.hash)) openAutoReels();
 }

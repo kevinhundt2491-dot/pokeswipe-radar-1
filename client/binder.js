@@ -8,7 +8,7 @@
 import { $, esc, eur, cdn, state, api, toast, handleError, requireLogin, modal, closeModalEl, FALLBACK_IMG } from "./core.js";
 import {
   groupBinderBySet, buildBinderCards, paginate, clampPage, swipeDirection, binderSummary, setIdOfCard, BINDER_PAGE_SIZE,
-  showcaseBinderFill, binderCardAt, SHOWCASE_GAPS,
+  showcaseBinderFill, binderCardAt, SHOWCASE_GAPS, autobinderBinderFill, AUTOBINDER_DEMO,
 } from "../server/binder-logic.ts";
 import { folderValue, binderTotal, readCountDupes, quantityBadge, COUNT_DUPES_KEY } from "../server/duplicates-logic.ts";
 
@@ -17,7 +17,7 @@ const IS_STAGE = (() => {
   try { return window.self !== window.top && new URLSearchParams(location.search).get("reel") === "1"; } catch { return false; }
 })();
 const DEMO_LISTING_ID = -1;
-let demo = null; // { setId, data, hero, price, binned }
+let demo = null; // { setId, data, hero, price, binned, mode, listedPrice, bulk, revealed }
 
 const LIVE_MS = 20_000;
 /** Bild über das Image CDN; schlägt es fehl, erst die Original-URL, dann der Platzhalter (CSP-sicherer Inline-Handler). */
@@ -44,7 +44,26 @@ function setCountDupes(on) {
     });
     renderTotal(foldersCache.folders);
   }
-  if (view.setId && view.data) render();
+  if (view.setId && view.data) {
+    const from = binderSummary(view.cards, view.data.set?.total, !on).value;
+    render();
+    tweenValue(from);
+  }
+}
+/** Gesamtwert in der Kopfzeile weich von `from` auf den neuen Wert zählen (≈ 0,45 s). */
+function tweenValue(from) {
+  const el = $("ps-binder-view")?.querySelector("[data-binder-value]");
+  const to = binderSummary(view.cards, view.data?.set?.total, countDupes()).value;
+  if (!el || !Number.isFinite(from) || Math.abs(from - to) < 0.005 || typeof requestAnimationFrame !== "function") return;
+  const t0 = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / 450), e = 1 - Math.pow(1 - k, 3);
+    if (!el.isConnected) return;
+    el.textContent = eur(k >= 1 ? to : from + (to - from) * e);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  el.textContent = eur(from);
+  requestAnimationFrame(step);
 }
 function syncDupesToggle() {
   const on = countDupes();
@@ -362,6 +381,7 @@ async function binderCardTap(cardId) {
   if (!c) return;
   // Demo-Angebot der Reel-Aufnahme: direkt zum Marktplatz springen (Angebots-Raster)
   if (view.demo && !c.owned && c.market?.listingId === DEMO_LISTING_ID) { closeSetBinder(); window.PS?.marketTab?.("all"); return; }
+  if (view.demo && Number(c.myListing?.id) < 0) return; // Demo-Inserat der Aufnahme – kein echtes Inserat dahinter
   if (c.owned && c.myListing) { window.PS?.openListing?.(c.myListing.id); return; }
   if (!c.owned && c.market) { window.PS?.openListing?.(c.market.listingId); return; }
   if (c.owned) {
@@ -395,13 +415,52 @@ function binderSell(portfolioItemId) {
 // ---------------------------------------------------------------------------
 // Showcase-Demo NUR für die Reel-Aufnahme (Stage): echter Katalog + echte Angebote, Ordner gefüllt, nichts gespeichert
 // ---------------------------------------------------------------------------
-/** Set-Daten vorab laden (vor Frame 0), damit der Ordner in der Aufnahme ohne Ladezeit aufgeht. */
-async function binderDemoPrepare(setId, { price = 29.9, hero = SHOWCASE_GAPS[3] } = {}) {
+/**
+ * Set-Daten vorab laden (vor Frame 0), damit der Ordner in der Aufnahme ohne Ladezeit aufgeht.
+ * mode "autobinder" = Demo-Ordner der Master-Vorlage (Doppelte, eigenes Inserat, Lücke mit Angebot – siehe AUTOBINDER_DEMO).
+ */
+async function binderDemoPrepare(setId, { price = 29.9, hero = SHOWCASE_GAPS[3], mode = "", listedPrice = 12.9 } = {}) {
   if (!IS_STAGE || !/^[\w.\-]{1,40}$/.test(String(setId || ""))) return null;
   const data = await api(`/api/binder/set/${encodeURIComponent(setId)}`);
   if (!data?.catalog?.length) return null;
-  demo = { setId, data, hero, price: Number(price) || 29.9, binned: null };
-  return { setId, name: data.set?.name || setId, cards: data.catalog.length, hero: binderCardAt(data.catalog, hero)?.name || "" };
+  const ab = mode === "autobinder";
+  demo = { setId, data, hero: ab ? AUTOBINDER_DEMO.gap : hero, price: Number(price) || 29.9, binned: null, mode: ab ? "autobinder" : "", listedPrice: Number(listedPrice) || 12.9, bulk: [], revealed: false };
+  const at = (i) => binderCardAt(data.catalog, i)?.name || "";
+  return {
+    setId, name: data.set?.name || setId, cards: data.catalog.length, hero: at(demo.hero),
+    ...(ab ? { scanned: at(AUTOBINDER_DEMO.scanned), listed: at(AUTOBINDER_DEMO.listed) } : {}),
+  };
+}
+
+const viewerId = () => state.user?.id || "";
+
+/** Eigene Karten des Demo-Ordners (Füllung + im Scanner abgelegte Karte). */
+function demoOwned() {
+  const d = demo.data, b = demo.binned;
+  if (demo.mode !== "autobinder") {
+    const owned = [...showcaseBinderFill(d.catalog), ...(d.owned || [])];
+    if (b?.id && setIdOfCard(b.id) === demo.setId) owned.push({ cardId: b.id, quantity: 1, condition: b.condition || "NM", image: b.image || "", name: b.name, value: Number(b.price) || 0 });
+    return owned;
+  }
+  const owned = autobinderBinderFill(d.catalog);
+  // 2. Exemplar der gescannten Karte (Rückfall ohne Scan: die Demo-Karte Nr. 006) → „2x“ im Ordner
+  const fallback = binderCardAt(d.catalog, AUTOBINDER_DEMO.scanned);
+  const s = b?.id && setIdOfCard(b.id) === demo.setId ? b : fallback ? { id: fallback.id, name: fallback.name, image: fallback.image, price: fallback.price, condition: "NM", listed: true } : null;
+  if (s) owned.push({ cardId: s.id, quantity: 1, condition: s.condition || "NM", image: s.image || "", name: s.name, value: Number(s.price) || 0 });
+  return owned;
+}
+
+/** Eigene (Demo-)Inserate: im Scanner eingestellte Karte, 1-Klick-Doppelte und – nach dem Live-Abgleich – Nr. 009. */
+function demoMyListings() {
+  if (demo.mode !== "autobinder") return [];
+  const d = demo.data, uid = viewerId(), out = [];
+  const b = demo.binned?.id ? demo.binned : null;
+  const scanned = b && setIdOfCard(b.id) === demo.setId ? b : binderCardAt(d.catalog, AUTOBINDER_DEMO.scanned);
+  if (scanned && (!b || b.listed)) out.push({ id: -11, cardId: scanned.id, price: Number(b?.listPrice || scanned.price) || 0, userId: uid });
+  demo.bulk.forEach((l, i) => out.push({ id: -100 - i, cardId: l.cardId, price: Number(l.price) || 0, userId: uid }));
+  const listed = binderCardAt(d.catalog, AUTOBINDER_DEMO.listed);
+  if (demo.revealed && listed) out.push({ id: -12, cardId: listed.id, price: demo.listedPrice, userId: uid });
+  return out;
 }
 
 /** Gefüllten Demo-Ordner öffnen (eigene Karten vollfarbig mit Zustand + Live-Wert, Lücken abgedunkelt). */
@@ -409,12 +468,11 @@ function binderDemoOpen() {
   if (!IS_STAGE || !demo) return false;
   const root = ensureRoot();
   const d = demo.data, heroCard = binderCardAt(d.catalog, demo.hero);
-  const owned = [...showcaseBinderFill(d.catalog), ...(d.owned || [])];
-  const b = demo.binned;
-  if (b?.id && setIdOfCard(b.id) === demo.setId) owned.push({ cardId: b.id, quantity: 1, condition: b.condition || "NM", image: b.image || "", name: b.name, value: Number(b.price) || 0 });
   view.setId = demo.setId; view.page = 0; view.filter = "all"; view.demo = true;
   // Die Lücke mit dem späteren Badge darf in der Demo kein echtes, abweichendes Angebot zeigen
-  view.data = { ...d, owned, marketListings: (d.marketListings || []).filter((l) => l.cardId !== heroCard?.id), myListings: [] };
+  const market = (d.marketListings || []).filter((l) => l.cardId !== heroCard?.id);
+  if (demo.revealed && heroCard) market.push(demoOffer(heroCard));
+  view.data = { ...d, owned: demoOwned(), marketListings: market, myListings: demoMyListings() };
   clearInterval(view.timer);
   root.classList.remove("hidden");
   document.body.classList.add("ps-binder-open");
@@ -423,19 +481,50 @@ function binderDemoOpen() {
   return true;
 }
 
-/** Live-Abgleich in der Demo: auf der Lücke leuchtet „Auf Marktplatz: 29,90 €“ auf. Liefert das Slot-Element. */
+const demoOffer = (card) => ({ id: DEMO_LISTING_ID, cardId: card.id, price: demo.price, userId: "reel-demo-seller", condition: "NM", seller: "Sammler" });
+
+/**
+ * Live-Abgleich in der Demo: auf der Lücke leuchtet „Auf Marktplatz: …“ auf (Master-Vorlage zusätzlich das eigene
+ * Inserat „Im Verkauf: 12,90 €“ auf Nr. 009). Liefert das Slot-Element der Lücke.
+ */
 function binderDemoReveal() {
   if (!IS_STAGE || !demo || !view.demo) return null;
   const heroCard = binderCardAt(demo.data.catalog, demo.hero);
   if (!heroCard) return null;
-  view.data.marketListings = [...(view.data.marketListings || []), { id: DEMO_LISTING_ID, cardId: heroCard.id, price: demo.price, userId: "reel-demo-seller", condition: "NM", seller: "Sammler" }];
+  demo.revealed = true;
+  view.data.marketListings = [...(view.data.marketListings || []).filter((l) => l.id !== DEMO_LISTING_ID), demoOffer(heroCard)];
+  if (demo.mode === "autobinder") view.data.myListings = demoMyListings();
   const page = view.page;
   rebuild(); view.page = clampPage(page, view.pages.length); render();
-  return $("ps-binder-view")?.querySelector(`[data-binder-card="${CSS.escape(heroCard.id)}"]`) || null;
+  return binderDemoSlot("hero");
+}
+
+/** Slot-Element im Demo-Ordner: "hero" (Lücke), "listed" (eigenes Inserat Nr. 009), "scanned" (gescannte Karte, „2x“). */
+function binderDemoSlot(which = "hero") {
+  if (!IS_STAGE || !demo) return null;
+  const idx = which === "listed" ? AUTOBINDER_DEMO.listed : which === "scanned" ? AUTOBINDER_DEMO.scanned : demo.hero;
+  const id = which === "scanned" && demo.binned?.id && setIdOfCard(demo.binned.id) === demo.setId ? demo.binned.id : binderCardAt(demo.data.catalog, idx)?.id;
+  return id ? $("ps-binder-view")?.querySelector(`[data-binder-card="${CSS.escape(id)}"]`) || null : null;
+}
+
+/** Sammlung + eigene Inserate des Demo-Ordners im Format der Inserat-Auswahl („Meine Inserate“). */
+function binderDemoInventory() {
+  if (!IS_STAGE || !demo) return null;
+  const setName = demo.data.set?.name || demo.setId;
+  const items = demoOwned().map((o, i) => {
+    const qty = Math.max(1, Number(o.quantity) || 1);
+    return { id: 900001 + i, cardId: o.cardId, lang: "de", name: o.name || o.cardId, image: o.image || "", setName, quantity: qty, unitValue: (Number(o.value) || 0) / qty, value: Number(o.value) || 0, condition: o.condition || "NM", variant: "normal" };
+  });
+  const listings = demoMyListings().map((l) => ({ id: l.id, card_id: l.cardId, status: "active", price: l.price }));
+  return { items, listings };
 }
 
 export function initBinder() {
-  if (IS_STAGE) window.addEventListener("ps:reel-binned", (e) => { if (demo) demo.binned = e.detail || null; });
+  if (IS_STAGE) {
+    window.addEventListener("ps:reel-binned", (e) => { if (demo) demo.binned = e.detail || null; });
+    // 1-Klick-Doppelte aus „Meine Inserate“ (Demo) → erscheinen im Ordner als eigene Inserate
+    window.addEventListener("ps:reel-listed", (e) => { if (demo) demo.bulk = Array.isArray(e.detail) ? e.detail : []; });
+  }
   renderFolders();
   window.addEventListener("ps:portfolio", () => { foldersCache.at = 0; if (!$("view-portfolio")?.classList.contains("hidden")) renderFolders(true); });
   window.addEventListener("ps:plan", () => { foldersCache.at = 0; renderFolders(); });
@@ -446,7 +535,7 @@ export function initBinder() {
 }
 
 export const binderApi = {
-  ...(IS_STAGE ? { binderDemoPrepare, binderDemoOpen, binderDemoReveal } : {}),
+  ...(IS_STAGE ? { binderDemoPrepare, binderDemoOpen, binderDemoReveal, binderDemoSlot, binderDemoInventory } : {}),
   openSetBinder, closeSetBinder, binderCardTap, binderWish, binderSell, renderFolders,
   binderNext: () => go(1), binderPrev: () => go(-1),
   binderCountDupes: (on) => setCountDupes(typeof on === "boolean" ? on : !countDupes()),

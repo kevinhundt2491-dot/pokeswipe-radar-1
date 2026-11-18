@@ -48,6 +48,7 @@ const CSS = `
 #reel-studio .rs-result video{width:180px;aspect-ratio:9/16;border-radius:14px;background:#000;align-self:flex-start}
 #reel-studio textarea{width:100%;box-sizing:border-box;min-height:170px;font:600 12px/1.45 var(--font-body,Figtree,sans-serif);border-radius:10px;padding:9px 11px;border:1px solid rgba(245,200,75,.25);background:var(--night-2,#131a33);color:var(--ink,#f3efe4);resize:vertical}
 #reel-studio .rs-monwrap{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800;color:var(--ink-soft,#b9b7c9)}
+#reel-studio .rs-master{border-color:rgba(56,189,248,.55);background:linear-gradient(135deg,rgba(56,189,248,.16),rgba(27,36,68,.95))}
 #reel-studio canvas.rs-mon{width:72px;aspect-ratio:9/16;border-radius:8px;background:#000;box-shadow:0 0 0 2px #2a3050}
 ${STAGE_CSS}`;
 
@@ -79,6 +80,11 @@ function build() {
             <select id="rs-scn">${SCENARIOS.map((s) => `<option value="${s.key}">${s.n}) ${esc(s.label)}</option>`).join("")}</select>
             <label class="rs-l" for="rs-len">Länge</label>
             <select id="rs-len">${LENGTHS.map((l) => `<option value="${l}"${l === 15 ? " selected" : ""}>${l} s (${WORD_LIMITS[l][0]}–${WORD_LIMITS[l][1]} Wörter)</option>`).join("")}</select>
+          </div>
+          <div class="rs-box rs-master" data-rs-master="autobinder">
+            <b>📒 Master-Vorlage: Reel: Neuer automatischer Binder &amp; Bulk-Marktplatz-Power</b>
+            <small class="rs-hint">Live-Scan → automatisch im Set-Binder → Doppelte zählen → „Alle Doppelten inserieren“ → Lücken direkt kaufen → Live-Chat &amp; Start. Exakt 29 s · 1080×1920 · 60 FPS · 11 Mbit/s · ElevenLabs-Voiceover · UI-Sounds · mittige Untertitel · Make.com-Versand.</small>
+            <div class="rs-bar"><button type="button" class="rs-btn rs-go" data-rs="master" data-k="autobinder">🎬 Vorlage auswählen &amp; im Pro-Generator aufnehmen</button></div>
           </div>
           <div class="rs-box">
             <b>🎙️ Voiceover-Skript</b>
@@ -146,6 +152,7 @@ function build() {
     if (act === "record") record("dom");
     if (act === "tab") record("tab");
     if (act === "stop") stopNow();
+    if (act === "master" && mode === "idle") openMaster(e.target.closest("[data-k]")?.dataset.k || "autobinder");
     if (act === "copy") copyCaption();
     if (act === "txt" && last) download(new Blob([last.txt], { type: "text/plain;charset=utf-8" }), `${last.base}.txt`);
   });
@@ -300,6 +307,13 @@ function open() {
   updateVoiceInfo();
   checkVoice();
   setStatus("✓ Bereit. Szenario wählen, ▶ Live-Vorschau ansehen, dann aufnehmen.", "ok");
+}
+
+/** Master-Vorlage (Showcase-Familie) läuft über die Pro-Render-Pipeline des Generators: Studio schließen, Generator mit Vorlage öffnen. */
+async function openMaster(key) {
+  close();
+  try { (await import("./auto-reels.js")).openAutoReels({ focus: key }); }
+  catch (e) { console.warn("Pro-Generator:", e); setStatus(`⚠️ Pro-Generator konnte nicht geöffnet werden: ${e?.message || e}`, "err"); }
 }
 
 function close() {

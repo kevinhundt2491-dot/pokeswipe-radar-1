@@ -5,7 +5,7 @@
 // (Sekunden bis zum nächsten Satz), die aus der echten ElevenLabs-Aufnahme stammt.
 
 import { VIEW_H } from "./live-stage.js";
-import { SHOWCASE_TIMELINE as TL } from "./reel-pro.js";
+import { SHOWCASE_TIMELINE as TL, AUTOBINDER_TIMELINE as AB, AUTOBINDER_BADGES } from "./reel-pro.js";
 
 const num = (s) => {
   const m = String(s || "").replace(/\./g, "").replace(",", ".").match(/-?\d+(\.\d+)?/);
@@ -15,6 +15,9 @@ const num = (s) => {
 // ---------------------------------------------------------------------------
 // Gemeinsame Bausteine
 // ---------------------------------------------------------------------------
+/** Hervorhebungen (ps-reel-spot) wieder entfernen. */
+const unspot = (s) => s.$$(".ps-reel-spot").forEach((el) => el.classList.remove("ps-reel-spot"));
+
 async function swipeReady(s) {
   await s.waitFor(() => s.$("#swipe-img")?.complete && s.text("#swipe-title"), 15_000, "Swipe-Karte lädt nicht");
 }
@@ -629,6 +632,135 @@ export const CHOREO = {
         s.win.scrollTo(0, 0);
         await s.sleep(Math.min(900, d * 150));
         await s.scrollBy(VIEW_H * 0.18, Math.max(1200, d * 1000 * 0.45));
+      },
+    ],
+  },
+
+  // 13) Master-Vorlage „Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power“ (29 s, fester Regie-Zeitplan AB aus
+  // reel-pro.js – die Tonspur legt ihre Mikro-SFX exakt auf dieselben Zeitpunkte). Beat 1 Live-Scan & automatische Ablage ·
+  // 2 Set-Binder mit Doppelten & Gesamtwert-Schalter · 3 Meine Inserate → „Alle Doppelten inserieren“ → zurück zur Lücke ·
+  // 4 Live-Chat → Startseite. Alles läuft über die echte Oberfläche; Ablage, Inserate und Ordner-Füllung sind Stage-Demos
+  // ohne Schreibzugriff aufs Konto.
+  autobinder: {
+    async setup(s) {
+      try { s.win.PS?.showSub?.("scan", "live"); } catch {}
+      await s.waitFor(() => s.$("#ps-ls-stage"), 15_000, "Live-Scanner lädt nicht").catch(() => {});
+      let info = null;
+      try {
+        info = await s.win.PS?.liveScanDemoPrepare?.({ keys: ["card:sv03.5-006", "card:sv03.5-199", "card:sv03.5-025", "card:sv03.5-003"], sleeve: true, zoom: 1.4, autoFile: true, listDemo: true });
+      } catch (e) { console.warn("Master-Scan-Demo:", e); }
+      if (info) { s.fact("card", info.name); if (Number(info.price) > 0) s.fact("price", `${Number(info.price).toFixed(2).replace(".", ",")} €`); }
+      try {
+        const b = await s.win.PS?.binderDemoPrepare?.("sv03.5", { mode: "autobinder", price: AUTOBINDER_BADGES.gap, listedPrice: AUTOBINDER_BADGES.listed });
+        if (b) { s.fact("set", b.name); s.fact("gap", b.hero); s.fact("listed", b.listed); }
+      } catch (e) { console.warn("Master-Binder-Demo:", e); }
+      const st = s.$("#ps-ls-stage");
+      if (st) { const r = st.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 70)); }
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 300, timeoutMs: 5000 });
+    },
+    beats: [
+      // Szene 1 (0–6 s): Karte in Schutzhülle scharf erfassen → Panel (Bild, Name, NM, Cardmarket-Wert) →
+      // „📒 Im Set-Ordner einsortiert“ → Tipp auf „🏷️ Als Inserat einstellen“ → Bestätigung → Reiter „Sammlung“
+      async (s, d, at) => {
+        const card = s.$("#ps-ls-demo-card");
+        if (card) { const { x, y } = s.center(card); await s.moveFinger(x + 70, y + 110, 420); }
+        await at(AB.scanStart);
+        s.hideFinger();
+        await s.win.PS?.liveScanDemoScan?.(AB.scanMs);
+        await s.idle({ quietMs: 150, timeoutMs: 600 });
+        const price = s.$("[data-hud-price]");
+        if (price) s.fact("price", price.textContent);
+        await at(AB.filed);
+        const filed = await s.win.PS?.liveScanDemoFile?.();
+        if (filed) await s.spotlight(filed);
+        await at(AB.sellTap);
+        unspot(s);
+        const sell = s.$('#ps-ls-hud [data-act="sell"]');
+        if (sell) await s.tap(sell, { reveal: false });
+        await at(AB.navCollection);
+        const nav = s.$("#mob-portfolio");
+        if (nav) await s.tap(nav, { reveal: false });
+      },
+      // Szene 2 (6–14 s): Set-Ordner „151“ – wischen, „2x“ auf der gescannten Karte, Schalter „Doppelte im Gesamtwert mitzählen“
+      async (s, d, at) => {
+        await at(AB.binderOpen);
+        s.hideFinger();
+        const opened = s.win.PS?.binderDemoOpen?.();
+        if (!opened) {
+          const seg = s.$('#view-portfolio [data-seg="binder"]');
+          if (seg) await s.tap(seg, { reveal: false });
+          return s.sleep(Math.max(0, d * 1000 - 800));
+        }
+        await s.decodeImages(900);
+        const vp = () => s.$("#ps-binder-view [data-binder-viewport]");
+        await at(AB.flip1);
+        if (vp()) await s.swipe(vp(), -1, 520);
+        await at(AB.flipBack);
+        if (vp()) await s.swipe(vp(), 1, 560);
+        const sw = () => s.$("#ps-binder-view [data-count-dupes]");
+        await at(AB.toggleOff);
+        if (sw()) await s.tap(sw(), { reveal: false });
+        await at(AB.toggleOn);
+        if (sw()) await s.tap(sw(), { reveal: false });
+        s.hideFinger();
+        await at(AB.dupeSpot);
+        const dupe = s.win.PS?.binderDemoSlot?.("scanned");
+        if (dupe) await s.spotlight(dupe);
+      },
+      // Szene 3 (14–22 s): Marktplatz → Meine Inserate → „🏷️ Alle Doppelten inserieren (12)“ → Bestätigen → Lade-Animation →
+      // zurück in den Ordner: graue Lücke mit „Auf Marktplatz: 4,50 €“ + eigenes Inserat „Im Verkauf: 12,90 €“
+      async (s, d, at) => {
+        await at(AB.mineOpen);
+        unspot(s);
+        s.hideFinger();
+        try { s.win.PS?.closeSetBinder?.(); } catch {}
+        const demo = s.win.PS?.listPickerDemoStart?.({ ms: AB.listMs });
+        if (demo) s.fact("dupes", String(demo.copies));
+        try { s.win.PS?.marketTab?.("mine"); } catch {}
+        await s.idle({ quietMs: 120, timeoutMs: 600 });
+        const picker = s.$("#ps-list-picker");
+        if (picker) { const r = picker.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 120)); }
+        await s.decodeImages(500);
+        await at(AB.bulkTap);
+        const bulk = s.$("#ps-list-picker [data-list-dupes]");
+        if (bulk) await s.tap(bulk, { reveal: false });
+        await at(AB.confirmTap);
+        const ok = s.$("#ps-dupes-confirm:not(.hidden) [data-dupes-confirm]");
+        if (ok) await s.tap(ok, { reveal: false });
+        s.hideFinger();
+        await at(AB.binderBack);
+        try { s.win.switchTab?.("portfolio"); } catch {}
+        s.win.PS?.binderDemoOpen?.();
+        await s.decodeImages(400);
+        await at(AB.reveal);
+        const gap = s.win.PS?.binderDemoReveal?.();
+        if (gap) await s.spotlight(gap);
+        await at(AB.listedSpot);
+        const listed = s.win.PS?.binderDemoSlot?.("listed");
+        if (listed) await s.spotlight(listed);
+      },
+      // Szene 4 (22–29 s): Community-Live-Chat (Sammler besprechen Tauschangebote) → zurück zur Startseite, Endtafel im Compositor
+      async (s, d, at) => {
+        unspot(s);
+        try { s.win.PS?.closeSetBinder?.(); } catch {}
+        await at(AB.chatTab);
+        const com = s.$("#mob-community");
+        if (com) await s.tap(com, { reveal: false });
+        try { s.win.PS?.communityTab?.("chat"); } catch {}
+        await s.idle({ quietMs: 150, timeoutMs: 800 });
+        s.hideFinger();
+        const chat = s.$("#ps-chat-panel");
+        if (chat) await s.reveal(chat, { ms: 600, ratio: 0.12 });
+        const box = s.$("#chat-messages");
+        if (box) await s.scrollTo(box.scrollHeight, 1500, box);
+        await at(AB.homeTap);
+        const home = s.$("#mob-home");
+        if (home) await s.tap(home, { reveal: false });
+        s.win.scrollTo(0, 0);
+        s.hideFinger();
+        await s.sleep(700);
+        await s.scrollBy(VIEW_H * 0.16, 1600);
       },
     ],
   },

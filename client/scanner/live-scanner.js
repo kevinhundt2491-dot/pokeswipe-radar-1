@@ -1097,7 +1097,7 @@ function renderHud(cur) {
       <div class="min-w-0 flex-1">
         <p data-hud-name class="text-sm font-black text-white leading-tight truncate">${FLAG[i.lang] || ""} ${esc(i.name)}</p>
         <p data-hud-set class="text-[11px] text-slate-400 truncate">${esc(num)}</p>
-        ${state.user && !cur.unsure ? `<p data-hud-autofile class="text-[9px] font-bold text-emerald-300 truncate">📒 ${cur.filed ? "Im Set-Ordner einsortiert" : "Wird automatisch in den Set-Ordner einsortiert"}</p>` : ""}
+        ${(state.user || (IS_STAGE && sc.demo?.autoFile)) && !cur.unsure ? `<p data-hud-autofile class="text-[9px] font-bold text-emerald-300 truncate">📒 ${cur.filed ? "Im Set-Ordner einsortiert" : "Wird automatisch in den Set-Ordner einsortiert"}</p>` : ""}
       </div>
       <div class="text-right shrink-0">
         <p class="text-[9px] uppercase font-bold text-slate-500 leading-none">${esc(cond)}${finish !== "normal" ? ` · ${finish === "holo" ? "Holo" : "Rev."}` : ""}</p>
@@ -1557,6 +1557,13 @@ function actOnHit(name, key) {
     window.dispatchEvent(new CustomEvent("ps:reel-binned", { detail: sc.demoBinned }));
     return runHitAction(name, async () => `${RESULT_ACTIONS.binder.toast} · ${snap.info.name} (${snap.choice.condition})`);
   }
+  // Master-Vorlage (Stage): „Als Inserat einstellen“ ohne Schreibzugriff – Karte bleibt im Demo-Ordner und gilt dort als inseriert
+  if (IS_STAGE && sc.demo?.listDemo && (name === "sell" || name === "instant")) {
+    const listPrice = mainPrice(snap.info, { condition: snap.choice.condition, finish: snap.choice.variant }) || Number(snap.info.price) || 0;
+    sc.demoBinned = { ...snap.info, condition: snap.choice.condition, listed: true, listPrice };
+    window.dispatchEvent(new CustomEvent("ps:reel-binned", { detail: sc.demoBinned }));
+    return runHitAction(name, async () => RESULT_ACTIONS[name].toast);
+  }
   const login = name === "binder" || name === "wish" || ((name === "sell" || name === "instant") && !IS_STAGE);
   // Login vor dem Schließen prüfen – sonst wäre der Treffer weg, während der Anmelde-Dialog aufgeht
   if (login && !requireLogin()) return null;
@@ -1609,7 +1616,7 @@ async function demoPrepare(opts = {}) {
   const keys = Array.isArray(opts.keys) && opts.keys.length ? opts.keys.filter((k) => /^card:[\w.\-]{2,40}$/.test(k)).slice(0, 8) : DEMO_KEYS;
   const info = await demoInfo(keys.length ? keys : DEMO_KEYS);
   if (!info) return null;
-  sc.demo = { info, zoom: Number(opts.zoom) > 1 ? Math.min(2, Number(opts.zoom)) : 0, sleeve: !!opts.sleeve };
+  sc.demo = { info, zoom: Number(opts.zoom) > 1 ? Math.min(2, Number(opts.zoom)) : 0, sleeve: !!opts.sleeve, autoFile: !!opts.autoFile, listDemo: !!opts.listDemo };
   $("ps-ls-idle")?.classList.add("hidden");
   $("ps-ls-demo")?.remove();
   const layer = document.createElement("div");
@@ -1670,6 +1677,19 @@ async function demoScan(ms = 1200) {
   addToSeries(info);
   renderHud(sc.current);
   return true;
+}
+
+/**
+ * Automatisches Einsortieren in der Aufnahme (Master-Vorlage): Treffer gilt als „📒 Im Set-Ordner einsortiert“,
+ * die Karte landet im Demo-Ordner (kein Schreibzugriff aufs Konto). Liefert die Status-Zeile im Ergebnisfeld.
+ */
+function demoFile() {
+  if (!IS_STAGE || !sc.demo || !sc.current?.info) return null;
+  sc.current.filed = true;
+  renderHud(sc.current);
+  sc.demoBinned = { ...sc.current.info, condition: sc.current.condition || DEFAULT_CONDITION };
+  window.dispatchEvent(new CustomEvent("ps:reel-binned", { detail: sc.demoBinned }));
+  return $("ps-ls-hud")?.querySelector("[data-hud-autofile]") || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1767,7 +1787,7 @@ async function deepScanPhoto() {
 }
 
 export const liveScanApi = {
-  ...(IS_STAGE ? { liveScanDemoPrepare: demoPrepare, liveScanDemoScan: demoScan } : {}),
+  ...(IS_STAGE ? { liveScanDemoPrepare: demoPrepare, liveScanDemoScan: demoScan, liveScanDemoFile: demoFile } : {}),
   liveScanStart: () => start(),
   liveScanStop: () => stop(),
   liveScanTorch: () => toggleTorch(),

@@ -35,8 +35,10 @@ const NARRATION_TIMEOUT_MS = 75_000;
 export const NARRATION_MAX_WORDS = 72;
 /** Eigenes Limit für die 29-s-Showcase-Vorlage (exaktes Briefing-Skript, ≈ 79 Wörter bei souveränem Tempo). */
 export const SHOWCASE_MAX_WORDS = 84;
-/** Wortlimit je Vorlagen-Format (Standard/Hook 72, Showcase 84). */
-export const narrationMaxWords = (format: unknown) => (format === "showcase" ? SHOWCASE_MAX_WORDS : NARRATION_MAX_WORDS);
+/** Eigenes Limit für die 29-s-Master-Vorlage „Automatischer Binder & Bulk-Marktplatz“ (exaktes Briefing-Skript ≈ 105 Wörter). */
+export const AUTOBINDER_MAX_WORDS = 110;
+/** Wortlimit je Vorlagen-Format (Standard/Hook 72, Showcase 84, Master „autobinder“ 110). */
+export const narrationMaxWords = (format: unknown) => (format === "showcase" ? SHOWCASE_MAX_WORDS : format === "autobinder" ? AUTOBINDER_MAX_WORDS : NARRATION_MAX_WORDS);
 /** Wörter wie gesprochen: alles mit Buchstabe oder Ziffer zählt (gleiche Regel wie client/reel-scripts.js). */
 export function countWords(text: string | string[]) {
   const s = Array.isArray(text) ? text.join(" ") : String(text ?? "");
