@@ -22,6 +22,8 @@ export type CartLine = {
   sellerName: string;
   sellerType: "private" | "business";
   sellerPlan: PlanId;
+  /** Gründer-Paket („Die ersten 50 Sammler“) aktiv → 0 % Provision */
+  sellerFeeFree?: boolean;
   title: string;
   image: string;
   variant: string;
@@ -76,7 +78,7 @@ export function groupCart(lines: CartLine[]): { groups: SellerGroup[]; problems:
   const groups: SellerGroup[] = [...bySeller.values()].map((ls) => {
     const itemsCents = ls.reduce((s, l) => s + l.unitCents * l.quantity, 0);
     const shippingCents = shippingForSeller(ls);
-    const fee = feeFor(ls[0].sellerPlan, itemsCents, shippingCents);
+    const fee = feeFor(ls[0].sellerPlan, itemsCents, shippingCents, Boolean(ls[0].sellerFeeFree));
     return {
       sellerId: ls[0].sellerId, sellerName: ls[0].sellerName, sellerType: ls[0].sellerType, lines: ls,
       itemsCents, shippingCents, feeCents: fee.feeCents, feeBps: fee.bps, payoutCents: fee.payoutCents,

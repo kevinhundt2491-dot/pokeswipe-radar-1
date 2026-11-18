@@ -54,6 +54,8 @@ import {
 import { oauthStrategy, externalBrowserUrl, IN_APP_LABEL, initialOf, displayNameFor, cleanDisplayName, isPreviewHost, mainDomainUrl, authErrorMessage } from "./session-logic.js";
 import { filterListings, MARKET_CHIP_KEYS, setCodeOf, conditionShort } from "./market-filter-logic.js";
 import { initHome, homeApi, renderHome } from "./home.js";
+import { initHomeBinder, homeBinderApi } from "./home-binder.js";
+import { initMarketBinder, marketBinderApi, renderMarketBinder } from "./market-binder.js";
 import { initPresence, presenceApi } from "./presence.js";
 
 // ---------------------------------------------------------------------------
@@ -483,7 +485,7 @@ function openPro(interval) {
         : id === "free" ? "" : btn(m?.trialDays ? `${m.trialDays} Tage gratis testen` : `${price} – jetzt starten`, `PS.checkout('${id}', '${yearly ? "year" : "month"}')`, `w-full ${id === "pro" ? "bg-gradient-to-r from-purple-500 to-pink-500 text-white" : "bg-yellow-400 text-slate-950"}`)}
     </div>`;
   };
-  const p = plans || { free: { portfolio: 25, alerts: 3, listings: 5 }, premium: { portfolio: 500, alerts: 50, listings: 40 }, pro: { alerts: 500, listings: 500, freeBoostsPerMonth: 3 } };
+  const p = plans || { free: { portfolio: 300, alerts: 3, listings: 5 }, premium: { portfolio: 500, alerts: 50, listings: 40 }, pro: { alerts: 500, listings: 500, freeBoostsPerMonth: 3 } };
   modal("ps-pro", `
     <span class="bg-yellow-400 text-slate-950 text-xs font-black px-3 py-1 rounded-full">👑 POKESWIPE PREMIUM</span>
     <h3 class="text-lg font-black text-white">Mehr Gewinn bei jedem Deal</h3>
@@ -1100,9 +1102,12 @@ function renderMarket() {
     box.innerHTML = `<div class="col-span-full">${chip !== "all" && state.listings.length
       ? `<div class="ps-card p-6 text-center text-xs text-slate-300 space-y-2"><p>Keine Treffer für diesen Filter – insgesamt warten ${state.listings.length} Angebote.</p><button type="button" onclick="PS.marketFilter('all')" class="bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-xl">Alle anzeigen</button></div>`
       : emptyMarketHtml(Boolean(f))}</div>`;
+    renderMarketBinder(list, state.listings);
     return;
   }
   box.innerHTML = list.map(listingTile).join("");
+  // Virtueller Marktplatz-Binder (Ordnerseiten 3×3 / 2×2) – Umschalter „📒 Binder | ☰ Liste“, siehe client/market-binder.js
+  renderMarketBinder(list, state.listings);
 }
 
 /** Einheitliche Karten-Kachel im Marktplatz-Raster: Artwork, Name, Set-Kürzel, Zustand, Preis vs. Cardmarket, 1-Tap-Aktion. */
@@ -1601,6 +1606,7 @@ window.PS = {
   isLoggedIn: () => Boolean(state.user),
   savePref: (k, v) => savePref(k, v, { api, loggedIn: Boolean(state.user) }),
   ...homeApi,
+  ...homeBinderApi,
   ...valuationApi,
   ...paymentsApi,
   ...nativeApi,
@@ -1633,6 +1639,7 @@ window.PS = {
   ...tradingApi,
   ...inviteApi,
   ...binderApi,
+  ...marketBinderApi,
   ...listPickerApi,
   ...presenceApi,
   openCreatorAdmin: () => import("./creator-admin.js").then((m) => m.openCreatorAdmin()).catch(handleError),
@@ -1663,6 +1670,8 @@ async function boot() {
   initInvite(); // Teilen & Freunde einladen: Fortschritt zum Gründer-Sammler, 1-Tap-Teilen, Hinweis nach Uploads
   initListPicker(); // Meine Inserate: „Alle Doppelten inserieren“ + Kartenauswahl mit Suche & Filter
   initPresence(); // Live-Online-Radar: „Gerade online“ (Mitglied vs. Gast), Binder-Vorschau, Direkt-Tausch
+  initMarketBinder(); // Marktplatz: Angebote seitenweise im virtuellen Binder durchblättern + Einzelkarten-Swipe
+  initHomeBinder(); // Startseite: interaktive Set-Binder-Vorschau (eigene Sets oder Beispiel-Set) direkt unter der Gründer-Box
   initBinder(); // Sammlung → Mein Binder: Set-Ordner & durchswipebare Binder-Ansicht mit Marktplatz-Abgleich
   initArena();
   initFlip();

@@ -1475,9 +1475,43 @@ function autoFileCurrent() {
   cur.filePromise = p;
 }
 
+/** Launch-Phase: großzügiges Limit für den lokalen Test-Binder (Gäste) – deckt sich mit dem Free-Tarif. */
+const GUEST_BINDER_LIMIT = 300;
+
+/** Gast-Modus: Karte im lokalen Test-Binder ablegen (Gerät) – beim Login zieht sie automatisch ins Konto um. */
+function addGuest(i, choice) {
+  const cardId = i.kind === "card" ? i.id : i.baseCardId;
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem("pokeswipe_portfolio_clean") || "[]"); } catch {}
+  if (Array.isArray(list) && list.length >= GUEST_BINDER_LIMIT) {
+    toast("📒 Test-Binder voll", `${GUEST_BINDER_LIMIT} Karten liegen schon auf diesem Gerät – melde dich kostenlos an, dann ziehen alle Karten mit in dein Konto.`);
+    return false;
+  }
+  const c = choice || { condition: i.scanCondition || "NM", variant: i.scanVariant || "normal" };
+  const value = condPrice(i, c.variant || "normal", c.condition || "NM") || Number(i.price) || 0;
+  const item = { cardId: cardId || null, name: `${i.name}${i.number ? ` (${i.number})` : ""}`, value, img: i.image || "", image: i.image || "", quantity: 1, condition: c.condition || "NM", variant: c.variant || "normal" };
+  if (typeof window.psGuestBinderAdd === "function") window.psGuestBinderAdd(item);
+  else { try { localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify([item, ...(Array.isArray(list) ? list : [])])); } catch {} }
+  try { window.dispatchEvent(new CustomEvent("ps:portfolio")); } catch {}
+  return true;
+}
+
 async function addToCollection(key) {
   const i = infoOf(key);
-  if (!i || !requireLogin()) return;
+  if (!i) return;
+  if (!state.user && !IS_STAGE) {
+    // Gäste testen ohne Login: Karte landet im lokalen Test-Binder
+    if (sc.current?.key === key && sc.current.filed) { toast("📒 Schon im Test-Binder", `${i.name} liegt bereits auf diesem Gerät.`); return; }
+    if (!addGuest(i, choiceFor(key))) return;
+    if (sc.current?.key === key) sc.current.filed = true;
+    markSeriesFiled(key);
+    learn(key, probeFor(key));
+    confirmCurrent(key);
+    haptic("success");
+    toast("📒 Im Test-Binder", `${i.name} liegt jetzt in deinem Set-Ordner auf diesem Gerät – beim kostenlosen Login wird alles automatisch übernommen.`);
+    return;
+  }
+  if (!requireLogin()) return;
   try {
     const choice = choiceFor(key);
     if ((sc.current?.key === key && sc.current.filed) || (pq?.filedKey === key && !sc.current)) { toast("📒 Schon einsortiert", `${i.name} liegt bereits in deinem Set-Ordner.`); return; }
@@ -1493,7 +1527,16 @@ async function addToCollection(key) {
 }
 
 async function addAll() {
-  if (!sc.series.length || !requireLogin()) return;
+  if (!sc.series.length) return;
+  if (!state.user && !IS_STAGE) {
+    const open = [...sc.series].reverse().filter((i) => !i.filed);
+    if (!open.length) { toast("📒 Alles einsortiert", "Alle gescannten Karten liegen schon in deinem Test-Binder."); return; }
+    let n = 0;
+    for (const i of open) { if (!addGuest(i, null)) break; i.filed = true; learn(i.key, i.probe); n++; }
+    if (n) toast("📒 Test-Binder ergänzt", `${n} Karte${n > 1 ? "n" : ""} auf diesem Gerät gespeichert – beim Login automatisch übernommen.`);
+    return;
+  }
+  if (!requireLogin()) return;
   let n = 0;
   // Automatisch einsortierte Karten nicht ein zweites Mal hinzufügen
   const open = [...sc.series].reverse().filter((i) => !i.filed);

@@ -2,6 +2,7 @@
 import { visionIdentify, catalogCandidates, visionScan, parseImageDataUrl } from "./scan-vision.ts";
 import { syncFounderQuiet, isFounder } from "./founder.ts";
 import { alertAllowance } from "./founder-logic.ts";
+import { first50Active, withFirst50 } from "./first50-logic.ts";
 import { rankCandidates, finishToVariant } from "./scan-vision-logic.ts";
 import { lookup } from "./scan-index.ts";
 import { and, desc, eq, sql, asc, inArray } from "drizzle-orm";
@@ -118,7 +119,7 @@ export async function extraMe(c: any, profile: Profile, plan: PlanId) {
     shareBonus,
     switchBonusAvailable: !profile.switchBonusAt && !profile.stripeSubscriptionId,
     shop: { slug: profile.shopSlug, title: profile.shopTitle, bio: profile.shopBio, enabled: PLANS[plan].shop, banner: profile.shopBanner, logo: profile.shopLogo, accent: profile.shopAccent },
-    scansLeft: Math.max(0, PLANS[plan].scansPerDay + shareBonus - (await scansToday(profile.userId))),
+    scansLeft: Math.max(0, withFirst50(PLANS[plan].scansPerDay + shareBonus, first50Active(profile)) - (await scansToday(profile.userId))),
     setsTracked: Number(sets?.n ?? 0),
   };
 }
@@ -543,7 +544,7 @@ export function registerFeatures(app: any, h: {
     const productId = int(b.productId, 1, 2 ** 31 - 1, 0);
     const target = money(b.targetPrice);
     if (!productId || !target || Number(target) <= 0) return c.json({ error: "Bitte Produkt und Zielpreis angeben." }, 400);
-    const alertLimit = alertAllowance(PLANS[plan].alerts, isFounder(c.get("profile")));
+    const alertLimit = withFirst50(alertAllowance(PLANS[plan].alerts, isFounder(c.get("profile"))), first50Active(c.get("profile")));
     if ((await activeAlertCount(user.id)) >= alertLimit) {
       return c.json({ error: `Limit erreicht: ${alertLimit} Preisalarme im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
     }
@@ -662,6 +663,6 @@ export function registerFeatures(app: any, h: {
   });
 
   // Alarme insgesamt für die Tracker-Übersicht (Karten + Sealed)
-  app.get("/api/alerts/count", auth, async (c: any) => c.json({ count: await activeAlertCount(c.get("user").id), limit: alertAllowance(PLANS[c.get("plan") as PlanId].alerts, isFounder(c.get("profile"))) }));
+  app.get("/api/alerts/count", auth, async (c: any) => c.json({ count: await activeAlertCount(c.get("user").id), limit: withFirst50(alertAllowance(PLANS[c.get("plan") as PlanId].alerts, isFounder(c.get("profile"))), first50Active(c.get("profile"))) }));
 
 }

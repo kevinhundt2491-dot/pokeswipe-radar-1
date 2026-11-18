@@ -12,6 +12,7 @@ import { db, profiles, listings, marketOrders, reviews, moderationLog, orderItem
 import { isAdmin, type AuthUser } from "./auth.ts";
 import { stripe } from "./billing.ts";
 import { effectivePlan, type PlanId } from "./plans.ts";
+import { first50Active } from "./first50-logic.ts";
 import { LEGAL_VERSION } from "./legal.ts";
 import { notify } from "./prices.ts";
 import { isBlockedBetween, forgetTrust, trustFor } from "./community.ts";
@@ -674,7 +675,7 @@ export function registerMarket(app: any, hlp: Hlp) {
   // Verkäuferkonto-Status (auch unter /api/connect/status)
   const sellerStatus = async (c: any) => {
     const p: Profile = c.get("profile"), plan: PlanId = c.get("plan");
-    const fee = { bps: MARKET_FEE_BPS[plan], allBps: MARKET_FEE_BPS };
+    const fee = { bps: first50Active(p) ? 0 : MARKET_FEE_BPS[plan], allBps: MARKET_FEE_BPS, first50Until: first50Active(p) ? p.first50Until : null };
     const psttg = await psttgNotice(p.userId).catch(() => null);
     if (!stripe()) return c.json({ enabled: false, connected: false, ready: false, fee, psttg });
     try {
@@ -758,7 +759,7 @@ export function registerMarket(app: any, hlp: Hlp) {
     if (b.acceptTerms !== true) return c.json({ error: "Bitte bestätige die Kaufbedingungen.", needsConsent: true }, 428);
     const listingId = int(b.listingId, 1, 2 ** 31 - 1, 0);
     const [l] = rows(await db.execute(sql`
-      SELECT l.*, p.stripe_account_ready, p.stripe_account_id, p.plan, p.plan_until, p.bonus_until, p.bonus_plan, p.banned, p.display_name, p.flagged_at, p.seller_type
+      SELECT l.*, p.stripe_account_ready, p.stripe_account_id, p.plan, p.plan_until, p.bonus_until, p.bonus_plan, p.first50_until, p.banned, p.display_name, p.flagged_at, p.seller_type
       FROM listings l JOIN profiles p ON p.user_id = l.user_id WHERE l.id = ${listingId} AND l.status = 'active'`));
     if (!l) return c.json({ error: "Inserat nicht mehr verfügbar." }, 404);
     if (Number(l.quantity) - Number(l.reserved) < 1) return c.json({ error: "Gerade nicht verfügbar – die Karte liegt im Checkout eines anderen Käufers. Bitte versuche es in einer Stunde erneut." }, 409);
@@ -777,7 +778,7 @@ export function registerMarket(app: any, hlp: Hlp) {
     if (buyerGate) return c.json({ error: buyerGate }, 403);
     const sellerGate = await escrowSellGate({ userId: String(l.user_id), flaggedAt: l.flagged_at }, listCents);
     if (sellerGate) return c.json({ error: "Dieses Inserat kann gerade nicht mit Käuferschutz gekauft werden – nutze die Tauschanfrage oder wende dich an den Verkäufer.", reason: "seller_limit" }, 403);
-    const fee = feeFor(sellerPlan, price, Number(l.shipping_cents) || 0);
+    const fee = feeFor(sellerPlan, price, Number(l.shipping_cents) || 0, first50Active({ first50Until: l.first50_until }));
     const message = str(b.message, 400);
 
     let order: Order;

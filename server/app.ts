@@ -52,6 +52,8 @@ import { log } from "./log.ts";
 import { registerOps } from "./ops.ts";
 import { registerFounder, founderInfo, syncFounderQuiet, isFounder } from "./founder.ts";
 import { isUploadPath, boostAllowance, alertAllowance } from "./founder-logic.ts";
+import { registerFirst50, claimFirst50, first50Me } from "./first50.ts";
+import { first50Active, withFirst50 } from "./first50-logic.ts";
 import { registerBinder } from "./binder.ts";
 import { findMergeTarget, bumpQuantity } from "./duplicates-logic.ts";
 import { registerConditionPrices } from "./condition-prices.ts";
@@ -110,6 +112,8 @@ const auth = async (c: any, next: any) => {
   if (!user) return c.json({ error: "Bitte melde dich an." }, 401);
   let profile = await ensureProfile(user);
   profile = await syncProfilePlan(profile);
+  // „Die ersten 50 Sammler“: freien Gründer-Platz automatisch vergeben (Badge + 60 Tage Pro, einmalig)
+  profile = await claimFirst50(profile);
   // Bestätigte E-Mail (Netlify Identity) merken – fließt in den Trust-Score der Community ein
   if (user.confirmed && !profile.emailConfirmed) {
     await db.update(profiles).set({ emailConfirmed: true }).where(eq(profiles.userId, user.id));
@@ -214,7 +218,9 @@ app.get("/api/me", auth, async (c) => {
     ...(await extraMe(c, profile, plan)),
     // „Freunde einladen & Karten hochladen“: Fortschritt & Gründer-Sammler-Vorteile (Zähler dauerhaft im Profil)
     founder: await founderInfo(user.id).catch(() => null),
-    alertLimit: alertAllowance(PLANS[plan].alerts, isFounder(profile)),
+    // „Die ersten 50 Sammler“: eigener Gründer-Platz (Nummer, Ende der 60 Pro-Tage)
+    first50: first50Me(profile),
+    alertLimit: withFirst50(alertAllowance(PLANS[plan].alerts, isFounder(profile)), first50Active(profile)),
   });
 });
 
@@ -400,7 +406,7 @@ app.post("/api/portfolio", auth, async (c) => {
 app.post("/api/portfolio/import", auth, async (c) => {
   const user = c.get("user"), plan = c.get("plan");
   const b = await body(c);
-  const list = Array.isArray(b.items) ? b.items.slice(0, 200) : [];
+  const list = Array.isArray(b.items) ? b.items.slice(0, 300) : [];
   const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(portfolioItems).where(eq(portfolioItems.userId, user.id));
   const room = Math.max(0, PLANS[plan].portfolio - Number(r?.n ?? 0));
   // CSV-/Listen-Import: Karten-ID (falls erkannt), Anzahl, Variante, Zustand, Sprache und Einkaufspreis übernehmen
@@ -496,7 +502,7 @@ app.get("/api/alerts", auth, async (c) => {
     : [];
   return c.json({
     alerts: list.map((a) => ({ ...a, price: cardPrice(a), history: hist.filter((h) => h.cardId === a.cardId).map((h) => Number(h.trend)) })),
-    limit: alertAllowance(PLANS[c.get("plan")].alerts, isFounder(c.get("profile"))),
+    limit: withFirst50(alertAllowance(PLANS[c.get("plan")].alerts, isFounder(c.get("profile"))), first50Active(c.get("profile"))),
   });
 });
 
@@ -506,7 +512,7 @@ app.post("/api/alerts", auth, async (c) => {
   const cardId = str(b.cardId, 40);
   const target = money(b.targetPrice);
   if (!CARD_ID_RE.test(cardId) || !target || Number(target) <= 0) return c.json({ error: "Bitte Karte und Zielpreis angeben." }, 400);
-  const alertLimit = alertAllowance(PLANS[plan].alerts, isFounder(c.get("profile")));
+  const alertLimit = withFirst50(alertAllowance(PLANS[plan].alerts, isFounder(c.get("profile"))), first50Active(c.get("profile")));
   if ((await activeAlertCount(user.id)) >= alertLimit) {
     return c.json({ error: `Limit erreicht: ${alertLimit} Preisalarme im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
   }
@@ -1233,7 +1239,8 @@ registerQuickList(app, { auth, body }); // Schnell-Inserieren aus dem Scanner: f
 registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
 registerMake(app, { auth, adminOnly, body }); // Make.com-Webhook für Auto-Reels (Admin-Zentrale)
-registerFounder(app, { auth }); // „Freunde einladen & Karten hochladen“ → Gründer-Sammler-Vorteile
+registerFounder(app, { auth });
+registerFirst50(app); // „Die ersten 50 Sammler“ – öffentlicher Live-Zähler // „Freunde einladen & Karten hochladen“ → Gründer-Sammler-Vorteile
 registerBinder(app, { auth }); // Set-Ordner & Binder-Ansicht mit Live-Marktplatz-Abgleich
 registerOps(app, { auth, adminOnly }); // Betrieb: Job-Läufe, Circuits & Fehlerprotokoll für Admins
 

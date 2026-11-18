@@ -83,6 +83,9 @@ export const profiles = pgTable("profiles", {
   cardUploads: integer("card_uploads").notNull().default(0),
   referralSignups: integer("referral_signups").notNull().default(0),
   founderAt: timestamp("founder_at", { withTimezone: true }),
+  // „Die ersten 50 Sammler“: Platz-Nummer (1–50) und Ende des Gründer-Pakets (60 Tage Pro, 0 % Marktplatz-Provision)
+  first50Rank: integer("first50_rank"),
+  first50Until: timestamp("first50_until", { withTimezone: true }),
   // Live-Online-Radar: Sammlung / Tausch-Karten für andere angemeldete Sammler sichtbar (Binder-Vorschau, jederzeit abschaltbar)
   binderVisible: boolean("binder_visible").notNull().default(true),
   // Creator-Programm: verifiziertes „Creator“-Abzeichen (gesetzt bei Freigabe durch den Admin)
@@ -92,6 +95,7 @@ export const profiles = pgTable("profiles", {
   uniqueIndex("profiles_display_name_lower").on(t.displayName),
   uniqueIndex("profiles_shop_slug").on(t.shopSlug),
   uniqueIndex("profiles_referral_code").on(t.referralCode),
+  uniqueIndex("profiles_first50_rank").on(t.first50Rank),
 ]);
 
 // Karten-Stammdaten + letzter Cardmarket-Preis (TCGdex)

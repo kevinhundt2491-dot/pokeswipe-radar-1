@@ -143,6 +143,9 @@ export async function renderFolders(force = false) {
         <button type="button" onclick="PS.openScanner()" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl">📷 Erste Karte scannen</button></div>`;
 }
 
+/** Set-Ordner für die Set-Binder-Vorschau der Startseite (client/home-binder.js) – gleicher Zwischenspeicher. */
+export const homeFolders = (force = false) => loadFolders(force);
+
 /** Startseite: Schnellzugriff auf die Set-Ordner (Logo, Fortschritt in %, 1 Tipp öffnet den Binder zum Durchblättern). */
 export async function renderHomeFolders(force = false) {
   const box = $("home-set-binder")?.querySelector("[data-home-folders]");

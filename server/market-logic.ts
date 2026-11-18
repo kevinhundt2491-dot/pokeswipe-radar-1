@@ -23,9 +23,11 @@ export const CONDITIONS: Record<string, string> = {
 };
 export const CARRIERS: Record<string, string> = { dhl: "DHL", dpd: "DPD", hermes: "Hermes", gls: "GLS", ups: "UPS", post: "Deutsche Post (Warensendung/Brief)", other: "Andere" };
 
-export function feeFor(plan: PlanId, priceCents: number, shippingCents = 0) {
-  const bps = MARKET_FEE_BPS[plan] ?? MARKET_FEE_BPS.free;
+/** feeFree: Verkäufer mit aktivem Gründer-Paket („Die ersten 50 Sammler“, 60 Tage) zahlen 0 % Provision. */
+export function feeFor(plan: PlanId, priceCents: number, shippingCents = 0, feeFree = false) {
   const gross = Math.max(0, Math.round(priceCents)) + Math.max(0, Math.round(shippingCents));
+  if (feeFree) return { bps: 0, feeCents: 0, totalCents: gross, payoutCents: gross };
+  const bps = MARKET_FEE_BPS[plan] ?? MARKET_FEE_BPS.free;
   const fee = Math.min(gross, Math.max(MARKET_MIN_FEE_CENTS, Math.round((Math.max(0, priceCents) * bps) / 10_000)));
   return { bps, feeCents: fee, totalCents: gross, payoutCents: gross - fee };
 }
