@@ -110,6 +110,18 @@ export const TIKTOK_NICHE_SEARCHES: { label: string; url: string }[] = [
   { label: "TikTok: Pokemon Masterset", url: "https://www.tiktok.com/search/user?q=pokemon%20masterset" },
 ];
 
+/** Schnellleiste „🎯 Kleine TikTok Käufer & Verkäufer finden (500–15k Follower)“ – öffentliche TikTok-Nutzersuche. */
+export const TIKTOK_BUYER_SELLER_SEARCHES: { label: string; url: string }[] = [
+  { label: "TikTok: Pokemon Karten verkaufen", url: "https://www.tiktok.com/search/user?q=pokemon%20karten%20verkaufen" },
+  { label: "TikTok: Pokemon Flohmarkt Deals", url: "https://www.tiktok.com/search/user?q=pokemon%20flohmarkt" },
+  { label: "TikTok: Pokemon Cardshow / Tausch", url: "https://www.tiktok.com/search/user?q=pokemon%20cardshow%20deutsch" },
+  { label: "TikTok: Pokemon Rip & Ship DE", url: "https://www.tiktok.com/search/user?q=pokemon%20rip%20and%20ship%20deutsch" },
+  { label: "TikTok: Pokemon Sammlung auflösen", url: "https://www.tiktok.com/search/user?q=pokemon%20sammlung%20verkaufen" },
+];
+
+/** Direktlink zum Showcase-Video (Set-Binder + 1-Klick-Inserieren) auf der Creator-Seite. */
+export const CREATOR_VIDEO_URL = "https://pokeswipe-radar.de/creator#video";
+
 /** Aus „@handle“, „handle“ oder einem Profil-Link einen TikTok-Profil-Link machen (leer, wenn nicht eindeutig). */
 export function tiktokProfileUrl(input: string): string {
   const s = String(input || "").trim();
@@ -151,9 +163,11 @@ export function researchLinks(l: { name: string; platform: string; channelUrl: s
 // ---------------------------------------------------------------------------
 // Anschreiben-Vorlagen A–D (Platzhalter [Kanalname], [PromoCode], [CreatorLink])
 // ---------------------------------------------------------------------------
-export type TemplateId = "A" | "B" | "C" | "D";
-export const TEMPLATE_IDS: TemplateId[] = ["A", "B", "C", "D"];
-export const TEMPLATES: Record<TemplateId, { label: string; subject: string; body: string; dm: string }> = {
+export type TemplateId = "A" | "B" | "C" | "D" | "E";
+export const TEMPLATE_IDS: TemplateId[] = ["A", "B", "C", "D", "E"];
+/** Launch-Vorlage für kleinere TikTok-Käufer & -Verkäufer (Standard für TikTok und den 1-Klick-Massenversand). */
+export const LAUNCH_TEMPLATE: TemplateId = "E";
+export const TEMPLATES: Record<TemplateId, { label: string; subject: string; body: string; dm: string; comment?: string }> = {
   A: {
     label: "A – Pack-Opening-YouTuber / TikToker",
     subject: "Kooperation: Live-Karten-Scanner für deine Openings + eigener Code für [Kanalname]",
@@ -239,6 +253,31 @@ Viele Grüße
 [Signatur]`,
     dm: "Hallo [Kanalname]! Für eure Community: kostenlose Restock-Alarme + sicherer Tausch-Hub bei PokeSwipe Radar. Für dich Pro dauerhaft gratis, für deine Mitglieder Code [PromoCode] (30 Tage Pro): [CreatorLink]",
   },
+  E: {
+    label: "E – TikTok Käufer/Verkäufer (Launch-Offer)",
+    subject: "Kurze Idee für deine Pokémon-Deals – 0 % Gebühren + eigener Code ({PROMO_CODE}) für {CREATOR_NAME}",
+    body: `Hey {CREATOR_NAME},
+
+wir feiern deine Videos rund ums Kaufen, Verkaufen und Tauschen von Pokémon-Karten auf {PLATTFORM}!
+
+Ganz ehrlich unter Sammlern: Unsere App PokeSwipe Radar (https://pokeswipe-radar.de) ist noch brandneu, hat aber richtig starkes Potenzial und wird von uns gerade jeden Tag weiter ausgebaut – was uns aktuell noch fehlt, ist einfach die Reichweite in der Szene.
+
+Schau dir mal kurz dieses kurze Video von unserem digitalen Set-Binder & dem 1-Klick-Inserieren-Button an:
+👉 https://pokeswipe-radar.de/creator#video
+
+Damit kannst du Karten direkt aus deinem Ordner mit einem Klick zum Verkauf einstellen oder gezielt Lücken in Sets schließen. Weil du genau in dem Bereich aktiv bist, wollen wir dich als einen der ersten Creator mit ins Boot holen:
+
+• 0 % Verkaufsgebühren auf dem Marktplatz (du behältst 100 % deiner Verkäufe)
+• Dauerhaft PokeSwipe VIP Pro gratis + verifiziertes Creator-/Händler-Badge
+• Dein eigener Community-Code "{PROMO_CODE}", mit dem deine Follower 30 Tage PokeSwipe Pro komplett kostenlos testen können
+
+Kein Vertrag, kein Haken – wenn du Bock hast, schau kurz ins Video rein oder teste die App direkt kostenlos. Gib mir gern kurz Bescheid, dann schalten wir dein Creator-Badge sofort live!
+
+Beste Grüße
+Kevin von PokeSwipe Radar`,
+    dm: "Hey {CREATOR_NAME}! 🙌 Feier deinen Content rund ums Kaufen & Verkaufen von Pokémon-Karten! Ganz ehrlich: Unsere neue Sammler-App PokeSwipe Radar ist noch brandneu, hat aber mega Potenzial und wird ständig weitergebaut – uns fehlt gerade nur noch die Reichweite. Schau mal kurz das Video mit unserem Set-Binder & dem 1-Klick-Inserieren-Button an: https://pokeswipe-radar.de/creator#video 🔥 Als Launch-Partner bekommst du dauerhaft VIP Pro gratis, 0 % Verkaufsgebühren + deinen eigenen Code {PROMO_CODE} (30 Tage Pro gratis für deine Community). Magst du mal reinschauen?",
+    comment: "Starke Deals! 🙌 Hab dir als App-Gründer gerade 0 % Verkaufsgebühren + einen eigenen Code ({PROMO_CODE}) für deine Community reserviert – folg kurz zurück, dann schick ich dir das Video dazu!",
+  },
 };
 
 export const FOLLOWUP_TEMPLATE = {
@@ -253,17 +292,23 @@ Viele Grüße
 [Signatur]`,
 };
 
-/** Passende Vorlage zur Kategorie / Größe. */
-export function chooseTemplate(category: string, followers: number): TemplateId {
+/** Passende Vorlage zur Kategorie / Größe – TikTok-Accounts bekommen standardmäßig das Launch-Angebot (E). */
+export function chooseTemplate(category: string, followers: number, platform = ""): TemplateId {
+  if (platform === "tiktok" && category !== "community") return LAUNCH_TEMPLATE;
   if (category === "community") return "D";
   if (category === "flohmarkt") return "B";
   if (category === "micro" || tierOf(followers) === "micro") return "C";
   return "A";
 }
 
-export function fillTemplate(text: string, v: { name: string; code: string; link: string; sender?: string; page?: string }) {
+export function fillTemplate(text: string, v: { name: string; code: string; link: string; sender?: string; page?: string; platform?: string }) {
   const sender = String(v.sender || "").trim().slice(0, 60);
   return String(text)
+    // Platzhalter der Launch-Vorlage E
+    .replace(/\{CREATOR_NAME\}/g, v.name || "du")
+    .replace(/\{PROMO_CODE\}/g, v.code || "")
+    .replace(/\{PLATTFORM\}/g, PLATFORM_LABEL[String(v.platform || "")] || "TikTok")
+    .replace(/\{VIDEO_URL\}/g, CREATOR_VIDEO_URL)
     .replace(/\[Absender\]/g, sender || "das Team")
     .replace(/\[Signatur\]/g, sender ? `${sender}\nPokeSwipe Radar` : "Dein PokeSwipe-Radar-Team")
     .replace(/\[Kanalname\]/g, v.name || "du")
@@ -284,8 +329,8 @@ export function legalFooter(site: string, optoutUrl: string) {
 // ---------------------------------------------------------------------------
 // Status & Versand-Regeln
 // ---------------------------------------------------------------------------
-export type LeadStatus = "ready" | "queued" | "sent" | "replied" | "active" | "paused" | "optout";
-export const LEAD_STATUSES: LeadStatus[] = ["ready", "queued", "sent", "replied", "active", "paused", "optout"];
+export type LeadStatus = "ready" | "queued" | "sent" | "dm_sent" | "replied" | "active" | "paused" | "optout";
+export const LEAD_STATUSES: LeadStatus[] = ["ready", "queued", "sent", "dm_sent", "replied", "active", "paused", "optout"];
 
 /** Anzeige-Status inkl. „Follow-up fällig“ (4 Tage nach Versand ohne Antwort). */
 export function displayStatus(l: { status: string; email: string; sentAt: Date | string | null; followupSentAt?: Date | string | null }, now = Date.now()) {
@@ -293,7 +338,7 @@ export function displayStatus(l: { status: string; email: string; sentAt: Date |
   if (l.status === "sent" && sent && !l.followupSentAt && now - sent >= FOLLOWUP_AFTER_DAYS * 86_400_000) return { key: "followup", label: "Follow-up fällig" };
   if (l.status === "ready" && !l.email) return { key: "no_email", label: "Kein E-Mail-Kontakt – DM nutzen" };
   const labels: Record<string, string> = {
-    ready: "Bereit", queued: "In Warteschlange", sent: "E-Mail gesendet", replied: "Antwort erhalten", active: "Aktiv", paused: "Pausiert", optout: "Abgemeldet",
+    ready: "Bereit", queued: "In Warteschlange", sent: "E-Mail gesendet", dm_sent: "DM gesendet", replied: "Antwort erhalten", active: "Aktiv", paused: "Pausiert", optout: "Abgemeldet",
   };
   return { key: l.status, label: labels[l.status] || l.status };
 }

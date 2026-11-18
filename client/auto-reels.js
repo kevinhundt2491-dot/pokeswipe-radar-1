@@ -8,6 +8,7 @@
 // separatem Post-Beschreibungstext (caption, title, hashtags) und .txt-Begleitdatei. Ohne Webhook-URL (oder
 // wenn der Versand scheitert) werden MP4 und .txt lokal heruntergeladen.
 import { toast, hooks, state, api } from "./core.js";
+import { uploadCreatorVideo } from "./creator-video-upload.js";
 import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
 import { recordLive, previewLive, loadNarration, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
@@ -280,6 +281,7 @@ function build() {
     const act = btn.dataset.ar, n = Number(btn.dataset.n);
     if (act === "close") close();
     if (btn.dataset.pro) return onProClick(btn);
+    if (act === "publish-video") return publishCreatorVideo(btn.dataset.k);
     if (act === "all") generateAll();
     if (act === "stop") { stopAll = true; if (mode === "preview") endPreview(); setStatus(mode === "rec" ? "Abbruch nach der laufenden Episode …" : "■ Gestoppt."); }
     if (act === "preview") startPreview(EPISODES[n - 1]);
@@ -728,6 +730,20 @@ let proNext = null; // { template, variant } vom Server
 
 function proMaxMb() { return Math.min(proCfg.maxMb || SAFE_MB, Math.floor(limitMb * 0.95)); }
 
+/** Fertiges Pro-Video öffentlich auf /creator#video zeigen (Upload in Stücken nach Netlify Blobs). */
+async function publishCreatorVideo(key) {
+  const r = proResults.get(key);
+  if (!r?.blob || r.publishing) return;
+  if (!confirm("Dieses Video öffentlich auf pokeswipe-radar.de/creator#video zeigen? Ein bisher hinterlegtes Video wird ersetzt.")) return;
+  r.publishing = 0.01; renderPro();
+  try {
+    await uploadCreatorVideo(r.blob, { source: `Pro-Generator: ${templateByKey(key)?.label || key}`.slice(0, 80), poster: r.thumb, onProgress: (p) => { r.publishing = Math.max(0.01, p); renderPro(); } });
+    r.published = true;
+    toast("🎬 Veröffentlicht", "Das Video läuft jetzt auf pokeswipe-radar.de/creator#video.");
+  } catch (e) { toast("⚠️ Veröffentlichen fehlgeschlagen", e?.message || String(e)); }
+  finally { r.publishing = 0; renderPro(); }
+}
+
 function renderPro(states = {}) {
   const spec = ui.root?.querySelector("#ar-pro-spec");
   if (!spec) return;
@@ -738,7 +754,7 @@ function renderPro(states = {}) {
     const icon = { on: "⏺", ok: "✅", err: "⚠️", wait: "⏳" }[st] || (r ? "✅" : on ? "🎞️" : "⏸");
     const words = checkTemplateScript(tpl, proScript(tpl, 0).say).words;
     const isNext = proNext?.template === tpl.key;
-    const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ ${r.name.endsWith(".mp4") ? "MP4" : "Video (WebM)"} herunterladen</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> <a href="${r.txtUrl}" download="${esc(r.txtName)}">⬇ .txt</a> ${r.sent ? "📤 an Make gesendet" : ""}</span></div></div>` : "";
+    const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ ${r.name.endsWith(".mp4") ? "MP4" : "Video (WebM)"} herunterladen</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> <a href="${r.txtUrl}" download="${esc(r.txtName)}">⬇ .txt</a> ${r.sent ? "📤 an Make gesendet" : ""}</span>${r.blob ? `<span><button type="button" class="ar-btn" data-ar="publish-video" data-k="${esc(tpl.key)}" ${r.publishing ? "disabled" : ""} title="Dieses Video öffentlich auf pokeswipe-radar.de/creator#video zeigen (Creator-Outreach)">${r.publishing ? `⏳ Veröffentliche … ${Math.round(r.publishing * 100)} %` : r.published ? "✅ Läuft auf /creator#video · erneut veröffentlichen" : "📌 Auf /creator#video veröffentlichen"}</button></span>` : ""}</div></div>` : "";
     const notes = (proNotes.get(tpl.key) || []).map((n) => `<small class="ar-note ${n.kind}" role="${n.kind === "err" ? "alert" : "status"}">${n.kind === "err" ? "⚠️ Fehler: " : n.kind === "warn" ? "⚠️ " : "ℹ️ "}${esc(n.text)}</small>`).join("");
     return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${tpl.seconds ? ` · ${[...new Set(secondsFor(tpl))].join("–")} s` : ""}${tpl.fps ? ` · ${tpl.fps} FPS` : ""}${tpl.mbit ? ` · ${tpl.mbit} Mbit/s` : ""}${proSent()[tpl.key] ? ` · 📤 zuletzt an Make gesendet am ${esc(new Date(proSent()[tpl.key].at).toLocaleString("de-DE"))}` : ""}${on ? "" : " · nicht in der Rotation (Admin-Zentrale)"}</small></span>
       <span class="ar-acts"><button type="button" data-ar="pro" data-pro="one" data-k="${tpl.key}" title="Nur diese Vorlage aufnehmen">⏺</button></span>${notes}${out}</li>`;
@@ -931,7 +947,7 @@ async function generatePro(list) {
       const old = proResults.get(tpl.key);
       if (old) [old.url, old.txtUrl, old.thumbUrl].forEach((u) => URL.revokeObjectURL(u));
       const txtBlob = new Blob([txt], { type: "text/plain;charset=utf-8" });
-      const r = { url: URL.createObjectURL(res.blob), name, size: res.blob.size, sent: false, cap, txt, txtName: `${fileBase(ep)}.txt`, txtUrl: URL.createObjectURL(txtBlob), thumbUrl: URL.createObjectURL(thumb) };
+      const r = { url: URL.createObjectURL(res.blob), name, size: res.blob.size, sent: false, cap, txt, txtName: `${fileBase(ep)}.txt`, txtUrl: URL.createObjectURL(txtBlob), thumbUrl: URL.createObjectURL(thumb), blob: res.blob, thumb };
       proResults.set(tpl.key, r);
       try {
         download(res.blob, name);

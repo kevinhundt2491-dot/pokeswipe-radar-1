@@ -112,14 +112,66 @@
   footer { border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--soft); font-size: .85rem; }
   footer .links { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 8px; }
 
+
+  /* Showcase-Video (#video): Set-Binder + 1-Klick-Inserieren – sofort sichtbar ganz oben */
+  .showcase { display: grid; grid-template-columns: auto 1fr; gap: 34px; align-items: center; padding: 6px 0 30px; scroll-margin-top: 10px; }
+  .phone { position: relative; width: min(300px, 78vw); aspect-ratio: 9 / 16; max-height: 72vh; border-radius: 34px; padding: 10px;
+    background: linear-gradient(160deg, #2a2f66, #12142e); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 40px 80px -30px rgba(0,0,0,.85), 0 0 0 6px rgba(255,203,5,.08); }
+  .phone .screen { position: relative; width: 100%; height: 100%; border-radius: 26px; overflow: hidden; background: #0d1024; }
+  .phone video { width: 100%; height: 100%; object-fit: cover; display: block; background: #0d1024; }
+  .phone .sound { position: absolute; right: 10px; bottom: 10px; z-index: 5; border: 0; cursor: pointer; border-radius: 999px; padding: 7px 11px;
+    font: 800 .78rem var(--body); background: rgba(0,0,0,.6); color: #fff; backdrop-filter: blur(6px); }
+  .showcase .live-tag { display: inline-flex; gap: 6px; align-items: center; font-weight: 900; font-size: .75rem; text-transform: uppercase; letter-spacing: .5px;
+    background: rgba(227,53,74,.16); color: #ffc2ca; border: 1px solid rgba(227,53,74,.45); border-radius: 999px; padding: 5px 11px; }
+  .showcase .live-tag::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--red); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .showcase h2 { margin: 12px 0 8px; }
+  .showcase ol { list-style: none; display: grid; gap: 10px; margin: 16px 0 20px; }
+  .showcase ol li { display: flex; gap: 10px; align-items: flex-start; color: var(--soft); }
+  .showcase ol li b.n { flex: none; width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; background: var(--yellow); color: #1a1406; font-weight: 900; }
+  .showcase ol li strong { color: var(--ink); }
+
+  /* Interaktive Live-Vorschau (wenn noch kein MP4 hinterlegt ist) */
+  .demo { position: absolute; inset: 0; display: flex; flex-direction: column; font-size: 11px; color: #e9e7f5; }
+  .demo .bar { display: flex; justify-content: space-between; align-items: center; padding: 12px 12px 8px; font-weight: 900; }
+  .demo .bar span { color: var(--yellow); }
+  .demo .prog { margin: 0 12px; height: 6px; border-radius: 99px; background: rgba(255,255,255,.1); overflow: hidden; }
+  .demo .prog i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--green), var(--yellow)); transition: width .6s ease; }
+  .demo .meta { display: flex; justify-content: space-between; padding: 6px 12px 8px; color: var(--soft); font-weight: 700; }
+  .demo .page { position: relative; flex: 1; margin: 0 10px; perspective: 900px; }
+  .demo .grid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 6px;
+    transform-origin: left center; transition: transform .55s cubic-bezier(.6,.1,.3,1), opacity .55s; }
+  .demo .grid.flip { transform: rotateY(-100deg); opacity: 0; }
+  .demo .slot { position: relative; border-radius: 7px; overflow: hidden; background: #1b1f45; border: 1px solid rgba(255,255,255,.08); }
+  .demo .slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .demo .slot.miss img { filter: grayscale(1) brightness(.45); }
+  .demo .slot .tag { position: absolute; left: 3px; right: 3px; bottom: 3px; border-radius: 5px; padding: 2px 3px; text-align: center; font-weight: 900; font-size: 8.5px; line-height: 1.2; }
+  .demo .slot.miss .tag { background: rgba(63,217,255,.9); color: #04202a; }
+  .demo .slot .dup { position: absolute; top: 3px; right: 3px; background: var(--pink); color: #fff; font-weight: 900; font-size: 9px; border-radius: 99px; padding: 1px 5px; }
+  .demo .slot.hl { outline: 3px solid var(--yellow); outline-offset: -3px; box-shadow: 0 0 22px rgba(255,203,5,.7); }
+  .demo .slot.sold .tag { background: rgba(52,211,153,.95); color: #052117; }
+  .demo .act { padding: 10px; }
+  .demo .listbtn { width: 100%; border: 0; border-radius: 12px; padding: 11px; font: 900 12px var(--body); color: #1a1406; background: linear-gradient(180deg, var(--yellow-2), var(--yellow));
+    box-shadow: 0 8px 20px -8px rgba(255,203,5,.8); transition: transform .15s; }
+  .demo .listbtn.press { transform: scale(.94); filter: brightness(.9); }
+  .demo .listbtn.done { background: linear-gradient(180deg, #6ee7b7, var(--green)); color: #052117; }
+  .demo .toast { position: absolute; left: 10px; right: 10px; top: 44px; z-index: 4; border-radius: 12px; padding: 9px 11px; font-weight: 800; background: rgba(20,24,51,.96);
+    border: 1px solid rgba(52,211,153,.6); transform: translateY(-140%); opacity: 0; transition: transform .35s, opacity .35s; }
+  .demo .toast.on { transform: none; opacity: 1; }
+  .demo .cap { position: absolute; left: 10px; right: 10px; bottom: 64px; z-index: 3; text-align: center; font-family: var(--display); font-size: 15px; line-height: 1.15;
+    text-shadow: 0 2px 10px #000; }
+  .demo .finger { position: absolute; z-index: 6; width: 26px; height: 26px; border-radius: 50%; background: rgba(255,255,255,.85); box-shadow: 0 0 0 6px rgba(255,255,255,.25);
+    pointer-events: none; opacity: 0; transition: left .5s ease, top .5s ease, opacity .25s; }
+
   @media (max-width: 900px) {
+    .showcase { grid-template-columns: 1fr; justify-items: center; text-align: left; gap: 20px; }
     .hero, .apply { grid-template-columns: 1fr; }
     .grid3 { grid-template-columns: 1fr; }
     .usecases { grid-template-columns: 1fr 1fr; }
     .codecard { transform: none; }
   }
   @media (max-width: 520px) { .row2, .usecases { grid-template-columns: 1fr; } .top .btn { display: none; } }
-  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn { transition: none; } .demo .grid { transition: none; } }
 </style>
 </head>
 <body>
@@ -128,6 +180,38 @@
     <a class="logo" href="/">Poke<span>Swipe</span> Radar</a>
     <a class="btn y sm" href="#bewerben">Creator-Zugang sichern</a>
   </div>
+
+  <section class="showcase" id="video" aria-labelledby="video-title">
+    <div class="phone">
+      <div class="screen" id="showcase-screen">
+        <!-- Ist ein MP4 hinterlegt (Pro-Reel-Generator / Admin-Upload), ersetzt /js/creator.js die Live-Vorschau durch das Video -->
+        <div class="demo" id="demo" role="img" aria-label="Live-Vorschau: Durch den digitalen Set-Binder blättern und eine doppelte Karte mit 1 Klick inserieren">
+          <div class="bar">📒 Set-Binder <span id="demo-set">Karmesin &amp; Purpur 151</span></div>
+          <div class="prog"><i id="demo-prog"></i></div>
+          <div class="meta"><span id="demo-count">0 / 165 Karten</span><span id="demo-page">Seite 1</span></div>
+          <div class="page"><div class="grid" id="demo-grid"></div></div>
+          <div class="act"><button type="button" class="listbtn" id="demo-btn" tabindex="-1">⚡ 1-Klick inserieren</button></div>
+          <div class="toast" id="demo-toast"></div>
+          <div class="cap" id="demo-cap"></div>
+          <div class="finger" id="demo-finger"></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <span class="live-tag">Live-Demo · 20 Sekunden</span>
+      <h2 id="video-title">Digitaler Set-Binder + <span style="color:var(--yellow)">1-Klick-Inserieren</span></h2>
+      <p class="sub" style="margin-bottom:0">So funktioniert PokeSwipe Radar für Käufer &amp; Verkäufer: Ordner durchblättern, Lücken sehen, Doppelte in Sekunden verkaufen.</p>
+      <ol>
+        <li><b class="n">1</b><span><strong>Durch den Set-Binder blättern:</strong> eigene Karten in Farbe, fehlende Karten grau – mit direktem Marktplatz-Abgleich („ab … € im Marktplatz“).</span></li>
+        <li><b class="n">2</b><span><strong>Doppelte oder gescannte Karte antippen</strong> – der Marktpreis ist schon eingetragen.</span></li>
+        <li><b class="n">3</b><span><strong>„1-Klick inserieren“</strong> – die Karte steht in Sekunden auf dem Marktplatz, mit Käuferschutz &amp; DHL-Label.</span></li>
+      </ol>
+      <div class="cta" style="margin-top:0">
+        <a class="btn y" href="/?tab=portfolio">📒 Set-Binder kostenlos testen</a>
+        <a class="btn g" href="#bewerben">🎟️ Creator-Code sichern</a>
+      </div>
+    </div>
+  </section>
 
   <section class="hero" style="padding-top:20px">
     <div>

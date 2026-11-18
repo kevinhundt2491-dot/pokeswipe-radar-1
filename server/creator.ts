@@ -10,7 +10,7 @@ import {
   TEMPLATES, TEMPLATE_IDS, FOLLOWUP_TEMPLATE, PLATFORM_LABEL, CATEGORY_LABEL, TIER_LABEL, LEAD_STATUSES,
   tierOf, responseScore, suggestPromoCode, cleanWishCode, researchLinks, chooseTemplate, fillTemplate, creatorLink, legalFooter,
   displayStatus, canSendNow, staggerSchedule, checkFetchUrl, isPlatformHost, isPrivateIp, extractContacts, type TemplateId,
-  FEATURED_CREATORS, TIKTOK_NICHE_SEARCHES, TIKTOK_DM, tiktokProfileUrl, creatorPage,
+  FEATURED_CREATORS, TIKTOK_NICHE_SEARCHES, TIKTOK_BUYER_SELLER_SEARCHES, CREATOR_VIDEO_URL, LAUNCH_TEMPLATE, tiktokProfileUrl, creatorPage,
   OUTREACH_BULK_DAILY_CAP, BULK_SEND_GAP_MS, parseCreatorImport, linkHubLabel, isLinkHub,
 } from "./creator-logic.ts";
 import { hasMx } from "./creator-email-finder.ts";
@@ -18,6 +18,7 @@ import { PROMO_RE } from "./referral-logic.ts";
 import { adminEmails } from "./alerts.ts";
 import { mailConfigured, sendMail } from "./legal.ts";
 import { notify } from "./prices.ts";
+import { getStore } from "@netlify/blobs";
 import { SITE, h } from "./growth.ts";
 import { str, int, rows, rateLimit, clientIp } from "./util.ts";
 import { log } from "./log.ts";
@@ -54,14 +55,18 @@ async function createCreatorPromo(wish: string, label: string, active: boolean, 
   return null;
 }
 
-const mailVars = (l: Pick<Lead, "name" | "promoCode">) => ({
-  name: l.name, code: l.promoCode, link: l.promoCode ? creatorLink(site(), l.promoCode) : creatorPage(site()), sender: senderName(), page: creatorPage(site()),
+const mailVars = (l: Pick<Lead, "name" | "promoCode"> & { platform?: string }) => ({
+  name: l.name, code: l.promoCode, link: l.promoCode ? creatorLink(site(), l.promoCode) : creatorPage(site()), sender: senderName(), page: creatorPage(site()), platform: l.platform,
 });
 function composeMail(l: Pick<Lead, "name" | "promoCode" | "template"> & { platform?: string }) {
   const t = TEMPLATES[(TEMPLATE_IDS.includes(l.template as TemplateId) ? l.template : "A") as TemplateId];
+  const launch = TEMPLATES[LAUNCH_TEMPLATE];
   const v = mailVars(l);
-  // TikTok-Creator bekommen die kurze, lockere DM (meist kein E-Mail-Kontakt)
-  return { subject: fillTemplate(t.subject, v), body: fillTemplate(t.body, v), dm: fillTemplate(l.platform === "tiktok" ? TIKTOK_DM : t.dm, v) };
+  // TikTok-Creator bekommen die Launch-DM (inkl. Video-Link & eigenem Code) – meist gibt es dort keinen E-Mail-Kontakt
+  return {
+    subject: fillTemplate(t.subject, v), body: fillTemplate(t.body, v), dm: fillTemplate(l.platform === "tiktok" ? launch.dm : t.dm, v),
+    comment: fillTemplate(t.comment || launch.comment || "", v),
+  };
 }
 /** Aktueller Anschreiben-Text: eigener Text bleibt, sonst immer die aktuelle Vorlage (inkl. /creator-Link). */
 const currentMail = (l: Lead) => (l.customBody ? { subject: l.subject, body: l.body } : composeMail(l));
@@ -77,7 +82,7 @@ async function createLead(input: {
     if (p) { promoId = p.id; promoCode = p.code; }
   }
   const followers = Math.max(0, Math.round(Number(input.followers) || 0));
-  const template = (TEMPLATE_IDS as string[]).includes(String(input.template)) ? String(input.template) : chooseTemplate(input.category, followers);
+  const template = (TEMPLATE_IDS as string[]).includes(String(input.template)) ? String(input.template) : chooseTemplate(input.category, followers, input.platform);
   const mail = composeMail({ name: input.name, promoCode, template, platform: input.platform });
   const [lead] = await db.insert(creatorLeads).values({
     name: input.name.slice(0, 80), category: input.category, platform: input.platform, channelUrl: input.channelUrl ?? "", followers,
@@ -120,7 +125,7 @@ async function ensureFeaturedCreators(createdBy: string) {
     const slot = all.find((l) => l.placeholder && /^Platzhalter/i.test(l.name) && l.platform === f.platform && l.category === f.category && l.status === "ready" && !l.email);
     if (slot) {
       const p = await createCreatorPromo("", f.name, true, createdBy);
-      const template = chooseTemplate(f.category, slot.followers);
+      const template = chooseTemplate(f.category, slot.followers, f.platform);
       const m = composeMail({ name: f.name, promoCode: p?.code || "", template, platform: f.platform });
       await db.update(creatorLeads).set({
         name: f.name, channelUrl: f.channelUrl, placeholder: false, promoId: p?.id ?? null, promoCode: p?.code || "", template,
@@ -134,6 +139,26 @@ async function ensureFeaturedCreators(createdBy: string) {
     changed++;
   }
   return changed;
+}
+
+/**
+ * Einmalig: noch nicht angeschriebene TikTok-Einträge ohne eigenen Text auf die Launch-Vorlage E umstellen
+ * (neue TikTok-Einträge bekommen E automatisch). Danach bleibt jede manuelle Vorlagen-Wahl unangetastet.
+ */
+async function upgradeTikTokTemplates() {
+  const cfg = getStore({ name: "app-config", consistency: "strong" });
+  if (await cfg.get("creator-template-e-v1").catch(() => "1")) return 0;
+  const list = await db.select().from(creatorLeads).where(and(eq(creatorLeads.platform, "tiktok"), eq(creatorLeads.customBody, false),
+    inArray(creatorLeads.status, ["ready", "paused"]), sql`${creatorLeads.sentAt} IS NULL`, sql`${creatorLeads.category} <> 'community'`));
+  let n = 0;
+  for (const l of list) {
+    if (l.template === LAUNCH_TEMPLATE) continue;
+    const m = composeMail({ ...l, template: LAUNCH_TEMPLATE });
+    await db.update(creatorLeads).set({ template: LAUNCH_TEMPLATE, subject: m.subject, body: m.body, updatedAt: new Date() }).where(eq(creatorLeads.id, l.id));
+    n++;
+  }
+  await cfg.set("creator-template-e-v1", new Date().toISOString());
+  return n;
 }
 
 async function seedIfEmpty(createdBy: string) {
@@ -180,7 +205,7 @@ async function resendSend(to: string, subject: string, text: string, unsubscribe
 }
 
 /** Sendet die Erst- oder Follow-up-Mail an einen Lead. Prüft alle Schutzregeln. */
-export async function sendLead(leadId: number, kind: "initial" | "followup", opts: { ignoreGap?: boolean; bulk?: boolean } = {}) {
+export async function sendLead(leadId: number, kind: "initial" | "followup", opts: { ignoreGap?: boolean; bulk?: boolean; template?: TemplateId } = {}) {
   if (!mailConfigured()) return { ok: false, error: "E-Mail-Versand ist nicht eingerichtet (RESEND_API_KEY / MAIL_FROM)." };
   const [l] = await db.select().from(creatorLeads).where(eq(creatorLeads.id, leadId)).limit(1);
   if (!l) return { ok: false, error: "Creator nicht gefunden." };
@@ -213,7 +238,9 @@ export async function sendLead(leadId: number, kind: "initial" | "followup", opt
   if (!locked) return { ok: false, error: "Wird gerade schon gesendet." };
 
   const v = mailVars(l);
-  const cur = currentMail(l);
+  // Launch-Massenversand: Vorlage (z. B. E) für alle Creator ohne eigenen Text – der Eintrag zeigt danach genau die gesendete Mail
+  const override = kind === "initial" && opts.template && !l.customBody && l.template !== opts.template ? opts.template : null;
+  const cur = override ? composeMail({ ...l, template: override }) : currentMail(l);
   const subject = kind === "initial" ? (cur.subject || composeMail(l).subject) : fillTemplate(FOLLOWUP_TEMPLATE.subject, v);
   const text = (kind === "initial" ? (cur.body || composeMail(l).body) : fillTemplate(FOLLOWUP_TEMPLATE.body, v)) + legalFooter(site(), optoutUrl(l.optoutToken));
   try {
@@ -221,7 +248,7 @@ export async function sendLead(leadId: number, kind: "initial" | "followup", opt
     await db.insert(creatorOutreachLog).values({ leadId: l.id, kind, email: l.email, ok: true, resendId: id });
     const now = new Date();
     await db.update(creatorLeads).set(kind === "initial"
-      ? { status: "sent", sentAt: now, scheduledAt: null, lastError: "", updatedAt: now }
+      ? { status: "sent", sentAt: now, scheduledAt: null, lastError: "", updatedAt: now, ...(override ? { template: override, subject: cur.subject, body: cur.body } : {}) }
       : { status: "sent", followupSentAt: now, lastError: "", updatedAt: now }).where(eq(creatorLeads.id, l.id));
     return { ok: true };
   } catch (e: any) {
@@ -293,6 +320,13 @@ export async function safeFetchHtml(raw: string, depth = 0, timeoutMs = 8000): P
 // ---------------------------------------------------------------------------
 // Ausgabe für die Admin-Oberfläche
 // ---------------------------------------------------------------------------
+/** TikTok-Profil des Creators: Kanal-Link → @handle im Namen → TikTok-Nutzersuche nach dem Namen. */
+function tiktokTarget(l: Pick<Lead, "name" | "channelUrl" | "socials">) {
+  const socials = Array.isArray(l.socials) ? (l.socials as string[]) : [];
+  return tiktokProfileUrl(l.channelUrl) || socials.map(tiktokProfileUrl).find(Boolean) || tiktokProfileUrl(l.name)
+    || `https://www.tiktok.com/search/user?q=${encodeURIComponent(l.name.replace(/^@/, ""))}`;
+}
+
 function leadView(l: Lead & { redemptions?: number | null; promo_active?: boolean | null }) {
   const mail = composeMail(l);
   const cur = currentMail(l);
@@ -305,7 +339,7 @@ function leadView(l: Lead & { redemptions?: number | null; promo_active?: boolea
     tier: tierOf(l.followers), tierLabel: TIER_LABEL[tierOf(l.followers)], score: responseScore(l),
     promoId: l.promoId, promoCode: l.promoCode, promoActive: l.promo_active ?? null, signups: Number(l.redemptions) || 0,
     link: l.promoCode ? creatorLink(site(), l.promoCode) : "", creatorPage: creatorPage(site()), template: l.template, subject: cur.subject, body: cur.body, customBody: l.customBody,
-    dm: mail.dm, status: l.status, display: displayStatus(l), placeholder: l.placeholder, source: l.source, notes: l.notes,
+    dm: mail.dm, comment: mail.comment, tiktokUrl: l.platform === "tiktok" ? tiktokTarget(l) : "", status: l.status, display: displayStatus(l), placeholder: l.placeholder, source: l.source, notes: l.notes,
     scheduledAt: l.scheduledAt, sentAt: l.sentAt, followupSentAt: l.followupSentAt, repliedAt: l.repliedAt, lastError: l.lastError,
     followupDueAt: l.sentAt ? new Date(new Date(l.sentAt).getTime() + FOLLOWUP_AFTER_DAYS * 86_400_000) : null,
     research: researchLinks(l),
@@ -414,6 +448,7 @@ export function registerCreator(app: any, hlp: Hlp) {
   app.get("/api/admin/creators", auth, adminOnly, async (c: any) => {
     const seeded = await seedIfEmpty(c.get("user").email || "");
     await ensureFeaturedCreators(c.get("user").email || "").catch((e) => log.warn("creator", "Feste Creator konnten nicht angelegt werden", { error: String(e?.message || e) }));
+    await upgradeTikTokTemplates().catch((e) => log.warn("creator", "TikTok-Vorlagen konnten nicht umgestellt werden", { error: String(e?.message || e) }));
     const [leads, st, apps] = await Promise.all([
       loadLeads(),
       sendStats(),
@@ -426,7 +461,8 @@ export function registerCreator(app: any, hlp: Hlp) {
       seeded, leads,
       applications: apps.map((a) => ({ ...a, promoCode: promos.find((p) => p.id === a.promoId)?.code || "", platformLabel: PLATFORM_LABEL[a.platform] || a.platform })),
       sending: { configured: mailConfigured(), cap: OUTREACH_DAILY_CAP, sentToday: st.sentToday, lastSentAt: st.lastSentAt, canSend: gate.ok, reason: gate.reason, minGapMin: OUTREACH_MIN_GAP_MS / 60_000, senderName: senderName(), bulkCap: OUTREACH_BULK_DAILY_CAP, bulkGapMs: BULK_SEND_GAP_MS },
-      templates: TEMPLATE_IDS.map((id) => ({ id, label: TEMPLATES[id].label, subject: TEMPLATES[id].subject, body: TEMPLATES[id].body, dm: TEMPLATES[id].dm })),
+      templates: TEMPLATE_IDS.map((id) => ({ id, label: TEMPLATES[id].label, subject: TEMPLATES[id].subject, body: TEMPLATES[id].body, dm: TEMPLATES[id].dm, comment: TEMPLATES[id].comment || "" })),
+      launchTemplate: LAUNCH_TEMPLATE, videoUrl: CREATOR_VIDEO_URL, buyerSellerSearches: TIKTOK_BUYER_SELLER_SEARCHES,
       categories: CREATOR_CATEGORIES.map((id) => ({ id, label: CATEGORY_LABEL[id] })),
       platforms: CREATOR_PLATFORMS.map((id) => ({ id, label: PLATFORM_LABEL[id] })),
       followupDays: FOLLOWUP_AFTER_DAYS,
@@ -496,7 +532,7 @@ export function registerCreator(app: any, hlp: Hlp) {
       if (p) { u.promoId = p.id; u.promoCode = p.code; merged.promoCode = p.code; }
     }
     if (!merged.customBody && (u.name || u.template || u.promoCode || u.category || b.resetBody)) {
-      if (b.template === undefined && (u.category || u.followers !== undefined)) { u.template = chooseTemplate(merged.category, merged.followers); merged.template = u.template; }
+      if (b.template === undefined && (u.category || u.followers !== undefined)) { u.template = chooseTemplate(merged.category, merged.followers, merged.platform); merged.template = u.template; }
       const m = composeMail(merged);
       u.subject = m.subject; u.body = m.body;
     }
@@ -515,7 +551,8 @@ export function registerCreator(app: any, hlp: Hlp) {
     const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
     const b = await body(c);
     const bulk = b.bulk === true && b.kind !== "followup";
-    const r = await sendLead(id, b.kind === "followup" ? "followup" : "initial", { bulk });
+    const template = bulk && (TEMPLATE_IDS as string[]).includes(String(b.template)) ? (b.template as TemplateId) : undefined;
+    const r = await sendLead(id, b.kind === "followup" ? "followup" : "initial", { bulk, template });
     // Massenversand: schlanke Antwort (die Liste lädt der Browser einmal am Ende neu)
     if (bulk) return r.ok ? c.json({ ok: true, id }) : c.json({ error: r.error, skip: Boolean((r as any).skip), stop: (r as any).waitMs !== undefined }, 409);
     return r.ok ? c.json({ ok: true, lead: (await loadLeads()).find((x) => x.id === id) }) : c.json({ error: r.error }, 409);

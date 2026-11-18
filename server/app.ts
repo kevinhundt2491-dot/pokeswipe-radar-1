@@ -60,6 +60,7 @@ import { freshnessLabel, isStale } from "./valuation-logic.ts";
 import { registerShipping } from "./shipping.ts";
 import { registerAlerts } from "./alerts.ts";
 import { registerCreator } from "./creator.ts";
+import { registerCreatorVideo } from "./creator-video.ts";
 import { registerPresence } from "./presence.ts";
 import { registerSession } from "./session.ts";
 
@@ -1215,6 +1216,7 @@ registerConditionPrices(app); // Phase 8: Preise nach Zustand & Sold Comps aus d
 registerValuation(app); // Phase 9: eigene Preis-Pipeline (NM … Damaged, PSA 8/9/10) mit Stale-While-Revalidate
 registerShipping(app, { auth, body }); // Phase 8: DHL-Versandetiketten mit eigenen Händler-Zugangsdaten
 registerAlerts(app, { auth, adminOnly, body }); // Phase 8: Browser-Fehlerberichte, Testalarm, Alarm-Verlauf
+registerCreatorVideo(app, { auth, adminOnly, body }); // Showcase-Video für /creator#video (Set-Binder + 1-Klick-Inserieren)
 registerCreator(app, { auth, adminOnly, body }); // Creator-Programm: /creator-Bewerbung, Creator-Finder & Resend-Outreach (Admin)
 registerPresence(app, { auth, body });
 registerSession(app, { body }); // Dauer-Anmeldung: HttpOnly-Sitzungs-Cookie (180 Tage, gleitend), Wiederherstellung & Abmelden // Live-Online-Radar: verifizierte Präsenz, Binder-Vorschau, Sichtbarkeits-Schalter
