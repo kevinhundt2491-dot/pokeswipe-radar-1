@@ -218,3 +218,32 @@ export function binderSummary(cardsList: BinderCard[], total?: number) {
   const value = Math.round(cardsList.reduce((s, c) => s + (c.owned ? c.ownedValue : 0), 0) * 100) / 100;
   return { owned, total: all, value, missing: Math.max(0, all - owned), onMarket, forSale, pct: all ? Math.min(100, Math.round((owned / all) * 100)) : 0, progressLabel: `${owned} / ${all} Karten` };
 }
+
+/**
+ * Showcase-Füllung NUR für die Reel-Aufnahme (Live-Stage): die ersten Ordnerseiten eines echten Set-Katalogs
+ * werden als „gefüllter Live-Betrieb“ belegt – eigene Karten vollfarbig mit Zustand und Live-Wert, ein paar
+ * Lücken bleiben abgedunkelt. Die Lücke `hero` (Standard: Mitte von Seite 2) bekommt später das Marktplatz-Badge.
+ * Schreibt nichts, liefert nur Einträge im Format von OwnedEntry.
+ */
+export const SHOWCASE_GAPS = Object.freeze([2, 6, 10, 13, 16, 21, 24]);
+export function showcaseBinderFill(catalog: CatalogCard[], { pages = 3, gaps = SHOWCASE_GAPS as readonly number[] } = {}): OwnedEntry[] {
+  const sorted = [...(catalog || [])].filter((c) => c?.id)
+    .map((c) => ({ c, localId: String(c.localId || localIdOfCard(c.id)) }))
+    .sort((a, b) => compareLocalId(a.localId, b.localId))
+    .map(({ c }) => c);
+  const n = Math.min(sorted.length, Math.max(1, pages) * BINDER_PAGE_SIZE);
+  const out: OwnedEntry[] = [];
+  for (let i = 0; i < n; i++) {
+    if (gaps.includes(i)) continue;
+    const c = sorted[i];
+    out.push({ cardId: c.id, quantity: i % 7 === 4 ? 2 : 1, condition: i % 5 === 3 ? "EX" : "NM", image: c.image || "", name: c.name, value: num(c.price) * (i % 7 === 4 ? 2 : 1) });
+  }
+  return out;
+}
+
+/** Karte an Position `index` (Ordner-Reihenfolge) – z. B. die Lücke, auf der das Marktplatz-Badge aufleuchtet. */
+export function binderCardAt(catalog: CatalogCard[], index: number): CatalogCard | null {
+  const sorted = [...(catalog || [])].filter((c) => c?.id)
+    .sort((a, b) => compareLocalId(String(a.localId || localIdOfCard(a.id)), String(b.localId || localIdOfCard(b.id))));
+  return sorted[index] ?? null;
+}

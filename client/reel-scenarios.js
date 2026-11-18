@@ -5,6 +5,7 @@
 // (Sekunden bis zum nächsten Satz), die aus der echten ElevenLabs-Aufnahme stammt.
 
 import { VIEW_H } from "./live-stage.js";
+import { SHOWCASE_TIMELINE as TL } from "./reel-pro.js";
 
 const num = (s) => {
   const m = String(s || "").replace(/\./g, "").replace(",", ".").match(/-?\d+(\.\d+)?/);
@@ -510,6 +511,128 @@ export const CHOREO = {
     ],
   },
 
+  // 12) Pro-Showcase (29 s, 4 Szenen mit festem Regie-Zeitplan TL aus reel-pro.js – die Tonspur legt ihre
+  // Mikro-SFX exakt auf dieselben Zeitpunkte). Beat 1 Blitz-Scanner · 2 Set-Binder & Lücken-Radar ·
+  // 3 Marktplatz, Swipe-Tausch & Live-Chat (+ Pro-Einblendung im Compositor) · 4 Startseite ohne Login-Zwang.
+  // Alles läuft über die echte Oberfläche; Scanner-„Binder“, Ordner-Füllung und Badge sind Stage-Demos ohne Schreibzugriff,
+  // „Kaufen“ wird nur sichtbar angetippt (kein Kauf, keine Reservierung).
+  showcase: {
+    async setup(s) {
+      try { s.win.PS?.showSub?.("scan", "live"); } catch {}
+      await s.waitFor(() => s.$("#ps-ls-stage"), 15_000, "Live-Scanner lädt nicht").catch(() => {});
+      let info = null;
+      try {
+        info = await s.win.PS?.liveScanDemoPrepare?.({ keys: ["card:sv03.5-006", "card:sv03.5-003", "card:sv03.5-009", "card:sv03.5-025"], sleeve: true, zoom: 1.4 });
+      } catch (e) { console.warn("Showcase-Scan-Demo:", e); }
+      if (info) { s.fact("card", info.name); if (Number(info.price) > 0) s.fact("price", `${Number(info.price).toFixed(2).replace(".", ",")} €`); }
+      try { const b = await s.win.PS?.binderDemoPrepare?.("sv03.5", { price: 29.9 }); if (b) { s.fact("set", b.name); s.fact("gap", b.hero); } } catch (e) { console.warn("Showcase-Binder-Demo:", e); }
+      const st = s.$("#ps-ls-stage");
+      if (st) { const r = st.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 70)); }
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 300, timeoutMs: 5000 });
+    },
+    beats: [
+      // Szene 1 (0–6 s): Blitz-Scanner – 1,4×-Zoom, „Erkannt“ mit Near-Mint-Preis, Zustand ▾, Tipp auf „Binder“
+      async (s, d, at) => {
+        const card = s.$("#ps-ls-demo-card");
+        if (card) { const { x, y } = s.center(card); await s.moveFinger(x + 70, y + 110, 420); }
+        await at(TL.scanStart);
+        s.hideFinger();
+        await s.win.PS?.liveScanDemoScan?.(TL.scanMs);
+        await s.idle({ quietMs: 150, timeoutMs: 900 });
+        const price = s.$("[data-hud-price]");
+        if (price) { s.fact("price", price.textContent); await s.spotlight(price); }
+        await at(TL.condTap);
+        s.$$(".ps-reel-spot").forEach((el) => el.classList.remove("ps-reel-spot"));
+        const cond = s.$("[data-hud-cond]");
+        if (cond) await s.tap(cond, { reveal: false });
+        await at(TL.condPick);
+        const nm = s.$('[data-cond][aria-selected="true"]') || s.$('[data-cond="NM"]');
+        if (nm) await s.tap(nm, { reveal: false });
+        await at(TL.binderTap);
+        const bin = s.$('#ps-ls-hud [data-act="binder"]');
+        if (bin) await s.tap(bin, { reveal: false });
+        await at(TL.navCollection);
+        const nav = s.$("#mob-portfolio");
+        if (nav) await s.tap(nav, { reveal: false });
+      },
+      // Szene 2 (6–15 s): gefüllter 3×3-Set-Ordner, flüssig blättern, Lücke leuchtet „Auf Marktplatz: 29,90 €“, Tipp → Angebot
+      async (s, d, at) => {
+        await at(TL.binderOpen);
+        s.hideFinger();
+        const opened = s.win.PS?.binderDemoOpen?.();
+        if (!opened) {
+          // Rückfall: echter Sammlungs-Reiter (Mein Binder) ohne Demo-Ordner
+          const seg = s.$('#view-portfolio [data-seg="binder"]');
+          if (seg) await s.tap(seg, { reveal: false });
+          return s.sleep(Math.max(0, d * 1000 - 800));
+        }
+        await s.decodeImages(900);
+        const vp = () => s.$("#ps-binder-view [data-binder-viewport]");
+        await at(TL.flip1);
+        if (vp()) await s.swipe(vp(), -1, 520);
+        await at(TL.flip2);
+        if (vp()) await s.swipe(vp(), -1, 520);
+        await at(TL.flipBack);
+        if (vp()) await s.swipe(vp(), 1, 560);
+        s.hideFinger();
+        await at(TL.badgeOn);
+        const slot = s.win.PS?.binderDemoReveal?.();
+        if (!slot) return;
+        await s.spotlight(slot);
+        const { x, y } = s.center(slot);
+        await s.moveFinger(x + 40, y + 70, 700);
+        await at(TL.missingTap);
+        s.$$(".ps-reel-spot").forEach((el) => el.classList.remove("ps-reel-spot"));
+        const fresh = s.$(`#ps-binder-view [data-binder-card="${slot.dataset.binderCard}"]`) || slot;
+        await s.tap(fresh, { reveal: false });
+        if (s.$("#view-map")?.classList.contains("hidden")) { try { s.win.switchTab?.("map"); } catch {} }
+        await s.waitFor(() => s.$$("#market-list .ps-tile[data-listing]").length > 0, 2500).catch(() => {});
+        const list = s.$("#ps-market-main");
+        if (list) { const r = list.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 64)); }
+      },
+      // Szene 3 (15–23 s): 2-Spalten-Marktplatz (Kaufen/Verkaufen), Swipe-Tausch, aktiver Live-Chat – Pro-Einblendung ab 19 s
+      async (s, d, at) => {
+        await at(TL.marketPan);
+        s.hideFinger();
+        await s.scrollBy(VIEW_H * 0.32, 1100);
+        const tile = s.$$("#market-list .ps-tile[data-listing]").find((t) => { const r = t.getBoundingClientRect(); return r.top > 90 && r.bottom < VIEW_H - 90; });
+        if (tile) {
+          await at(TL.buyTap);
+          const cta = tile.querySelector(".ps-tile-cta") || tile;
+          await s.tapVisual(cta);
+          await at(TL.priceGlow);
+          await s.spotlight(tile);
+        }
+        await at(TL.swipeTab);
+        s.$$(".ps-reel-spot").forEach((el) => el.classList.remove("ps-reel-spot"));
+        const seg = s.$('#view-map [data-seg="swipe"]');
+        if (seg) { await s.reveal(seg, { ms: 250, ratio: 0.2 }); await s.tap(seg, { reveal: false }); }
+        await at(TL.chatTab);
+        const com = s.$("#mob-community");
+        if (com) await s.tap(com, { reveal: false });
+        try { s.win.PS?.communityTab?.("chat"); } catch {}
+        await s.idle({ quietMs: 150, timeoutMs: 800 });
+        const chat = s.$("#ps-chat-panel");
+        s.hideFinger();
+        if (chat) await s.reveal(chat, { ms: 600, ratio: 0.12 });
+        const box = s.$("#chat-messages");
+        if (box) await s.scrollTo(box.scrollHeight, 1400, box);
+        await at(TL.homeTap);
+        const home = s.$("#mob-home");
+        if (home) await s.tap(home, { reveal: false });
+        s.win.scrollTo(0, 0);
+      },
+      // Szene 4 (23–29 s): aufgeräumte Startseite ohne Login-Zwang – ruhige Kamerafahrt, Endtafel im Compositor
+      async (s, d) => {
+        s.hideFinger();
+        s.win.scrollTo(0, 0);
+        await s.sleep(Math.min(900, d * 150));
+        await s.scrollBy(VIEW_H * 0.18, Math.max(1200, d * 1000 * 0.45));
+      },
+    ],
+  },
+
   // 10) App-Tour: Swipe → Flip-Radar → Sammlung über die echte Bottom-Navigation
   tour: {
     setup: showArena,
@@ -582,7 +705,7 @@ export async function runChoreo(stage, key, marks, clock, D) {
     await until(starts[i]);
     const end = i < c.beats.length - 1 ? starts[i + 1] : D;
     const d = Math.max(0.6, end - clock());
-    try { await c.beats[i](stage, d); }
+    try { await c.beats[i](stage, d, until); }
     catch (e) { if (e?.name === "StageAbort") return; console.warn(`Reel-Beat ${key}#${i + 1}:`, e); }
   }
 }

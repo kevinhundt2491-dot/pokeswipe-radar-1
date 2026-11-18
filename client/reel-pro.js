@@ -325,17 +325,17 @@ export function pickCoverCard(cards, recent = []) {
   return cards.find((c) => !used.has(c.id)) || cards[0] || null;
 }
 
-export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || null;
+export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || null;
 
 export const isHook4 = (tpl) => tpl?.format === "hook4";
 /** Szenen-Schlüssel einer Vorlage (5 Standard-Szenen bzw. 4 Hook-Szenen). */
-export const scenesFor = (tpl) => (isHook4(tpl) ? HOOK4_SCENES : PRO_SCENES);
+export const scenesFor = (tpl) => (isHook4(tpl) ? HOOK4_SCENES : tpl?.format === "showcase" ? SHOWCASE_SCENES : PRO_SCENES);
 
 /** Die Sätze einer Vorlage (5 Standard / 4 Hook-Presets). variant wählt die Hook-Schlagzeile (rotiert). */
 export function proScript(tpl, variant = 0) {
   const hook = tpl.hooks[Math.abs(variant) % tpl.hooks.length];
   // Hook-Presets: der erste Satz IST der Hook (Sprecherin startet sofort), kein angehängter Standard-CTA
-  const src = isHook4(tpl) ? tpl.lines : [{ say: hook.say, show: hook.say }, ...tpl.lines, tpl.cta || CTA_LINE];
+  const src = isHook4(tpl) || tpl?.format === "showcase" ? tpl.lines : [{ say: hook.say, show: hook.say }, ...tpl.lines, tpl.cta || CTA_LINE];
   const all = src.map((l) => ({ say: l.say, show: l.show || l.say }));
   return { cover: hook.cover, badge: hook.badge, say: all.map((l) => l.say), show: all.map((l) => l.show) };
 }
@@ -443,7 +443,8 @@ export const estimateMb = (seconds, mbit) => ((mbit + AUDIO_KBPS / 1000) * secon
 /** Ziellänge einer Vorlage in Sekunden [min, max] (Standard 20–30 s, z. B. „scansell“ 15–20 s). */
 export function secondsFor(tpl) {
   const s = Array.isArray(tpl?.seconds) ? tpl.seconds : null;
-  return s && s[0] > 0 && s[1] > s[0] ? [s[0], s[1]] : [PRO_MIN_S, PRO_MAX_S];
+  // exakte Länge (z. B. Showcase 29–29 s) ist erlaubt
+  return s && s[0] > 0 && s[1] >= s[0] ? [s[0], s[1]] : [PRO_MIN_S, PRO_MAX_S];
 }
 
 /** Sprechtempo für die Ziellänge: Dauer bei Tempo 1 → Tempo im erlaubten Bereich (0,9–1,12). */
@@ -497,6 +498,7 @@ const HASH_BASE = ["#PokemonTCG", "#PokemonKarten", "#PokeSwipeRadar", "#Pokemon
 /** Deutscher Social-Media-Text für Make.com: starker Einstieg, Nutzen, CTA zu pokeswipe-radar.de, Hashtags. */
 export function proCaption(tpl, variant = 0, facts = {}) {
   if (isHook4(tpl)) return hookCaption(tpl, variant);
+  if (tpl?.format === "showcase") return showcaseCaption(tpl, variant, facts);
   const { cover } = proScript(tpl, variant);
   const emoji = { overview: "🚀", radar: "📡", swipe: "👆", market: "🛡️", portfolio: "📈", scansell: "", quicklist: "⚡" }[tpl.key] ?? "🔥";
   const hook = emoji ? `${cover} ${emoji}` : cover;
@@ -527,4 +529,153 @@ export function hookCaption(tpl, variant = 0) {
   const title = `${tpl.title} | PokeSwipe Radar`.slice(0, 100);
   const caption = [cover, "", ...body, "", ...cta, "", `💬 ${q} Schreib’s in die Kommentare!`, "", hashtags.join(" ")].join("\n");
   return { title, hook: cover, body, hashtags, caption, question: q };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// High-End-Showcase (format "showcase"): „Pro-Showcase: Volle App- & Pro-Abo-Power“
+//   exakt 29 s · 9:16 · 1080×1920 · 60 FPS · 11 Mbit/s (10–12) · 4 Szenen mit festem Regie-Zeitplan:
+//   0–6 s   scan     Blitz-Scanner (Karte in Schutzhülle, 1,4×-Zoom, Near-Mint-Preis, Tipp auf „Binder“)
+//   6–15 s  binder   Set-Ordner 3×3 durchblättern, Lücke leuchtet „Auf Marktplatz: 29,90 €“, Tipp → Angebot
+//   15–23 s market   2-Spalten-Marktplatz, Swipe-Tausch, Live-Chat, danach Pro-Abo-/Pro-Pass-Highlights
+//   23–29 s finale   Startseite ohne Login-Zwang + App-Icon + „pokeswipe-radar.de – Kostenlos starten, kein Download“
+// Eigene Liste (SHOWCASE_TEMPLATES), damit die bestehenden 20–30-s-Vorlagen und ihre Grenzen unverändert bleiben.
+// ---------------------------------------------------------------------------------------------------------------
+export const SHOWCASE_SCENES = ["scan", "binder", "market", "finale"];
+/** Regie-Zeitplan in Sekunden: Start von scan, binder, market, finale und Videoende. */
+export const SHOWCASE_PLAN = Object.freeze([0, 6, 15, 23, 29]);
+export const SHOWCASE_SECONDS = 29;
+export const SHOWCASE_FPS = 60;
+export const SHOWCASE_MBIT = 11;
+export const SHOWCASE_MBIT_RANGE = Object.freeze([10, 12]);
+/** Wortlimit des Showcase-Voiceovers (29 s bei ruhigem, souveränem Tempo ≈ 2,8 Wörter/s). */
+export const SHOWCASE_WORDS = Object.freeze([60, 84]);
+/** Zeitpunkt, ab dem in Szene 3 die Pro-Abo-Highlights eingeblendet werden. */
+export const SHOWCASE_PRO_AT = 19;
+
+/** Exaktes Voiceover aus dem Briefing (Untertitel = Briefing-Text, gesprochen wird die Domain ausgeschrieben). */
+const SHOWCASE_LINES = [
+  { say: "So sieht moderner Kartenhandel heute aus: Karte vor die Handykamera halten – der Live-Scanner erkennt sie sofort mit aktuellem Preis und sortiert sie direkt in deinen digitalen Set-Ordner." },
+  { say: "Beim Durchblättern siehst du sofort, welche Karten dir noch fehlen – und sobald ein anderer Sammler sie anbietet, leuchtet der Preis direkt auf der Lücke auf." },
+  { say: "Ein Tipp zum Kaufen, Tauschen oder eigenen Verkaufen." },
+  { say: "Und mit dem Pro-Abo sicherst du dir zusätzlich sofortige Preis-Alarme und Top-Boosts." },
+  { say: `Jetzt kostenlos testen auf ${SAY_DOMAIN}.`, show: "Jetzt kostenlos testen auf pokeswipe-radar.de." },
+];
+
+export const SHOWCASE_TEMPLATES = [
+  {
+    key: "showcase", format: "showcase", label: "Pro-Showcase: Volle App- & Pro-Abo-Power",
+    choreo: "showcase", tab: "scan", visual: "showcase",
+    title: "Pro-Showcase: Scanner, Set-Binder, Marktplatz & Pro-Abo – alles im Browser",
+    accent: "#22d3ee", gold: "#fbbf24",
+    seconds: [SHOWCASE_SECONDS, SHOWCASE_SECONDS], exact: SHOWCASE_SECONDS, fps: SHOWCASE_FPS, mbit: SHOWCASE_MBIT, cbr: true,
+    tone: "calm", maxSpeed: SPEED_CAP, words: SHOWCASE_WORDS, plan: SHOWCASE_PLAN,
+    binderSet: "sv03.5", binderSetName: "Karmesin & Purpur – 151", marketBadge: 29.9,
+    hooks: [
+      { badge: "PRO-SHOWCASE", cover: "Dein kompletter Karten-Manager im Browser" },
+      { badge: "PRO-PASS", cover: "Scanner, Binder, Marktplatz & Pro – in 29 s" },
+    ],
+    lines: SHOWCASE_LINES,
+    overlays: {
+      scan: "Dein kompletter Karten-Manager im Browser",
+      binder: "Fehlende Karten im Ordner? Sofort finden, tauschen oder kaufen",
+      market: "Mit Pro-Abo: Sofortige Preis-Alarme & Top-Boosts für deine Karten",
+      finale: "pokeswipe-radar.de – Kostenlos starten, kein Download",
+    },
+    pro: [
+      ["⚡", "Sofortige Preis-Radar-Alarme", "Push, sobald ein Schnäppchen live geht"],
+      ["🚀", "Top-Boosts für deine Inserate", "Ganz oben im Marktplatz & Swipe-Tausch"],
+      ["📊", "Unbegrenzte Sammlungs-Analysen", "Wert, Gewinner & Set-Fortschritt live"],
+    ],
+    finale: { domain: DOMAIN, sub: "Kostenlos starten, kein Download", chips: ["✅ Ohne Login-Zwang", "🌐 Läuft im Browser", "⚡ Pro-Abo optional"] },
+    stats: [["📸", "Blitz-Scanner"], ["📒", "Set-Binder"], ["⚡", "Pro-Alarme"]],
+    badges: ["📸 Live-Scanner mit 1,4×-Zoom", "📒 Set-Ordner mit Lücken-Radar", "🛒 Kaufen, Verkaufen & Swipe-Tausch", "⚡ Pro: Preis-Alarme & Top-Boosts"],
+    trust: ["✅ Ohne Login-Zwang", "🌐 Kein Download", "💬 Aktiver Live-Chat", "🔒 Käuferschutz"],
+    tags: ["#PokemonSammler", "#PokemonScanner", "#TCGDeutschland", "#PokemonBinder"],
+    body: ["📸 Karte vor die Handykamera halten – der Live-Scanner erkennt sie sofort mit aktuellem Preis und sortiert sie direkt in deinen digitalen Set-Ordner.",
+      "📒 Beim Durchblättern siehst du sofort, welche Karten dir fehlen – bietet ein Sammler sie an, leuchtet der Preis direkt auf der Lücke auf.",
+      "⚡ Mit dem Pro-Abo: sofortige Preis-Radar-Alarme, Top-Boosts für deine Inserate und unbegrenzte Sammlungs-Analysen."],
+    captionCta: ["👉 Jetzt kostenlos testen auf pokeswipe-radar.de – kein Download, kein Login-Zwang."],
+  },
+];
+/** Alle Vorlagen des Generators (Standard + Hook-Presets + Showcase). */
+export const ALL_TEMPLATES = [...PRO_TEMPLATES, ...SHOWCASE_TEMPLATES];
+export const isShowcase = (tpl) => tpl?.format === "showcase";
+export const findTemplate = (k) => ALL_TEMPLATES.find((t) => t.key === k) || null;
+
+/** Sätze der Showcase-Vorlage (exakt das Briefing, ohne angehängten Hook/CTA). */
+export function showcaseScript(tpl, variant = 0) {
+  const hook = tpl.hooks[Math.abs(variant) % tpl.hooks.length];
+  const all = tpl.lines.map((l) => ({ say: l.say, show: l.show || l.say }));
+  return { cover: hook.cover, badge: hook.badge, say: all.map((l) => l.say), show: all.map((l) => l.show) };
+}
+
+/** Wortprüfung mit dem Limit der Vorlage (Showcase 60–84, sonst Standard 52–72). */
+export function checkTemplateScript(tpl, lines) {
+  if (!isShowcase(tpl)) return checkProScript(lines);
+  const words = countWords(lines), [min, max] = tpl.words || SHOWCASE_WORDS;
+  return { ok: words >= min && words <= max, words, min, max };
+}
+
+/** Fester Regie-Zeitplan (auf die tatsächliche Länge D skaliert, falls sie von 29 s abweicht). */
+export function showcaseScenes(D = SHOWCASE_SECONDS, plan = SHOWCASE_PLAN) {
+  const k = D / plan[plan.length - 1];
+  return SHOWCASE_SCENES.map((key, i) => ({ key, start: plan[i] * k, end: plan[i + 1] * k }));
+}
+
+/** Beat-Starts der Live-Choreografie = Szenenstarts (Beat i läuft in Szene i). */
+export const showcaseMarks = (scenes) => scenes.map((s) => ({ start: s.start, end: s.end }));
+
+/**
+ * Regie-Zeitplan der Live-Aktionen (Videozeit in s). Die Choreografie wartet auf diese Zeitpunkte, die Tonspur
+ * legt die passenden Mikro-Soundeffekte exakt darauf (Tonspur wird VOR der Aufnahme offline gerendert).
+ */
+export const SHOWCASE_TIMELINE = Object.freeze({
+  scanStart: 0.75, scanMs: 1100, condTap: 2.45, condPick: 3.35, binderTap: 4.4, navCollection: 5.45,
+  binderOpen: 6.05, flip1: 7.3, flip2: 8.7, flipBack: 10.0, badgeOn: 11.1, missingTap: 12.9,
+  marketPan: 15.05, buyTap: 16.3, priceGlow: 16.75, swipeTab: 17.45, chatTab: 18.35, homeTap: 22.35,
+});
+/** Zeit vom Start einer Tap-Bewegung bis zum Drücken (LiveStage.tap: Finger fährt 380 ms). */
+export const TAP_LEAD = 0.38;
+
+/** Mikro-Sounddesign: [Zeit, Effekt] – Scanner-Beep, Blättern, Erfolgs-Pling, Taps, Übergänge. */
+export function showcaseCues(scenes, tl = SHOWCASE_TIMELINE) {
+  const [, binder, market, finale] = scenes;
+  const D = scenes[scenes.length - 1].end || SHOWCASE_SECONDS;
+  const k = D / SHOWCASE_SECONDS;
+  const at = (s) => +(s * k).toFixed(3);
+  const tap = (s) => [at(s + TAP_LEAD), "tap"];
+  const swipe = (s) => [at(s + 0.3 + 0.28), "page"]; // Finger 300 ms hin, dann Blättern zur Hälfte des Wischs
+  return [
+    [0.02, "softhit"],
+    [at(tl.scanStart + 0.05), "scanhum"], [at(tl.scanStart + tl.scanMs / 1000), "beep"],
+    tap(tl.condTap), tap(tl.condPick), tap(tl.binderTap), [at(tl.binderTap + TAP_LEAD + 0.12), "drop"], tap(tl.navCollection),
+    [binder.start, "whoosh"], swipe(tl.flip1), swipe(tl.flip2), swipe(tl.flipBack), [at(tl.badgeOn), "pling"], tap(tl.missingTap),
+    [market.start, "whoosh"], tap(tl.buyTap), [at(tl.priceGlow), "pling"], tap(tl.swipeTab), tap(tl.chatTab),
+    [at(SHOWCASE_PRO_AT), "shimmer"], [at(SHOWCASE_PRO_AT + 0.45), "tick"], [at(SHOWCASE_PRO_AT + 0.85), "tick"], [at(SHOWCASE_PRO_AT + 1.25), "tick"],
+    tap(tl.homeTap), [finale.start, "whoosh"], [finale.start + 0.9, "chime"],
+  ].filter(([t]) => t >= 0 && t <= D).sort((a, b) => a[0] - b[0]);
+}
+
+/** Prüfbericht der Showcase-Spezifikation (für Metadaten und Tests). */
+export function showcaseSpec(tpl, { duration, fps, mbit, width = 1080, height = 1920 } = {}) {
+  const [lo, hi] = SHOWCASE_MBIT_RANGE;
+  const checks = {
+    duration: Math.abs(Number(duration) - (tpl.exact || SHOWCASE_SECONDS)) < 0.5 / (fps || SHOWCASE_FPS) + 1e-6,
+    fps: Number(fps) === SHOWCASE_FPS, bitrate: Number(mbit) >= lo && Number(mbit) <= hi, size: width === 1080 && height === 1920,
+  };
+  return { ok: Object.values(checks).every(Boolean), checks };
+}
+
+/** Social-Media-Text des Showcase (Hook, 3 Nutzen-Sätze, CTA, 6–10 Hashtags). */
+export function showcaseCaption(tpl, variant = 0, facts = {}) {
+  const { cover } = showcaseScript(tpl, variant);
+  const hook = `${cover} ⚡`;
+  const card = String(facts?.card || "").replace(/\s+/g, " ").trim().slice(0, 40);
+  const body = [...tpl.body, ...(card ? [`Im Video live gescannt: ${card}.`] : [])];
+  const seen = new Set();
+  const hashtags = ["#PokemonTCG", "#PokemonKarten", "#PokeSwipeRadar", ...tpl.tags, "#Pokemon", "#TCGDeals"]
+    .filter((t) => { const x = t.toLowerCase(); if (seen.has(x)) return false; seen.add(x); return true; }).slice(0, 10);
+  const title = `${tpl.title} | PokeSwipe Radar`.slice(0, 100);
+  const caption = [hook, "", ...body, "", ...tpl.captionCta, "", hashtags.join(" ")].join("\n");
+  return { title, hook, body, hashtags, caption };
 }
