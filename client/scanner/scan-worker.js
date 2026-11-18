@@ -20,6 +20,30 @@ let langsOrder = ["de", "en", "ja"];
 let lastHash = { at: 0, cands: [] };
 let textDetector = null;
 let busy = false;
+/** Zeitbudget je Live-Bild für Ersatz-Zuschnitte und Position, an der die Suche beim nächsten Bild weitermacht */
+const LIVE_BUDGET_MS = 35;
+let fbCursor = 0;
+
+/** Ersatz-Zuschnitte in sinnvoller Reihenfolge: kleiner gehalten, schief (±5°/±9°), neben der Mitte (± leicht gedreht). */
+function fallbackQuads(base0) {
+  const out = FALLBACK_SCALES.slice(1).map((k) => scaleQuad(base0, k));
+  const tilt = scaleQuad(base0, 0.93);
+  for (const deg of TILT_ANGLES) out.push(rotateQuad(tilt, deg));
+  const base = scaleQuad(base0, 0.9), w = base[1][0] - base[0][0], h = base[3][1] - base[0][1];
+  for (const [dx, dy] of [[-0.08, 0], [0.08, 0], [-0.15, 0.04], [0.15, 0.04], [-0.15, -0.04], [0.15, -0.04], [0, 0.07], [0, -0.07]]) {
+    for (const deg of [0, -7, 7]) out.push(rotateQuad(base.map(([x, y]) => [x + dx * w, y + dy * h]), deg));
+  }
+  return out;
+}
+
+/** Anzeigename „Glurak ex 199/165“ aus dem Text-Index – damit der Treffer sofort benannt ist, bevor der Preis geladen ist. */
+function labelOf(key) {
+  const i = textIdx?.byKey.get(key);
+  if (i === undefined) return "";
+  const r = textIdx.rows[i];
+  const num = r.num >= 0 ? `${r.prefix}${r.num}${r.total > 0 ? `/${r.total}` : ""}` : "";
+  return `${r.name}${num ? ` ${num}` : ""}`;
+}
 
 // ---------------------------------------------------------------------------
 // Index laden (je Sprache, vom Service Worker auch offline gehalten)
@@ -160,6 +184,7 @@ async function analyse(msg) {
   let det = detectCard(small, half, grad);
   if (!det.found) {
     for (const guide of searchGuides(half, small.w, small.h)) {
+      if (!msg.capture && performance.now() - t0 > 18) break;
       const alt = detectCard(small, guide, grad);
       if (alt.found) { det = alt; break; }
     }
@@ -183,26 +208,25 @@ async function analyse(msg) {
       .slice(0, 14);
     return { quad, raw, glare, probe, color, matches, focus: focusScore(raw) };
   };
-  // Kanten sicher gefunden: exakter Zuschnitt. Sonst mehrere Rahmen-Größen probieren (Karte kleiner gehalten,
-  // Toploader/Sleeve-Rand) und die mit dem besten Treffer nehmen – früher wurde nur der Führungsrahmen genutzt.
+  // Kanten sicher gefunden: exakter Zuschnitt. Sonst Ersatz-Zuschnitte (kleiner, gedreht, verschoben) probieren und
+  // den besten Treffer nehmen – mit Zeitbudget: im Live-Bild nur ~35 ms je Bild (auf dem Handy früher über 1 s mit bis zu
+  // 33 Zuschnitten, das blockierte auch die Texterkennung). Die Live-Suche setzt beim nächsten Bild dort fort, wo sie
+  // aufgehört hat – über wenige Bilder sind alle Lagen geprüft. Beim Auslösen/Foto gilt ein großzügiges Budget.
   let ev = evaluate(corners);
   if (!det.found) {
+    const budget = msg.capture ? 450 : LIVE_BUDGET_MS;
     const best = () => ev.matches[0]?.score ?? 999;
-    const tryQuad = (q) => { const alt = evaluate(q.map(([x, y]) => [x * 2, y * 2])); if ((alt.matches[0]?.score ?? 999) < best()) ev = alt; };
-    for (const k of FALLBACK_SCALES.slice(1)) tryQuad(scaleQuad(det.corners, k));
-    // Schief oder neben der Mitte gehalten: gedrehte (±5°/±9°) und verschobene Zuschnitte – nur solange kein klarer Treffer
-    if (best() > SCORE_STRONG) {
-      const base = scaleQuad(det.corners, 0.93);
-      for (const deg of TILT_ANGLES) { tryQuad(rotateQuad(base, deg)); if (best() <= SCORE_STRONG) break; }
+    const alts = fallbackQuads(det.corners);
+    const start = msg.capture ? 0 : fbCursor % alts.length;
+    let tried = 0;
+    for (let n = 0; n < alts.length && best() > SCORE_STRONG; n++) {
+      if (tried >= 2 && performance.now() - t0 > budget) break;
+      const q = alts[(start + n) % alts.length];
+      const alt = evaluate(q.map(([x, y]) => [x * 2, y * 2]));
+      tried++;
+      if ((alt.matches[0]?.score ?? 999) < best()) ev = alt;
     }
-    if (best() > SCORE_STRONG) {
-      const base = scaleQuad(det.corners, 0.9), w = base[1][0] - base[0][0];
-      const h = base[3][1] - base[0][1];
-      outer: for (const [dx, dy] of [[-0.08, 0], [0.08, 0], [-0.15, 0.04], [0.15, 0.04], [-0.15, -0.04], [0.15, -0.04], [0, 0.07], [0, -0.07]]) for (const deg of [0, -7, 7]) {
-        tryQuad(rotateQuad(base.map(([x, y]) => [x + dx * w, y + dy * h]), deg));
-        if (best() <= SCORE_STRONG) break outer;
-      }
-    }
+    if (!msg.capture) fbCursor = start + tried;
     corners = ev.quad;
   }
   const { glare, probe, color, matches } = ev;
@@ -232,7 +256,7 @@ async function analyse(msg) {
     found: det.found, confidence: det.confidence, sharpness: det.sharpness, focus: Math.round(ev.focus * 100) / 100, corners,
     accepted: d.accepted, byNumber: d.byNumber, score: d.score, margin: d.margin,
     best: d.best >= 0 ? idx.keys[d.best] : null,
-    group,
+    group, label: group.length ? labelOf(group[0].key) : "",
     glare: Math.round(glare * 1000) / 1000, glareHigh: glare > GLARE_HIGH,
     // Fingerabdruck dieses Bildes – wird beim Übernehmen an den lernenden Index geschickt
     probe: { artP: wordsToHex(probe[0], probe[1]), artD: wordsToHex(probe[2], probe[3]), fullP: wordsToHex(probe[4], probe[5]), color },
@@ -260,7 +284,7 @@ self.onmessage = async (e) => {
       const hash = msg.useHash !== false && Date.now() - lastHash.at < 1500 ? lastHash.cands : [];
       d = textIdx ? decideText(textIdx, String(msg.text || ""), hash, langsOrder) : null;
     } catch (err) { d = null; }
-    postMessage({ type: "text-result", reqId: msg.reqId, ms: performance.now() - t0, ...(d || { accepted: false, strength: "none", keys: [], candidates: [] }) });
+    postMessage({ type: "text-result", reqId: msg.reqId, ms: performance.now() - t0, ...(d || { accepted: false, strength: "none", keys: [], candidates: [] }), label: d?.keys?.length ? labelOf(d.keys[0]) : "" });
     return;
   }
   if (msg.type === "frame") {
