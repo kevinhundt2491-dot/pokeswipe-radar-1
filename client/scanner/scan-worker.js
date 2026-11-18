@@ -288,7 +288,9 @@ self.onmessage = async (e) => {
     return;
   }
   if (msg.type === "frame") {
-    if (busy && !msg.reqId) return; // Einzelbilder (Foto-Scan) nie verwerfen
+    // Einzelbilder (Foto-Scan) nie verwerfen; ein verworfenes Live-Bild wird gemeldet, damit die Kamera-Schleife sofort
+    // das nächste schickt (sie wartet auf jede Antwort, statt Bilder aufzustauen)
+    if (busy && !msg.reqId) { postMessage({ type: "result", skipped: true }); return; }
     busy = true;
     try { postMessage(await analyse(msg)); }
     catch (err) { postMessage({ type: "result", reqId: msg.reqId, error: String(err?.message || err) }); }
