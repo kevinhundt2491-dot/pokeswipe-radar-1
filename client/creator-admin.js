@@ -15,6 +15,7 @@ const STATUS_CLS = {
 };
 const fmt = (d) => (d ? new Date(d).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
 const fmtDay = (d) => (d ? new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const inputCls = "w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs";
 
 async function load() {
@@ -69,6 +70,7 @@ function finderHtml(d) {
   const totalSignups = d.leads.reduce((s, l) => s + (Number(l.signups) || 0), 0);
   const sendable = d.leads.filter((l) => ca.selected.has(l.id) && ["ready", "paused"].includes(l.status) && l.email && !l.placeholder).length;
   return `
+    ${tiktokFinderHtml(d)}
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
       ${[["Creator", d.leads.filter((l) => !l.placeholder).length], ["Gesendet", d.leads.filter((l) => l.sentAt).length], ["Follow-up fällig", d.leads.filter((l) => l.display.key === "followup").length], ["Anmeldungen über Codes", totalSignups]]
         .map(([k, v]) => `<div class="bg-slate-950 rounded-xl p-2 border border-slate-800"><p class="text-[10px] uppercase text-slate-400 font-bold">${k}</p><p class="text-lg font-black text-white">${Number(v)}</p></div>`).join("")}
@@ -96,11 +98,33 @@ function finderHtml(d) {
     <div class="space-y-2">${leads.length ? leads.map((l) => leadCard(l, d)).join("") : `<p class="text-xs text-slate-500">Keine Einträge in diesem Filter.</p>`}</div>`;
 }
 
+// Schnellsuche: aktive deutsche TikTok-Creator (1k–15k) + 1-Klick-Anlage mit optionalem Linktree/Bio-Link
+const TIKTOK_SEARCHES_FALLBACK = [
+  { label: "TikTok: Pokemon Karten öffnen", url: "https://www.tiktok.com/search/user?q=pokemon%20karten%20oeffnen" },
+  { label: "TikTok: Pokemon Pulls deutsch", url: "https://www.tiktok.com/search/user?q=pokemon%20pulls%20deutsch" },
+  { label: "TikTok: Pokemon Flohmarkt", url: "https://www.tiktok.com/search/user?q=pokemon%20flohmarkt" },
+  { label: "TikTok: Pokemon Masterset", url: "https://www.tiktok.com/search/user?q=pokemon%20masterset" },
+];
+function tiktokFinderHtml(d) {
+  const searches = d.tiktokSearches?.length ? d.tiktokSearches : TIKTOK_SEARCHES_FALLBACK;
+  return `<div class="bg-gradient-to-r from-cyan-500/10 to-fuchsia-500/10 border border-cyan-400/30 rounded-2xl p-3 space-y-2 text-xs">
+    <p class="font-black text-white">🎯 Aktive deutsche TikTok-Creator (1k–15k Follower) finden</p>
+    <div class="flex flex-wrap gap-1.5">${searches.map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener" class="bg-slate-950 border border-slate-700 hover:border-cyan-400 text-white font-bold px-2.5 py-1.5 rounded-lg">${esc(x.label)} ↗</a>`).join("")}</div>
+    <div class="grid grid-cols-1 sm:grid-cols-5 gap-1.5">
+      <input id="ca-tt-name" placeholder="TikTok-Name oder @handle *" class="${inputCls} sm:col-span-2" onkeydown="if(event.key==='Enter')PS.caQuickTikTok()" />
+      <input id="ca-tt-bio" placeholder="Linktree / Beacons / Website aus der Bio (optional)" class="${inputCls} sm:col-span-2" onkeydown="if(event.key==='Enter')PS.caQuickTikTok()" />
+      ${btn("+ TikTok-Creator mit 1 Klick anlegen", "PS.caQuickTikTok()", "bg-cyan-500 text-slate-950")}
+    </div>
+    <p class="text-[10px] text-slate-400">Promo-Code (z. B. NAME30) wird automatisch erzeugt. Mit Bio-Link sucht der Extraktor sofort nach einer öffentlichen E-Mail und übernimmt sie ins Kontakt-Feld – sonst „📋 DM kopieren“ nutzen.</p>
+  </div>`;
+}
+
 function leadCard(l, d) {
   const open = ca.open.has(l.id);
   const sel = ca.selected.has(l.id);
   const scoreCls = l.score >= 70 ? "bg-emerald-500" : l.score >= 45 ? "bg-yellow-400" : "bg-rose-500";
-  const canSend = ["ready", "paused", "queued"].includes(l.status) && l.email && !l.placeholder;
+  const hasMail = EMAIL_OK.test(String(l.email || ""));
+  const canSend = ["ready", "paused", "queued"].includes(l.status) && hasMail && !l.placeholder;
   const followDue = l.display.key === "followup";
   return `<div class="bg-slate-900 border ${l.placeholder ? "border-dashed border-slate-700" : sel ? "border-violet-400" : "border-slate-800"} rounded-2xl p-3 space-y-2 text-xs">
     <div class="flex items-start gap-2">
@@ -128,13 +152,13 @@ function leadCard(l, d) {
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
       <div class="flex gap-1"><input id="ca-email-${Number(l.id)}" type="email" value="${esc(l.email)}" placeholder="Kontakt-E-Mail" class="${inputCls}" />${btn("✓", `PS.caSaveEmail(${Number(l.id)})`, "bg-emerald-500 text-slate-950 px-3")}</div>
-      <div class="flex gap-1"><input id="ca-extract-${Number(l.id)}" placeholder="Linktree / Beacons / Website / Impressum-URL" class="${inputCls}" />${btn("🔎 Extrahieren", `PS.caExtract(${Number(l.id)})`, "bg-cyan-600 text-white px-2 shrink-0")}</div>
+      <div class="flex gap-1"><input id="ca-extract-${Number(l.id)}" value="${esc(l.bioLink || "")}" placeholder="Linktree / Beacons / Instagram / Website / Impressum-URL" class="${inputCls}" />${btn("🔎 Extrahieren", `PS.caExtract(${Number(l.id)})`, "bg-cyan-600 text-white px-2 shrink-0")}</div>
     </div>
     ${(l.socials || []).length ? `<p class="text-[10px] text-slate-400 break-all">Gefunden: ${(l.socials || []).map((s) => `<a href="${esc(s)}" target="_blank" rel="noopener" class="underline text-slate-300">${esc(String(s).replace(/^https?:\/\/(www\.)?/, ""))}</a>`).join(" · ")}</p>` : ""}
     <div class="flex flex-wrap gap-1.5">
-      ${canSend ? btn(l.status === "queued" ? "Jetzt statt geplant senden" : "✅ Freigeben & senden", `PS.caSend(${Number(l.id)})`, "bg-emerald-500 text-slate-950") : ""}
+      ${canSend ? btn(l.status === "queued" ? "Jetzt statt geplant über Resend senden" : "✅ Freigeben & über Resend senden", `PS.caSend(${Number(l.id)})`, "bg-emerald-500 text-slate-950 font-black ring-2 ring-emerald-300/60") : ""}
       ${followDue ? btn("🔁 Follow-up senden", `PS.caFollowup(${Number(l.id)})`, "bg-amber-400 text-slate-950") : ""}
-      ${btn("📋 DM kopieren", `PS.caCopyDm(${Number(l.id)})`, "bg-slate-800 text-white")}
+      ${btn("📋 DM kopieren", `PS.caCopyDm(${Number(l.id)})`, hasMail ? "bg-slate-800 text-white" : "bg-cyan-500 text-slate-950 font-black")}
       <select onchange="PS.caStatus(${Number(l.id)}, this.value)" class="bg-slate-800 text-white rounded-xl px-2 text-[11px] font-bold">
         <option value="">Status setzen …</option>
         ${[["replied", "💬 Antwort erhalten"], ["active", "🎬 Aktiv (macht mit)"], ["paused", "⏸ Pausieren"], ["ready", "↺ Zurück auf Bereit"], ["optout", "🚫 Abgemeldet / kein Interesse"]].map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}
@@ -312,13 +336,25 @@ export const creatorAdminApi = {
     if (!confirm("Eintrag wirklich löschen? (Der Promo-Code bleibt bestehen.)")) return;
     try { await api(`/api/admin/creators/${id}`, { method: "DELETE" }); ca.data.leads = ca.data.leads.filter((l) => l.id !== id); ca.selected.delete(id); render(); } catch (e) { handleError(e); }
   },
-  async caExtract(id) {
-    const url = $(`ca-extract-${id}`)?.value.trim();
+  async caQuickTikTok() {
+    const name = $("ca-tt-name")?.value.trim();
+    const bioUrl = $("ca-tt-bio")?.value.trim() || "";
+    if (!name) return toast("TikTok-Creator", "Bitte TikTok-Namen oder @handle eingeben.");
+    try {
+      const r = await api("/api/admin/creators", { method: "POST", body: { name, platform: "tiktok", category: "micro", bioUrl, quick: true } });
+      replaceLead(r.lead); ca.open.delete(r.lead.id); ca.filter = "all"; render();
+      toast("✅ TikTok-Creator angelegt", r.lead.promoCode ? `Promo-Code ${r.lead.promoCode} ist aktiv.` : "Angelegt.");
+      if (bioUrl) await creatorAdminApi.caExtract(r.lead.id, bioUrl);
+    } catch (e) { handleError(e); }
+  },
+  async caExtract(id, preset) {
+    const url = (preset || $(`ca-extract-${id}`)?.value || "").trim();
     if (!url) return toast("Kontakt-Extraktor", "Bitte eine öffentliche URL (Linktree, Beacons, Website, Impressum) eingeben.");
     toast("🔎 Suche Kontakt …", url);
     try {
       const r = await api("/api/admin/extract-creator-contact", { method: "POST", body: { url, leadId: id } });
       if (r.platform) {
+        await refreshAll();
         toast("ℹ️ Plattform-Seite", r.hint);
         if (r.open) window.open(r.open, "_blank", "noopener");
         return;
@@ -326,7 +362,8 @@ export const creatorAdminApi = {
       await refreshAll();
       if (r.emails.length) {
         const l = leadById(id);
-        if (l && !r.updated && l.email !== r.emails[0] && confirm(`Gefunden: ${r.emails.join(", ")}\n\n„${r.emails[0]}“ als Kontakt übernehmen?`)) await patch(id, { email: r.emails[0] }, "E-Mail übernommen");
+        if (r.updated) toast("✅ E-Mail übernommen", `${r.emails[0]} – „Freigeben & über Resend senden“ ist jetzt aktiv.`);
+        else if (l && l.email !== r.emails[0] && confirm(`Gefunden: ${r.emails.join(", ")}\n\n„${r.emails[0]}“ als Kontakt übernehmen?`)) await patch(id, { email: r.emails[0] }, "E-Mail übernommen");
         else toast("✅ Kontakt gefunden", r.emails.join(", "));
       } else toast("Keine E-Mail gefunden", r.hint || "Bitte Impressum direkt eingeben.");
     } catch (e) { handleError(e); }
@@ -334,8 +371,9 @@ export const creatorAdminApi = {
   async caSend(id) {
     const l = leadById(id);
     if (!l) return;
-    if (!confirm(`E-Mail jetzt an ${l.email} senden?\n\nBetreff: ${l.subject}`)) return;
-    try { const r = await api(`/api/admin/creators/${id}/send`, { method: "POST", body: {} }); replaceLead(r.lead); await refreshAll(); toast("📤 Gesendet", `${l.name} wurde angeschrieben.`); }
+    if (!ca.data?.sending?.configured) return toast("Resend nicht eingerichtet", "RESEND_API_KEY / MAIL_FROM fehlen – bis dahin „📋 DM kopieren“ nutzen.");
+    if (!confirm(`Kooperation jetzt über Resend an ${l.email} senden?\n\nBetreff: ${l.subject}\nPromo-Code: ${l.promoCode || "–"}\nLink: ${l.creatorPage || "/creator"}`)) return;
+    try { const r = await api(`/api/admin/creators/${id}/send`, { method: "POST", body: {} }); replaceLead(r.lead); await refreshAll(); toast("📤 E-Mail gesendet", `${l.name} wurde über Resend angeschrieben – Status: E-Mail gesendet.`); }
     catch (e) { handleError(e); }
   },
   async caFollowup(id) {

@@ -10,6 +10,7 @@ import {
   TEMPLATES, TEMPLATE_IDS, FOLLOWUP_TEMPLATE, PLATFORM_LABEL, CATEGORY_LABEL, TIER_LABEL, LEAD_STATUSES,
   tierOf, responseScore, suggestPromoCode, cleanWishCode, researchLinks, chooseTemplate, fillTemplate, creatorLink, legalFooter,
   displayStatus, canSendNow, staggerSchedule, checkFetchUrl, isPlatformHost, isPrivateIp, extractContacts, type TemplateId,
+  FEATURED_CREATORS, TIKTOK_NICHE_SEARCHES, TIKTOK_DM, tiktokProfileUrl, creatorPage,
 } from "./creator-logic.ts";
 import { PROMO_RE } from "./referral-logic.ts";
 import { adminEmails } from "./alerts.ts";
@@ -51,15 +52,22 @@ async function createCreatorPromo(wish: string, label: string, active: boolean, 
   return null;
 }
 
-function composeMail(l: Pick<Lead, "name" | "promoCode" | "template">) {
+const mailVars = (l: Pick<Lead, "name" | "promoCode">) => ({
+  name: l.name, code: l.promoCode, link: l.promoCode ? creatorLink(site(), l.promoCode) : creatorPage(site()), sender: senderName(), page: creatorPage(site()),
+});
+function composeMail(l: Pick<Lead, "name" | "promoCode" | "template"> & { platform?: string }) {
   const t = TEMPLATES[(TEMPLATE_IDS.includes(l.template as TemplateId) ? l.template : "A") as TemplateId];
-  const v = { name: l.name, code: l.promoCode, link: l.promoCode ? creatorLink(site(), l.promoCode) : `${site()}/creator`, sender: senderName() };
-  return { subject: fillTemplate(t.subject, v), body: fillTemplate(t.body, v), dm: fillTemplate(t.dm, v) };
+  const v = mailVars(l);
+  // TikTok-Creator bekommen die kurze, lockere DM (meist kein E-Mail-Kontakt)
+  return { subject: fillTemplate(t.subject, v), body: fillTemplate(t.body, v), dm: fillTemplate(l.platform === "tiktok" ? TIKTOK_DM : t.dm, v) };
 }
+/** Aktueller Anschreiben-Text: eigener Text bleibt, sonst immer die aktuelle Vorlage (inkl. /creator-Link). */
+const currentMail = (l: Lead) => (l.customBody ? { subject: l.subject, body: l.body } : composeMail(l));
 
 async function createLead(input: {
   name: string; category: string; platform: string; channelUrl?: string; followers?: number; email?: string; notes?: string;
   placeholder?: boolean; source?: string; status?: string; promoId?: number | null; promoCode?: string; template?: string; createdBy: string; withPromo?: boolean;
+  socials?: string[];
 }) {
   let promoId = input.promoId ?? null, promoCode = input.promoCode ?? "";
   if (!promoId && input.withPromo !== false && !input.placeholder) {
@@ -68,13 +76,61 @@ async function createLead(input: {
   }
   const followers = Math.max(0, Math.round(Number(input.followers) || 0));
   const template = (TEMPLATE_IDS as string[]).includes(String(input.template)) ? String(input.template) : chooseTemplate(input.category, followers);
-  const mail = composeMail({ name: input.name, promoCode, template });
+  const mail = composeMail({ name: input.name, promoCode, template, platform: input.platform });
   const [lead] = await db.insert(creatorLeads).values({
     name: input.name.slice(0, 80), category: input.category, platform: input.platform, channelUrl: input.channelUrl ?? "", followers,
-    email: input.email ?? "", promoId, promoCode, template, subject: mail.subject, body: mail.body, status: input.status ?? "ready",
+    email: input.email ?? "", socials: (input.socials ?? []).slice(0, 16), promoId, promoCode, template, subject: mail.subject, body: mail.body, status: input.status ?? "ready",
     placeholder: Boolean(input.placeholder), source: input.source ?? "manual", notes: (input.notes ?? "").slice(0, 1000), optoutToken: newToken(),
   }).returning();
   return lead;
+}
+
+/**
+ * Feste Creator (FEATURED_CREATORS) idempotent sicherstellen:
+ * • Eintrag mit gleichem Namen vorhanden → fehlenden Kanal-Link ergänzen, ggf. Platzhalter-Flag lösen, Promo-Code anlegen
+ * • sonst einen leeren Platzhalter gleicher Plattform/Kategorie übernehmen, sonst neu anlegen
+ * • Existiert der Promo-Code schon ohne Eintrag (Eintrag wurde bewusst gelöscht), wird nichts neu angelegt.
+ * Es werden nie E-Mails gesetzt.
+ */
+async function ensureFeaturedCreators(createdBy: string) {
+  const all = await db.select().from(creatorLeads);
+  let changed = 0;
+  for (const f of FEATURED_CREATORS) {
+    const existing = all.find((l) => l.name.trim().toLowerCase() === f.name.toLowerCase());
+    if (existing) {
+      const u: Partial<Lead> = {};
+      if (!existing.channelUrl) u.channelUrl = f.channelUrl;
+      if (existing.placeholder) u.placeholder = false;
+      if (!existing.promoId) {
+        const p = await createCreatorPromo("", f.name, true, createdBy);
+        if (p) { u.promoId = p.id; u.promoCode = p.code; }
+      }
+      if (!existing.customBody && u.promoCode) {
+        const m = composeMail({ ...existing, ...u } as Lead);
+        u.subject = m.subject; u.body = m.body;
+      }
+      if (Object.keys(u).length) { await db.update(creatorLeads).set({ ...u, updatedAt: new Date() }).where(eq(creatorLeads.id, existing.id)); changed++; }
+      continue;
+    }
+    const [promoTaken] = await db.select({ id: promoCodes.id }).from(promoCodes).where(eq(promoCodes.code, suggestPromoCode(f.name))).limit(1);
+    if (promoTaken) continue;
+    const slot = all.find((l) => l.placeholder && /^Platzhalter/i.test(l.name) && l.platform === f.platform && l.category === f.category && l.status === "ready" && !l.email);
+    if (slot) {
+      const p = await createCreatorPromo("", f.name, true, createdBy);
+      const template = chooseTemplate(f.category, slot.followers);
+      const m = composeMail({ name: f.name, promoCode: p?.code || "", template, platform: f.platform });
+      await db.update(creatorLeads).set({
+        name: f.name, channelUrl: f.channelUrl, placeholder: false, promoId: p?.id ?? null, promoCode: p?.code || "", template,
+        subject: m.subject, body: m.body, customBody: false, source: "featured", notes: "", updatedAt: new Date(),
+      }).where(eq(creatorLeads.id, slot.id));
+      all.splice(all.indexOf(slot), 1, { ...slot, name: f.name, placeholder: false });
+    } else {
+      const lead = await createLead({ name: f.name, platform: f.platform, category: f.category, channelUrl: f.channelUrl, source: "featured", createdBy });
+      all.push(lead);
+    }
+    changed++;
+  }
+  return changed;
 }
 
 async function seedIfEmpty(createdBy: string) {
@@ -143,9 +199,10 @@ export async function sendLead(leadId: number, kind: "initial" | "followup", opt
     .where(and(eq(creatorLeads.id, l.id), inArray(creatorLeads.status, lockStatus))).returning({ id: creatorLeads.id });
   if (!locked) return { ok: false, error: "Wird gerade schon gesendet." };
 
-  const v = { name: l.name, code: l.promoCode, link: l.promoCode ? creatorLink(site(), l.promoCode) : `${site()}/creator`, sender: senderName() };
-  const subject = kind === "initial" ? (l.subject || composeMail(l).subject) : fillTemplate(FOLLOWUP_TEMPLATE.subject, v);
-  const text = (kind === "initial" ? (l.body || composeMail(l).body) : fillTemplate(FOLLOWUP_TEMPLATE.body, v)) + legalFooter(site(), optoutUrl(l.optoutToken));
+  const v = mailVars(l);
+  const cur = currentMail(l);
+  const subject = kind === "initial" ? (cur.subject || composeMail(l).subject) : fillTemplate(FOLLOWUP_TEMPLATE.subject, v);
+  const text = (kind === "initial" ? (cur.body || composeMail(l).body) : fillTemplate(FOLLOWUP_TEMPLATE.body, v)) + legalFooter(site(), optoutUrl(l.optoutToken));
   try {
     const id = await resendSend(l.email, subject, text, optoutUrl(l.optoutToken));
     await db.insert(creatorOutreachLog).values({ leadId: l.id, kind, email: l.email, ok: true, resendId: id });
@@ -225,12 +282,15 @@ async function safeFetchHtml(raw: string, depth = 0): Promise<{ html: string; ur
 // ---------------------------------------------------------------------------
 function leadView(l: Lead & { redemptions?: number | null; promo_active?: boolean | null }) {
   const mail = composeMail(l);
+  const cur = currentMail(l);
+  const socials = Array.isArray(l.socials) ? (l.socials as string[]) : [];
+  const bioLink = socials.find((s) => { try { return !isPlatformHost(new URL(s).hostname); } catch { return false; } }) || "";
   return {
     id: l.id, name: l.name, category: l.category, categoryLabel: CATEGORY_LABEL[l.category] || l.category, platform: l.platform,
-    platformLabel: PLATFORM_LABEL[l.platform] || l.platform, channelUrl: l.channelUrl, followers: l.followers, email: l.email, socials: l.socials,
+    platformLabel: PLATFORM_LABEL[l.platform] || l.platform, channelUrl: l.channelUrl, followers: l.followers, email: l.email, socials, bioLink,
     tier: tierOf(l.followers), tierLabel: TIER_LABEL[tierOf(l.followers)], score: responseScore(l),
     promoId: l.promoId, promoCode: l.promoCode, promoActive: l.promo_active ?? null, signups: Number(l.redemptions) || 0,
-    link: l.promoCode ? creatorLink(site(), l.promoCode) : "", template: l.template, subject: l.subject, body: l.body, customBody: l.customBody,
+    link: l.promoCode ? creatorLink(site(), l.promoCode) : "", creatorPage: creatorPage(site()), template: l.template, subject: cur.subject, body: cur.body, customBody: l.customBody,
     dm: mail.dm, status: l.status, display: displayStatus(l), placeholder: l.placeholder, source: l.source, notes: l.notes,
     scheduledAt: l.scheduledAt, sentAt: l.sentAt, followupSentAt: l.followupSentAt, repliedAt: l.repliedAt, lastError: l.lastError,
     followupDueAt: l.sentAt ? new Date(new Date(l.sentAt).getTime() + FOLLOWUP_AFTER_DAYS * 86_400_000) : null,
@@ -338,6 +398,7 @@ export function registerCreator(app: any, hlp: Hlp) {
   // ---------------- Admin: Creator-Finder & Outreach ----------------
   app.get("/api/admin/creators", auth, adminOnly, async (c: any) => {
     const seeded = await seedIfEmpty(c.get("user").email || "");
+    await ensureFeaturedCreators(c.get("user").email || "").catch((e) => log.warn("creator", "Feste Creator konnten nicht angelegt werden", { error: String(e?.message || e) }));
     const [leads, st, apps] = await Promise.all([
       loadLeads(),
       sendStats(),
@@ -354,6 +415,7 @@ export function registerCreator(app: any, hlp: Hlp) {
       categories: CREATOR_CATEGORIES.map((id) => ({ id, label: CATEGORY_LABEL[id] })),
       platforms: CREATOR_PLATFORMS.map((id) => ({ id, label: PLATFORM_LABEL[id] })),
       followupDays: FOLLOWUP_AFTER_DAYS,
+      tiktokSearches: TIKTOK_NICHE_SEARCHES,
     });
   });
 
@@ -365,7 +427,14 @@ export function registerCreator(app: any, hlp: Hlp) {
     const platform = (CREATOR_PLATFORMS as readonly string[]).includes(b.platform) ? b.platform : "youtube";
     const email = normEmail(b.email);
     if (email && !EMAIL_OK.test(email)) return c.json({ error: "Ungültige E-Mail." }, 400);
-    const lead = await createLead({ name, category, platform, channelUrl: cleanUrl(b.channelUrl), followers: int(b.followers, 0, 1e9, 0), email, notes: str(b.notes, 1000), createdBy: c.get("user").email || "" });
+    // TikTok-Schnellfeld: „@handle“ → Profil-Link, Linktree/Bio-Link landet bei den gefundenen Links (für den Extraktor)
+    let channelUrl = cleanUrl(b.channelUrl);
+    if (!channelUrl && platform === "tiktok") channelUrl = tiktokProfileUrl(String(b.name || ""));
+    const bio = cleanUrl(b.bioUrl);
+    const lead = await createLead({
+      name: name.replace(/^@/, "").slice(0, 80) || name, category, platform, channelUrl, followers: int(b.followers, 0, 1e9, 0), email, notes: str(b.notes, 1000),
+      socials: bio ? [bio] : [], source: b.quick === true ? "tiktok-quick" : "manual", createdBy: c.get("user").email || "",
+    });
     return c.json({ lead: (await loadLeads()).find((l) => l.id === lead.id) }, 201);
   });
 
@@ -539,10 +608,11 @@ export function registerCreator(app: any, hlp: Hlp) {
       return c.json({ error: e?.platform ? "Plattform-Seite – bitte manuell öffnen." : `Seite nicht abrufbar: ${String(e?.message || e).slice(0, 120)}` }, 422);
     }
     let updated = false;
-    if (leadId && (emails.length || socials.length)) {
+    if (leadId) {
       const [l] = await db.select().from(creatorLeads).where(eq(creatorLeads.id, leadId)).limit(1);
       if (l) {
-        const mergedSocials = [...new Set([...(Array.isArray(l.socials) ? (l.socials as string[]) : []), ...socials])].slice(0, 16);
+        // Der eingegebene Bio-Link wird mitgespeichert, damit er beim nächsten Mal vorausgefüllt ist
+        const mergedSocials = [...new Set([chk.url.toString(), ...(Array.isArray(l.socials) ? (l.socials as string[]) : []), ...socials])].slice(0, 16);
         await db.update(creatorLeads).set({ email: l.email || emails[0] || "", socials: mergedSocials, updatedAt: new Date() }).where(eq(creatorLeads.id, leadId));
         updated = !l.email && Boolean(emails[0]);
       }
