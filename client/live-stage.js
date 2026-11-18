@@ -359,7 +359,7 @@ export class LiveStage {
   cardRects() {
     const doc = this.doc;
     if (!doc) return [];
-    const sel = "#ps-ls-demo-card, #ps-ls-hud img, #ps-binder-view:not(.hidden) .ps-bslot.owned .ps-bslot-art img, #ps-binder-view:not(.hidden) .ps-bslot.market .ps-bslot-art img, .ps-tile-art img, #swipe-img, #home-market-grid img";
+    const sel = "#ps-ls-demo-card, #ps-ls-hud img, #ps-binder-view:not(.hidden) .ps-bslot.owned .ps-bslot-art img, #ps-binder-view:not(.hidden) .ps-bslot.market .ps-bslot-art img, .ps-tile-art img, #swipe-img, #home-market-grid img, #ps-list-picker [data-pick-card] img";
     const out = [];
     for (const el of doc.querySelectorAll(sel)) {
       const r = el.getBoundingClientRect();

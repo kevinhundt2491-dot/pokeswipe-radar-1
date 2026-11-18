@@ -13,7 +13,7 @@ import { founderInviteHtml } from "./invite.js";
 import { langSwitchHtml } from "./i18n.js";
 import { inviteProgressHtml, proStatusText } from "./referral.js";
 import { demandTileHtml } from "./demand.js";
-import { listPickerHtml, renderListPicker } from "./list-picker.js";
+import { listPickerHtml, renderListPicker, pickerDemoOn } from "./list-picker.js";
 
 export const MAIN_TABS = ["home", "scan", "map", "portfolio", "community"];
 const PAGES = {
@@ -105,7 +105,7 @@ export function marketMode() {
 }
 
 function mySalesHtml() {
-  if (!state.user) {
+  if (!state.user && !pickerDemoOn()) {
     return `<div class="poke-glass rounded-3xl p-5 text-center space-y-3">
       <p class="text-sm font-black text-white">📦 Meine Verkäufe & Bestellungen</p>
       <p class="text-xs text-slate-300">Melde dich an, um Käufe, Verkäufe, Tausche und deine Inserate an einem Ort zu verwalten.</p>
@@ -113,7 +113,8 @@ function mySalesHtml() {
     </div>`;
   }
   const m = state.me || {};
-  const mine = (state.listings || []).filter((l) => l.user_id === state.user?.id);
+  // Reel-Aufnahme (Demo-Bestand): keine echten Inserate des angemeldeten Kontos zeigen
+  const mine = pickerDemoOn() ? [] : (state.listings || []).filter((l) => l.user_id === state.user?.id);
   const tile = (icon, label, sub, on, cls = "text-white") => `<button type="button" onclick="${on}" class="text-left bg-slate-950 border border-slate-800 hover:border-yellow-400 rounded-2xl p-3 min-h-[64px]">
     <span class="block text-sm font-black ${cls}">${icon} ${label}</span><span class="block text-[11px] text-slate-400">${sub}</span></button>`;
   return `<div class="space-y-3">

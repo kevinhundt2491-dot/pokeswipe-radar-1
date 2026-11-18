@@ -97,6 +97,9 @@ export class ProCompositor {
   constructor({ tpl, cover, badge = "", look = null, coverCard = null, scenes, captions, focus = () => null, facts = {}, fade = 0, pressed = () => false, cards = () => [] }) {
     Object.assign(this, { tpl, cover, badge, coverCard, scenes, captions, focus, facts, fade, pressed, cards });
     this.showcase = isShowcase(tpl);
+    // Showcase-Familie: Vorlagen dürfen eigene Kamera-/Zoom-Keyframes mitbringen (Master-Vorlagen), sonst Pro-Showcase
+    this.cam = Array.isArray(tpl?.camera) && tpl.camera.length > 1 ? tpl.camera : SC_CAMERA;
+    this.zoomPlan = Array.isArray(tpl?.zoomPlan) ? tpl.zoomPlan : SC_ZOOM;
     if (this.showcase && typeof Image !== "undefined") { this.icon = new Image(); this.icon.decoding = "async"; this.icon.src = "/icons/icon-512.png"; }
     this.accent = look?.accent || tpl.accent || "#ffcb05";
     this.layout = look?.layout || "left";
@@ -887,7 +890,7 @@ export class ProCompositor {
   /** Kamera-Zustand des Smartphones zur Zeit t (Bildschirmmitte, Maßstab, Neigung). */
   #scCamera(t) {
     const D = this.scenes[this.scenes.length - 1].end, k = D / 29;
-    const K = SC_CAMERA;
+    const K = this.cam;
     const tt = t / k;
     let i = 0;
     while (i < K.length - 2 && tt > K[i + 1][0]) i++;
@@ -900,7 +903,7 @@ export class ProCompositor {
   /** Ziel-Zoom des Bildschirminhalts (1 = ganze App inkl. 5-Reiter-Navigation sichtbar). */
   #scZoom(t) {
     const tt = t / ((this.scenes[this.scenes.length - 1].end || 29) / 29);
-    for (const [a, b, z] of SC_ZOOM) if (tt >= a && tt < b) return z;
+    for (const [a, b, z] of this.zoomPlan) if (tt >= a && tt < b) return z;
     return 1;
   }
 
@@ -1191,7 +1194,8 @@ export class ProCompositor {
     else if (sc === binder) this.#scHeadline(ctx, ov.binder, t, binder.start, binder.end);
     else if (sc === market) {
       this.#scHeadline(ctx, ov.market, t, market.start, market.end);
-      const pa = SHOWCASE_PRO_AT * k;
+      const proAt = this.tpl.proAt === undefined ? SHOWCASE_PRO_AT : this.tpl.proAt; // null = keine Pro-Einblendung
+      const pa = proAt === null ? Infinity : proAt * k;
       if (t >= pa) {
         // Smartphone tritt zurück, edle Pro-Einblendung davor
         const dim = clamp(Math.min(ease((t - pa) / 0.5), 1 - ease((t - (market.end - 0.35)) / 0.35)));
@@ -1199,8 +1203,9 @@ export class ProCompositor {
         this.#proPanel(ctx, t, pa, market.end + 0.2);
       }
     } else if (sc === finale) {
-      this.#scHeadline(ctx, "Ohne Login-Zwang – sofort loslegen", t, finale.start, D + 1, { lines: 1, size: 50, y: 270 });
-      this.#scFinale(ctx, t, finale.start);
+      const fh = this.tpl.finaleHeadline;
+      this.#scHeadline(ctx, fh?.text || "Ohne Login-Zwang – sofort loslegen", t, finale.start, D + 1, { lines: fh?.lines || 1, size: fh?.size || 50, y: fh?.y || 270 });
+      this.#scFinale(ctx, t, this.#lockupAt());
     }
   }
 
@@ -1234,7 +1239,7 @@ export class ProCompositor {
     while (ctx.measureText(txt).width > maxW && size > 38) { size -= 4; ctx.font = `900 ${size}px ${BODY}`; }
     const tw = Math.min(maxW, ctx.measureText(txt).width), h = size * 1.7;
     const pop = 0.94 + 0.06 * ease((t - c.start) * 8);
-    const capY = this.showcase ? (sc.key === "finale" ? CAP_Y_FINALE : CAP_Y_SHOWCASE) : hook4 ? CAP_Y_HOOK : sc.key === "focus" ? CAP_Y_PHONE : CAP_Y;
+    const capY = this.showcase ? this.#scCapY(t, sc) : hook4 ? CAP_Y_HOOK : sc.key === "focus" ? CAP_Y_PHONE : CAP_Y;
     ctx.translate(hook4 ? HX : CX, capY); ctx.scale(pop, pop);
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 8;
@@ -1253,6 +1258,18 @@ export class ProCompositor {
       x += ww;
     }
     ctx.restore();
+  }
+
+  /** Start des Abschluss-Lockups (Master-Vorlagen: eigener Zeitpunkt, sonst Beginn der Abschluss-Szene). */
+  #lockupAt() {
+    const fin = this.scenes[this.scenes.length - 1], k = fin.end / 29;
+    return this.tpl.lockupAt != null ? Math.max(fin.start, this.tpl.lockupAt * k) : fin.start;
+  }
+
+  /** Untertitel-Höhe im Showcase: Vorlage mit captionY → mittig unter dem Smartphone, im Abschluss über dem Lockup. */
+  #scCapY(t, sc) {
+    if (this.tpl.captionY) return sc.key === "finale" && t >= this.#lockupAt() ? CAP_Y_FINALE : this.tpl.captionY;
+    return sc.key === "finale" ? CAP_Y_FINALE : CAP_Y_SHOWCASE;
   }
 
   sceneAt(t) { return this.scenes.find((s) => t < s.end) || this.scenes[this.scenes.length - 1]; }

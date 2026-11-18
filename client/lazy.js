@@ -69,7 +69,7 @@ const LIVE_SCAN_KEYS = [
   "quickListSet", "quickListPhoto", "quickListGo", "quickListPrice", "quickListUse", "quickListStrategy", "quickListConditionAll", "quickListRemove", "quickListSubmit",
   "quickListPreview", "quickListCancel", "quickListUndo",
   // nur in der Pro-Video-Aufnahme (Live-Stage) vorhanden – sonst liefern sie null
-  "liveScanDemoPrepare", "liveScanDemoScan",
+  "liveScanDemoPrepare", "liveScanDemoScan", "liveScanDemoFile",
 ];
 
 /** Platzhalter mit derselben ID – die Unter-Reiter-Navigation findet den Bereich sofort, der Inhalt kommt beim Öffnen. */

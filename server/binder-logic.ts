@@ -257,3 +257,29 @@ export function binderCardAt(catalog: CatalogCard[], index: number): CatalogCard
     .sort((a, b) => compareLocalId(String(a.localId || localIdOfCard(a.id)), String(b.localId || localIdOfCard(b.id))));
   return sorted[index] ?? null;
 }
+
+/**
+ * Demo-Ordner der Master-Vorlage „Automatischer Binder & Bulk-Marktplatz“ (NUR Reel-Aufnahme, schreibt nichts):
+ * die ersten 3 Seiten eines echten Set-Katalogs. Seite 1 (Positionen 0–8) zeigt die Geschichte des Videos:
+ *   • `gap` (Standard Nr. 003, im Set „151“ Bisaflor ex) fehlt → später „Auf Marktplatz: 4,50 €“
+ *   • `scanned` (Nr. 006, Glurak ex) liegt 1× im Ordner – der Live-Scan legt das 2. Exemplar dazu → „2x“
+ *   • `listed` (Nr. 009) gehört dem Nutzer → später „Im Verkauf: 12,90 €“
+ * Auf Seite 2–3 liegen weitere Doppelte: zusammen genau 12 überzählige Exemplare für „Alle Doppelten inserieren“.
+ */
+export const AUTOBINDER_DEMO = Object.freeze({
+  gaps: Object.freeze([2, 6, 12, 16, 22]),
+  extra: Object.freeze({ 10: 3, 11: 2, 13: 2, 14: 3, 17: 2, 19: 2, 20: 2, 23: 2, 25: 2, 26: 2 }) as Readonly<Record<number, number>>,
+  gap: 2, scanned: 5, listed: 8,
+});
+export function autobinderBinderFill(catalog: CatalogCard[], { pages = 3 } = {}): OwnedEntry[] {
+  const sorted = [...(catalog || [])].filter((c) => c?.id)
+    .sort((a, b) => compareLocalId(String(a.localId || localIdOfCard(a.id)), String(b.localId || localIdOfCard(b.id))));
+  const n = Math.min(sorted.length, Math.max(1, pages) * BINDER_PAGE_SIZE);
+  const out: OwnedEntry[] = [];
+  for (let i = 0; i < n; i++) {
+    if (AUTOBINDER_DEMO.gaps.includes(i)) continue;
+    const c = sorted[i], q = AUTOBINDER_DEMO.extra[i] || 1;
+    out.push({ cardId: c.id, quantity: q, condition: i % 5 === 3 ? "EX" : "NM", image: c.image || "", name: c.name, value: num(c.price) * q });
+  }
+  return out;
+}

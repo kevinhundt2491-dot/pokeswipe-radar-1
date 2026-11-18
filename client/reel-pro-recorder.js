@@ -20,8 +20,9 @@ import { exactMp4Support, ExactMp4Writer } from "./reel-mp4.js";
 import {
   proScript, checkProScript, sceneTimes, choreoMarks, captionChunks, bitrateFor, shrinkBitrate, speedFor, audibleEnd, frameGrid,
   secondsFor, scenesFor, isHook4, segmentReport, SAFE_MB, MB, AUDIO_KBPS, PRO_MIN_S, PRO_MAX_S, PRO_LEAD, END_FADE,
-  isShowcase, showcaseScript, checkTemplateScript, showcaseScenes, showcaseMarks, showcaseCues, showcaseSpec,
+  isShowcase, showcaseScript, checkTemplateScript, showcaseScenes, showcaseMarks, templateCues, showcaseSpec,
 } from "./reel-pro.js";
+import { fitVoice } from "./voice-fit.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -34,12 +35,14 @@ const NO_VOICE_S = 26;
  * Sprecherin für eine Pro-Vorlage laden und das Tempo so wählen, dass das Video 20–30 s lang wird.
  * @returns {Promise<{ take: object, speed: number, seconds: number }>}
  */
-export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S], cap = 1.12, { format = "" } = {}) {
+export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S], cap = 1.12, { format = "", startSpeed = 0, fit: fitOpts = null } = {}) {
   // Exakte Länge (Showcase 29 s): natürliches Tempo, bis zu 2 Feinanpassungen, damit das letzte Wort
   // spätestens 0,8 s vor dem Ende fällt – das Video bleibt dann frame-genau exakt `range[1]` Sekunden lang.
-  if (format === "showcase" || range[0] === range[1]) {
+  // Master-Vorlagen (fitOpts): Start direkt mit dem Höchsttempo; reicht es nicht, werden Sprechpausen gekürzt und die
+  // Stimme tonhöhenneutral um höchstens fitOpts.maxStretch gerafft (fitTake) – so bleibt das Video exakt 29 s.
+  if (format === "showcase" || format === "autobinder" || range[0] === range[1]) {
     const fit = range[1] - PRO_LEAD - END_FADE;
-    let speed = 1.0;
+    let speed = Number(startSpeed) > 0 ? Math.min(cap, Number(startSpeed)) : 1.0;
     let take = await loadNarration(lines, ac, { tone, speed, format });
     for (let i = 0; i < 2; i++) {
       const sec = speechSeconds(take);
@@ -49,7 +52,12 @@ export async function loadProNarration(lines, ac, tone = "energetic", range = [P
       try { take = await loadNarration(lines, ac, { tone, speed: want, format }); speed = want; }
       catch (e) { console.warn("Showcase-Voiceover: Tempo-Anpassung fehlgeschlagen, nutze vorherigen Take", e); break; }
     }
-    return { take, speed, seconds: Math.max(range[1], PRO_LEAD + speechSeconds(take) + END_FADE) };
+    let fitted = null;
+    if (fitOpts && speechSeconds(take) > fit - 0.05) {
+      try { fitted = fitTake(take, ac, fit - 0.08, fitOpts); if (fitted) take = fitted; }
+      catch (e) { console.warn("Master-Voiceover: Längen-Anpassung fehlgeschlagen, nutze Original-Take", e); }
+    }
+    return { take, speed, seconds: Math.max(range[1], PRO_LEAD + speechSeconds(take) + END_FADE), fitted: fitted ? fitted.fit : null };
   }
   // Kurze Vorlagen (z. B. 15–20 s) starten gleich mit dem schnellsten erlaubten Tempo (Hook-Presets: 1,2)
   let speed = range[1] <= 20 ? cap : 1.04;
@@ -61,6 +69,27 @@ export async function loadProNarration(lines, ac, tone = "energetic", range = [P
     catch (e) { console.warn("Pro-Voiceover: Tempo-Anpassung fehlgeschlagen, nutze ersten Take", e); }
   }
   return { take, speed, seconds: PRO_LEAD + speechSeconds(take) + END_FADE };
+}
+
+/**
+ * Take auf höchstens `target` Sekunden Sprechzeit bringen (Pausen kürzen, dann tonhöhenneutral raffen).
+ * Erzeugt einen NEUEN Take (der zwischengespeicherte Original-Take bleibt unverändert) inkl. umgerechneter Satz-
+ * und Wort-Zeitstempel. null, wenn nichts zu tun ist.
+ */
+export function fitTake(take, ac, target, { maxStretch = 1.1 } = {}) {
+  const b = take.buffer;
+  const chans = Array.from({ length: b.numberOfChannels }, (_, c) => b.getChannelData(c));
+  const before = speechSeconds(take);
+  const r = fitVoice(chans, b.sampleRate, before, target, { maxStretch });
+  if (!r.changed) return null;
+  const buffer = ac.createBuffer(r.channels.length, r.channels[0].length, b.sampleRate);
+  r.channels.forEach((ch, c) => buffer.copyToChannel(ch, c));
+  const m = (x) => ({ ...x, start: r.map(Number(x.start) || 0), end: r.map(Number(x.end) || 0) });
+  return {
+    ...take, buffer, duration: buffer.duration, speechEnd: undefined,
+    marks: (take.marks || []).map(m), wordMarks: take.wordMarks ? take.wordMarks.map((ws) => (ws || []).map(m)) : null,
+    fit: { before: +before.toFixed(3), after: +r.speech.toFixed(3), pausesSaved: +r.saved.toFixed(3), stretch: r.factor },
+  };
 }
 
 /** Exakte Sprechdauer eines dekodierten Takes (letztes hörbares Sample, nie kürzer als das letzte Wort). */
@@ -134,7 +163,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
   const scenes = show ? showcaseScenes(D, tpl.plan) : sceneTimes(marks, D, scenesFor(tpl));
   const captions = captionChunks(script.show, marks, wordMarks);
   const useMbit = show ? Math.min(bitrateFor(D, tpl.mbit || mbit, maxMb), 12) : bitrateFor(D, mbit, maxMb);
-  const cues = show ? showcaseCues(scenes) : cuesFor(scenes), seed = tpl.key.length + variant;
+  const cues = show ? templateCues(tpl, scenes) : cuesFor(scenes), seed = tpl.key.length + variant;
   const placed = voice ? [{ id: "narration", start: PRO_LEAD, stop: PRO_LEAD + speech, buffer: voice.buffer, rate: 1 }] : [];
 
   const exactCfg = await exactMp4Support({ width: OUT_W, height: OUT_H, fps, mbit: useMbit, audioKbps: AUDIO_KBPS });

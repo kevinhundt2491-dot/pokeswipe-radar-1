@@ -325,7 +325,7 @@ export function pickCoverCard(cards, recent = []) {
   return cards.find((c) => !used.has(c.id)) || cards[0] || null;
 }
 
-export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || null;
+export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || MASTER_TEMPLATES.find((t) => t.key === k) || null;
 
 export const isHook4 = (tpl) => tpl?.format === "hook4";
 /** Szenen-Schlüssel einer Vorlage (5 Standard-Szenen bzw. 4 Hook-Szenen). */
@@ -679,3 +679,121 @@ export function showcaseCaption(tpl, variant = 0, facts = {}) {
   const caption = [hook, "", ...body, "", ...tpl.captionCta, "", hashtags.join(" ")].join("\n");
   return { title, hook, body, hashtags, caption };
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Master-Vorlage „Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power“ (key "autobinder", Showcase-Familie)
+//   exakt 29 s · 9:16 · 1080×1920 · 60 FPS · 11 Mbit/s (10–12) · ElevenLabs-Sprecherin · Mikro-SFX · mittige Untertitel
+//   0–6 s   scan     Live-Scanner: Glurak ex in Schutzhülle, Panel mit Bild/Name/NM/Cardmarket-Wert, „📒 Im Set-Ordner
+//                    einsortiert“, Tipp auf „🏷️ Als Inserat einstellen“ → Bestätigung
+//   6–14 s  binder   Sammlung → Mein Binder (Set „151“): 3×3-Seiten wischen, Holo-Reflex, „2x“ auf Glurak ex,
+//                    Umschalter „Doppelte im Gesamtwert mitzählen“ → Wert ändert sich live
+//   14–22 s market   Marktplatz → Meine Inserate: „🏷️ Alle Doppelten inserieren (12)“ → Bestätigung → Lade-Animation,
+//                    zurück im Ordner: graue Lücke „Auf Marktplatz: 4,50 €“ + eigenes Inserat „Im Verkauf: 12,90 €“
+//   22–29 s finale   Community-Live-Chat → Startseite, Abschluss „Kostenlos direkt im Browser – Kein Download nötig“
+// Eigene Liste (MASTER_TEMPLATES): Bestehende Vorlagen, Zeitpläne und Grenzen bleiben unverändert.
+// Alle Beschriftungen im Bild sind die echten Texte der App.
+// ---------------------------------------------------------------------------------------------------------------
+export const AUTOBINDER_PLAN = Object.freeze([0, 6, 14, 22, 29]);
+/** Wortlimit (exaktes Briefing-Skript ≈ 105 gesprochene Wörter, Sprecherin bei Höchsttempo + Feinanpassung). */
+export const AUTOBINDER_WORDS = Object.freeze([95, 110]);
+/** Höchste zusätzliche Zeitraffung der Sprecherin (Tonhöhe bleibt), falls Tempo 1,2 für exakt 29 s nicht reicht. */
+export const AUTOBINDER_MAX_STRETCH = 1.1;
+/** Demo-Ordner: Lücke „Bisaflor ex“ (Nr. 003) mit Marktplatz-Angebot, eigenes Inserat auf Nr. 009, gescannte Karte Nr. 006. */
+export const AUTOBINDER_BADGES = Object.freeze({ gap: 4.5, listed: 12.9 });
+
+/** Regie-Zeitplan der Live-Aktionen (Videozeit in s) – Choreografie und Sound-FX nutzen exakt diese Werte. */
+export const AUTOBINDER_TIMELINE = Object.freeze({
+  scanStart: 0.7, scanMs: 1100, filed: 2.3, sellTap: 3.3, navCollection: 5.2,
+  binderOpen: 6.05, flip1: 6.9, flipBack: 8.05, toggleOff: 9.3, toggleOn: 11.0, dupeSpot: 12.5,
+  mineOpen: 14.05, bulkTap: 15.15, confirmTap: 16.55, listMs: 1500, binderBack: 19.2, reveal: 19.95, listedSpot: 20.9,
+  chatTab: 22.05, homeTap: 25.0, lockup: 25.6,
+});
+
+// Kamera (Zeit auf 29 s normiert): Smartphone etwas kleiner und höher – darunter stehen die mittigen Untertitel
+const AB_CAMERA = Object.freeze([
+  [0, { cx: 505, cy: 800, s: 0.9, rot: -0.03 }], [1.1, { cx: 505, cy: 790, s: 0.9, rot: -0.012 }], [5.5, { cx: 505, cy: 784, s: 0.9, rot: 0 }],
+  [6.5, { cx: 505, cy: 780, s: 0.92, rot: 0.01 }], [13.6, { cx: 505, cy: 776, s: 0.94, rot: 0.004 }],
+  [14.5, { cx: 505, cy: 782, s: 0.9, rot: -0.008 }], [21.6, { cx: 505, cy: 780, s: 0.92, rot: 0.006 }],
+  [22.5, { cx: 505, cy: 784, s: 0.9, rot: 0 }], [24.9, { cx: 505, cy: 784, s: 0.9, rot: 0 }],
+  [25.9, { cx: 505, cy: 640, s: 0.66, rot: 0 }], [29, { cx: 505, cy: 634, s: 0.68, rot: 0 }],
+]);
+// Bildschirm-Zoom [von, bis, Zoom] – 1,0 zeigt die ganze App inkl. 5-Reiter-Navigation
+const AB_ZOOM = Object.freeze([
+  [0.25, 2.1, 1.38], [2.1, 4.6, 1.24], [4.6, 6.5, 1.0], [6.5, 9.0, 1.08], [9.0, 12.2, 1.22], [12.2, 14.3, 1.1],
+  [14.3, 15.0, 1.0], [15.0, 18.9, 1.16], [18.9, 19.8, 1.0], [19.8, 21.9, 1.14], [21.9, 29, 1.0],
+]);
+
+/** Exaktes Voiceover aus dem Briefing – ein Satz(-paar) je Sinnabschnitt; gesprochen wird die Domain ausgeschrieben. */
+const AUTOBINDER_LINES = [
+  { say: "Karten sammeln und verkaufen war noch nie so einfach: Sobald du deine Karte scannst, landet sie automatisch in deinem digitalen Set-Binder!" },
+  { say: "Und willst du sie zu Geld machen? Ein Klick genügt, und sie steht auf dem Marktplatz." },
+  { say: "Im Ordner behältst du den vollen Überblick: Doppelte werden extra gezählt und du entscheidest, ob sie in die Gesamtsumme einfließen." },
+  { say: "Das Beste: Mit nur einem Klick inserierst du alle deine Doppelten auf einmal, während immer eine für deine Sammlung gesichert bleibt!" },
+  { say: "Fehlende Karten werden grau angezeigt – und sobald jemand sie anbietet, kannst du sie direkt aus der Lücke kaufen." },
+  { say: `Ohne Download kostenlos im Browser: ${SAY_DOMAIN}!`, show: "Ohne Download kostenlos im Browser: pokeswipe-radar.de!" },
+];
+
+export const MASTER_TEMPLATES = [
+  {
+    key: "autobinder", format: "showcase", voiceFormat: "autobinder", master: true,
+    label: "Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power",
+    choreo: "autobinder", tab: "scan", visual: "showcase",
+    title: "Automatischer Set-Binder & 1-Klick-Bulk-Inserate – scannen, sammeln, verkaufen",
+    accent: "#38bdf8", gold: "#fbbf24",
+    seconds: [SHOWCASE_SECONDS, SHOWCASE_SECONDS], exact: SHOWCASE_SECONDS, fps: SHOWCASE_FPS, mbit: SHOWCASE_MBIT, cbr: true,
+    tone: "energetic", maxSpeed: SPEED_CAP, startSpeed: SPEED_CAP, fitVoice: { maxStretch: AUTOBINDER_MAX_STRETCH },
+    words: AUTOBINDER_WORDS, plan: AUTOBINDER_PLAN, timeline: AUTOBINDER_TIMELINE,
+    binderSet: "sv03.5", binderSetName: "Karmesin & Purpur – 151", badgePrices: AUTOBINDER_BADGES,
+    scanKeys: ["card:sv03.5-006", "card:sv03.5-199", "card:sv03.5-025", "card:sv03.5-003"],
+    hooks: [
+      { badge: "AUTO-BINDER", cover: "Scannen = automatisch im Set-Binder 📒" },
+      { badge: "BULK-INSERATE", cover: "Alle Doppelten mit 1 Klick inserieren ⚡" },
+    ],
+    lines: AUTOBINDER_LINES,
+    overlays: {
+      scan: "Karten scannen: Automatisch im Set-Binder & sofort im Marktplatz!",
+      binder: "Dein digitaler Ordner zählt doppelte Karten automatisch mit!",
+      market: "Alle Doppelten mit 1 Klick inserieren – Lücken direkt aus dem Ordner kaufen!",
+      finale: "Kostenlos direkt im Browser – Kein Download nötig: pokeswipe-radar.de",
+    },
+    // Compositor: eigene Kamera, keine Pro-Abo-Einblendung, Untertitel mittig unter dem Smartphone, Abschluss-Lockup ab 25,6 s
+    camera: AB_CAMERA, zoomPlan: AB_ZOOM, proAt: null, captionY: 1290, lockupAt: AUTOBINDER_TIMELINE.lockup,
+    finaleHeadline: { text: "Kostenlos direkt im Browser – Kein Download nötig: pokeswipe-radar.de", lines: 2, size: 52, y: 300 },
+    finale: { domain: DOMAIN, sub: "Jetzt kostenlos loslegen", chips: ["📒 Auto-Binder", "⚡ Bulk-Inserate", "🌐 Läuft im Browser"] },
+    stats: [["📸", "Live-Scanner"], ["📒", "Auto-Binder"], ["⚡", "Bulk-Inserate"]],
+    badges: ["📸 Scannen → automatisch im Set-Ordner", "🏷️ 1 Tipp: Als Inserat einstellen", "📒 Doppelte zählen & Gesamtwert", "⚡ Alle Doppelten mit 1 Klick inserieren"],
+    trust: ["✅ Je 1 Exemplar bleibt im Binder", "🌐 Kein Download", "💬 Aktiver Live-Chat", "🔒 Käuferschutz"],
+    tags: ["#PokemonSammler", "#PokemonBinder", "#PokemonVerkaufen", "#TCGDeutschland"],
+    body: ["📸 Karte scannen – sie landet automatisch im passenden Set-Ordner deines digitalen Binders. Ein Tipp auf „Als Inserat einstellen“ und sie steht auf dem Marktplatz.",
+      "📒 Im Ordner siehst du doppelte Karten mit Zähler und entscheidest per Schalter, ob sie in den Gesamtwert einfließen.",
+      "⚡ „Alle Doppelten inserieren“: alle überzähligen Exemplare mit 1 Klick zum Live-Preis online – je 1 Karte bleibt in deiner Sammlung. Fehlende Karten kaufst du direkt aus der Lücke."],
+    captionCta: ["👉 Kostenlos direkt im Browser: pokeswipe-radar.de – kein Download nötig."],
+  },
+];
+ALL_TEMPLATES.push(...MASTER_TEMPLATES);
+export const isMaster = (tpl) => !!tpl?.master;
+
+/** Mikro-Sounddesign der Master-Vorlage: Scanner-Beep, Ablage, Blättern, Schalter-Ticks, Inserier-Ticks, Erfolgs-Plings. */
+export function autobinderCues(scenes, tl = AUTOBINDER_TIMELINE) {
+  const [, binder, market, finale] = scenes;
+  const D = scenes[scenes.length - 1].end || SHOWCASE_SECONDS;
+  const k = D / SHOWCASE_SECONDS;
+  const at = (s) => +(s * k).toFixed(3);
+  const tap = (s) => [at(s + TAP_LEAD), "tap"];
+  const swipe = (s) => [at(s + 0.3 + 0.28), "page"];
+  const listTicks = Array.from({ length: 6 }, (_, i) => [at(tl.confirmTap + TAP_LEAD + 0.25 + (i * tl.listMs) / 6000), "tick"]);
+  return [
+    [0.02, "softhit"],
+    [at(tl.scanStart + 0.05), "scanhum"], [at(tl.scanStart + tl.scanMs / 1000), "beep"], [at(tl.filed), "drop"],
+    tap(tl.sellTap), [at(tl.sellTap + TAP_LEAD + 0.18), "pling"], tap(tl.navCollection),
+    [binder.start, "whoosh"], swipe(tl.flip1), swipe(tl.flipBack),
+    tap(tl.toggleOff), [at(tl.toggleOff + TAP_LEAD + 0.1), "tick"], tap(tl.toggleOn), [at(tl.toggleOn + TAP_LEAD + 0.1), "tick"], [at(tl.dupeSpot), "pop"],
+    [market.start, "whoosh"], tap(tl.bulkTap), tap(tl.confirmTap), ...listTicks,
+    [at(tl.confirmTap + TAP_LEAD + 0.25 + tl.listMs / 1000), "pling"],
+    [at(tl.binderBack), "whoosh"], [at(tl.reveal), "pling"], [at(tl.listedSpot), "tick"],
+    [finale.start, "whoosh"], tap(tl.chatTab), tap(tl.homeTap), [at(tl.lockup + 0.9), "chime"],
+  ].filter(([t]) => t >= 0 && t <= D).sort((a, b) => a[0] - b[0]);
+}
+
+/** Sound-Cues einer Showcase-Familien-Vorlage (Pro-Showcase oder Master-Vorlage). */
+export const templateCues = (tpl, scenes) => (tpl?.key === "autobinder" ? autobinderCues(scenes) : showcaseCues(scenes));

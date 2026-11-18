@@ -294,6 +294,26 @@ Dafür erlauben `X-Frame-Options: SAMEORIGIN` und `frame-ancestors 'self'` das E
 
 Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorgabe nur in diesem Browser.
 
+### Master-Vorlage „Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power“
+
+Direkt auswählbar im Reel Studio (Kasten „📒 Master-Vorlage“ → öffnet den Pro-Generator) und im Generator per Button
+„📒 Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power“; optional auch in der Rotation der Admin-Zentrale (Schlüssel
+`autobinder`). Exakt 29 s (1740 Frames), 9:16, 1080×1920, 60 FPS, 11 Mbit/s, ElevenLabs-Sprecherin mit dem Briefing-Skript,
+Mikro-Soundeffekte und mittige Karaoke-Untertitel; Make.com bekommt dieselben Felder wie beim Pro-Showcase plus
+`video_master` und `voice_fit_json`. Regie-Zeitplan (`AUTOBINDER_TIMELINE` in `client/reel-pro.js`, Choreografie
+`autobinder` in `client/reel-scenarios.js`):
+
+| Zeit | Szene | Live in der echten App |
+| --- | --- | --- |
+| 0–6 s | Live-Scan & Ablage | Glurak ex in Schutzhülle → Panel mit Bild, Name, NM, Cardmarket-Wert → „📒 Im Set-Ordner einsortiert“ → Tipp auf „🏷️ Als Inserat einstellen“ |
+| 6–14 s | Set-Binder | Sammlung → Mein Binder (151): Seiten wischen, Holo-Reflex, „2x“, Umschalter „Doppelte im Gesamtwert mitzählen“ (Wert zählt live um) |
+| 14–22 s | Bulk-Inserate | Marktplatz → Meine Inserate: „🏷️ Alle Doppelten inserieren (12)“ → Bestätigung → Fortschritt → zurück im Ordner: Lücke „Auf Marktplatz: 4,50 €“, eigenes Inserat „Im Verkauf: 12,90 €“ |
+| 22–29 s | Abschluss | Community-Live-Chat → Startseite → „Kostenlos direkt im Browser – Kein Download nötig: pokeswipe-radar.de“ |
+
+Alle Texte im Bild sind die echten App-Texte. Ablage, Inserate, Bestätigungsdialog und Ordner-Füllung sind Stage-Demos
+(nur im Aufnahme-iframe `?reel=1`) ohne Schreibzugriff aufs Konto. Für exakt 29 s startet die Sprecherin mit Tempo 1,2;
+reicht das nicht, kürzt `client/voice-fit.js` zuerst Sprechpausen und rafft dann tonhöhenneutral (WSOLA) um höchstens 10 %.
+
 ## Phase 6 – Varianten, echtes Swipe-Trading, Suche, Plattform-Pflichten, Härtung
 
 - **Varianten-Ebene** – Normal, Reverse Holo, Holo, 1st Edition, Shadowless, Promo als eigene Einheit in Portfolio, Inseraten,
