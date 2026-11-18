@@ -68,7 +68,7 @@ export function selectFinish(view, finish) {
 /** Folge-Aktionen im Ergebnisfeld und die kurze Bestätigung nach dem automatischen Schließen. */
 export const RESULT_ACTIONS = {
   binder: { label: "💼 Binder", toast: "💼 Zum Binder hinzugefügt" },
-  sell: { label: "🏷️ Verkaufen", toast: "🏷️ Inserat vorbereitet" },
+  sell: { label: "🏷️ Als Inserat einstellen", toast: "🏷️ Inserat vorbereitet · bleibt auch im Set-Ordner" },
   instant: { label: "⚡ Inserat", toast: "⚡ 1-Tap-Inserat gestartet" },
   wish: { label: "❤️ Wunsch", toast: "❤️ Auf die Wunschliste gesetzt" },
   flip: { label: "📈 Flip-Check", toast: "📈 Flip-Check geöffnet" },
@@ -97,6 +97,29 @@ export function createActionRunner({ close, resume, notify, onError } = {}) {
       onError?.(e);
       return false;
     }
+  };
+}
+
+/**
+ * Automatisches Einsortieren in den Set-Ordner: Ein sicher erkannter Treffer wird beim Weiter-Scannen (✕, nächste Karte)
+ * eingeordnet; unsichere Treffer erst, wenn der Nutzer sie über eine Aktion bestätigt. Gäste und die Video-Bühne nie.
+ */
+export function shouldAutoFile(cur, { loggedIn = false, stage = false } = {}) {
+  return Boolean(cur?.info && !cur.loading && !cur.unsure && !cur.filed && loggedIn && !stage);
+}
+
+/** Aktionen im Ergebnisfeld, die die Karte (zusätzlich) im Set-Ordner speichern. Wunsch/Details/Flip/Swiper nicht. */
+export const AUTO_FILE_ACTIONS = ["binder", "sell", "instant"];
+
+/**
+ * Jeder Treffer wird genau einmal gespeichert (auch bei Doppelklick oder „Speichern“ nach dem Auto-Einsortieren).
+ * Schlägt das Speichern fehl, darf es erneut versucht werden.
+ */
+export function createAutoFiler(save) {
+  return async (hit, payload) => {
+    if (hit?.filed) return null;
+    if (hit) hit.filed = true;
+    try { return (await save(payload)) || {}; } catch (e) { if (hit) hit.filed = false; throw e; }
   };
 }
 

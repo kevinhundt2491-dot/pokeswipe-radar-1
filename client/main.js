@@ -43,6 +43,7 @@ import { initNativePlatform, nativeApi } from "./native.js";
 import { initPayments, routePayments, paymentsApi } from "./payments.js";
 import { initInvite, inviteApi } from "./invite.js";
 import { initBinder, binderApi } from "./binder.js";
+import { initListPicker, listPickerApi } from "./list-picker.js";
 import { variantSelect, conditionSelect, variantsOf, variantBadge, VARIANT_LABEL, VARIANT_KEYS, CONDITION_LABEL } from "./variants.js";
 import {
   restoreSession, persistSessionCookies, ensureFreshToken, storedSession, cachedProfile, saveProfileCache, clearProfileCache,
@@ -1531,6 +1532,7 @@ window.PS = {
   ...tradingApi,
   ...inviteApi,
   ...binderApi,
+  ...listPickerApi,
   enablePush: wrapEnablePush(featureApi.enablePush),
   openPost: (id) => { history.replaceState(null, "", `/?tab=community&post=${Number(id)}`); routeCommunity(); },
 };
@@ -1553,6 +1555,7 @@ async function boot() {
   initAppNav(); // 5 Hauptreiter: Start · Scanner · Marktplatz · Sammlung · Community (+ Unterreiter), Profil-Menü oben rechts
   initHome(); // Start-Dashboard: Scanner-Hero, Marktplatz-Highlights, Live-Chat, Binder
   initInvite(); // Teilen & Freunde einladen: Fortschritt zum Gründer-Sammler, 1-Tap-Teilen, Hinweis nach Uploads
+  initListPicker(); // Meine Inserate: „Alle Doppelten inserieren“ + Kartenauswahl mit Suche & Filter
   initBinder(); // Sammlung → Mein Binder: Set-Ordner & durchswipebare Binder-Ansicht mit Marktplatz-Abgleich
   initArena();
   initFlip();

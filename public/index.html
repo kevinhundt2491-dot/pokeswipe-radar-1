@@ -617,6 +617,10 @@
             <p class="text-xs text-slate-300">Tippe einen Ordner an und blättere wie in einem echten Binder – fehlende Karten siehst du sofort, inklusive Marktplatz-Angeboten.</p></div>
           <span data-folder-count class="ps-pill text-[11px] font-black text-slate-200 shrink-0"></span>
         </div>
+        <div data-folder-tools class="hidden flex flex-wrap items-center justify-between gap-2">
+          <button type="button" role="switch" data-count-dupes aria-checked="true" onclick="PS.binderCountDupes()" class="ps-switch on"><span class="ps-switch-track" aria-hidden="true"><span class="ps-switch-knob"></span></span><span>Doppelte im Gesamtwert mitzählen</span></button>
+          <span class="text-xs text-slate-300">Gesamtwert <strong data-binder-total class="text-emerald-300">0,00 €</strong></span>
+        </div>
         <div data-folders class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5"></div>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

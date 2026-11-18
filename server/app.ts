@@ -53,6 +53,7 @@ import { registerOps } from "./ops.ts";
 import { registerFounder, founderInfo, syncFounderQuiet, isFounder } from "./founder.ts";
 import { isUploadPath, boostAllowance, alertAllowance } from "./founder-logic.ts";
 import { registerBinder } from "./binder.ts";
+import { findMergeTarget, bumpQuantity } from "./duplicates-logic.ts";
 import { registerConditionPrices } from "./condition-prices.ts";
 import { registerValuation, pricesDegraded } from "./valuation.ts";
 import { freshnessLabel, isStale } from "./valuation-logic.ts";
@@ -306,6 +307,29 @@ app.get("/api/portfolio", auth, async (c) => {
   });
 });
 
+/** Vorhandenen Sammlungs-Eintrag derselben Karte (Variante + Zustand) um die gescannte Anzahl erhöhen. */
+async function mergeIntoPortfolio(userId: string, b: any) {
+  const variant = parseVariant(b.variant);
+  if (!variant) return null;
+  const condition = normalizeCondition(b.condition);
+  let ref: any = null;
+  if (b.printId) {
+    const print = await printForPortfolio(str(b.printId, 50));
+    if (!print) return null;
+    ref = print.baseCardId ? { cardId: print.baseCardId, printId: print.id } : { cardId: null, printId: print.id };
+  } else if (b.cardId && CARD_ID_RE.test(str(b.cardId, 40))) ref = { cardId: str(b.cardId, 40), printId: null };
+  if (!ref) return null;
+  const existing = await db.select({ id: portfolioItems.id, cardId: portfolioItems.cardId, printId: portfolioItems.printId, variant: portfolioItems.variant, condition: portfolioItems.condition, quantity: portfolioItems.quantity })
+    .from(portfolioItems)
+    .where(and(eq(portfolioItems.userId, userId), ref.printId ? eq(portfolioItems.printId, ref.printId) : and(eq(portfolioItems.cardId, ref.cardId), sql`${portfolioItems.printId} IS NULL`)))
+    .limit(50);
+  const target = findMergeTarget(existing, { ...ref, variant, condition });
+  if (!target) return null;
+  const [item] = await db.update(portfolioItems).set({ quantity: bumpQuantity(target.quantity, int(b.quantity, 1, 999, 1)) })
+    .where(and(eq(portfolioItems.id, target.id), eq(portfolioItems.userId, userId))).returning();
+  return item ?? null;
+}
+
 async function checkPortfolioLimit(userId: string, plan: PlanId, adding: number) {
   const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(portfolioItems).where(eq(portfolioItems.userId, userId));
   return Number(r?.n ?? 0) + adding <= PLANS[plan].portfolio;
@@ -314,6 +338,11 @@ async function checkPortfolioLimit(userId: string, plan: PlanId, adding: number)
 app.post("/api/portfolio", auth, async (c) => {
   const user = c.get("user"), plan = c.get("plan");
   const b = await body(c);
+  // Scanner: gleiche Karte (Karte/Druck + Variante + Zustand) erneut gescannt → Anzahl erhöhen statt zweiten Slot anlegen
+  if (b.merge === true) {
+    const merged = await mergeIntoPortfolio(user.id, b);
+    if (merged) return c.json({ ...merged, merged: true }, 200);
+  }
   if (!(await checkPortfolioLimit(user.id, plan, 1))) {
     return c.json({ error: `Limit erreicht (${PLANS[plan].portfolio} Karten im Tarif ${PLANS[plan].label}).`, upgrade: true }, 402);
   }
