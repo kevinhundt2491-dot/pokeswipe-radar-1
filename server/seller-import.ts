@@ -23,6 +23,7 @@ import { MARKET_MIN_PRICE_CENTS, MARKET_MAX_PRICE_CENTS } from "./market-logic.t
 import { parseImport, importPrice, cleanImportOptions, IMPORT_MAX_BYTES, type ImportRow } from "./seller-import-logic.ts";
 import { str, int, rows, rateLimit, trustedOrigin } from "./util.ts";
 import { log } from "./log.ts";
+import { notifyWishlistListing } from "./growth.ts";
 
 type Hlp = { auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>> };
 type Profile = typeof profiles.$inferSelect;
@@ -135,6 +136,11 @@ async function upsertListing(ctx: SellerCtx, row: ImportRow, m: Match): Promise<
   }).onConflictDoNothing().returning({ id: listings.id });
   if (!created) return { status: "updated" };
   if (addsActive) ctx.room--;
+  // Wunschlisten- & Binder-Lücken-Alarm (Glocke + Push) auch für Händler-Importe – wie bei manuell erstellten Inseraten
+  if (status === "active" && m.cardId) {
+    const [row] = await db.select().from(listings).where(eq(listings.id, created.id)).limit(1);
+    if (row) await notifyWishlistListing(row, ctx.profile.displayName, ctx.profile.userId).catch((e) => log.warn("seller-import", "Wunschlisten-Alarm fehlgeschlagen", { err: e }));
+  }
   return { status: "created", listingId: created.id };
 }
 

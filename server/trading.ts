@@ -397,7 +397,14 @@ export function registerTrading(app: any, { auth, body }: Hlp) {
     if (await isBlockedBetween(user.id, partnerId)) return c.json({ error: "Tauschanfrage nicht möglich." }, 403);
     const [partner] = await db.select({ banned: profiles.banned, binderVisible: profiles.binderVisible }).from(profiles).where(eq(profiles.userId, partnerId)).limit(1);
     if (!partner || partner.banned) return c.json({ error: "Dieser Sammler ist nicht verfügbar." }, 404);
-    if (binderPartner && !partner.binderVisible) return c.json({ error: "Dieser Sammler zeigt seine Sammlung gerade nicht – frag ihn im Chat." }, 403);
+    if (binderPartner && !partner.binderVisible) {
+      // Schwarzes Brett / Live-Chat: Karten, die der Partner dort selbst „zum Tausch anbietet“ (Karten-Pin), bleiben tauschbar
+      const wanted = (Array.isArray(b.want) ? b.want : []).map((w: any) => int(w?.portfolioItemId, 1, ID_MAX, 0)).filter(Boolean);
+      const pinned = wanted.length ? rows(await db.execute(sql`
+        SELECT (card_meta->>'portfolioItemId')::int AS id FROM community_posts WHERE user_id = ${partnerId} AND card_intent = 'offer' AND status = 'visible' AND card_meta->>'portfolioItemId' IS NOT NULL
+        UNION SELECT (card_meta->>'portfolioItemId')::int FROM chat_messages WHERE user_id = ${partnerId} AND card_intent = 'offer' AND status = 'visible' AND card_meta->>'portfolioItemId' IS NOT NULL`)).map((r: any) => Number(r.id)) : [];
+      if (!wanted.length || !wanted.every((id: number) => pinned.includes(id))) return c.json({ error: "Dieser Sammler zeigt seine Sammlung gerade nicht – frag ihn im Chat." }, 403);
+    }
 
     // Positionen: was ich gebe (aus meiner Sammlung/meinen Inseraten), was ich möchte (Inserate des Partners; Sammlungs-Karten nur aus einem Match)
     const give = await resolvePositions(b.give, user.id, true);

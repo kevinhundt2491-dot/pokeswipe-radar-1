@@ -840,6 +840,8 @@ export function registerGrowth(app: any, hlp: {
       communityComments: rows(await db.execute(sql`SELECT id, post_id, body, status, created_at FROM community_comments WHERE user_id = ${userId}`)),
       chatMessages: rows(await db.execute(sql`SELECT id, body, status, created_at FROM chat_messages WHERE user_id = ${userId} ORDER BY id DESC LIMIT 2000`)),
       likes: rows(await db.execute(sql`SELECT post_id, created_at FROM community_likes WHERE user_id = ${userId}`)),
+      friendships: rows(await db.execute(sql`SELECT requester_id, addressee_id, status, created_at, responded_at FROM friendships WHERE requester_id = ${userId} OR addressee_id = ${userId}`)),
+      directMessages: rows(await db.execute(sql`SELECT id, recipient_id, kind, body, meta, status, created_at FROM direct_messages WHERE user_id = ${userId} ORDER BY id DESC LIMIT 2000`)),
       following: rows(await db.execute(sql`SELECT p.display_name, f.created_at FROM follows f JOIN profiles p ON p.user_id = f.followee_id WHERE f.follower_id = ${userId}`)),
       followersCount: Number(rows(await db.execute(sql`SELECT count(*)::int AS n FROM follows WHERE followee_id = ${userId}`))[0]?.n ?? 0),
       blocked: rows(await db.execute(sql`SELECT p.display_name, b.created_at FROM user_blocks b JOIN profiles p ON p.user_id = b.blocked_id WHERE b.blocker_id = ${userId}`)),

@@ -278,7 +278,11 @@ async function openCollector(id) {
       : `<div class="grid grid-cols-2 gap-2">
         ${btn("💬 Anschreiben", `PS.chatMention(${jsArg(p.name)})`, "bg-yellow-400 text-slate-950")}
         ${btn("🤝 Tausch anbieten", "PS.binderTrade('any', 0)", "bg-emerald-500 text-slate-950")}
-      </div>`;
+      </div>
+      ${state.user ? `<div class="grid grid-cols-2 gap-2">
+        ${window.PS?.friendButton?.(p.id, p.name, "lg") || ""}
+        ${btn("🔒 Privater 1:1-Chat", `PS.openDm(${jsArg(p.id)})`, "bg-slate-800 text-white")}
+      </div>` : ""}`;
     const stats = r.stats ? `<p class="text-[11px] text-slate-400">${Number(r.stats.cards) || 0} Karten · ${Number(r.stats.unique) || 0} verschiedene · <strong class="text-emerald-300">${(Number(r.stats.spare) || 0) + (Number(r.stats.listings) || 0)} zum Tausch</strong></p>` : "";
     const body = r.hidden
       ? `<p class="text-xs bg-slate-900 rounded-xl p-3 text-slate-300">🔒 ${esc(p.name)} zeigt seine Sammlung gerade nicht öffentlich. Du kannst ihn trotzdem im Live-Chat anschreiben.</p>`

@@ -917,7 +917,12 @@ export const communityPosts = pgTable("community_posts", {
   likeCount: integer("like_count").notNull().default(0),
   commentCount: integer("comment_count").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("community_posts_feed").on(t.status, t.id), index("community_posts_user").on(t.userId, t.id)]);
+  // Schwarzes Brett: Kategorie (pull = Pulls & Sammler-Flex | trade = Tausch-Gesuche & Angebote | talk = Fragen & Talk)
+  category: text().notNull().default("pull"),
+  // ⚡ Live-Binder-Match & Karten-Pin: angehängte Karte aus dem Binder (offer = „Ich biete zum Tausch“, seek = „Ich suche für mein Set“)
+  cardIntent: text("card_intent"),
+  cardMeta: jsonb("card_meta"),
+}, (t) => [index("community_posts_feed").on(t.status, t.id), index("community_posts_user").on(t.userId, t.id), index("community_posts_category").on(t.category, t.id)]);
 
 export const communityComments = pgTable("community_comments", {
   id: serial().primaryKey(),
@@ -943,7 +948,35 @@ export const chatMessages = pgTable("chat_messages", {
   status: text().notNull().default("visible"),
   flagReason: text("flag_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // Karten-Pin im Live-Chat (siehe community_posts.card_*)
+  cardId: text("card_id"),
+  cardIntent: text("card_intent"),
+  cardMeta: jsonb("card_meta"),
 }, (t) => [index("chat_messages_room").on(t.room, t.id), index("chat_messages_user").on(t.userId, t.createdAt)]);
+
+// Freundschaftsanfragen & Sammler-Freundesliste (ein Eintrag je Paar; requester → addressee)
+export const friendships = pgTable("friendships", {
+  id: serial().primaryKey(),
+  requesterId: text("requester_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  addresseeId: text("addressee_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  status: text().notNull().default("pending"), // pending | accepted | declined
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  respondedAt: timestamp("responded_at", { withTimezone: true }),
+}, (t) => [uniqueIndex("friendships_pair").on(t.requesterId, t.addresseeId), index("friendships_addressee").on(t.addresseeId, t.status)]);
+
+// Privater 1:1-Chat zwischen Sammlern: Text, Tausch-Vorschlag (trade_id in meta) und Treffen-Planer (meetup)
+export const directMessages = pgTable("direct_messages", {
+  id: serial().primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }), // Absender
+  recipientId: text("recipient_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),
+  kind: text().notNull().default("text"), // text | trade | meetup
+  body: text().notNull().default(""),
+  meta: jsonb(),
+  status: text().notNull().default("visible"),
+  flagReason: text("flag_reason"),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("direct_messages_pair").on(t.userId, t.recipientId, t.id), index("direct_messages_recipient").on(t.recipientId, t.readAt)]);
 
 export const userBlocks = pgTable("user_blocks", {
   blockerId: text("blocker_id").notNull().references(() => profiles.userId, { onDelete: "cascade" }),

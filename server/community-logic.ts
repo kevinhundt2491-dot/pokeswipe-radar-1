@@ -149,7 +149,7 @@ export function trustLevel(score: number): TrustLevel {
 }
 
 /** Schreib-Limits je Vertrauensstufe (pro Minute / pro Stunde) – serverseitig über die Datenbank gezählt. */
-export function writeLimits(score: number, kind: "chat" | "post" | "comment" | "deal" | "radar") {
+export function writeLimits(score: number, kind: "chat" | "post" | "comment" | "deal" | "radar" | "dm") {
   const lvl = trustLevel(score).key;
   const table = {
     chat: { new: [4, 40], known: [8, 120], trusted: [12, 240], top: [20, 400] },
@@ -158,6 +158,8 @@ export function writeLimits(score: number, kind: "chat" | "post" | "comment" | "
     // Phase 5: Community-Deals im Flip-Radar und Sammler-Radar-Pins
     deal: { new: [1, 3], known: [2, 10], trusted: [3, 20], top: [5, 40] },
     radar: { new: [1, 2], known: [1, 4], trusted: [2, 6], top: [2, 10] },
+    // Privater 1:1-Chat (Freunde, Direkt-Tausch, Treffen-Planer)
+    dm: { new: [6, 60], known: [12, 200], trusted: [20, 400], top: [30, 600] },
   } as const;
   const [perMinute, perHour] = table[kind][lvl];
   return { perMinute, perHour };
