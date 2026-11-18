@@ -20,6 +20,7 @@ import { exactMp4Support, ExactMp4Writer } from "./reel-mp4.js";
 import {
   proScript, checkProScript, sceneTimes, choreoMarks, captionChunks, bitrateFor, shrinkBitrate, speedFor, audibleEnd, frameGrid,
   secondsFor, scenesFor, isHook4, segmentReport, SAFE_MB, MB, AUDIO_KBPS, PRO_MIN_S, PRO_MAX_S, PRO_LEAD, END_FADE,
+  isShowcase, showcaseScript, checkTemplateScript, showcaseScenes, showcaseMarks, showcaseCues, showcaseSpec,
 } from "./reel-pro.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
@@ -33,7 +34,23 @@ const NO_VOICE_S = 26;
  * Sprecherin für eine Pro-Vorlage laden und das Tempo so wählen, dass das Video 20–30 s lang wird.
  * @returns {Promise<{ take: object, speed: number, seconds: number }>}
  */
-export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S], cap = 1.12) {
+export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S], cap = 1.12, { format = "" } = {}) {
+  // Exakte Länge (Showcase 29 s): natürliches Tempo, bis zu 2 Feinanpassungen, damit das letzte Wort
+  // spätestens 0,8 s vor dem Ende fällt – das Video bleibt dann frame-genau exakt `range[1]` Sekunden lang.
+  if (format === "showcase" || range[0] === range[1]) {
+    const fit = range[1] - PRO_LEAD - END_FADE;
+    let speed = 1.0;
+    let take = await loadNarration(lines, ac, { tone, speed, format });
+    for (let i = 0; i < 2; i++) {
+      const sec = speechSeconds(take);
+      const want = sec > fit ? Math.min(cap, Math.ceil(speed * (sec / (fit - 0.25)) * 100) / 100)
+        : sec < fit - 4 ? Math.max(0.9, Math.round(speed * (sec / (fit - 1.5)) * 100) / 100) : speed;
+      if (want === speed) break;
+      try { take = await loadNarration(lines, ac, { tone, speed: want, format }); speed = want; }
+      catch (e) { console.warn("Showcase-Voiceover: Tempo-Anpassung fehlgeschlagen, nutze vorherigen Take", e); break; }
+    }
+    return { take, speed, seconds: Math.max(range[1], PRO_LEAD + speechSeconds(take) + END_FADE) };
+  }
   // Kurze Vorlagen (z. B. 15–20 s) starten gleich mit dem schnellsten erlaubten Tempo (Hook-Presets: 1,2)
   let speed = range[1] <= 20 ? cap : 1.04;
   let take = await loadNarration(lines, ac, { tone, speed });
@@ -98,22 +115,26 @@ function audioClock(ac) {
  * @returns {Promise<null | { blob, ext, mime, duration, facts, lines, fps, liveFps, capture, mbit, cover, scenes, exact }>}
  */
 export async function recordPro({ stage, tpl, variant = 0, look = null, coverCard = null, voice = null, mbit = 18, fps = 30, maxMb = SAFE_MB, canvas, onStatus, onTick }) {
-  const script = proScript(tpl, variant);
-  const chk = checkProScript(script.say);
+  const show = isShowcase(tpl);
+  if (show) fps = tpl.fps || 60; // Showcase: immer 60 FPS
+  const script = show ? showcaseScript(tpl, variant) : proScript(tpl, variant);
+  const chk = show ? checkTemplateScript(tpl, script.say) : checkProScript(script.say);
   if (!chk.ok) throw new Error(`Skript „${tpl.label}“ hat ${chk.words} Wörter (erlaubt ${chk.min}–${chk.max})`);
   const choreo = CHOREO[tpl.choreo];
   if (!choreo) throw new Error(`Keine Live-Choreografie für „${tpl.choreo}“`);
 
   // ---- 1. Zeitplan aus der vollständig dekodierten Sprecherin ----
   const speech = voice ? speechSeconds(voice) : 0; // exactAudioDuration (gemessen an den Samples)
-  const { frames: N, duration: D } = frameGrid(voice ? PRO_LEAD + speech + END_FADE : Math.min(NO_VOICE_S, secondsFor(tpl)[1]), fps);
+  // Showcase: exakt 29 s (1740 Frames bei 60 FPS) – nur falls die Sprecherin trotz Höchsttempo länger braucht, wird verlängert
+  const want = show ? Math.max(tpl.exact, voice ? PRO_LEAD + speech + END_FADE : 0) : voice ? PRO_LEAD + speech + END_FADE : Math.min(NO_VOICE_S, secondsFor(tpl)[1]);
+  const { frames: N, duration: D } = frameGrid(want, fps);
   const shift = (m) => ({ start: PRO_LEAD + m.start, end: PRO_LEAD + m.end });
   const marks = voice ? voice.marks.map(shift) : estimateMarks(script.say, D);
   const wordMarks = voice?.wordMarks ? voice.wordMarks.map((ws) => ws.map(shift)) : null;
-  const scenes = sceneTimes(marks, D, scenesFor(tpl));
+  const scenes = show ? showcaseScenes(D, tpl.plan) : sceneTimes(marks, D, scenesFor(tpl));
   const captions = captionChunks(script.show, marks, wordMarks);
-  const useMbit = bitrateFor(D, mbit, maxMb);
-  const cues = cuesFor(scenes), seed = tpl.key.length + variant;
+  const useMbit = show ? Math.min(bitrateFor(D, tpl.mbit || mbit, maxMb), 12) : bitrateFor(D, mbit, maxMb);
+  const cues = show ? showcaseCues(scenes) : cuesFor(scenes), seed = tpl.key.length + variant;
   const placed = voice ? [{ id: "narration", start: PRO_LEAD, stop: PRO_LEAD + speech, buffer: voice.buffer, rate: 1 }] : [];
 
   const exactCfg = await exactMp4Support({ width: OUT_W, height: OUT_H, fps, mbit: useMbit, audioKbps: AUDIO_KBPS });
@@ -130,7 +151,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
     let mixed = null;
     if (exactCfg) {
       onStatus?.("🎚️ Rendere die Tonspur sample-genau (Sprecherin, Musik, Effekte) …");
-      try { mixed = await renderSoundtrack(D, cues, seed, placed, { sampleRate: exactCfg.sampleRate, fadeOut: END_FADE }); }
+      try { mixed = await renderSoundtrack(D, cues, seed, placed, { sampleRate: exactCfg.sampleRate, fadeOut: END_FADE, ...(show ? { studio: true } : {}) }); }
       catch (e) { if (voice) throw new Error(`Tonspur konnte nicht gerendert werden: ${e?.message || e}`); mixed = null; }
     }
     onStatus?.(`🌐 Lade die Live-Website (${tpl.label}) …`);
@@ -146,6 +167,9 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
       tpl, cover: script.cover, badge: script.badge, look, coverCard, scenes, captions, facts: stage.facts, fade: END_FADE,
       // Fingerposition normiert (0–1) – der Fokus-Zoom fährt gezielt auf die Stelle, an der die App gerade bedient wird
       focus: () => { const f = stage.finger; return f && f.el?.style.opacity !== "0" ? { x: f.x / VIEW_W, y: f.y / VIEW_H } : null; },
+      // Showcase: Tipp-Impulse (Finger gedrückt) und Kartenflächen für den Holo-Lichtreflex – normiert 0–1
+      pressed: () => !!stage.finger?.el?.classList.contains("down"),
+      cards: show ? () => stage.cardRects?.() || [] : () => [],
     });
     canvas.width = OUT_W; canvas.height = OUT_H;
     const ctx = canvas.getContext("2d", { alpha: false });
@@ -177,7 +201,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
     } else {
       vstream = canvas.captureStream(fps);
       if (ac && ac.state === "running") {
-        try { sound = startSoundtrack(ac, D, cues, seed, placed, { fadeOut: END_FADE }); } catch (e) { if (voice) throw e; sound = null; }
+        try { sound = startSoundtrack(ac, D, cues, seed, placed, { fadeOut: END_FADE, ...(show ? { studio: true } : {}) }); } catch (e) { if (voice) throw e; sound = null; }
       }
       if (voice && !sound?.voiceEnded) throw new Error("Tonspur mit Sprecherin konnte nicht gestartet werden");
       const stream = sound ? new MediaStream([...vstream.getVideoTracks(), sound.track]) : vstream;
@@ -226,7 +250,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
       requestAnimationFrame(paint);
     });
     onStatus?.(`⏺ Pro-Video „${tpl.label}“ läuft (${fps} FPS, ${useMbit} Mbit/s${exactCfg ? ", frame-genau" : ""}) – Tab sichtbar lassen …`);
-    choreoRun = runChoreo(stage, tpl.choreo, choreoMarks(scenes), () => Math.max(0, clock()), scenes[scenes.length - 1].start);
+    choreoRun = runChoreo(stage, tpl.choreo, show ? showcaseMarks(scenes) : choreoMarks(scenes), () => Math.max(0, clock()), show ? D : scenes[scenes.length - 1].start);
     // Wachhund: läuft die Uhr nicht weiter (z. B. Tab im Hintergrund), wird die Aufnahme verworfen statt zu hängen
     const startWall = performance.now();
     const watchdog = new Promise((_, reject) => {
@@ -260,6 +284,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
       blob, ext: extOf(type), mime: exactCfg ? `video/mp4;codecs=${exactCfg.video.codec},mp4a.40.2` : rec.mimeType || type, duration: D, facts: { ...stage.facts }, lines: script.say, cover: script.cover,
       fps: exactCfg ? fps : Math.round(encoded / Math.max(0.1, D)), liveFps: Math.round(src.rate()), capture: "pro", mbit: useMbit, scenes, thumb, badge: script.badge, look,
       exact: !!exactCfg, frames: exactCfg ? N : encoded, bitrateMode: exactCfg ? bitrateMode : "recorder", speech, timing: isHook4(tpl) ? segmentReport(scenes, tpl.segments) : null,
+      spec: show ? showcaseSpec(tpl, { duration: D, fps: exactCfg ? fps : Math.round(encoded / Math.max(0.1, D)), mbit: useMbit }) : null,
     };
   } catch (e) {
     if (aborted && !error && /abgebrochen/.test(e?.message || "")) return null;

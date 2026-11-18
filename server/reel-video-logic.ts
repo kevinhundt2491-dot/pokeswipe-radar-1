@@ -13,7 +13,12 @@ export const PRO_TEMPLATE_LABELS: Record<string, string> = {
   fomo: "Hook-Preset: Schnäppchen-FOMO (Live Flip-Radar, 15–17 s, 8 Mbit/s)",
   flea: "Hook-Preset: Flohmarkt- & Tausch-Schutz (Browser-Scanner, 15–17 s, 8 Mbit/s)",
   chase: "Hook-Preset: Tinder für Sammler (Swipe, Tausch-Hub & Sammler-Radar, 15–17 s, 8 Mbit/s)",
+  showcase: "Pro-Showcase: Volle App- & Pro-Abo-Power (exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s)",
 };
+/** High-End-Showcase-Vorlagen (eigenes Format, exakte Länge) – optional in der Rotation, Standard bleibt PRO_TEMPLATE_KEYS. */
+export const SHOWCASE_TEMPLATE_KEYS = ["showcase"] as const;
+/** Alle Vorlagen, die die Admin-Zentrale auswählen kann. */
+export const VIDEO_TEMPLATE_KEYS = [...PRO_TEMPLATE_KEYS, ...SHOWCASE_TEMPLATE_KEYS] as const;
 /** Die 3 Hook-Presets (4 Szenen, 15–17 s) – im Generator einzeln oder gemeinsam per Klick erzeugbar. */
 export const HOOK_PRESET_KEYS = ["fomo", "flea", "chase"] as const;
 export const HOOK_VARIANTS = 2;
@@ -30,7 +35,7 @@ export const DEFAULT_VIDEO: VideoConfig = {
 /** Gespeicherte/übergebene Werte auf erlaubte Werte begrenzen. */
 export function cleanVideoConfig(raw: any, prev: VideoConfig = DEFAULT_VIDEO): VideoConfig {
   const r = raw && typeof raw === "object" ? raw : {};
-  const tpl = Array.isArray(r.templates) ? PRO_TEMPLATE_KEYS.filter((k) => r.templates.includes(k)) : prev.templates;
+  const tpl: string[] = Array.isArray(r.templates) ? VIDEO_TEMPLATE_KEYS.filter((k) => r.templates.includes(k)) : prev.templates;
   const mbit = Number(r.mbit ?? prev.mbit);
   const maxMb = Number(r.maxMb ?? prev.maxMb);
   return {

@@ -33,6 +33,10 @@ const NARRATION_TIMEOUT_MS = 75_000;
 // Wortlimit der Live-Reels: 32–36 Wörter (15 s) bzw. 65–72 Wörter (30 s) – mehr wird nicht gesprochen,
 // damit die Stimme entspannt und vollständig bis zum letzten Wort durchspricht.
 export const NARRATION_MAX_WORDS = 72;
+/** Eigenes Limit für die 29-s-Showcase-Vorlage (exaktes Briefing-Skript, ≈ 79 Wörter bei souveränem Tempo). */
+export const SHOWCASE_MAX_WORDS = 84;
+/** Wortlimit je Vorlagen-Format (Standard/Hook 72, Showcase 84). */
+export const narrationMaxWords = (format: unknown) => (format === "showcase" ? SHOWCASE_MAX_WORDS : NARRATION_MAX_WORDS);
 /** Wörter wie gesprochen: alles mit Buchstabe oder Ziffer zählt (gleiche Regel wie client/reel-scripts.js). */
 export function countWords(text: string | string[]) {
   const s = Array.isArray(text) ? text.join(" ") : String(text ?? "");
@@ -238,7 +242,8 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     if (!lines.length || lines.some((l: string) => !l)) return c.json({ error: "Sprechertext fehlt oder enthält leere Sätze." }, 400);
     if (lines.join(" ").length > NARRATION_MAX_CHARS) return c.json({ error: "Sprechertext zu lang." }, 400);
     const words = countWords(lines);
-    if (words > NARRATION_MAX_WORDS) return c.json({ error: `Sprechertext zu lang (${words} Wörter, höchstens ${NARRATION_MAX_WORDS}).` }, 400);
+    const maxWords = narrationMaxWords(b.format);
+    if (words > maxWords) return c.json({ error: `Sprechertext zu lang (${words} Wörter, höchstens ${maxWords}).` }, 400);
     const sp = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(b.speed) || 1)) * 100) / 100;
     const store = getStore("voiceover");
     const settings = toneSettings(b.tone);

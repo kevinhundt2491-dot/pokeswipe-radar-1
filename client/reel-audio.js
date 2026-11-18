@@ -97,17 +97,17 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = [], opts = {
  * keinen Versatz und keinen Drift zwischen Bild und Ton.
  * @returns {Promise<AudioBuffer>}
  */
-export async function renderSoundtrack(D, cues = [], seed = 1, voice = [], { sampleRate = 48000, fadeOut = 1.2 } = {}) {
+export async function renderSoundtrack(D, cues = [], seed = 1, voice = [], { sampleRate = 48000, fadeOut = 1.2, studio = false } = {}) {
   const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   if (!OAC) throw new Error("Dieser Browser kann die Tonspur nicht offline rendern");
   const length = Math.round(D * sampleRate);
   const ac = new OAC({ numberOfChannels: 2, length, sampleRate });
-  buildMix(ac, ac.destination, 0, D, cues, seed, voice, { fadeOut });
+  buildMix(ac, ac.destination, 0, D, cues, seed, voice, { fadeOut, studio });
   return ac.startRendering();
 }
 
 /** Musik + Effekte + Sprecherin in `out` aufbauen (live oder offline). T0 = Kontextzeit von Videosekunde 0. */
-function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2 } = {}) {
+function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2, studio = false } = {}) {
   // Schutz-Limiter am Ausgang: verhindert Übersteuern (Knistern), greift bei normalem Pegel nicht ein
   const limiter = ac.createDynamicsCompressor();
   limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.12;
@@ -129,6 +129,8 @@ function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2 } = {}) {
   const sfx = ac.createGain(); sfx.gain.value = 0.85; sfx.connect(master);
   // Mit Sprecherin: Musik dezent und leise im Hintergrund, Effekte zurückhaltend
   if (voice.length) { music.gain.value = 0.2; sfx.gain.value = 0.32; }
+  // Studio-Mix (Showcase): Musik als leiser Teppich, Mikro-SFX klar hörbar, aber immer unter der Stimme
+  if (studio) { music.gain.value = voice.length ? 0.13 : 0.4; sfx.gain.value = voice.length ? 0.3 : 0.7; }
   const nodes = [];
   const voiceSources = [];
   const track = (n) => { nodes.push(n); return n; };
@@ -216,6 +218,38 @@ function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2 } = {}) {
     match(t) { [72, 76, 79, 84].forEach((m, i) => osc("triangle", hz(m), t + i * 0.07, 0.35, 0.16, sfx, { a: 0.004 })); },
     pop(t) { osc("sine", 500, t, 0.12, 0.35, sfx, { a: 0.002, glideTo: 1100 }); },
     riser(t) { burst(t - 1.2, 1.2, 0.22, sfx, { type: "bandpass", f: 300, f2: 7000, q: 2, a: 1.1 }); },
+    // ---- Mikro-Sounddesign (Showcase): leise, kurze UI-Sounds ----
+    /** dezenter Scanner-Beep beim Erfassen (zwei saubere Sinus-Töne mit weichem Ausklang) */
+    beep(t) {
+      osc("sine", 1568, t, 0.07, 0.24, sfx, { a: 0.003 });
+      osc("sine", 2093, t + 0.085, 0.14, 0.2, sfx, { a: 0.003 });
+      osc("triangle", 3136, t + 0.085, 0.08, 0.04, sfx, { a: 0.002 });
+    },
+    /** leises Scanner-Summen während der Laser über die Karte fährt */
+    scanhum(t) { burst(t, 0.9, 0.05, sfx, { type: "bandpass", f: 1200, f2: 2600, q: 6, a: 0.15 }); },
+    /** sanftes Karten-Blättern (Papier-Swish + weicher Anschlag) */
+    page(t) {
+      burst(t - 0.08, 0.2, 0.16, sfx, { type: "bandpass", f: 3800, f2: 1400, q: 0.9, a: 0.05 });
+      burst(t + 0.1, 0.06, 0.08, sfx, { type: "lowpass", f: 900, a: 0.002 });
+    },
+    /** kurzer Erfolgs-Pling (Glocke mit Obertönen) */
+    pling(t) {
+      [[88, 0.16], [95, 0.07], [100, 0.035]].forEach(([m, g]) => osc("sine", hz(m), t, 0.55, g, sfx, { a: 0.003 }));
+      osc("sine", hz(93), t + 0.09, 0.45, 0.09, sfx, { a: 0.003 });
+    },
+    /** weicher Tipp (Glas-Klick) */
+    tap(t) { osc("sine", 1900, t, 0.035, 0.12, sfx, { a: 0.001, glideTo: 1200 }); burst(t, 0.025, 0.05, sfx, { type: "highpass", f: 5000 }); },
+    /** Karte landet im Ordner */
+    drop(t) { osc("sine", 300, t, 0.16, 0.22, sfx, { a: 0.003, glideTo: 140 }); burst(t, 0.07, 0.06, sfx, { type: "lowpass", f: 1500 }); },
+    /** Kamera-Übergang (luftiger Whoosh) */
+    whoosh(t) { burst(t - 0.22, 0.38, 0.13, sfx, { type: "bandpass", f: 500, f2: 3500, q: 1.1, a: 0.18 }); },
+    /** sanfte Weichzeichnung für den Weichstart */
+    softhit(t) { osc("sine", 90, t, 0.5, 0.35, sfx, { a: 0.004, glideTo: 45 }); },
+    /** edler Glitzer für die Pro-Einblendung */
+    shimmer(t) { [84, 88, 91, 96, 100].forEach((m, i) => osc("sine", hz(m), t + i * 0.045, 0.4, 0.05, sfx, { a: 0.004 })); },
+    tick(t) { osc("triangle", hz(91), t, 0.09, 0.09, sfx, { a: 0.002 }); },
+    /** warmer Schluss-Akkord unter der Domain */
+    chime(t) { [72, 76, 79, 84].forEach((m, i) => osc("sine", hz(m), t + i * 0.06, 1.1, 0.07, sfx, { a: 0.01 })); },
     finale(t) {
       SFX.impact(t);
       [60, 64, 67, 72].forEach((m) => osc("sawtooth", hz(m), t, 1.4, 0.05, pad, { a: 0.02 }));
@@ -243,8 +277,8 @@ function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2 } = {}) {
       });
     };
     // Unter der durchgehenden Sprecherin bleibt die Musik dezent hörbar (nicht stumm) – über die vollen 30 s
-    duck(music, music.gain.value, 0.1);
-    duck(sfx, sfx.gain.value, 0.15);
+    duck(music, music.gain.value, studio ? 0.07 : 0.1);
+    duck(sfx, sfx.gain.value, studio ? 0.2 : 0.15);
     voice.forEach(({ start, buffer }) => {
       const src = track(ac.createBufferSource());
       src.buffer = buffer; src.playbackRate.value = 1;
