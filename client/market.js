@@ -472,7 +472,13 @@ export async function routeMarket() {
     } catch (e) { handleError(e); }
     clean(); openOrders(); window.PS?.loadListings?.();
   } else if (q.get("orders") === "1") { clean(); if (state.user) openOrders(); }
-  else if (q.get("seller")) {
+  else if (/^\d{1,10}$/.test(q.get("listing") || "")) {
+    // Direktlink aus Mitteilung/Push („Fehlende Binder-Karte verfügbar“, Wunschkarte): Marktplatz + Inserat öffnen
+    const id = Number(q.get("listing"));
+    try { history.replaceState(history.state, "", `${location.pathname}?tab=map`); } catch {}
+    window.PS?.goMarket?.();
+    window.PS?.openListing?.(id);
+  } else if (q.get("seller")) {
     const which = q.get("seller");
     clean();
     if (state.user) { await window.PS?.refreshMe?.(); if (which === "taxinfo" && window.PS?.openTaxInfo) window.PS.openTaxInfo(); else openSeller(); }

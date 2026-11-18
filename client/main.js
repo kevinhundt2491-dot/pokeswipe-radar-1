@@ -1402,7 +1402,8 @@ async function openNotifications() {
         const nl = String(n.link || "");
         const sub = /^\/\?tab=(\w+)&sub=(\w+)$/.exec(nl);
         const post = /^\/\?tab=community&post=(\d+)$/.exec(nl);
-        const link = nl.startsWith("/?tab=trades") ? `PS.openTrades()` : nl.startsWith("/?tab=map&sell=wanted") ? `PS.closeAll(); PS.openDemand()` : nl.startsWith("/?tab=map") ? `PS.goMarket()`
+        const lst = /^\/\?tab=map&listing=(\d+)$/.exec(nl);
+        const link = lst ? `PS.closeAll(); PS.goMarket(); PS.openListing(${Number(lst[1])})` : nl.startsWith("/?tab=trades") ? `PS.openTrades()` : nl.startsWith("/?tab=map&sell=wanted") ? `PS.closeAll(); PS.openDemand()` : nl.startsWith("/?tab=map") ? `PS.goMarket()`
           : nl.startsWith("/?orders=1") ? `PS.closeAll(); PS.openOrders()` : post ? `PS.closeAll(); PS.openPost(${Number(post[1])})`
           : nl.startsWith("/?tab=community") ? `PS.closeAll(); switchTab('community')`
           : sub ? `PS.closeAll(); PS.showSub('${sub[1]}', '${sub[2]}')` : "";

@@ -9,7 +9,7 @@ import {
 import { authenticate, ensureProfile, isAdmin, type AuthUser } from "./auth.ts";
 import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, effectivePlan, listingLimit, type PlanId } from "./plans.ts";
 import { registerFeatures, ensureReferralCode, extraMe, applyShopUpdates, activeAlertCount, findSealed, notifySealedListing, trialDays } from "./features.ts";
-import { registerGrowth, notifyWishlistListing } from "./growth.ts";
+import { registerGrowth, notifyWishlistListing, listingLink } from "./growth.ts";
 import { registerCollector } from "./collector.ts";
 import { registerDrops } from "./drops.ts";
 import { registerVoiceover } from "./voiceover.ts";
@@ -702,7 +702,7 @@ app.post("/api/listings", auth, async (c) => {
         sql`${priceAlerts.targetPrice} >= ${price}`, sql`${priceAlerts.userId} <> ${user.id}`,
       ));
       for (const w of watchers.slice(0, 200)) {
-        await notify(w.userId, `🤝 Neues Inserat unter deinem Zielpreis`, `${cardName} für ${euro(Number(price))} in ${row.city} (${profile.displayName}).`, "/?tab=map");
+        await notify(w.userId, `🤝 Neues Inserat unter deinem Zielpreis`, `${cardName} für ${euro(Number(price))} in ${row.city} (${profile.displayName}).`, listingLink(row.id));
       }
     }
   }
