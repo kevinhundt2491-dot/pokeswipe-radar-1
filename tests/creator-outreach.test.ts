@@ -180,3 +180,40 @@ test("Online-Radar & Creator: Client-Module, Seiten und Routen sind verdrahtet",
   const trading = readFileSync("server/trading.ts", "utf8");
   assert.match(trading, /binderPartner && !partner\.binderVisible/);
 });
+
+test("Feste Creator, TikTok-Schnellsuche & DM: echte Kanal-Links, keine E-Mails, Promo-Codes NAME30", async () => {
+  const m = await import("../server/creator-logic.ts");
+  const names = m.FEATURED_CREATORS.map((f) => f.name);
+  for (const n of ["Gigalabastia", "ZockerEule", "FanmadeTim", "PokeBazi", "The Zero of Time", "Dario"]) assert.ok(names.includes(n), n);
+  for (const f of m.FEATURED_CREATORS) {
+    assert.match(f.channelUrl, /^https:\/\/www\.youtube\.com\/@[A-Za-z0-9]+$/);
+    assert.equal(f.platform, "youtube");
+    assert.match(m.suggestPromoCode(f.name), /^[A-Z0-9]+30$/);
+    assert.ok(!("email" in f), "keine E-Mail erfunden");
+  }
+  assert.equal(m.suggestPromoCode("Gigalabastia"), "GIGALABASTIA30");
+  assert.equal(m.FEATURED_CREATORS.find((f) => f.name === "Gigalabastia")?.category, "flohmarkt");
+  assert.deepEqual(m.TIKTOK_NICHE_SEARCHES.map((s) => s.url), [
+    "https://www.tiktok.com/search/user?q=pokemon%20karten%20oeffnen",
+    "https://www.tiktok.com/search/user?q=pokemon%20pulls%20deutsch",
+    "https://www.tiktok.com/search/user?q=pokemon%20flohmarkt",
+    "https://www.tiktok.com/search/user?q=pokemon%20masterset",
+  ]);
+  assert.equal(m.tiktokProfileUrl("@poke.max"), "https://www.tiktok.com/@poke.max");
+  assert.equal(m.tiktokProfileUrl("https://www.tiktok.com/@poke_max?lang=de"), "https://www.tiktok.com/@poke_max");
+  assert.equal(m.tiktokProfileUrl("Poke Max"), "");
+  assert.equal(m.tiktokProfileUrl("pokemax"), "", "ohne @ wird kein Handle geraten");
+  const dm = m.fillTemplate(m.TIKTOK_DM, { name: "PokeMax", code: "POKEMAX30", link: "x", page: m.creatorPage("https://pokeswipe-radar.de/") });
+  assert.ok(dm.includes("POKEMAX30") && dm.includes("https://pokeswipe-radar.de/creator") && dm.includes("PokeMax"));
+  for (const id of m.TEMPLATE_IDS) {
+    const out = m.fillTemplate(m.TEMPLATES[id].body, { name: "D", code: "D30", link: "l", page: "https://pokeswipe-radar.de/creator" });
+    assert.ok(out.includes("https://pokeswipe-radar.de/creator"), `${id} ohne /creator-Link`);
+  }
+  assert.equal(m.displayStatus({ status: "sent", email: "a@b.de", sentAt: new Date() }).label, "E-Mail gesendet");
+});
+
+test("Extraktor: Linktree-/Beacons-JSON mit \\u0040 und kaputtem mailto", () => {
+  const html = `<script id="__NEXT_DATA__">{"links":[{"url":"mailto:business\\u0040pokemax.de"}]}</script><a href="mailto:%E0%A4%A">x</a>`;
+  const r = extractContacts(html, "https://linktr.ee/pokemax");
+  assert.ok(r.emails.includes("business@pokemax.de"), JSON.stringify(r.emails));
+});

@@ -89,6 +89,44 @@ export const STARTER_LEADS: StarterLead[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Feste deutsche Pokémon-TCG-Creator (vom Admin vorgegeben) – nur Kanal-Links, KEINE E-Mails.
+// Werden beim Öffnen des Creator-Finders einmalig angelegt bzw. in passende leere Platzhalter übernommen.
+// ---------------------------------------------------------------------------
+export type FeaturedCreator = { name: string; platform: CreatorPlatform; channelUrl: string; category: string };
+export const FEATURED_CREATORS: FeaturedCreator[] = [
+  { name: "Gigalabastia", platform: "youtube", channelUrl: "https://www.youtube.com/@Gigalabastia", category: "flohmarkt" },
+  { name: "ZockerEule", platform: "youtube", channelUrl: "https://www.youtube.com/@ZockerEule", category: "packopening" },
+  { name: "FanmadeTim", platform: "youtube", channelUrl: "https://www.youtube.com/@FanmadeTim", category: "packopening" },
+  { name: "PokeBazi", platform: "youtube", channelUrl: "https://www.youtube.com/@PokeBazi", category: "packopening" },
+  { name: "The Zero of Time", platform: "youtube", channelUrl: "https://www.youtube.com/@TheZeroOfTime", category: "packopening" },
+  { name: "Dario", platform: "youtube", channelUrl: "https://www.youtube.com/@DarioPokemon", category: "packopening" },
+];
+
+/** 1-Klick-Suchen nach aktiven deutschen TikTok-Creatorn (1k–15k Follower) – öffnen nur die öffentliche TikTok-Suche. */
+export const TIKTOK_NICHE_SEARCHES: { label: string; url: string }[] = [
+  { label: "TikTok: Pokemon Karten öffnen", url: "https://www.tiktok.com/search/user?q=pokemon%20karten%20oeffnen" },
+  { label: "TikTok: Pokemon Pulls deutsch", url: "https://www.tiktok.com/search/user?q=pokemon%20pulls%20deutsch" },
+  { label: "TikTok: Pokemon Flohmarkt", url: "https://www.tiktok.com/search/user?q=pokemon%20flohmarkt" },
+  { label: "TikTok: Pokemon Masterset", url: "https://www.tiktok.com/search/user?q=pokemon%20masterset" },
+];
+
+/** Aus „@handle“, „handle“ oder einem Profil-Link einen TikTok-Profil-Link machen (leer, wenn nicht eindeutig). */
+export function tiktokProfileUrl(input: string): string {
+  const s = String(input || "").trim();
+  const m = s.match(/tiktok\.com\/(@[A-Za-z0-9._]{2,40})/i);
+  if (m) return `https://www.tiktok.com/${m[1]}`;
+  // Nur ein ausdrückliches @handle wird zum Link – Anzeigenamen werden nicht zu Handles „geraten“
+  const h = s.slice(1);
+  return s.startsWith("@") && /^[A-Za-z0-9._]{2,24}$/.test(h) ? `https://www.tiktok.com/@${h}` : "";
+}
+
+/** Öffentliche Creator-Infoseite, die in jeder Anfrage verlinkt wird. */
+export const creatorPage = (site: string) => `${site.replace(/\/$/, "")}/creator`;
+
+/** Kurze, lockere TikTok-DM (für Creator ohne E-Mail-Kontakt). */
+export const TIKTOK_DM = "Hey [Kanalname]! 👋 Feier deine Pokémon-Videos richtig. Wir sind PokeSwipe Radar – unser Live-Scanner zeigt beim Opening sofort den Kartenwert. Lust auf Pro dauerhaft gratis + deinen eigenen Code [PromoCode] (30 Tage Pro für deine Community)? Alle Infos: [CreatorPage] 🙌";
+
+// ---------------------------------------------------------------------------
 // Recherche-Links (nur öffentliche Seiten, keine API-Abfragen)
 // ---------------------------------------------------------------------------
 export function researchLinks(l: { name: string; platform: string; channelUrl: string; placeholder?: boolean }) {
@@ -129,6 +167,7 @@ Was wir dir anbieten möchten:
 • Dauerhaft PokeSwipe Pro gratis (VIP-Creator-Pass) + verifiziertes Creator-Badge in Profil & Marktplatz
 • Deinen eigenen Community-Code [PromoCode]: Jeder Zuschauer testet damit 30 Tage Pro kostenlos
 • Dein Link: [CreatorLink]
+• Alle Infos zum Creator-Programm: [CreatorPage]
 
 Kein Vertrag, keine Pflicht-Posts – nutz es einfach, wenn es dir gefällt. Wir freuen uns über eine kurze Antwort, gern auch mit Feedback.
 
@@ -149,6 +188,7 @@ Unser Angebot an dich:
 • Dauerhaft PokeSwipe Pro gratis (VIP-Creator-Pass) inkl. verifiziertem Creator-Badge
 • Eigener Code [PromoCode] – deine Zuschauer testen 30 Tage Pro kostenlos
 • Dein Link: [CreatorLink]
+• Alle Infos zum Creator-Programm: [CreatorPage]
 
 Ganz ohne Verpflichtung. Wenn du Lust hast, probier es beim nächsten Dreh einfach aus – wir freuen uns auf deine Rückmeldung!
 
@@ -170,6 +210,7 @@ Das bekommst du:
 • Eigener Community-Code [PromoCode] – 30 Tage Pro gratis für deine Follower
 • Wir teilen deine Videos gern auch auf unseren Kanälen
 • Dein Link: [CreatorLink]
+• Alle Infos zum Creator-Programm: [CreatorPage]
 
 Kein Vertrag, keine Mindest-Posts. Sag einfach Bescheid, ob du Lust hast – wir freuen uns!
 
@@ -190,6 +231,7 @@ hier ist [Absender] von PokeSwipe Radar. Wir haben gesehen, dass du eine Pokémo
 
 Für dich als Admin: dauerhaft PokeSwipe Pro gratis inkl. Creator-Badge. Für deine Mitglieder: Code [PromoCode] = 30 Tage Pro kostenlos.
 Dein Community-Link: [CreatorLink]
+Alle Infos zum Creator-Programm: [CreatorPage]
 
 Wenn das für euren Server passt, freuen wir uns über eine kurze Rückmeldung – auch gern mit Wünschen, was eurer Community noch fehlt.
 
@@ -219,14 +261,15 @@ export function chooseTemplate(category: string, followers: number): TemplateId 
   return "A";
 }
 
-export function fillTemplate(text: string, v: { name: string; code: string; link: string; sender?: string }) {
+export function fillTemplate(text: string, v: { name: string; code: string; link: string; sender?: string; page?: string }) {
   const sender = String(v.sender || "").trim().slice(0, 60);
   return String(text)
     .replace(/\[Absender\]/g, sender || "das Team")
     .replace(/\[Signatur\]/g, sender ? `${sender}\nPokeSwipe Radar` : "Dein PokeSwipe-Radar-Team")
     .replace(/\[Kanalname\]/g, v.name || "du")
     .replace(/\[PromoCode\]/g, v.code || "")
-    .replace(/\[CreatorLink\]/g, v.link || "");
+    .replace(/\[CreatorLink\]/g, v.link || "")
+    .replace(/\[CreatorPage\]/g, v.page || "https://pokeswipe-radar.de/creator");
 }
 
 /** Personalisierter Link mit Promo-Code und Herkunft. */
@@ -250,7 +293,7 @@ export function displayStatus(l: { status: string; email: string; sentAt: Date |
   if (l.status === "sent" && sent && !l.followupSentAt && now - sent >= FOLLOWUP_AFTER_DAYS * 86_400_000) return { key: "followup", label: "Follow-up fällig" };
   if (l.status === "ready" && !l.email) return { key: "no_email", label: "Kein E-Mail-Kontakt – DM nutzen" };
   const labels: Record<string, string> = {
-    ready: "Bereit", queued: "In Warteschlange", sent: "Gesendet", replied: "Antwort erhalten", active: "Aktiv", paused: "Pausiert", optout: "Abgemeldet",
+    ready: "Bereit", queued: "In Warteschlange", sent: "E-Mail gesendet", replied: "Antwort erhalten", active: "Aktiv", paused: "Pausiert", optout: "Abgemeldet",
   };
   return { key: l.status, label: labels[l.status] || l.status };
 }
@@ -348,6 +391,9 @@ const JUNK_EMAIL = /(example\.(com|org|de)|domain\.(com|de)|sentry|wixpress|@2x|
 
 function decodeEntities(s: string) {
   return s
+    // JSON-Escapes, wie sie Linktree/Beacons (Next.js-Daten) nutzen: \u0040 → @, \u002F → /
+    .replace(/\\u00(40|2[eEfF])/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\\//g, "/")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
     .replace(/&(amp|commat|period|nbsp);/g, (_, n) => ({ amp: "&", commat: "@", period: ".", nbsp: " " } as Record<string, string>)[n]);
@@ -362,7 +408,7 @@ export function extractContacts(html: string, baseUrl = "") {
     if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,24}$/.test(v) || JUNK_EMAIL.test(v) || v.length > 120) return;
     emails.set(v, Math.max(emails.get(v) ?? 0, prio));
   };
-  for (const m of text.matchAll(/mailto:([^"'\s>?]+)/gi)) add(decodeURIComponent(m[1]), 3);
+  for (const m of text.matchAll(/mailto:([^"'\s>?]+)/gi)) { let v = m[1]; try { v = decodeURIComponent(v); } catch {} add(v, 3); }
   // Verschleierte Schreibweisen
   const deobf = text
     .replace(/\s*(\[|\(|\{)\s*(at|ät|@)\s*(\]|\)|\})\s*/gi, "@")
