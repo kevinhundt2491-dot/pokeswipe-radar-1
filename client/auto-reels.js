@@ -12,7 +12,7 @@ import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
 import { recordLive, previewLive, loadNarration, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
 import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
-import { PRO_TEMPLATES, templateByKey, proCaption, proScript, checkProScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, SAFE_MB, PRO_MAX_S } from "./reel-pro.js";
+import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S } from "./reel-pro.js";
 import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
 import { lookFor, cardImageUrl, pickCoverCard } from "./reel-pro.js";
 import { sameOriginImageUrl } from "./dom-capture.js";
@@ -712,6 +712,7 @@ const PRO_HTML = `
     <div class="ar-bar">
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="next">🔁 Nächstes Pro-Video (Rotation)</button>
       <button type="button" class="ar-btn" data-ar="pro" data-pro="all">🚀 Alle aktiven Vorlagen</button>
+      <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="showcase" title="High-End-Showcase: Scanner, Set-Binder, Marktplatz, Live-Chat und Pro-Abo – exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s">🎬 Pro-Showcase (29 s · 60 FPS)</button>
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="hook4" title="Schnäppchen-FOMO, Flohmarkt-Schutz und Tinder für Sammler nacheinander aufnehmen">🎯 Alle 3 Hook-Presets (15–17 s)</button>
     </div>
     <ul id="ar-pro-list"></ul>
@@ -731,14 +732,14 @@ function renderPro(states = {}) {
   if (!spec) return;
   const est = estimateMb(PRO_MAX_S, bitrateFor(PRO_MAX_S, proCfg.mbit, proMaxMb()));
   spec.textContent = `1080×1920 · H.264 High · ${proCfg.fps} FPS · bis ${proCfg.mbit} Mbit/s · AAC 192 kbit/s Stereo · Stimme ${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"} · Größen-Garantie ≤ ${proMaxMb()} MB (≈ ${est.toFixed(0)} MB bei 30 s)`;
-  ui.root.querySelector("#ar-pro-list").innerHTML = PRO_TEMPLATES.map((tpl, i) => {
+  ui.root.querySelector("#ar-pro-list").innerHTML = ALL_TEMPLATES.map((tpl, i) => {
     const on = proCfg.templates.includes(tpl.key), r = proResults.get(tpl.key), st = states[tpl.key];
     const icon = { on: "⏺", ok: "✅", err: "⚠️", wait: "⏳" }[st] || (r ? "✅" : on ? "🎞️" : "⏸");
-    const words = checkProScript(proScript(tpl, 0).say).words;
+    const words = checkTemplateScript(tpl, proScript(tpl, 0).say).words;
     const isNext = proNext?.template === tpl.key;
     const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ ${r.name.endsWith(".mp4") ? "MP4" : "Video (WebM)"} herunterladen</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> <a href="${r.txtUrl}" download="${esc(r.txtName)}">⬇ .txt</a> ${r.sent ? "📤 an Make gesendet" : ""}</span></div></div>` : "";
     const notes = (proNotes.get(tpl.key) || []).map((n) => `<small class="ar-note ${n.kind}" role="${n.kind === "err" ? "alert" : "status"}">${n.kind === "err" ? "⚠️ Fehler: " : n.kind === "warn" ? "⚠️ " : "ℹ️ "}${esc(n.text)}</small>`).join("");
-    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${tpl.seconds ? ` · ${secondsFor(tpl).join("–")} s` : ""}${tpl.mbit ? ` · ${tpl.mbit} Mbit/s` : ""}${proSent()[tpl.key] ? ` · 📤 zuletzt an Make gesendet am ${esc(new Date(proSent()[tpl.key].at).toLocaleString("de-DE"))}` : ""}${on ? "" : " · nicht in der Rotation (Admin-Zentrale)"}</small></span>
+    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${tpl.seconds ? ` · ${[...new Set(secondsFor(tpl))].join("–")} s` : ""}${tpl.fps ? ` · ${tpl.fps} FPS` : ""}${tpl.mbit ? ` · ${tpl.mbit} Mbit/s` : ""}${proSent()[tpl.key] ? ` · 📤 zuletzt an Make gesendet am ${esc(new Date(proSent()[tpl.key].at).toLocaleString("de-DE"))}` : ""}${on ? "" : " · nicht in der Rotation (Admin-Zentrale)"}</small></span>
       <span class="ar-acts"><button type="button" data-ar="pro" data-pro="one" data-k="${tpl.key}" title="Nur diese Vorlage aufnehmen">⏺</button></span>${notes}${out}</li>`;
   }).join("");
 }
@@ -753,7 +754,9 @@ async function onProClick(btn) {
   if (mode !== "idle") return;
   const what = btn.dataset.pro;
   if (what === "one") return generatePro([{ tpl: templateByKey(btn.dataset.k), variant: proNext?.template === btn.dataset.k ? proNext.variant : 0 }]);
-  if (what === "all") return generatePro(PRO_TEMPLATES.filter((t) => proCfg.templates.includes(t.key)).map((tpl) => ({ tpl, variant: 0 })));
+  if (what === "all") return generatePro(ALL_TEMPLATES.filter((t) => proCfg.templates.includes(t.key)).map((tpl) => ({ tpl, variant: 0 })));
+  // High-End-Showcase immer einzeln per Klick – unabhängig von der Rotation der Admin-Zentrale
+  if (what === "showcase") return generatePro(ALL_TEMPLATES.filter(isShowcase).map((tpl) => ({ tpl, variant: proNext?.template === tpl.key ? proNext.variant : 0 })));
   // Die 3 Hook-Presets immer gemeinsam – unabhängig davon, ob sie in der Rotation der Admin-Zentrale aktiv sind
   if (what === "hook4") return generatePro(PRO_TEMPLATES.filter(isHook4).map((tpl) => ({ tpl, variant: 0 })));
   if (what === "next") {
@@ -850,14 +853,14 @@ async function generatePro(list) {
     const pick = pickCoverCard(pool, recentCards());
     if (pick) pool = pool.filter((c) => c !== pick);
     const coverCard = pick ? { ...pick, img: await loadCardImage(pick) } : null;
-    const n = PRO_TEMPLATES.indexOf(tpl) + 1;
+    const n = ALL_TEMPLATES.indexOf(tpl) + 1;
     states[tpl.key] = "on"; renderPro(states); setBusy(true);
     try {
       const script = proScript(tpl, variant);
       let voice = null, speed = 1, voiceFailed = null, voiceSec = 0;
       if (voiceOn) {
         setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
-        try { ({ take: voice, speed, seconds: voiceSec } = await loadProNarration(script.say, ac, proCfg.tone, secondsFor(tpl), tpl.maxSpeed || 1.12)); }
+        try { ({ take: voice, speed, seconds: voiceSec } = await loadProNarration(script.say, ac, tpl.tone || proCfg.tone, secondsFor(tpl), tpl.maxSpeed || 1.12, { format: tpl.format || "" })); }
         catch (e) {
           // Kein Abbruch: das Video wird mit Musik (ohne Sprecherin) aufgenommen und heruntergeladen,
           // aber NICHT automatisch an Make.com gesendet. Der genaue Fehler steht unter der Karte.
@@ -879,7 +882,7 @@ async function generatePro(list) {
         await waitVisible();
         if (!wake || wake.released) { try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; } }
         res = await recordProSafe({
-          stage, tpl, variant, look, coverCard, voice, mbit: tpl.mbit || proCfg.mbit, fps: proCfg.fps, maxMb, canvas: ui.canvas,
+          stage, tpl, variant, look, coverCard, voice, mbit: tpl.mbit || proCfg.mbit, fps: tpl.fps || proCfg.fps, maxMb, canvas: ui.canvas,
           onStatus: (m) => setStatus(`Pro ${n} (${i + 1}/${list.length}): ${m}`),
           onTick: (t, D) => { ui.time.innerHTML = `<span class="ls-rec-dot"></span>Pro ${n} · ${fmt(t, D)}`; ui.bar.style.width = `${((i + t / D) / list.length) * 100}%`; },
         });
@@ -892,7 +895,7 @@ async function generatePro(list) {
       // Vorschaubild = exakt Frame 0 der Aufnahme (Rückfall: gleiches Motiv ohne Live-Ansicht neu zeichnen)
       const thumb = res.thumb?.size ? res.thumb : await renderCoverThumb(tpl, script, look, coverCard);
       const cap = proCaption(tpl, variant, res.facts);
-      const ep = { n: 100 + n, key: `pro-${tpl.key}`, title: tpl.label, pro: { n, fps: proCfg.fps } };
+      const ep = { n: 100 + n, key: `pro-${tpl.key}`, title: tpl.label, pro: { n, fps: tpl.fps || proCfg.fps } };
       const txt = captionFile(ep, cap, { voiceover: res.lines.join(" "), recorded: new Date().toLocaleString("de-DE"), mode: `Pro-Video, ${res.fps} FPS, ${res.mbit} Mbit/s${res.exact ? ", frame-genau (WebCodecs)" : ""}` });
       const mb = (res.blob.size / MB).toFixed(1);
       const name = `${fileBase(ep)}.${res.ext}`;
@@ -906,7 +909,15 @@ async function generatePro(list) {
           video_format: "hook4", video_bitrate_mode: res.bitrateMode || "", comment_question: cap.question || "", target_seconds: secondsFor(tpl).join("-"),
           speech_seconds: res.speech ? +res.speech.toFixed(2) : "", segments_json: JSON.stringify(res.timing), timing_ok: res.timing?.ok ? "1" : "0",
         } : {}),
+        ...(isShowcase(tpl) ? {
+          video_format: "showcase", video_bitrate_mode: res.bitrateMode || "", target_seconds: String(tpl.exact), duration_seconds: +res.duration.toFixed(3),
+          speech_seconds: res.speech ? +res.speech.toFixed(2) : "", spec_json: JSON.stringify(res.spec), spec_ok: res.spec?.ok ? "1" : "0",
+        } : {}),
       };
+      if (res.spec && !res.spec.ok) {
+        const bad = Object.entries(res.spec.checks).filter(([, v]) => !v).map(([k]) => ({ duration: "Länge ≠ 29 s", fps: "nicht 60 FPS", bitrate: "Bitrate außerhalb 10–12 Mbit/s", size: "nicht 1080×1920" })[k]).join(", ");
+        addNote(tpl.key, "warn", `Showcase-Spezifikation nicht ganz erfüllt (${bad}) – ${res.duration.toFixed(2).replace(".", ",")} s, ${res.fps} FPS, ${res.mbit} Mbit/s${res.exact ? "" : " (Browser ohne WebCodecs-MP4: bitte aktuelles Chrome/Edge nutzen)"}.`);
+      }
       if (res.timing && !res.timing.ok) {
         const t = res.timing.rows.map((r) => `${r.key} ${r.start.toFixed(1)}–${r.end.toFixed(1)} s (Soll ${r.want.join("–")})`).join(" · ");
         addNote(tpl.key, "info", `Länge ${res.timing.duration.toFixed(1).replace(".", ",")} s – Szenen folgen den echten Satz-Zeitstempeln der Sprecherin: ${t}.`);
@@ -976,7 +987,7 @@ async function generatePro(list) {
 async function renderCoverThumb(tpl, script, look, coverCard) {
   await loadProFonts();
   const c = document.createElement("canvas"); c.width = OUT_W; c.height = OUT_H;
-  const comp = new ProCompositor({ tpl, cover: script.cover, badge: script.badge, look, coverCard, scenes: sceneTimes([], isHook4(tpl) ? 17 : 26, scenesFor(tpl)), captions: [] });
+  const comp = new ProCompositor({ tpl, cover: script.cover, badge: script.badge, look, coverCard, scenes: isShowcase(tpl) ? showcaseScenes(tpl.exact) : sceneTimes([], isHook4(tpl) ? 17 : 26, scenesFor(tpl)), captions: [] });
   comp.draw(c.getContext("2d", { alpha: false }), 0, null);
   return (await jpeg(c)) || new Blob([], { type: "image/jpeg" });
 }

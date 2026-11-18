@@ -56,10 +56,10 @@ const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length
  * Komplettes Skript in EINEM Take sprechen lassen, MP3 vollständig laden und als AudioBuffer dekodieren.
  * @returns {Promise<{ buffer: AudioBuffer, marks: {start:number,end:number}[], duration: number, words: number, mp3: Blob }>}
  */
-export async function loadNarration(lines, ac, { tone = "calm", speed = 1 } = {}) {
+export async function loadNarration(lines, ac, { tone = "calm", speed = 1, format = "" } = {}) {
   const key = `${tone}|${speed}|${lines.join("\n")}`;
   if (voiceCache.has(key)) return voiceCache.get(key);
-  const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines, speed, tone } });
+  const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines, speed, tone, ...(format ? { format } : {}) } });
   // Lange Takes werden gestreamt (Status 200 sofort) – ein Fehler steht dann im Feld "error"
   if (res?.error) throw new Error(res.error);
   if (!res?.audio || !Array.isArray(res.marks) || res.marks.length !== lines.length) throw new Error("Sprachausgabe unvollständig");

@@ -1497,6 +1497,12 @@ function actOnHit(name, key) {
   if (!HIT_ACTIONS[name]) return null;
   const snap = hitSnapshot(key);
   if (!snap) return null;
+  // Reel-Aufnahme (Stage): „Binder“ legt die Karte nur in der Demo ab – kein Login, kein Schreibzugriff aufs Konto
+  if (IS_STAGE && name === "binder") {
+    sc.demoBinned = { ...snap.info, condition: snap.choice.condition };
+    window.dispatchEvent(new CustomEvent("ps:reel-binned", { detail: sc.demoBinned }));
+    return runHitAction(name, async () => `${RESULT_ACTIONS.binder.toast} · ${snap.info.name} (${snap.choice.condition})`);
+  }
   const login = name === "binder" || name === "wish" || ((name === "sell" || name === "instant") && !IS_STAGE);
   // Login vor dem Schließen prüfen – sonst wäre der Treffer weg, während der Anmelde-Dialog aufgeht
   if (login && !requireLogin()) return null;
@@ -1528,9 +1534,10 @@ const IS_STAGE = (() => {
 })();
 const DEMO_KEYS = ["card:sv03.5-199", "card:sv03.5-006", "card:sv08-238", "card:sv03.5-025", "card:sv04.5-234", "card:sv02-269"];
 
-async function demoInfo() {
+async function demoInfo(keys = DEMO_KEYS) {
   const good = (list) => list.filter((i) => i?.image && Number(i.price) > 0).sort((a, b) => b.price - a.price);
-  let infos = good(await fetchInfo(DEMO_KEYS));
+  let infos = good(await fetchInfo(keys));
+  if (!infos.length && keys !== DEMO_KEYS) infos = good(await fetchInfo(DEMO_KEYS));
   if (!infos.length) {
     try {
       const r = await api("/api/admin/reel-cover-cards?n=6");
@@ -1541,13 +1548,14 @@ async function demoInfo() {
 }
 
 /** Scanner-Bühne mit Karte und Rahmen aufbauen (vor Frame 0 der Aufnahme). Liefert den Treffer oder null. */
-async function demoPrepare() {
+async function demoPrepare(opts = {}) {
   if (!IS_STAGE) return null;
   const stage = $("ps-ls-stage");
   if (!stage) return null;
-  const info = await demoInfo();
+  const keys = Array.isArray(opts.keys) && opts.keys.length ? opts.keys.filter((k) => /^card:[\w.\-]{2,40}$/.test(k)).slice(0, 8) : DEMO_KEYS;
+  const info = await demoInfo(keys.length ? keys : DEMO_KEYS);
   if (!info) return null;
-  sc.demo = { info };
+  sc.demo = { info, zoom: Number(opts.zoom) > 1 ? Math.min(2, Number(opts.zoom)) : 0, sleeve: !!opts.sleeve };
   $("ps-ls-idle")?.classList.add("hidden");
   $("ps-ls-demo")?.remove();
   const layer = document.createElement("div");
@@ -1559,6 +1567,20 @@ async function demoPrepare() {
       <div id="ps-ls-demo-laser" style="position:absolute;left:-4%;right:-4%;top:0;height:4px;border-radius:4px;background:#22d3ee;box-shadow:0 0 18px 6px rgba(34,211,238,.75)"></div>
     </div>
     <p id="ps-ls-demo-hint" style="position:absolute;top:10px;left:0;right:0;text-align:center;font-size:12px;font-weight:900;color:#fff;text-shadow:0 1px 4px #000">📸 Karte in den Rahmen halten</p>`;
+  if (sc.demo.sleeve) {
+    // Karte steckt in einer glänzenden Schutzhülle (Penny-Sleeve): transparente Folie mit Kante und Lichtkante
+    const sleeve = document.createElement("div");
+    sleeve.id = "ps-ls-demo-sleeve";
+    sleeve.style.cssText = "position:absolute;left:50%;top:45%;width:58%;aspect-ratio:66/93;transform:translate(-50%,-50%) rotate(-4deg);border-radius:14px;border:2px solid rgba(255,255,255,.35);background:linear-gradient(125deg,rgba(255,255,255,.22) 0%,rgba(255,255,255,.04) 28%,rgba(255,255,255,0) 52%,rgba(255,255,255,.12) 78%,rgba(255,255,255,.02) 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);pointer-events:none";
+    layer.querySelector("#ps-ls-demo-frame")?.before(sleeve);
+  }
+  if (sc.demo.zoom) {
+    const chip = document.createElement("p");
+    chip.id = "ps-ls-demo-zoom";
+    chip.textContent = `🔍 ${sc.demo.zoom.toLocaleString("de-DE", { maximumFractionDigits: 1 })}× Zoom`;
+    chip.style.cssText = "position:absolute;right:10px;top:34px;font-size:11px;font-weight:900;color:#0b1220;background:#22d3ee;border-radius:999px;padding:3px 9px;opacity:0;transition:opacity .25s";
+    layer.append(chip);
+  }
   stage.prepend(layer); // unter HUD und Hinweisen der echten Oberfläche
   await new Promise((r) => { const img = $("ps-ls-demo-card"); if (!img || img.complete) r(); else { img.onload = r; img.onerror = r; setTimeout(r, 4000); } });
   return info;
@@ -1569,6 +1591,12 @@ async function demoScan(ms = 1200) {
   if (!IS_STAGE || !sc.demo) return false;
   const laser = $("ps-ls-demo-laser"), frame = $("ps-ls-demo-frame"), hintEl = $("ps-ls-demo-hint");
   if (hintEl) hintEl.textContent = "⚡ Erkenne Karte …";
+  // Kamera-Zoom (z. B. 1,4×): Karte + Hülle fahren weich heran, der Zoom-Chip blendet ein
+  if (sc.demo.zoom) {
+    const z = sc.demo.zoom;
+    ["ps-ls-demo-card", "ps-ls-demo-sleeve"].forEach((id) => { const el = $(id); if (el) { el.style.transition = `transform ${Math.round(ms * 0.45)}ms cubic-bezier(.2,.8,.2,1)`; el.style.transform = `translate(-50%,-50%) rotate(-2deg) scale(${z * 0.82})`; } });
+    const chip = $("ps-ls-demo-zoom"); if (chip) chip.style.opacity = "1";
+  }
   const t0 = performance.now();
   await new Promise((resolve) => {
     const step = () => {

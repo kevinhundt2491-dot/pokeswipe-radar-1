@@ -12,7 +12,7 @@ import {
   MAKE_PLATFORMS, PLATFORM_LABELS, resolveMakeConfig, cleanHookUrl, cleanToken, cleanPlatforms, cleanReport, isMakeHost,
   type StoredMakeConfig, type DeliveryReport,
 } from "./make-logic.ts";
-import { cleanVideoConfig, rotationAt, DEFAULT_VIDEO, PRO_TEMPLATE_KEYS, PRO_TEMPLATE_LABELS, type VideoConfig } from "./reel-video-logic.ts";
+import { cleanVideoConfig, rotationAt, DEFAULT_VIDEO, VIDEO_TEMPLATE_KEYS, PRO_TEMPLATE_LABELS, type VideoConfig } from "./reel-video-logic.ts";
 
 const store = () => getStore({ name: "app-config", consistency: "strong" });
 const CONFIG_KEY = "make-config";
@@ -63,7 +63,7 @@ export function registerMake(app: any, { auth, adminOnly, body }: any) {
       lastError: log.find((d) => !d.ok) ?? null,
       deliveries: log.slice(0, 10),
       video: await videoConfig(),
-      allTemplates: PRO_TEMPLATE_KEYS.map((id) => ({ id, label: PRO_TEMPLATE_LABELS[id] })),
+      allTemplates: VIDEO_TEMPLATE_KEYS.map((id) => ({ id, label: PRO_TEMPLATE_LABELS[id] })),
     });
   });
 

@@ -337,6 +337,40 @@ export class LiveStage {
     await this.sleep(120);
   }
 
+  /**
+   * Sichtbarer Tipp OHNE Klick-Auslösung (z. B. „Jetzt kaufen“ in der Aufnahme – es soll kein echter Kauf,
+   * keine Reservierung entstehen). Finger fährt hin, drückt und leuchtet – genau wie bei tap().
+   */
+  async tapVisual(el, { hold = 160 } = {}) {
+    this.check();
+    if (!el) return;
+    const { x, y } = this.center(el);
+    await this.moveFinger(x, y, 380);
+    this.press(true);
+    await this.sleep(hold);
+    this.press(false);
+    await this.sleep(120);
+  }
+
+  /**
+   * Sichtbare Pokémon-Kartenbilder (Scanner, Set-Binder, Marktplatz, Swipe) als normierte Rechtecke 0–1 –
+   * der Compositor legt darauf den bewegten Holo-Lichtreflex. Höchstens 12, nur was im Viewport liegt.
+   */
+  cardRects() {
+    const doc = this.doc;
+    if (!doc) return [];
+    const sel = "#ps-ls-demo-card, #ps-ls-hud img, #ps-binder-view:not(.hidden) .ps-bslot.owned .ps-bslot-art img, #ps-binder-view:not(.hidden) .ps-bslot.market .ps-bslot-art img, .ps-tile-art img, #swipe-img, #home-market-grid img";
+    const out = [];
+    for (const el of doc.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 24 || r.height < 30 || r.bottom < 0 || r.top > VIEW_H || r.right < 0 || r.left > VIEW_W) continue;
+      if (this.win.getComputedStyle(el).visibility === "hidden") continue;
+      out.push({ x: r.left / VIEW_W, y: r.top / VIEW_H, w: r.width / VIEW_W, h: r.height / VIEW_H });
+      if (out.length >= 12) break;
+    }
+    return out;
+  }
+
   /** Echter Swipe auf der Live-Karte (PointerEvents → Swipe-Handler der App, inkl. Badges & Fly-out). */
   async swipe(el, dir = 1, ms = 620) {
     this.check();

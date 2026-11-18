@@ -6,7 +6,7 @@
 // Bedienelemente über das Video. Texte und Untertitel bleiben deshalb in x 80–930, y 230–1500.
 
 import { OUT_W as W, OUT_H as H } from "./live-stage.js";
-import { DOMAIN, CTA_TEXT, isHook4 } from "./reel-pro.js";
+import { DOMAIN, CTA_TEXT, isHook4, isShowcase, SHOWCASE_PRO_AT } from "./reel-pro.js";
 
 const EMOJI = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
 const DISPLAY = `"Lilita One", "Figtree", system-ui, ${EMOJI}, sans-serif`;
@@ -32,8 +32,25 @@ const HZ = { left: 80, right: 920, top: 250, bottom: 1440 };
 const HX = (HZ.left + HZ.right) / 2;
 const CAP_Y_HOOK = 1352;
 const GREEN = "#22c55e", RED = "#ef4444";
+// Showcase: Untertitel unter dem Smartphone (y ≈ 1345–1440, oberhalb der Caption-/Musikzeile der Plattformen),
+// im Abschluss zwischen Smartphone und Domain-Lockup
+const CAP_Y_SHOWCASE = 1392, CAP_Y_FINALE = 1010;
 
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10); }; // Smootherstep – ruckfreie Kamerafahrten
+// Showcase-Kamera (Zeit in s auf 29 s normiert): Bildschirmmitte, Maßstab (1 = 520×924 px Bildschirm), Neigung
+const SC_CAMERA = [
+  [0, { cx: 505, cy: 880, s: 1.0, rot: -0.03 }], [1.1, { cx: 505, cy: 868, s: 1.0, rot: -0.012 }], [5.4, { cx: 505, cy: 856, s: 1.0, rot: 0 }],
+  [6.6, { cx: 505, cy: 850, s: 1.02, rot: 0.01 }], [14.4, { cx: 505, cy: 846, s: 1.06, rot: 0.004 }],
+  [15.4, { cx: 505, cy: 850, s: 1.0, rot: -0.008 }], [18.9, { cx: 505, cy: 850, s: 1.02, rot: 0.006 }],
+  [19.8, { cx: 505, cy: 700, s: 0.8, rot: 0 }], [22.7, { cx: 505, cy: 700, s: 0.8, rot: 0 }],
+  [23.7, { cx: 505, cy: 640, s: 0.66, rot: 0 }], [29, { cx: 505, cy: 634, s: 0.68, rot: 0 }],
+];
+// Bildschirm-Zoom je Zeitfenster [von, bis, Zoom] – 1,0 zeigt die ganze App inkl. 5-Reiter-Navigation
+const SC_ZOOM = [
+  [0.25, 2.35, 1.4], [2.35, 4.85, 1.26], [4.85, 6.6, 1.0], [6.6, 11.0, 1.1], [11.0, 13.6, 1.32], [13.6, 16.0, 1.0],
+  [16.0, 17.2, 1.22], [17.2, 23, 1.0],
+]; 
 const ease = (x) => 1 - Math.pow(1 - clamp(x), 3);
 const back = (x) => { const c = 1.6; x = clamp(x); return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
 
@@ -77,8 +94,10 @@ export class ProCompositor {
    * @param {() => ({x:number,y:number}|null)} [o.focus]  Fingerposition in Ausgabe-Pixeln (für den Fokus-Zoom)
    * @param {object} [o.facts]
    */
-  constructor({ tpl, cover, badge = "", look = null, coverCard = null, scenes, captions, focus = () => null, facts = {}, fade = 0 }) {
-    Object.assign(this, { tpl, cover, badge, coverCard, scenes, captions, focus, facts, fade });
+  constructor({ tpl, cover, badge = "", look = null, coverCard = null, scenes, captions, focus = () => null, facts = {}, fade = 0, pressed = () => false, cards = () => [] }) {
+    Object.assign(this, { tpl, cover, badge, coverCard, scenes, captions, focus, facts, fade, pressed, cards });
+    this.showcase = isShowcase(tpl);
+    if (this.showcase && typeof Image !== "undefined") { this.icon = new Image(); this.icon.decoding = "async"; this.icon.src = "/icons/icon-512.png"; }
     this.accent = look?.accent || tpl.accent || "#ffcb05";
     this.layout = look?.layout || "left";
     this.m = 1; // Deckkraft-Faktor (für Überblendungen)
@@ -103,8 +122,9 @@ export class ProCompositor {
   /** Kamera-Zustand zurücksetzen (nach dem Vorschaubild, vor Frame 0 der Aufnahme). */
   reset() {
     this.fx = 0.5; this.fy = 0.42; // geglättete Zoom-Mitte (normiert 0–1 im Live-Bild)
-    this.zoom = 1.1;
+    this.zoom = this.showcase ? 1.25 : 1.1;
     this.lastT = 0;
+    this.ripples = []; this.down = false;
   }
 
   /** Zeitbasierte Glättung (unabhängig von der Framerate): Anteil, um den sich ein Wert in dt Sekunden annähert. */
@@ -168,7 +188,7 @@ export class ProCompositor {
    * Dynamic Island, Glas-Reflexion). (x, y, w, h) = Bildschirmfläche. Der Ausschnitt aus dem Live-Bild hat
    * immer exakt das Seitenverhältnis des Bildschirms – nichts wird gestreckt. zoom > 1 = Kamerafahrt auf die Fokus-Mitte.
    */
-  #phone(ctx, live, x, y, w, h, zoom = 1, alpha = 1, { spot = null } = {}) {
+  #phone(ctx, live, x, y, w, h, zoom = 1, alpha = 1, { spot = null, fx = false, t = 0 } = {}) {
     const bez = Math.max(10, w * 0.034), R = w * 0.12, r = R - bez * 0.6;
     ctx.save();
     ctx.globalAlpha = alpha * this.m;
@@ -201,6 +221,7 @@ export class ProCompositor {
       const sx = clamp(this.fx * LW - sw / 2, 0, LW - sw), sy = clamp(this.fy * LH - sh / 2, 0, LH - sh);
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
       ctx.drawImage(live, sx, sy, sw, sh, x, y, w, h);
+      if (fx) this.#screenFx(ctx, t, { x, y, w, h, sx, sy, sw, sh, LW, LH });
       // Spotlight auf die Stelle, die gerade bedient wird
       if (spot) {
         const px = x + ((spot.x * LW - sx) / sw) * w, py = y + ((spot.y * LH - sy) / sh) * h;
@@ -856,6 +877,348 @@ export class ProCompositor {
     ctx.restore();
   }
 
+
+  // ================================================================ Pro-Showcase (4 Szenen, 29 s, 60 FPS)
+  // Durchgehende Kamera statt Diashow: ein schwebendes Smartphone mit Tiefenschatten fährt per Keyframes
+  // (weich interpoliert) durch alle Szenen, der Bildschirminhalt zoomt zusätzlich auf die gerade bediente Stelle.
+  // Übergänge: Whip-Pan mit Lichtwischer. Darüber: Szenen-Overlay oben, Untertitel unten im sicheren Bereich,
+  // Tipp-Impulse genau an der Fingerposition und ein bewegter Holo-Lichtreflex auf allen sichtbaren Karten.
+
+  /** Kamera-Zustand des Smartphones zur Zeit t (Bildschirmmitte, Maßstab, Neigung). */
+  #scCamera(t) {
+    const D = this.scenes[this.scenes.length - 1].end, k = D / 29;
+    const K = SC_CAMERA;
+    const tt = t / k;
+    let i = 0;
+    while (i < K.length - 2 && tt > K[i + 1][0]) i++;
+    const [t0, a] = K[i], [t1, b] = K[i + 1];
+    const u = smooth((tt - t0) / Math.max(0.001, t1 - t0));
+    const lerp = (p) => a[p] + (b[p] - a[p]) * u;
+    return { cx: lerp("cx"), cy: lerp("cy"), s: lerp("s"), rot: lerp("rot") };
+  }
+
+  /** Ziel-Zoom des Bildschirminhalts (1 = ganze App inkl. 5-Reiter-Navigation sichtbar). */
+  #scZoom(t) {
+    const tt = t / ((this.scenes[this.scenes.length - 1].end || 29) / 29);
+    for (const [a, b, z] of SC_ZOOM) if (tt >= a && tt < b) return z;
+    return 1;
+  }
+
+  /** Whip-Pan an den Szenengrenzen: Versatz (px), Maßstabs-Delle und Lichtwischer-Stärke. */
+  #scWhip(t) {
+    for (let i = 1; i < this.scenes.length; i++) {
+      const b = this.scenes[i].start, u = (t - (b - 0.3)) / 0.6;
+      if (u > 0 && u < 1) {
+        const w = Math.sin(u * Math.PI);
+        return { x: (i % 2 ? -1 : 1) * 80 * Math.sin(u * Math.PI * 2) * (1 - u * 0.3), dip: 1 - 0.05 * w, flash: w, u };
+      }
+    }
+    return { x: 0, dip: 1, flash: 0, u: 0 };
+  }
+
+  /** Holo-Lichtreflex + Tipp-Impulse im Bildschirm (Koordinaten über die aktuelle Kamera-Abbildung). */
+  #screenFx(ctx, t, m) {
+    const X = (nx) => m.x + ((nx * m.LW - m.sx) / m.sw) * m.w;
+    const Y = (ny) => m.y + ((ny * m.LH - m.sy) / m.sh) * m.h;
+    const kx = (m.LW / m.sw) * m.w, ky = (m.LH / m.sh) * m.h, unit = m.w / 520;
+    // Holo-Schimmer: diagonale Regenbogen-Lichtkante wandert über jede sichtbare Karte (versetzt je Karte)
+    let rects = [];
+    try { rects = this.cards() || []; } catch { rects = []; }
+    rects.forEach((r, i) => {
+      const px = X(r.x), py = Y(r.y), pw = r.w * kx, ph = r.h * ky;
+      if (pw < 18 || px > m.x + m.w || py > m.y + m.h || px + pw < m.x || py + ph < m.y) return;
+      const p = ((t * 0.42 + i * 0.23) % 1.5) - 0.25;
+      if (p < -0.2 || p > 1.2) return; // Lichtkante gerade nicht über dieser Karte
+      const g = ctx.createLinearGradient(px, py, px + pw, py + ph);
+      const stop = (o, c) => { if (o >= 0 && o <= 1) g.addColorStop(o, c); };
+      g.addColorStop(0, "rgba(255,255,255,0)");
+      stop(p - 0.2, "rgba(255,255,255,0)"); stop(p - 0.09, "rgba(110,220,255,0.20)"); stop(p, "rgba(255,255,255,0.46)");
+      stop(p + 0.09, "rgba(255,140,235,0.20)"); stop(p + 0.2, "rgba(255,255,255,0)");
+      g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.save();
+      rr(ctx, px, py, pw, ph, Math.max(3, 7 * unit)); ctx.clip();
+      ctx.globalCompositeOperation = "lighter"; ctx.globalAlpha = 0.6;
+      ctx.fillStyle = g; ctx.fillRect(px, py, pw, ph);
+      ctx.restore();
+    });
+    // Tipp-Impulse: leuchtender Kern + zwei auslaufende Ringe genau an der Tipp-Stelle
+    this.ripples = this.ripples.filter((r) => t - r.t0 < 0.8);
+    for (const r of this.ripples) {
+      const a = clamp((t - r.t0) / 0.8), px = X(r.x), py = Y(r.y);
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const core = ctx.createRadialGradient(px, py, 0, px, py, 46 * unit);
+      core.addColorStop(0, `rgba(255,255,255,${0.85 * (1 - a)})`); core.addColorStop(0.45, hexA(this.accent, 0.5 * (1 - a))); core.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = core; ctx.beginPath(); ctx.arc(px, py, 46 * unit, 0, Math.PI * 2); ctx.fill();
+      for (const [delay, max] of [[0, 78], [0.14, 110]]) {
+        const q = clamp((a * 0.8 - delay) / (0.8 - delay));
+        if (q <= 0) continue;
+        ctx.beginPath(); ctx.arc(px, py, (16 + max * ease(q)) * unit, 0, Math.PI * 2);
+        ctx.lineWidth = Math.max(1.5, 6 * (1 - q)) * unit * 1.4; ctx.strokeStyle = hexA(this.accent, 0.9 * (1 - q));
+        ctx.shadowColor = this.accent; ctx.shadowBlur = 18; ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // gehaltener Finger: ruhiger Leuchtpunkt
+    if (this.down) {
+      const f = this.focus();
+      if (f) {
+        const px = X(f.x), py = Y(f.y);
+        ctx.save(); ctx.globalCompositeOperation = "lighter";
+        const g = ctx.createRadialGradient(px, py, 0, px, py, 34 * unit);
+        g.addColorStop(0, "rgba(255,255,255,0.7)"); g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, py, 34 * unit, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+
+  /** Szenen-Overlay oben (Glas-Panel, max. 2 Zeilen, Wort für Wort einschwebend). Szene 1 steht ab Frame 0. */
+  #scHeadline(ctx, text, t, start, end, { lines = 2, size = 56, y = 300 } = {}) {
+    const inA = start <= 0.01 ? 1 : ease((t - start) / 0.5), outA = 1 - ease((t - (end - 0.32)) / 0.32);
+    const a = clamp(Math.min(inA, outA));
+    if (a <= 0) return;
+    ctx.save();
+    const maxW = SAFE.right - SAFE.left - 70;
+    const { size: s, lines: ls } = fitText(ctx, text, (n) => `400 ${n}px ${DISPLAY}`, maxW, lines, size, 36);
+    ctx.font = `400 ${s}px ${DISPLAY}`;
+    const lh = s * 1.12, h = ls.length * lh + 34;
+    const w = Math.min(SAFE.right - SAFE.left, Math.max(...ls.map((l) => ctx.measureText(l).width)) + 64);
+    const top = y - h / 2 + (1 - inA) * 22;
+    ctx.globalAlpha = a * this.m;
+    ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+    rr(ctx, CX - w / 2, top, w, h, 26); ctx.fillStyle = "rgba(6,9,20,0.78)"; ctx.fill();
+    ctx.shadowColor = "transparent";
+    const bg = ctx.createLinearGradient(CX - w / 2, top, CX + w / 2, top + h);
+    bg.addColorStop(0, hexA(this.accent, 0.95)); bg.addColorStop(1, hexA(this.tpl.gold || "#fbbf24", 0.95));
+    ctx.lineWidth = 3; ctx.strokeStyle = bg; ctx.stroke();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round"; ctx.lineWidth = 6; ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    // Wörter schweben nacheinander ein (gestaffelt), danach ruhig
+    let wi = 0;
+    ls.forEach((line, li) => {
+      const words = line.split(" "), total = ctx.measureText(line).width;
+      let x = CX - total / 2;
+      const ly = top + 17 + lh * (li + 0.5);
+      for (const word of words) {
+        const ww = ctx.measureText(word).width, sp = ctx.measureText(" ").width;
+        const wa = start <= 0.01 ? 1 : ease((t - start - wi * 0.045) / 0.3);
+        ctx.globalAlpha = a * wa * this.m;
+        ctx.textAlign = "left";
+        ctx.strokeText(word, x, ly + (1 - wa) * 14);
+        ctx.fillStyle = /€|Pro|29,90|pokeswipe/i.test(word) ? (this.tpl.gold || "#fbbf24") : "#ffffff";
+        ctx.fillText(word, x, ly + (1 - wa) * 14);
+        x += ww + sp; wi++;
+      }
+    });
+    ctx.restore();
+  }
+
+  /** Edle Pro-Abo-/Pro-Pass-Einblendung (Glas-Panel mit Goldkante, 3 gestaffelte Vorteile, Lichtwischer). */
+  #proPanel(ctx, t, from, to) {
+    const a = clamp(Math.min(ease((t - from) / 0.5), 1 - ease((t - (to - 0.35)) / 0.35)));
+    if (a <= 0) return;
+    const gold = this.tpl.gold || "#fbbf24";
+    const x = 95, w = 820, top = 905 + (1 - a) * 60, h = 400;
+    ctx.save();
+    ctx.globalAlpha = a * this.m;
+    ctx.shadowColor = "rgba(0,0,0,0.75)"; ctx.shadowBlur = 60; ctx.shadowOffsetY = 24;
+    rr(ctx, x, top, w, h, 36);
+    const bg = ctx.createLinearGradient(x, top, x, top + h);
+    bg.addColorStop(0, "rgba(22,18,40,0.97)"); bg.addColorStop(1, "rgba(8,10,22,0.97)");
+    ctx.fillStyle = bg; ctx.fill();
+    ctx.shadowColor = hexA(gold, 0.55); ctx.shadowBlur = 36; ctx.shadowOffsetY = 0;
+    const edge = ctx.createLinearGradient(x, top, x + w, top + h);
+    edge.addColorStop(0, "#fde68a"); edge.addColorStop(0.5, gold); edge.addColorStop(1, "#f59e0b");
+    ctx.lineWidth = 4; ctx.strokeStyle = edge; ctx.stroke();
+    ctx.shadowColor = "transparent";
+    // Kopf: Gold-Badge „PRO-PASS“ + Titel
+    ctx.font = `900 30px ${BODY}`;
+    const label = "⚡ PRO-PASS", bw = ctx.measureText(label).width + 40;
+    rr(ctx, x + 34, top + 30, bw, 54, 27); ctx.fillStyle = edge; ctx.fill();
+    ctx.fillStyle = "#1a1203"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(label, x + 34 + bw / 2, top + 58);
+    ctx.textAlign = "left"; ctx.font = `400 40px ${DISPLAY}`; ctx.fillStyle = "#ffffff";
+    ctx.fillText("Alles, was Profis nutzen", x + 54 + bw, top + 59);
+    // 3 Vorteile, gestaffelt
+    (this.tpl.pro || []).forEach(([icon, title, sub], i) => {
+      const ra = ease((t - from - 0.45 - i * 0.4) / 0.35);
+      if (ra <= 0) return;
+      const ry = top + 112 + i * 94;
+      ctx.save();
+      ctx.globalAlpha = a * ra * this.m;
+      ctx.translate((1 - ra) * 40, 0);
+      rr(ctx, x + 30, ry, w - 60, 82, 22); ctx.fillStyle = "rgba(255,255,255,0.05)"; ctx.fill();
+      ctx.beginPath(); ctx.arc(x + 76, ry + 41, 30, 0, Math.PI * 2); ctx.fillStyle = hexA(gold, 0.18); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = hexA(gold, 0.8); ctx.stroke();
+      ctx.font = `400 34px ${BODY}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.fillText(icon, x + 76, ry + 43);
+      ctx.textAlign = "left";
+      const ft = fitText(ctx, title, (n) => `900 ${n}px ${BODY}`, w - 200, 1, 34, 24);
+      ctx.font = `900 ${ft.size}px ${BODY}`; ctx.fillStyle = "#ffffff"; ctx.fillText(ft.lines[0], x + 126, ry + 29);
+      const fs = fitText(ctx, sub, (n) => `700 ${n}px ${BODY}`, w - 200, 1, 24, 18);
+      ctx.font = `700 ${fs.size}px ${BODY}`; ctx.fillStyle = "#cbd5e1"; ctx.fillText(fs.lines[0], x + 126, ry + 60);
+      ctx.font = `900 30px ${BODY}`; ctx.fillStyle = GREEN; ctx.textAlign = "right"; ctx.fillText("✓", x + w - 56, ry + 42);
+      ctx.restore();
+    });
+    // Lichtwischer über das Panel
+    const sw = ((t - from) * 0.55) % 1.6 - 0.3;
+    if (sw > -0.2 && sw < 1.2) {
+      ctx.save(); rr(ctx, x, top, w, h, 36); ctx.clip();
+      ctx.globalCompositeOperation = "lighter";
+      const g = ctx.createLinearGradient(x + w * (sw - 0.15), top, x + w * (sw + 0.15), top + h);
+      g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(0.5, "rgba(255,240,200,0.16)"); g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = g; ctx.fillRect(x, top, w, h);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /** Abschluss-Lockup: App-Icon + Domain + „Kostenlos starten, kein Download“ + Vertrauens-Chips. */
+  #scFinale(ctx, t, start) {
+    const a = ease((t - start - 0.35) / 0.55);
+    if (a <= 0) return;
+    const fin = this.tpl.finale || {};
+    ctx.save();
+    ctx.globalAlpha = a * this.m;
+    // Zeile: Icon + Domain
+    const icon = 132, gap = 30;
+    ctx.font = `400 64px ${DISPLAY}`;
+    const dom = fin.domain || DOMAIN, dw = ctx.measureText(dom).width;
+    const total = icon + gap + dw, x0 = CX - total / 2, cy = 1150 + (1 - a) * 30;
+    const pop = back(clamp((t - start - 0.35) / 0.6));
+    ctx.save();
+    ctx.translate(x0 + icon / 2, cy); ctx.scale(pop, pop);
+    ctx.shadowColor = hexA(this.accent, 0.8); ctx.shadowBlur = 40;
+    rr(ctx, -icon / 2, -icon / 2, icon, icon, 30); ctx.fillStyle = "#0b1022"; ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.save(); rr(ctx, -icon / 2, -icon / 2, icon, icon, 30); ctx.clip();
+    if (this.icon?.complete && this.icon.naturalWidth) ctx.drawImage(this.icon, -icon / 2, -icon / 2, icon, icon);
+    else { ctx.font = `400 72px ${BODY}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("📡", 0, 4); }
+    ctx.restore();
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(255,255,255,0.25)"; rr(ctx, -icon / 2, -icon / 2, icon, icon, 30); ctx.stroke();
+    ctx.restore();
+    ctx.font = `400 64px ${DISPLAY}`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round"; ctx.lineWidth = 8; ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    const tx = x0 + icon + gap, dot = dom.lastIndexOf(".");
+    ctx.strokeText(dom, tx, cy + 4);
+    ctx.fillStyle = "#ffffff"; ctx.shadowColor = hexA(this.accent, 0.7); ctx.shadowBlur = 22;
+    ctx.fillText(dot > 0 ? dom.slice(0, dot) : dom, tx, cy + 4);
+    if (dot > 0) { ctx.fillStyle = this.accent; ctx.fillText(dom.slice(dot), tx + ctx.measureText(dom.slice(0, dot)).width, cy + 4); }
+    ctx.shadowColor = "transparent";
+    // „Kostenlos starten, kein Download“
+    const sa = ease((t - start - 0.75) / 0.45);
+    if (sa > 0) {
+      ctx.globalAlpha = a * sa * this.m;
+      const sub = fin.sub || "Kostenlos starten, kein Download";
+      ctx.font = `900 40px ${BODY}`;
+      const sw = ctx.measureText(sub).width + 70, sy = 1290 + (1 - sa) * 16;
+      const gold = this.tpl.gold || "#fbbf24";
+      const g = ctx.createLinearGradient(CX - sw / 2, sy, CX + sw / 2, sy);
+      g.addColorStop(0, "#fde68a"); g.addColorStop(1, gold);
+      ctx.shadowColor = hexA(gold, 0.6); ctx.shadowBlur = 26;
+      rr(ctx, CX - sw / 2, sy - 36, sw, 72, 36); ctx.fillStyle = g; ctx.fill();
+      ctx.shadowColor = "transparent"; ctx.fillStyle = "#1a1203"; ctx.textAlign = "center"; ctx.fillText(sub, CX, sy + 2);
+    }
+    // Vertrauens-Chips
+    const ca = ease((t - start - 1.15) / 0.45);
+    if (ca > 0 && fin.chips?.length) {
+      ctx.globalAlpha = a * ca * this.m;
+      // Chips immer innerhalb der Safe Zone (x 80–930): Schrift verkleinern, bis die Zeile passt
+      let fsz = 24, pad = 20, gapC = 12, ws = [];
+      for (; fsz >= 16; fsz -= 1) {
+        ctx.font = `800 ${fsz}px ${BODY}`; pad = Math.round(fsz * 0.8);
+        ws = fin.chips.map((c) => ctx.measureText(c).width + pad * 2);
+        if (ws.reduce((p, c) => p + c, 0) + gapC * (ws.length - 1) <= SAFE.right - SAFE.left) break;
+      }
+      let cx = CX - (ws.reduce((p, c) => p + c, 0) + gapC * (ws.length - 1)) / 2;
+      fin.chips.forEach((c, i) => {
+        rr(ctx, cx, 1352, ws[i], 46, 23); ctx.fillStyle = "rgba(8,12,26,0.85)"; ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = hexA(this.accent, 0.6); ctx.stroke();
+        ctx.fillStyle = "#e2e8f0"; ctx.textAlign = "center"; ctx.fillText(c, cx + ws[i] / 2, 1376);
+        cx += ws[i] + gapC;
+      });
+    }
+    ctx.restore();
+  }
+
+  /** Ein kompletter Showcase-Frame (Hintergrund, Kamera, Smartphone, Overlays). */
+  #showcaseFrame(ctx, t, live) {
+    this.#backdrop(ctx, t);
+    const [scan, binder, market, finale] = this.scenes;
+    const D = this.scenes[this.scenes.length - 1].end, k = D / 29;
+    // Tipp-Erkennung (Finger gedrückt → neuer Impuls)
+    let down = false;
+    try { down = !!this.pressed(); } catch { down = false; }
+    if (down && !this.down) { const f = this.focus(); if (f) this.ripples.push({ t0: t, x: f.x, y: f.y }); }
+    this.down = down;
+    // Bildschirm-Zoom folgt dem Finger (weich), sonst ruhige Mitte
+    const f = this.focus();
+    const zt = this.#scZoom(t);
+    const tx = f ? f.x : 0.5, ty = f ? f.y : 0.46;
+    const kf = this.#follow(t, f ? 2.6 : 1.2), kz = this.#follow(t, 2.2);
+    this.fx += (tx - this.fx) * kf; this.fy += (ty - this.fy) * kf;
+    this.zoom += (zt - this.zoom) * kz;
+    // Kamera + Whip-Pan + Schweben
+    const cam = this.#scCamera(t), wh = this.#scWhip(t);
+    const s = cam.s * wh.dip, w = 520 * s, h = 924 * s;
+    const bob = Math.sin(t * 1.15) * 9 * s, sway = Math.sin(t * 0.62) * 0.012;
+    const cx = cam.cx + wh.x, cy = cam.cy + bob;
+    const x = cx - w / 2, y = cy - h / 2;
+    // Tiefenschatten am „Boden“ – wird kleiner/heller, wenn das Gerät nach oben schwebt
+    ctx.save();
+    const lift = (bob / (9 * s) + 1) / 2;
+    const sh = ctx.createRadialGradient(cx, y + h + 70 * s, 10, cx, y + h + 70 * s, w * 0.62);
+    sh.addColorStop(0, `rgba(0,0,0,${0.55 - lift * 0.15})`); sh.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.translate(cx, y + h + 70 * s); ctx.scale(1, 0.16); ctx.translate(-cx, -(y + h + 70 * s));
+    ctx.fillStyle = sh; ctx.fillRect(cx - w, y + h + 70 * s - w, w * 2, w * 2);
+    ctx.restore();
+    ctx.save();
+    ctx.translate(cx, cy); ctx.rotate(cam.rot + sway); ctx.translate(-cx, -cy);
+    this.#phone(ctx, live, x, y, w, h, this.zoom, 1, { fx: true, t });
+    ctx.restore();
+    // Lichtwischer beim Szenenwechsel
+    if (wh.flash > 0) {
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      const gx = -W * 0.4 + wh.u * W * 1.8;
+      const g = ctx.createLinearGradient(gx - 260, 0, gx + 260, H);
+      g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(0.5, `rgba(200,240,255,${0.16 * wh.flash})`); g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+    // Overlays je Szene
+    const ov = this.tpl.overlays || {};
+    const sc = this.sceneAt(t);
+    if (sc === scan) this.#scHeadline(ctx, ov.scan || this.cover, t, 0, scan.end);
+    else if (sc === binder) this.#scHeadline(ctx, ov.binder, t, binder.start, binder.end);
+    else if (sc === market) {
+      this.#scHeadline(ctx, ov.market, t, market.start, market.end);
+      const pa = SHOWCASE_PRO_AT * k;
+      if (t >= pa) {
+        // Smartphone tritt zurück, edle Pro-Einblendung davor
+        const dim = clamp(Math.min(ease((t - pa) / 0.5), 1 - ease((t - (market.end - 0.35)) / 0.35)));
+        ctx.fillStyle = `rgba(3,5,12,${0.4 * dim})`; ctx.fillRect(0, 380, W, H - 380);
+        this.#proPanel(ctx, t, pa, market.end + 0.2);
+      }
+    } else if (sc === finale) {
+      this.#scHeadline(ctx, "Ohne Login-Zwang – sofort loslegen", t, finale.start, D + 1, { lines: 1, size: 50, y: 270 });
+      this.#scFinale(ctx, t, finale.start);
+    }
+  }
+
+  /** Showcase-Frame komplett: durchgehende Kamera (keine Überblend-Diashow), Untertitel, Fortschritt, Ausblenden. */
+  #drawShowcase(ctx, t, live) {
+    this.#showcaseFrame(ctx, t, live);
+    this.subtitles(ctx, t);
+    const D = this.scenes[this.scenes.length - 1].end;
+    const g = ctx.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, this.accent); g.addColorStop(1, this.tpl.gold || this.accent);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W * clamp(t / D), 8);
+    if (this.fade > 0 && t > D - this.fade) {
+      const a = clamp((t - (D - this.fade)) / this.fade);
+      ctx.fillStyle = `rgba(0,0,0,${a * a * (3 - 2 * a)})`; ctx.fillRect(0, 0, W, H);
+    }
+    this.lastT = t;
+  }
+
   /** Untertitel (Karaoke-Stil, aktuelles Wort in Akzentfarbe) im mittleren, geschützten Bereich. */
   subtitles(ctx, t) {
     const sc = this.sceneAt(t);
@@ -871,7 +1234,8 @@ export class ProCompositor {
     while (ctx.measureText(txt).width > maxW && size > 38) { size -= 4; ctx.font = `900 ${size}px ${BODY}`; }
     const tw = Math.min(maxW, ctx.measureText(txt).width), h = size * 1.7;
     const pop = 0.94 + 0.06 * ease((t - c.start) * 8);
-    ctx.translate(hook4 ? HX : CX, hook4 ? CAP_Y_HOOK : sc.key === "focus" ? CAP_Y_PHONE : CAP_Y); ctx.scale(pop, pop);
+    const capY = this.showcase ? (sc.key === "finale" ? CAP_Y_FINALE : CAP_Y_SHOWCASE) : hook4 ? CAP_Y_HOOK : sc.key === "focus" ? CAP_Y_PHONE : CAP_Y;
+    ctx.translate(hook4 ? HX : CX, capY); ctx.scale(pop, pop);
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 8;
     rr(ctx, -tw / 2 - 34, -h / 2, tw + 68, h, 30); ctx.fillStyle = "rgba(5,7,15,0.88)"; ctx.fill();
@@ -882,9 +1246,10 @@ export class ProCompositor {
     for (const w of c.words) {
       const ww = ctx.measureText(`${w.w} `).width;
       const on = t >= w.start && t < w.end + 0.05;
-      ctx.textAlign = "left"; ctx.strokeText(w.w, x, 2);
-      ctx.fillStyle = on ? this.accent : "#ffffff";
-      ctx.fillText(w.w, x, 2);
+      const lift = on && this.showcase ? -4 : 0;
+      ctx.textAlign = "left"; ctx.strokeText(w.w, x, 2 + lift);
+      ctx.fillStyle = on ? (this.showcase ? this.tpl.gold || this.accent : this.accent) : "#ffffff";
+      ctx.fillText(w.w, x, 2 + lift);
       x += ww;
     }
     ctx.restore();
@@ -909,6 +1274,7 @@ export class ProCompositor {
 
   /** Kompletten Frame zur Videozeit t zeichnen. live = Canvas mit der aktuellen Live-Aufnahme (1080×1920). */
   draw(ctx, t, live) {
+    if (this.showcase) return this.#drawShowcase(ctx, t, live);
     const i = this.scenes.indexOf(this.sceneAt(t));
     const s = this.scenes[i], next = this.scenes[i + 1];
     this.#scene(ctx, s, t, live);
