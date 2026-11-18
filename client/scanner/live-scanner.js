@@ -8,7 +8,7 @@ import { readCardText, warmupOcr, ocrKind, getOcr } from "./ocr.js";
 import {
   SCAN_CONDS, SCAN_FINISHES, DEFAULT_CONDITION, RESULT_ACTIONS, conditionPrice, hasOwnFinishPrice, shouldAutoClose,
   newHitView, mainPrice, conditionOptions, conditionChipLabel, toggleConditionMenu, selectCondition, selectFinish,
-  createActionRunner, createCooldown, zoomPlan, glareCheck, hashDecision, TARGET_ZOOM, shouldAutoFile, createAutoFiler,
+  createActionRunner, createCooldown, zoomPlan, glareCheck, lockDecision, createFrameVoter, voteWindow, TARGET_ZOOM, shouldAutoFile, createAutoFiler,
 } from "./scan-ui-logic.js";
 import { haptic, isNative } from "../native.js";
 import { openQuickList, quickListApi } from "./quick-list.js";
@@ -40,7 +40,10 @@ const CARD_RATIO = 63 / 88;
 const FRAME_W = 720;
 /** Auslöser/Auto-Capture: Einzelbild in voller Schärfe (wird nie verworfen) */
 const CAPTURE_W = 1100;
-const MIN_INTERVAL_MS = 90;
+/** Breite des Karten-Fotos, das beim Treffer aus dem vollen Kamerabild geschnitten wird */
+const SNAPSHOT_W = 640;
+/** Hochfrequenter Frame-Sampler: bis zu ~15 Analysen/s (Gegendruck: nie mehr als ein Bild gleichzeitig im Worker) */
+const MIN_INTERVAL_MS = 66;
 /** Auto-Capture: so viele ruhige, scharfe Bilder in Folge, dann wird ausgelöst */
 const STABLE_FRAMES = 3;
 /** „Ruhig gehalten“ – großzügiger als früher (2,5 %): leichtes Zittern der Hand reicht nicht mehr zum Abbruch */
@@ -86,6 +89,8 @@ const sc = {
   hitMs: [],
   /** Kein Doppel-Scan derselben Karte innerhalb von ~0,9 s (beim Durchblättern eines Stapels) */
   cooldown: createCooldown(),
+  /** 2-aus-3-Konsens über aufeinanderfolgende Live-Bilder (Lock erst, wenn 2 Bilder in ~250 ms dieselbe Karte zeigen) */
+  voter: createFrameVoter(),
   prefs: readPrefs(),
 };
 
@@ -561,7 +566,7 @@ function orderGroup(group) {
 function trackStability(m) {
   if (!m.found) {
     sc.gone++; sc.prevCorners = null; sc.stable = 0; sc.autoArmed = true;
-    if (sc.gone >= GONE_FRAMES) { sc.suppress = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0; sc.prevRead = null; }
+    if (sc.gone >= GONE_FRAMES) { sc.voter.reset(); sc.suppress = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0; sc.prevRead = null; }
     return;
   }
   sc.gone = 0;
@@ -617,9 +622,10 @@ function onWorker(m) {
     const same = sc.streakKey && keys.some((k) => sc.streakKey.includes(k));
     sc.streak = same ? sc.streak + 1 : 1;
     sc.streakKey = keys;
-    // Bild-Fingerabdruck zuerst: klarer Treffer, passende Kartennummer oder eindeutiges Artwork sofort – auch wenn die
-    // (fett-kursive) Sammlernummer nicht lesbar ist –, sonst nach zwei übereinstimmenden Bildern
-    if (hashDecision(m, sc.streak) === "hit") {
+    // Hybrid-Lock: Artwork-Fingerabdruck + gelesene Kartennummer im selben Bild → sofort; sonst 2-aus-3-Konsens
+    // aufeinanderfolgender Bilder innerhalb ~250 ms (verhindert Fehlauslösungen beim Hinlegen der Karte)
+    const vote = sc.voter.push(keys, Date.now(), voteWindow(sc.frames ? sc.msSum / sc.frames : 0));
+    if (lockDecision(m, vote) === "hit") {
       if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte in den Rahmen legen"); return; }
       if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); setUi("hit", "✅ Erkannt!"); return; }
       if (sc.cooldown.blocked(keys)) return;
@@ -630,6 +636,7 @@ function onWorker(m) {
     return;
   }
   sc.streak = 0; sc.streakKey = null;
+  sc.voter.push([], Date.now());
   if (m.found && !sc.unsureSince) sc.unsureSince = Date.now();
   offerAi(m.found && (sc.glare || Date.now() - sc.unsureSince > AI_OFFER_AFTER_MS));
   if (!sc.capturing && !hitFresh) {
@@ -874,10 +881,13 @@ function capturePhoto(corners = null) {
     const x0 = Math.max(0, vx0 - mx), y0 = Math.max(0, vy0 - my);
     const w = Math.min(video.videoWidth - x0, vw + 2 * mx), h = Math.min(video.videoHeight - y0, vh + 2 * my);
     if (!(w > 40 && h > 40)) return null;
-    const W = 440, H = Math.round(W * (h / w));
+    // Hochauflösender Snapshot im Moment der Erkennung: direkt aus dem vollen Kamerabild (nicht aus dem Analyse-Canvas)
+    const W = Math.max(440, Math.min(SNAPSHOT_W, Math.round(w))), H = Math.round(W * (h / w));
     const cv = document.createElement("canvas");
     cv.width = W; cv.height = H;
-    cv.getContext("2d").drawImage(video, x0, y0, w, h, 0, 0, W, H);
+    const cx = cv.getContext("2d");
+    cx.imageSmoothingQuality = "high";
+    cx.drawImage(video, x0, y0, w, h, 0, 0, W, H);
     const url = cv.toDataURL("image/jpeg", 0.85);
     return url.length < 400_000 ? url : cv.toDataURL("image/jpeg", 0.6);
   } catch { return null; }

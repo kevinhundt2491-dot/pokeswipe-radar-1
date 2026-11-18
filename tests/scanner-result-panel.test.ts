@@ -185,7 +185,8 @@ test("Scanner-Oberfläche: Ergebnisfeld-Aktionen laufen über Auto-Close, Zustan
   assert.match(src, /navigator\.vibrate\(40\)/);
   assert.match(src, /zoomPlan\(caps, CAMERA_ZOOM\)/);
   assert.match(src, /glareOf\(video, rect\)/);
-  assert.match(src, /hashDecision\(m, sc\.streak\)/);
+  assert.match(src, /lockDecision\(m, vote\)/);
+  assert.match(src, /sc\.voter\.push\(/);
   const lazy = readFileSync(new URL("../client/lazy.js", import.meta.url), "utf8");
   for (const k of ["liveScanAct", "liveScanCondMenu", "liveScanMore", "liveScanSound"]) assert.ok(lazy.includes(`"${k}"`), `${k} ist in PS registriert`);
 });

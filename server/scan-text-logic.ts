@@ -17,6 +17,7 @@ export type TextRow = {
   total: number; // offizielle Kartenanzahl des Sets (0 = unbekannt)
   set: string; // normalisiertes Set-Kürzel / Set-ID
   ident: string; // Karte unabhängig von der Sprache (Set-ID + Nummer), verbindet DE- und EN-Druck
+  hp: number; // KP/HP laut Katalog (0 = unbekannt) – Entscheidungshilfe zwischen Reprints/Drucken gleichen Namens
 };
 
 export type TextIndex = {
@@ -49,18 +50,18 @@ export function splitLocalId(localId: string): { prefix: string; num: number } {
 const numKey = (prefix: string, num: number) => `${prefix}|${num}`;
 
 /**
- * Text-Index aus der Server-Antwort aufbauen. Zeilenformat (Tab-getrennt): key, name, localId, total, setCode.
+ * Text-Index aus der Server-Antwort aufbauen. Zeilenformat (Tab-getrennt): key, name, localId, total, setCode[, hp].
  */
 export function buildTextIndex(parts: { lang: string; t: string }[]): TextIndex {
   const rows: TextRow[] = [];
   for (const p of parts) {
     for (const line of String(p.t || "").split("\n")) {
       if (!line) continue;
-      const [key, name = "", local = "", total = "0", code = ""] = line.split("\t");
+      const [key, name = "", local = "", total = "0", code = "", hp = "0"] = line.split("\t");
       if (!key) continue;
       const { prefix, num } = splitLocalId(local);
       const id = key.replace(/^(card|print):/, "").replace(/^(en|ja|de):/, "");
-      rows.push({ key, lang: p.lang, name, norm: normName(name), prefix, num, total: Number(total) || 0, set: normName(code), ident: `${p.lang === "ja" ? "ja:" : ""}${id}` });
+      rows.push({ key, lang: p.lang, name, norm: normName(name), prefix, num, total: Number(total) || 0, set: normName(code), ident: `${p.lang === "ja" ? "ja:" : ""}${id}`, hp: Number(hp) > 0 ? Number(hp) : 0 });
     }
   }
   const byNumber = new Map<string, number[]>(), byName = new Map<string, number[]>();
@@ -107,7 +108,8 @@ export function parseCollectorNumbers(text: string): NumberRead[] {
     if (total >= 10 && num <= Math.max(total * 1.8, total + 120)) push({ num, total, prefix: "", promo: false, text: `${m[1]}/${m[2]}` });
   }
   // 2b) Schrägstrich nicht erkannt („205 165“, kursive Nummern): nur als „lose“ Lesung
-  for (const m of fixed.matchAll(/(?:^|[^0-9])(\d{2,3})\s+(\d{2,3})(?![0-9])/g)) {
+  // nur innerhalb einer Zeile – die KP-Zeile (oben rechts) darf nicht mit der Nummernzeile verschmelzen
+  for (const m of fixed.matchAll(/(?:^|[^0-9])(\d{2,3})[ \t]+(\d{2,3})(?![0-9])/g)) {
     const num = Number(m[1]), total = Number(m[2]);
     if (total >= 10 && num <= Math.max(total * 1.8, total + 120)) push({ num, total, prefix: "", promo: false, text: `${m[1]}/${m[2]}`, loose: true });
   }
@@ -117,6 +119,19 @@ export function parseCollectorNumbers(text: string): NumberRead[] {
     if (Number.isFinite(num)) push({ num, total: 0, prefix: m[1], promo: true, text: `${m[1]} ${m[2]}` });
   }
   return out;
+}
+
+/**
+ * KP/HP oben rechts lesen („KP 130“, „HP130“, „130 HP“). Plausibel sind 30–400 in Zehnerschritten. Liefert 0, wenn
+ * nichts Sinnvolles gelesen wurde.
+ */
+export function parseHp(text: string): number {
+  const up = String(text || "").toUpperCase();
+  for (const m of up.matchAll(/\b(?:KP|HP)\s*([0-9OIlSB]{2,3})\b|\b([0-9OIlSB]{2,3})\s*(?:KP|HP)\b/g)) {
+    const v = Number(fixDigits(m[1] || m[2]));
+    if (v >= 30 && v <= 400 && v % 10 === 0) return v;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +274,9 @@ export function decideText(idx: TextIndex, text: string, hash: HashCand[] = [], 
   const none: TextDecision = { accepted: false, strength: "none", via: "", ident: null, keys: [], candidates: [], number: null, name: null, nameSim: 0 };
   if (!idx.rows.length || !text) return none;
   const numbers = parseCollectorNumbers(text);
+  // KP/HP (oben rechts) – unterscheidet z. B. Reprints/Drucke gleichen Namens, wenn die Nummer unleserlich ist
+  const hp = parseHp(text);
+  const hpOf = (list: number[]) => hp > 0 && list.some((i) => idx.rows[i].hp === hp);
   const names = matchNames(idx, nameCandidates(text));
   const topName = names[0] || null;
   const hashScore = new Map<string, number>();
@@ -293,8 +311,8 @@ export function decideText(idx: TextIndex, text: string, hash: HashCand[] = [], 
     if (!hits.length) continue;
     const groups = [...groupByIdent(idx, hits).entries()];
     // Name passt zu genau einer Karte mit dieser Nummer
-    const scored = groups.map(([id, list]) => ({ id, list, sim: Math.max(...list.map(nameSimOf)), hash: hashOk(list) }));
-    scored.sort((a, b) => b.sim - a.sim || Number(b.hash) - Number(a.hash));
+    const scored = groups.map(([id, list]) => ({ id, list, sim: Math.max(...list.map(nameSimOf)), hash: hashOk(list), hp: hpOf(list) }));
+    scored.sort((a, b) => b.sim - a.sim || Number(b.hash) - Number(a.hash) || Number(b.hp) - Number(a.hp));
     const top = scored[0];
     if (top.sim >= NAME_MIN && (scored.length === 1 || scored[1].sim < top.sim - 0.08)) return result("strong", "number+name", top.id, top.list, [], n, top.sim);
     const byHash = scored.filter((x) => x.hash);
@@ -309,6 +327,9 @@ export function decideText(idx: TextIndex, text: string, hash: HashCand[] = [], 
       return result(top.hash ? "strong" : "medium", top.hash ? "number+hash" : "number", top.id, top.list, [], n, top.sim);
     }
     if (byHash.length === 1) return result("strong", "number+hash", byHash[0].id, byHash[0].list, [], n, byHash[0].sim);
+    // Nummer mehrdeutig, aber genau eine Karte mit passender KP → mittel (rastet nach zweiter gleicher Lesung ein)
+    const byHp = scored.filter((x) => x.hp);
+    if (byHp.length === 1) return result("medium", "number+hp", byHp[0].id, byHp[0].list, [], n, byHp[0].sim);
     // Mehrdeutig: als Vorschläge merken – vielleicht entscheiden gleich Name + Bild
     weak ||= result("weak", "number-ambiguous", null, [], scored.flatMap((x) => x.list), n, top.sim);
   }
@@ -340,6 +361,14 @@ export function decideText(idx: TextIndex, text: string, hash: HashCand[] = [], 
       const id = idx.rows[confirmed.find((i) => idx.rows[i].key === bestKey)!].ident;
       const all = list.filter((i) => idx.rows[i].ident === id);
       return result(topName.sim >= NAME_STRONG || groups.size === 1 ? "strong" : "medium", "name+hash", id, all, [], null, topName.sim);
+    }
+    // Name + KP: nur eine Karte dieses Namens hat die gelesene KP → mittel (Lock nach zweiter gleicher Lesung)
+    if (hp > 0 && topName.sim >= NAME_STRONG) {
+      const hpGroups = groupByIdent(idx, list.filter((i) => idx.rows[i].hp === hp));
+      if (hpGroups.size === 1) {
+        const [id, rowsHp] = [...hpGroups.entries()][0];
+        return result("medium", "name+hp", id, rowsHp, [], null, topName.sim);
+      }
     }
     // Nur Name: Vorschläge (z. B. alle Drucke dieses Pokémon), Bild-ähnlichste zuerst
     return result("weak", "name", null, [], list.slice(0, 60), null, topName.sim);

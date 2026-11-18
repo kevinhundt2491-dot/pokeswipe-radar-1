@@ -8,6 +8,7 @@ import {
   parseNumberText, glyphVector, splitIndexId, localNumber, decodeBase64, unpackWords, NUMBER_STRIPS, WORDS, SCORE_STRONG,
   normalizeContrast, glareRatio, colorSignature, colorDistance, colorPenalty, wordsToHex, GLARE_HIGH,
   suppressGlare, focusScore, sharpen, scaleQuad, FALLBACK_SCALES, sobel, rotateQuad, TILT_ANGLES,
+  glareMask, maskBits, topMatchesMasked, prepareStrip,
 } from "../../server/scan-logic.ts";
 import { buildTextIndex, decideText } from "../../server/scan-text-logic.ts";
 
@@ -201,12 +202,14 @@ async function analyse(msg) {
     // Holo-/Sleeve-Glanz: helle Flecken durch die Umgebung ersetzen, sonst kippen viele Hash-Bits
     const card = glare > 0.004 ? suppressGlare(raw) : raw;
     const probe = cardHashes(card);
+    // Sleeve-/Toploader-Kompensation: dHash-Bits unter Lichtreflexen zählen beim Abgleich nicht (Maske vom Rohbild)
+    const mask = glare > 0.004 ? glareMask(raw) : null;
     const color = colorSignature(rgba, msg.w, msg.h, quad);
-    const matches = topMatches(probe, idx.words, idx.count, 18)
+    const matches = topMatchesMasked(probe, idx.words, idx.count, 18, mask)
       .map((m) => (idx.colors[m.i] ? { ...m, score: m.score + colorPenalty(colorDistance(color, idx.colors[m.i])) } : m))
       .sort((a, b) => a.score - b.score)
       .slice(0, 14);
-    return { quad, raw, glare, probe, color, matches, focus: focusScore(raw) };
+    return { quad, raw, glare, probe, color, matches, masked: maskBits(mask), focus: focusScore(raw) };
   };
   // Kanten sicher gefunden: exakter Zuschnitt. Sonst Ersatz-Zuschnitte (kleiner, gedreht, verschoben) probieren und
   // den besten Treffer nehmen – mit Zeitbudget: im Live-Bild nur ~35 ms je Bild (auf dem Handy früher über 1 s mit bis zu
@@ -240,7 +243,8 @@ async function analyse(msg) {
     const H = homography(corners);
     for (const box of NUMBER_STRIPS) {
       // Kontrast normalisieren + nachschärfen: Spiegelungen, dunkle Räume und leichte Unschärfe stören die Ziffern sonst stark
-      const strip = sharpen(normalizeContrast(warp(frame, H, 252, 72, box)));
+      // Glanzspitzen stauchen + lokaler Kontrast (milchige/verkratzte Hüllen) + nachschärfen
+      const strip = prepareStrip(warp(frame, H, 252, 72, box));
       ocr = (await platformOcr(strip)) || (glyphs?.length ? readNumber(strip, glyphs) : null);
       if (ocr) { ocr.strip = box.key; break; }
     }
@@ -257,7 +261,7 @@ async function analyse(msg) {
     accepted: d.accepted, byNumber: d.byNumber, score: d.score, margin: d.margin,
     best: d.best >= 0 ? idx.keys[d.best] : null,
     group, label: group.length ? labelOf(group[0].key) : "",
-    glare: Math.round(glare * 1000) / 1000, glareHigh: glare > GLARE_HIGH,
+    glare: Math.round(glare * 1000) / 1000, glareHigh: glare > GLARE_HIGH, masked: ev.masked || 0,
     // Fingerabdruck dieses Bildes – wird beim Übernehmen an den lernenden Index geschickt
     probe: { artP: wordsToHex(probe[0], probe[1]), artD: wordsToHex(probe[2], probe[3]), fullP: wordsToHex(probe[4], probe[5]), color },
     candidates: matches.slice(0, 8).map((m) => ({ key: idx.keys[m.i], lang: idx.langs[m.i], score: Math.round(m.score) })),
