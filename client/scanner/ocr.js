@@ -122,7 +122,7 @@ function stack(parts, width, gap = 14) {
  * `rect` = achsenparalleles Rechteck der Karte im Quellbild ({x, y, w, h}); die Zuschnitte haben Luft nach außen
  * (Karte schief, zu nah, zu weit, neben der Mitte).
  */
-export function ocrCanvases(src, rect, { width = 900 } = {}) {
+export function ocrCanvases(src, rect, { width = 900, tight = false } = {}) {
   const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
   const clamp = (r) => {
     const x = Math.max(0, r.x), y = Math.max(0, r.y);
@@ -140,18 +140,25 @@ export function ocrCanvases(src, rect, { width = 900 } = {}) {
     enhanceStrip(cx, pw, ph);
     return c;
   };
-  const nameW = Math.round(width * 0.8);
+  // Kartenkanten bekannt („tight“): schmale Streifen genau über Name und Nummer – rund 45 % weniger Pixel und damit
+  // deutlich schnellere Texterkennung. Ohne Kanten großzügige Streifen (Karte liegt irgendwo um den Rahmen).
+  // Breite 760 px: die Sammlernummer ist damit weiterhin ~30 px hoch (früher 900 px, unnötig langsam).
+  const pw = tight ? Math.min(width, 760) : width;
+  const nameW = Math.round(pw * 0.8);
+  const nz = tight ? { y: y + h * 0.005, h: h * 0.11 } : { y: y - h * 0.03, h: h * 0.17 };
+  const bz = tight ? { y: y + h * 0.88, h: h * 0.11 } : { y: y + h * 0.86, h: h * 0.17 };
   return {
-    name: stack([zone({ x: x - w * 0.03, y: y - h * 0.03, w: w * 0.8, h: h * 0.17 }, nameW)], nameW),
+    name: stack([zone({ x: x - w * 0.03, y: nz.y, w: w * 0.8, h: nz.h }, nameW)], nameW),
     number: stack([
-      zone({ x: x - w * 0.04, y: y + h * 0.86, w: w * 0.56, h: h * 0.17 }, width), // unten links (Karmesin & Purpur, Schwert & Schild)
-      zone({ x: x + w * 0.48, y: y + h * 0.86, w: w * 0.56, h: h * 0.17 }, width), // unten rechts (ältere Karten)
-    ], width),
+      zone({ x: x - w * 0.04, y: bz.y, w: w * 0.56, h: bz.h }, pw), // unten links (Karmesin & Purpur, Schwert & Schild)
+      zone({ x: x + w * 0.48, y: bz.y, w: w * 0.56, h: bz.h }, pw), // unten rechts (ältere Karten)
+    ], pw),
   };
 }
 
 /** Name + Nummer lesen. Liefert { text, ms, engine } oder null, wenn kein OCR-Motor verfügbar ist. */
 export async function readCardText(src, rect, opts = {}) {
+  if (rect?.tight) opts = { ...opts, tight: true };
   const eng = await getOcr();
   if (!eng) return null;
   const t0 = performance.now();

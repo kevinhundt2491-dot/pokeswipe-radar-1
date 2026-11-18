@@ -340,36 +340,40 @@ export async function lookup(keys: string[]): Promise<LookupRow[]> {
     if (g?.ask) return { v: Number(g.ask), src: "ask", ebay };
     return { v: null, src: "", ebay };
   };
-  if (cardIds.length) {
-    const list = rows(await db.execute(sql`
+  // Karten, Drucke und PSA-/eBay-Werte parallel abfragen – früher lief jede Abfrage nacheinander (bis zu 10 Rundreisen,
+  // spürbar im Scanner: der Treffer stand da, der Preis kam deutlich später)
+  const [cardList, printList] = await Promise.all([
+    cardIds.length ? db.execute(sql`
       SELECT c.id, c.name, c.set_name, COALESCE(NULLIF(s.abbreviation, ''), c.set_id, '') AS set_code, c.local_id, s.card_count_official AS total,
         c.image, c.rarity, COALESCE(c.trend, c.avg, c.low)::float AS price, COALESCE(c.reverse_trend, c.reverse_avg)::float AS reverse_price
-      FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id WHERE c.id IN (${sql.join(cardIds.map((i) => sql`${i}`), sql`, `)})`));
-    for (const r of list) {
-      const p = await psa("card", r.id);
-      out.push({
-        key: `card:${r.id}`, kind: "card", id: String(r.id), lang: "de", name: String(r.name), altName: "", setName: String(r.set_name || ""),
-        setCode: String(r.set_code || ""), number: r.local_id && /^\d+$/.test(r.local_id) && Number(r.total) > 0 ? `${r.local_id}/${r.total}` : String(r.local_id || ""),
-        image: String(r.image || ""), rarity: String(r.rarity || ""), price: r.price ?? null, priceSource: "cardmarket", psa10: p.v, psa10Source: p.src, baseCardId: String(r.id),
-        reversePrice: r.reverse_price ?? null, ...p.ebay,
-      });
-    }
-  }
-  if (printIds.length) {
-    const list = rows(await db.execute(sql`
+      FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id WHERE c.id IN (${sql.join(cardIds.map((i) => sql`${i}`), sql`, `)})`).then(rows) : Promise.resolve([] as any[]),
+    printIds.length ? db.execute(sql`
       SELECT p.id, p.lang, p.name, p.set_name, p.set_code, p.number, p.image, p.rarity, p.price_eur::float AS price, p.price_source, p.base_card_id,
         CASE WHEN p.lang = 'ja' THEN ps.name_de ELSE NULL END AS alt_name
-      FROM card_prints p LEFT JOIN pokemon_species ps ON ps.dex_id = p.dex_id WHERE p.id IN (${sql.join(printIds.map((i) => sql`${i}`), sql`, `)})`));
-    for (const r of list) {
-      const p = await psa("print", r.id);
-      out.push({
-        key: `print:${r.id}`, kind: "print", id: String(r.id), lang: String(r.lang), name: String(r.name), altName: String(r.alt_name || ""),
-        setName: String(r.set_name || ""), setCode: String(r.set_code || ""), number: String(r.number || ""), image: String(r.image || ""),
-        rarity: String(r.rarity || ""), price: r.price ?? null, priceSource: String(r.price_source || ""), psa10: p.v, psa10Source: p.src,
-        baseCardId: r.base_card_id ? String(r.base_card_id) : null, ...p.ebay,
-      });
-    }
-  }
+      FROM card_prints p LEFT JOIN pokemon_species ps ON ps.dex_id = p.dex_id WHERE p.id IN (${sql.join(printIds.map((i) => sql`${i}`), sql`, `)})`).then(rows) : Promise.resolve([] as any[]),
+  ]);
+  const [cardPsa, printPsa] = await Promise.all([
+    Promise.all(cardList.map((r: any) => psa("card", r.id))),
+    Promise.all(printList.map((r: any) => psa("print", r.id))),
+  ]);
+  cardList.forEach((r: any, n: number) => {
+    const p = cardPsa[n];
+    out.push({
+      key: `card:${r.id}`, kind: "card", id: String(r.id), lang: "de", name: String(r.name), altName: "", setName: String(r.set_name || ""),
+      setCode: String(r.set_code || ""), number: r.local_id && /^\d+$/.test(r.local_id) && Number(r.total) > 0 ? `${r.local_id}/${r.total}` : String(r.local_id || ""),
+      image: String(r.image || ""), rarity: String(r.rarity || ""), price: r.price ?? null, priceSource: "cardmarket", psa10: p.v, psa10Source: p.src, baseCardId: String(r.id),
+      reversePrice: r.reverse_price ?? null, ...p.ebay,
+    });
+  });
+  printList.forEach((r: any, n: number) => {
+    const p = printPsa[n];
+    out.push({
+      key: `print:${r.id}`, kind: "print", id: String(r.id), lang: String(r.lang), name: String(r.name), altName: String(r.alt_name || ""),
+      setName: String(r.set_name || ""), setCode: String(r.set_code || ""), number: String(r.number || ""), image: String(r.image || ""),
+      rarity: String(r.rarity || ""), price: r.price ?? null, priceSource: String(r.price_source || ""), psa10: p.v, psa10Source: p.src,
+      baseCardId: r.base_card_id ? String(r.base_card_id) : null, ...p.ebay,
+    });
+  });
   return keys.map((k) => out.find((o) => o.key === k)).filter(Boolean) as LookupRow[];
 }
 

@@ -228,4 +228,10 @@ export default [
   ["Vor dem Veröffentlichen kannst du Preis, Zustand und Käuferschutz noch anpassen.", "You can still adjust price, condition and buyer protection before publishing."],
   ["Suche Nachfrage für deine Sammlung", "Looking up demand for your collection"],
   ["Bestand importieren", "Import stock"],
+  // Scanner-Turbo 2
+  ["Karte vor die Kamera halten – fertig", "Hold the card up to the camera – done"],
+  ["Kein Ausrichten, kein Auslöser: Sobald es grün blinkt, steht der Preis da.", "No lining up, no shutter: as soon as it flashes green, the price is there."],
+  ["Tipp: Name oben und Nummer unten müssen lesbar sein. Unscharf? Aufs Bild tippen. Glanz? Karte leicht kippen. Dunkel? 🔦", "Tip: the name at the top and the number at the bottom must be readable. Blurry? Tap the image. Glare? Tilt the card slightly. Dark? 🔦"],
+  ["{card} – kurz halten", "{card} – hold still"],
+  ["{card} – lade Marktpreis", "{card} – loading market price"],
 ];

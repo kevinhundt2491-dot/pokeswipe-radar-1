@@ -43,8 +43,15 @@ const STABLE_FRAMES = 3;
 const STABLE_MOTION = 0.045;
 /** Text-Erkennung (Name + Nummer) im Live-Bild: Abstand zwischen zwei Lesungen */
 const OCR_INTERVAL_MS = 280;
-/** Zwei gleiche Text-Lesungen innerhalb dieser Zeit = sicherer Treffer („Lock-on“, ~0,5 s) */
-const TEXT_LOCK_MS = 1200;
+/**
+ * Zwei gleiche Text-Lesungen innerhalb dieser Zeit = sicherer Treffer („Lock-on“). Früher 1,2 s – auf Handys dauert eine
+ * Lesung aber oft 0,8–1,5 s, die zweite Lesung kam dann zu spät und der Treffer rastete nie ein.
+ */
+const TEXT_LOCK_MS = 4000;
+/** Lesungen dieser Zeitspanne werden zusammengelegt (Name aus der einen, Nummer aus der nächsten Lesung) */
+const TEXT_MERGE_MS = 2500;
+/** Solange die Texterkennung rechnet, kommen Bild-Abgleiche seltener – beide teilen sich die CPU des Handys */
+const MIN_INTERVAL_OCR_MS = 160;
 const CAPTURE_COOLDOWN_MS = 2200;
 /** Ohne Karte so viele Bilder in Folge → Karte gilt als entfernt (Serien-Scan, Auto-KI wieder frei) */
 const GONE_FRAMES = 5;
@@ -132,8 +139,8 @@ export function liveScanPanelHtml() {
     <div class="flex flex-wrap items-start justify-between gap-2">
       <div>
         <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚡ Turbo-Scanner · ohne KI, auf dem Gerät</span>
-        <h2 class="text-base sm:text-lg font-black text-white mt-1">Karte einfach vor die Kamera halten – erkannt in unter einer Sekunde</h2>
-        <p class="text-xs text-slate-300">Kein exaktes Ausrichten nötig: Name, Sammlernummer und Motiv werden live gelesen. Schief, näher oder weiter weg ist okay – grün blinkt, Preis und 1-Tap-Aktionen erscheinen sofort. Deutsch, Englisch und Japanisch.</p>
+        <h2 class="text-base sm:text-lg font-black text-white mt-1">Karte vor die Kamera halten – fertig</h2>
+        <p class="text-xs text-slate-300">Kein Ausrichten, kein Auslöser: Sobald es grün blinkt, steht der Preis da.</p>
       </div>
       <div class="flex flex-wrap gap-1" role="group" aria-label="Sprachen für die Erkennung">
         ${["de", "en", "ja"].map((l) => `<button type="button" data-scan-lang="${l}" onclick="PS.liveScanLang('${l}')" class="ps-chip text-xs font-black px-2.5 py-1 rounded-lg"></button>`).join("")}
@@ -180,7 +187,7 @@ export function liveScanPanelHtml() {
       <button onclick="PS.showSub('scan', 'camera')" class="text-[11px] bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg">🔎 Suche ohne Kamera</button>
     </div>
     <div id="ps-ls-series" class="space-y-2"></div>
-    <p class="text-[10px] text-slate-500">Tipp: Die Karte muss den Rahmen nicht exakt füllen – Name oben und Nummer unten sollten aber im Bild sein. Auf das Bild tippen stellt dort scharf. Bei Holo-Glanz Karte leicht kippen oder Sleeve abnehmen, bei wenig Licht die Taschenlampe nutzen. Gleiche Motive in mehreren Sprachen und ähnliche Treffer lassen sich im Ergebnis umschalten.</p>
+    <p class="text-[10px] text-slate-500">Tipp: Name oben und Nummer unten müssen lesbar sein. Unscharf? Aufs Bild tippen. Glanz? Karte leicht kippen. Dunkel? 🔦</p>
     <div id="ps-ls-admin"></div>
   </div>`;
 }
@@ -325,14 +332,17 @@ async function start() {
     toast("📷 Keine Kamera verfügbar", "Dein Browser erlaubt hier keinen Kamerazugriff. Wähle ein Foto aus der Galerie oder nutze die Suche.");
     return;
   }
-  if (sc.running) return;
+  if (sc.running || sc.starting) return;
+  sc.starting = true;
   try {
     sc.stream = await openCamera();
   } catch (e) {
+    sc.starting = false;
     const denied = e?.name === "NotAllowedError" || e?.name === "SecurityError";
     toast(denied ? "📷 Kamera nicht erlaubt" : "📷 Kamera nicht verfügbar", denied ? "Erlaube den Kamerazugriff in den Browser-Einstellungen – oder wähle ein Foto aus der Galerie (🖼️)." : "Keine passende Kamera gefunden. Wähle ein Foto aus der Galerie (🖼️).");
     return;
   }
+  sc.starting = false;
   sc.track = sc.stream.getVideoTracks()[0];
   const caps = await tuneTrack(sc.track);
   const video = $("ps-ls-video");
@@ -347,7 +357,7 @@ async function start() {
   $("ps-ls-idle")?.classList.add("hidden");
   sc.running = true; sc.frames = 0; sc.msSum = 0; sc.streak = 0; sc.streakKey = null;
   sc.stable = 0; sc.focusMax = 0; sc.gone = 0; sc.prevCorners = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0;
-  sc.textLock = null; sc.lastStill = null; sc.ocrBusy = false; sc.lastOcrAt = 0; sc.searchSince = 0;
+  sc.textLock = null; sc.lastStill = null; sc.ocrBusy = false; sc.lastOcrAt = 0; sc.searchSince = 0; sc.prevRead = null;
   if (!sc.ready && !sc.loadingIndex) loadIndex();
   warmupOcr();
   layout();
@@ -439,7 +449,8 @@ function tick() {
   if (!panel || panel.offsetParent === null || document.hidden) { stop(); return; }
   const video = $("ps-ls-video");
   const now = performance.now();
-  if (sc.ready && !sc.capturing && video.readyState >= 2 && now - sc.lastSent >= MIN_INTERVAL_MS) {
+  const interval = sc.ocrBusy && ocrKind() === "tesseract" ? MIN_INTERVAL_OCR_MS : MIN_INTERVAL_MS;
+  if (sc.ready && !sc.capturing && video.readyState >= 2 && now - sc.lastSent >= interval) {
     const g = sc.geometry && sc.geometry.vw === video.videoWidth ? sc.geometry : layout();
     if (g) {
       g.vw = video.videoWidth;
@@ -482,7 +493,7 @@ function orderGroup(group) {
 function trackStability(m) {
   if (!m.found) {
     sc.gone++; sc.prevCorners = null; sc.stable = 0; sc.autoArmed = true;
-    if (sc.gone >= GONE_FRAMES) { sc.suppress = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0; }
+    if (sc.gone >= GONE_FRAMES) { sc.suppress = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0; sc.prevRead = null; }
     return;
   }
   sc.gone = 0;
@@ -585,7 +596,8 @@ function rectOfQuad(q) {
  */
 function liveCardRect(g) {
   if (sc.prevCorners && Date.now() - sc.cornersAt < 700) {
-    return rectOfQuad(sc.prevCorners.map(([x, y]) => [g.sx0 + x / g.k, g.sy0 + y / g.k]));
+    // Kanten frisch erkannt → schmale Lese-Streifen genau über Name und Nummer (schneller)
+    return { ...rectOfQuad(sc.prevCorners.map(([x, y]) => [g.sx0 + x / g.k, g.sy0 + y / g.k])), tight: true };
   }
   const gd = g.guide;
   const x0 = g.sx0 + gd.x0 / g.k, y0 = g.sy0 + gd.y0 / g.k, w = (gd.x1 - gd.x0) / g.k, h = (gd.y1 - gd.y0) / g.k;
@@ -626,7 +638,15 @@ async function liveOcr(video) {
     sc.ocrRuns++; sc.ocrMsSum += r.ms; sc.lastText = r.text;
     if (!r.text.trim()) return;
     if (!sc.searchSince) sc.searchSince = Date.now() - r.ms;
-    onText(await workerText(r.text));
+    let d = await workerText(r.text);
+    // Nicht sicher: mit der vorigen Lesung zusammenlegen – oft ist der Name in der einen, die Nummer in der anderen scharf
+    const prev = sc.prevRead;
+    sc.prevRead = { text: r.text, at: Date.now() };
+    if (sc.running && (!d || d.strength !== "strong") && prev && Date.now() - prev.at < TEXT_MERGE_MS && prev.text !== r.text) {
+      const merged = await workerText(`${prev.text}\n${r.text}`);
+      if (merged?.accepted && (merged.strength === "strong" || !d?.accepted)) d = merged;
+    }
+    onText(d);
   } catch { /* nächste Lesung */ } finally { sc.ocrBusy = false; }
 }
 
@@ -638,7 +658,7 @@ function onText(d) {
   const same = sc.textLock && sc.textLock.ident === d.ident && now - sc.textLock.at < TEXT_LOCK_MS;
   sc.textLock = { ident: d.ident, at: now, n: same ? sc.textLock.n + 1 : 1 };
   if (d.strength === "strong" || sc.textLock.n >= 2) { hitFromText(d); return; }
-  if (!sc.current) setUi("ready", `🔤 ${d.number ? `Nr. ${d.number}` : d.name || "Karte"} gelesen – kurz halten …`, 0.7);
+  if (!sc.current) setUi("ready", `🔤 ${d.label || (d.number ? `Nr. ${d.number}` : d.name || "Karte")} – kurz halten …`, 0.7);
 }
 
 function hitFromText(d, photo = null) {
@@ -647,7 +667,7 @@ function hitFromText(d, photo = null) {
   if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte vor die Kamera"); return; }
   if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); return; }
   sc.textLock = null;
-  showHit(group, { probe: sc.lastProbe, candidates: (d.candidates || []).map((k) => ({ key: k, score: 0 })), byNumber: Boolean(d.number), via: d.via }, photo || capturePhoto(sc.prevCorners));
+  showHit(group, { probe: sc.lastProbe, candidates: (d.candidates || []).map((k) => ({ key: k, score: 0 })), byNumber: Boolean(d.number), via: d.via, label: d.label }, photo || capturePhoto(sc.prevCorners));
 }
 
 /**
@@ -875,7 +895,9 @@ function presentHit(cur) {
     sc.hitMs = [...sc.hitMs, Date.now() - sc.searchSince].slice(-20);
     sc.searchSince = 0;
   }
-  successFeedback();
+  // Blitz + Vibration kamen schon beim Erkennen (vor dem Preis-Laden) – nicht doppelt
+  if (cur.unsure || Date.now() - (sc.feedbackAt || 0) > 3000) successFeedback();
+  sc.feedbackAt = 0;
   setUi("hit", cur.unsure ? "🤔 Fast sicher – bitte bestätigen" : "✅ Erkannt!");
   window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
   if (!cur.unsure) addToSeries(info);
@@ -892,8 +914,10 @@ async function showHit(group, m, photo = null) {
   const token = Symbol("hit");
   sc.current = { key: keys[0], keys, info: null, loading: token, probe: m.probe || null, photo: photo || capturePhoto(m.corners) };
   sc.currentAt = Date.now();
-  setUi("hit", "✅ Erkannt!");
-  renderHud({ loading: true });
+  successFeedback(); sc.feedbackAt = Date.now();
+  setUi("hit", m.label ? `✅ ${m.label}` : "✅ Erkannt!");
+  // Name sofort zeigen (aus dem Index auf dem Gerät), Preis lädt dahinter
+  renderHud({ loading: true, text: m.label ? `✅ ${m.label} – lade Marktpreis …` : "" });
   const infos = await fetchInfo([...keys, ...altKeys]);
   if (!sc.current || sc.current.loading !== token) return;
   const variants = infos.filter((i) => keys.includes(i.key));
@@ -1520,7 +1544,7 @@ export const liveScanApi = {
   liveScanNext: () => {
     if (sc.current?.unsure && sc.current.info) { sc.current.unsure = false; addToSeries(sc.current.info); }
     sc.suppress = sc.current?.keys || sc.suppress;
-    sc.current = null; sc.currentAt = 0; sc.stable = 0; sc.autoArmed = true; sc.autoAiUsed = false; sc.searchSince = 0; sc.textLock = null;
+    sc.current = null; sc.currentAt = 0; sc.stable = 0; sc.autoArmed = true; sc.autoAiUsed = false; sc.searchSince = 0; sc.textLock = null; sc.prevRead = null;
     renderHud(null);
     if (!sc.running) { $("ps-ls-still")?.classList.add("hidden"); start(); return; }
     setUi("search", "🔁 Nächste Karte in den Rahmen halten");
@@ -1567,6 +1591,23 @@ export function onLiveScanShown() {
   renderLangChips();
   renderToggles();
   loadStatus();
+  if (IS_STAGE) return;
+  // Schon beim Öffnen vorladen (Karten-Index + Texterkennung) – nicht erst nach dem Kamera-Start: die erste Karte ist
+  // dann sofort erkennbar statt nach mehreren Sekunden Laden
+  if (!sc.ready && !sc.loadingIndex) loadIndex();
+  warmupOcr();
+  autoStart();
+}
+
+/** Kamera ohne Extra-Tipp starten, wenn der Zugriff schon erlaubt ist (sonst bleibt der Start-Knopf, kein Überfall-Dialog). */
+async function autoStart() {
+  if (sc.running || sc.starting || sc.lastStill || !navigator.mediaDevices?.getUserMedia) return;
+  try {
+    const p = await navigator.permissions?.query?.({ name: "camera" });
+    if (p?.state !== "granted") return;
+  } catch { return; }
+  const panel = $("ps-live-scan");
+  if (panel && panel.offsetParent !== null && !sc.running) start();
 }
 
 export function initLiveScanner() {
