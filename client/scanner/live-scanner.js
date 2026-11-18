@@ -14,6 +14,7 @@ import { haptic, isNative } from "../native.js";
 import { openQuickList, quickListApi } from "./quick-list.js";
 import { priceTagHtml } from "../price-tag.js";
 import { renderGlyphBitmaps } from "./glyph-render.js";
+import { createSweep } from "./sweep-scanner.js";
 
 // Turbo-Upgrade (ohne KI): zusätzlich zur Bild-Erkennung liest der Scanner alle ~280 ms Kartenname und Sammlernummer
 // (TextDetector bzw. Tesseract.js, beides auf dem Gerät) und sucht sie unscharf im Katalog (~20.000 Karten, Text-Index im
@@ -158,22 +159,26 @@ export function liveScanPanelHtml() {
     <style>${SCANNER_CSS}</style>
     <div class="flex flex-wrap items-start justify-between gap-2">
       <div>
-        <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚡ Turbo-Scanner · ohne KI, auf dem Gerät</span>
-        <h2 class="text-base sm:text-lg font-black text-white mt-1">Karte vor die Kamera halten – fertig</h2>
-        <p class="text-xs text-slate-300">Kein Ausrichten, kein Auslöser: Sobald es grün blinkt, steht der Preis da.</p>
+        <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚡ Zero-Latency Sweep-Modus · auf dem Gerät</span>
+        <h2 class="text-base sm:text-lg font-black text-white mt-1">Einfach über die Karten ziehen – Pling!</h2>
+        <p class="text-xs text-slate-300">Kein Rahmen, kein Countdown, kein Warten: Jede Karte im Bild landet sofort in deiner Scan-Liste.</p>
       </div>
+    </div>
+    ${sweepUi().html()}
+    <div id="ps-ls-classic" class="hidden space-y-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <p class="text-xs font-black text-white">🖼️ Foto-Erkennung</p>
       <div class="flex flex-wrap gap-1" role="group" aria-label="Sprachen für die Erkennung">
         ${["de", "en", "ja"].map((l) => `<button type="button" data-scan-lang="${l}" onclick="PS.liveScanLang('${l}')" class="ps-chip text-xs font-black px-2.5 py-1 rounded-lg"></button>`).join("")}
       </div>
     </div>
-    <p id="ps-ls-index" class="text-[11px] text-slate-400">Lade Scanner-Status …</p>
     <div id="ps-ls-stage" class="relative mx-auto w-full max-w-md aspect-[3/4] rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 select-none touch-manipulation">
       <video id="ps-ls-video" class="absolute inset-0 w-full h-full object-cover hidden" playsinline muted autoplay></video>
       <img id="ps-ls-still" alt="Hochgeladenes Kartenfoto" class="absolute inset-0 w-full h-full object-contain bg-slate-950 hidden" />
       <div id="ps-ls-idle" class="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p class="text-4xl" aria-hidden="true">📷</p>
-        <p class="text-xs text-slate-300">Die Rückkamera wird nur genutzt, solange der Scanner offen ist. Erkennung komplett auf deinem Gerät – kein Foto-Upload, keine KI. Nur wenn du „KI-Tiefenscan“ antippst, geht der Kartenausschnitt an die KI; nur wenn du inserierst, hängt das Scan-Foto am Inserat.</p>
-        <button onclick="PS.liveScanStart()" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">⚡ Live-Scanner starten</button>
+        <p class="text-xs text-slate-300">Foto einer Karte aufnehmen oder hochladen – die Erkennung läuft auf deinem Gerät. Nur wenn du „KI-Tiefenscan“ antippst, geht der Kartenausschnitt an die KI.</p>
+        <button onclick="PS.liveScanStart()" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">⚡ Zurück zum Sweep-Scanner</button>
         <div class="flex flex-wrap justify-center gap-2">
           <label class="cursor-pointer text-xs font-black bg-slate-800 text-white px-3 py-2 rounded-xl">📸 Foto aufnehmen<input data-ls-upload="1" type="file" accept="image/*" capture="environment" class="hidden" /></label>
           <label class="cursor-pointer text-xs font-black bg-slate-800 text-white px-3 py-2 rounded-xl">🖼️ Bild hochladen<input id="ps-ls-file-idle" data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
@@ -198,18 +203,21 @@ export function liveScanPanelHtml() {
     <div class="flex items-center justify-center gap-5">
       <label class="cursor-pointer w-12 h-12 rounded-full bg-slate-800 text-white text-xl flex items-center justify-center" title="Foto aufnehmen" aria-label="Foto aufnehmen">📸<input data-ls-upload="1" type="file" accept="image/*" capture="environment" class="hidden" /></label>
       <label class="cursor-pointer w-12 h-12 rounded-full bg-slate-800 text-white text-xl flex items-center justify-center" title="Bild hochladen" aria-label="Bild aus der Galerie hochladen">🖼️<input id="ps-ls-file" data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
-      <button id="ps-ls-shutter" onclick="PS.liveScanShutter()" aria-label="Auslösen – Karte jetzt scannen" title="Auslösen (zusätzlich zur Auto-Erkennung)"></button>
-      <button id="ps-ls-torch2" onclick="PS.liveScanTorch()" class="w-12 h-12 rounded-full bg-slate-800 text-white text-xl" aria-label="Taschenlampe / Blitz" aria-pressed="false" title="Taschenlampe">🔦</button>
+      <button type="button" onclick="PS.liveScanStart()" class="h-12 px-4 rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 text-xs font-black" aria-label="Zurück zum Sweep-Scanner">⚡ Sweep-Scanner</button>
     </div>
     <div class="flex flex-wrap justify-center gap-1.5">
       <button id="ps-ls-series-mode" onclick="PS.liveScanSeriesMode()" class="${chip(false)}" aria-pressed="false" title="Stapel durchscannen: jede Karte landet in der Liste, der Scanner ist sofort für die nächste bereit">🔁 Serien-Scan</button>
       <button id="ps-ls-autoai" onclick="PS.liveScanAutoAi()" class="${chip(false)}" aria-pressed="false" title="Standardmäßig aus. Wenn an: ist die Erkennung auf dem Gerät unsicher, prüft die KI den Kartenausschnitt automatisch (zählt als KI-Scan)">🤖 KI-Auto</button>
       <button id="ps-ls-sound" onclick="PS.liveScanSound()" class="${chip(false)}" aria-pressed="false" title="Optional: dezenter Ton bei jedem Treffer (Vibration gibt es immer, wo das Gerät sie kann)">🔔 Ton</button>
       <button id="ps-ls-ai" onclick="PS.liveScanPhoto()" class="text-[11px] bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg" title="Optional – nur nötig, wenn die schnelle Erkennung auf dem Gerät eine Karte nicht findet (z. B. Promo, starke Spiegelung). Zählt als KI-Scan.">🧠 KI-Tiefenscan</button>
+    </div>
+    <p class="text-[10px] text-slate-500">Tipp: Name oben und Nummer unten müssen lesbar sein. Glanz? Karte leicht kippen.</p>
+    </div>
+    <p id="ps-ls-index" class="text-[11px] text-slate-400">Lade Scanner-Status …</p>
+    <div class="flex flex-wrap gap-1.5">
       <button onclick="PS.showSub('scan', 'camera')" class="text-[11px] bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg">🔎 Suche ohne Kamera</button>
     </div>
     <div id="ps-ls-series" class="space-y-2"></div>
-    <p class="text-[10px] text-slate-500">Tipp: Name oben und Nummer unten müssen lesbar sein. Unscharf? Aufs Bild tippen. Glanz? Karte leicht kippen. Dunkel? 🔦</p>
     <div id="ps-ls-admin"></div>
   </div>`;
 }
@@ -625,6 +633,7 @@ function trackStability(m) {
 }
 
 function onWorker(m) {
+  if (typeof m.type === "string" && m.type.startsWith("sweep-")) { sweepUi().onWorker(m); return; }
   if ((m.type === "result" || m.type === "text-result") && m.reqId && sc.pending.has(m.reqId)) {
     const resolve = sc.pending.get(m.reqId);
     sc.pending.delete(m.reqId);
@@ -634,13 +643,15 @@ function onWorker(m) {
   // Worker ohne OffscreenCanvas (ältere iOS/Safari): Ziffern-Vorlagen auf einem normalen Canvas im Haupt-Thread zeichnen
   if (m.type === "need-glyphs") { sendMainThreadGlyphs(); return; }
   if (m.type === "ocr-mode") { sc.ocrMode = m.ocr || sc.ocrMode; renderIndexLine(); return; }
-  if (m.type === "progress") { if (m.state === "error") toast("⚠️ Index", `${LANG_LABEL[m.lang] || m.lang}: konnte nicht geladen werden.`); return; }
+  if (m.type === "progress") { if (m.state === "error" && !sc.idxErrShown) toast("⚠️ Index", `${LANG_LABEL[m.lang] || m.lang}: konnte nicht geladen werden.`); return; }
   if (m.type === "ready") {
     sc.ready = true; sc.loadingIndex = false; sc.indexCount = m.count || 0; sc.perLang = m.perLang || {}; sc.ocrMode = m.ocr || "none";
     sc.learnedCount = m.learned || 0;
     sc.textCount = m.textCount || 0;
+    sc.offscreen = Boolean(m.offscreen);
     sc.readyWaiters?.splice(0).forEach((r) => r());
     renderIndexLine();
+    sweepUi().onIndex();
     if (sc.running) setUi("search", sc.indexCount ? "📇 Karte in den Rahmen halten" : "Noch keine Karten im Index – Auslöser nutzt die KI.");
     return;
   }
@@ -1387,6 +1398,8 @@ function fileToDataUrl(file, max = 1600) {
 async function scanUpload(file) {
   if (!file) return;
   if (sc.running) stop();
+  if (sweepUi().running) sweepUi().stop();
+  showClassic(true);
   let dataUrl;
   try { dataUrl = await fileToDataUrl(file); } catch { toast("🖼️ Foto nicht lesbar", "Bitte ein JPG- oder PNG-Foto wählen."); return; }
   const still = $("ps-ls-still");
@@ -1415,7 +1428,7 @@ async function scanUpload(file) {
 // ---------------------------------------------------------------------------
 const infoOf = (key) => sc.info.get(key) || sc.series.find((s) => s.key === key) || null;
 
-async function addOne(info, choice = null) {
+async function addOne(info, choice = null, qty = 1) {
   const body = info.kind === "print" ? { printId: info.id } : { cardId: info.id };
   // Zustand und Variante aus der Schnellwahl mitgeben (Binder zeigt dann den passenden Wert)
   const c = choice || { condition: info.scanCondition || "NM", variant: info.scanVariant || "normal" };
@@ -1423,6 +1436,7 @@ async function addOne(info, choice = null) {
   if (FINISHES.some(([f]) => f === c.variant)) body.variant = c.variant;
   // Gleiche Karte schon im Set-Ordner → Anzahl hochzählen (2x, 3x …) statt zweiten Slot anlegen
   body.merge = true;
+  if (Number(qty) > 1) body.quantity = Math.min(999, Math.round(Number(qty)));
   return api("/api/portfolio", { method: "POST", body });
 }
 
@@ -1479,7 +1493,7 @@ function autoFileCurrent() {
 const GUEST_BINDER_LIMIT = 300;
 
 /** Gast-Modus: Karte im lokalen Test-Binder ablegen (Gerät) – beim Login zieht sie automatisch ins Konto um. */
-function addGuest(i, choice) {
+function addGuest(i, choice, qty = 1) {
   const cardId = i.kind === "card" ? i.id : i.baseCardId;
   let list = [];
   try { list = JSON.parse(localStorage.getItem("pokeswipe_portfolio_clean") || "[]"); } catch {}
@@ -1489,7 +1503,7 @@ function addGuest(i, choice) {
   }
   const c = choice || { condition: i.scanCondition || "NM", variant: i.scanVariant || "normal" };
   const value = condPrice(i, c.variant || "normal", c.condition || "NM") || Number(i.price) || 0;
-  const item = { cardId: cardId || null, name: `${i.name}${i.number ? ` (${i.number})` : ""}`, value, img: i.image || "", image: i.image || "", quantity: 1, condition: c.condition || "NM", variant: c.variant || "normal" };
+  const item = { cardId: cardId || null, name: `${i.name}${i.number ? ` (${i.number})` : ""}`, value, img: i.image || "", image: i.image || "", quantity: Math.max(1, Math.min(999, Number(qty) || 1)), condition: c.condition || "NM", variant: c.variant || "normal" };
   if (typeof window.psGuestBinderAdd === "function") window.psGuestBinderAdd(item);
   else { try { localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify([item, ...(Array.isArray(list) ? list : [])])); } catch {} }
   try { window.dispatchEvent(new CustomEvent("ps:portfolio")); } catch {}
@@ -1658,7 +1672,7 @@ function nextCard() {
   if (!sc.running) {
     if (IS_STAGE) return;
     $("ps-ls-still")?.classList.add("hidden");
-    start();
+    startSweep();
     return;
   }
   setUi("search", "🔁 Nächste Karte in den Rahmen halten");
@@ -1779,6 +1793,8 @@ async function demoPrepare(opts = {}) {
   const keys = Array.isArray(opts.keys) && opts.keys.length ? opts.keys.filter((k) => /^card:[\w.\-]{2,40}$/.test(k)).slice(0, 8) : DEMO_KEYS;
   const info = await demoInfo(keys.length ? keys : DEMO_KEYS);
   if (!info) return null;
+  showClassic(true);
+  $("ps-sw")?.classList.add("hidden");
   sc.demo = { info, zoom: Number(opts.zoom) > 1 ? Math.min(2, Number(opts.zoom)) : 0, sleeve: !!opts.sleeve, autoFile: !!opts.autoFile, listDemo: !!opts.listDemo };
   $("ps-ls-idle")?.classList.add("hidden");
   $("ps-ls-demo")?.remove();
@@ -1963,11 +1979,64 @@ async function deepScanPhoto() {
   } catch (e) { renderPq({ infos: [], note: "KI-Tiefenscan fehlgeschlagen." }); handleError(e); }
 }
 
+// ---------------------------------------------------------------------------
+// Zero-Latency Sweep-Modus (rahmenloser Live-Scanner) – teilt Worker, Index, Kartendaten und Set-Binder mit dem Rest
+// ---------------------------------------------------------------------------
+let sweepInst = null;
+function sweepUi() {
+  sweepInst ||= createSweep({
+    worker: () => ensureWorker(),
+    ensureIndex: () => { if (!sc.ready && !sc.loadingIndex) loadIndex(); },
+    index: () => ({ ready: sc.ready, loading: sc.loadingIndex, count: sc.indexCount, offscreen: Boolean(sc.offscreen) }),
+    // Session-Sprache: fehlt die Sprache im Index, wird sie dazugeladen (sonst würden z. B. japanische Karten nicht gefunden)
+    ensureLang: (l) => {
+      if (!FLAG[l] || sc.langs.includes(l)) return;
+      sc.langs = ["de", "en", "ja"].filter((x) => x === l || sc.langs.includes(x));
+      try { localStorage.setItem(LANGS_KEY, JSON.stringify(sc.langs)); } catch {}
+      renderLangChips();
+      if (sc.worker) loadIndex();
+    },
+    fetchInfo: (keys) => fetchInfo(keys),
+    // „In Set-Binder einsortieren“: gleicher Weg wie der bisherige Scanner (Konto → Set-Ordner, Gast → Test-Binder)
+    fileItem: async (info, choice, qty) => {
+      if (IS_STAGE) return false;
+      if (!state.user) return addGuest(info, choice, qty);
+      await addOne(info, choice, qty);
+      return true;
+    },
+    learn: (key, probe) => learn(key, probe, "confirm"),
+    openQuickList: (infos, opts) => openQuickList(infos, opts),
+    beforeStart: () => {
+      if (sc.running) stop();
+      sc.lastStill = null; sc.current = null; sc.currentAt = 0;
+      clearTimeout(sc.hudTimer);
+      renderHud(null);
+      $("ps-ls-still")?.classList.add("hidden");
+      showClassic(false);
+    },
+    isStage: IS_STAGE,
+  });
+  return sweepInst;
+}
+
+/** Klassische Bühne (Foto-Ergebnis, Reel-Demo) ein- bzw. ausblenden – der Sweep-Scanner ist die Standardansicht. */
+function showClassic(on) {
+  $("ps-ls-classic")?.classList.toggle("hidden", !on);
+}
+
+function startSweep() {
+  if (IS_STAGE) return;
+  $("ps-sw")?.classList.remove("hidden");
+  sweepUi().start();
+}
+
 export const liveScanApi = {
   ...(IS_STAGE ? { liveScanDemoPrepare: demoPrepare, liveScanDemoScan: demoScan, liveScanDemoFile: demoFile } : {}),
-  liveScanStart: () => start(),
-  liveScanStop: () => stop(),
-  liveScanTorch: () => toggleTorch(),
+  /** Zero-Latency Sweep-Modus: PS.sweep('start' | 'stop' | 'torch' | 'mute' | 'set' | 'lang' | 'finish' | 'plus' | 'undo' | …) */
+  sweep: (name, ...args) => sweepUi().act(name, ...args),
+  liveScanStart: () => startSweep(),
+  liveScanStop: () => { stop(); sweepUi().stop(); },
+  liveScanTorch: () => (sweepUi().running ? sweepUi().act("torch") : toggleTorch()),
   liveScanLang: setLang,
   liveScanAdd: addToCollection,
   /** Aktion im Ergebnisfeld mit Auto-Close (binder | sell | instant | wish | flip | details | swiper) */
@@ -2003,7 +2072,7 @@ export const liveScanApi = {
   liveScanLearn: (key, probe, source = "ai") => learn(key, probe || window.__psScanProbe, source),
   liveScanDismiss: () => {
     sc.current = null; sc.currentAt = 0; renderHud(null);
-    if (!sc.running) { $("ps-ls-still")?.classList.add("hidden"); $("ps-ls-hint")?.classList.add("hidden"); $("ps-ls-idle")?.classList.remove("hidden"); }
+    if (!sc.running) { $("ps-ls-still")?.classList.add("hidden"); $("ps-ls-hint")?.classList.add("hidden"); $("ps-ls-idle")?.classList.remove("hidden"); if (!IS_STAGE) showClassic(false); }
     setUi("search", "📇 Karte in den Rahmen halten");
   },
   /** Auslöser: Einzelbild in voller Schärfe (zusätzlich zur Auto-Erkennung); bei aus­geschalteter Kamera startet er sie */
@@ -2083,7 +2152,7 @@ export const liveScanApi = {
   /** Bereich öffnen und Kamera sofort starten (Schnellstart-Knöpfe, „Karte scannen“). */
   openLiveScanner: () => {
     window.PS?.showSub?.("scan", "live");
-    setTimeout(() => start(), 120);
+    setTimeout(() => startSweep(), 120);
   },
 };
 
@@ -2092,6 +2161,7 @@ export function onLiveScanShown() {
   renderLangChips();
   renderToggles();
   loadStatus();
+  sweepUi().shown();
   if (IS_STAGE) return;
   // Schon beim Öffnen vorladen (Karten-Index + Texterkennung) – nicht erst nach dem Kamera-Start: die erste Karte ist
   // dann sofort erkennbar statt nach mehreren Sekunden Laden
@@ -2102,26 +2172,27 @@ export function onLiveScanShown() {
 
 /** Kamera ohne Extra-Tipp starten, wenn der Zugriff schon erlaubt ist (sonst bleibt der Start-Knopf, kein Überfall-Dialog). */
 async function autoStart() {
-  if (sc.running || sc.starting || sc.lastStill || !navigator.mediaDevices?.getUserMedia) return;
+  if (sc.running || sc.starting || sc.lastStill || sweepUi().running || !navigator.mediaDevices?.getUserMedia) return;
   try {
     const p = await navigator.permissions?.query?.({ name: "camera" });
     if (p?.state !== "granted") return;
   } catch { return; }
   const panel = $("ps-live-scan");
-  if (panel && panel.offsetParent !== null && !sc.running) start();
+  if (panel && panel.offsetParent !== null && !sc.running && !sweepUi().running) startSweep();
 }
 
 export function initLiveScanner() {
   renderLangChips();
   renderToggles();
+  sweepUi().mount();
   // Galerie-Import (beide Datei-Felder) und Tap-to-Focus – per Delegation, weil das Panel nachgeladen wird
   document.addEventListener("change", (e) => {
     const el = e.target;
     if (el?.dataset?.lsUpload) { const f = el.files?.[0]; el.value = ""; scanUpload(f); }
   });
   document.addEventListener("click", (e) => { if (e.target?.closest?.("#ps-ls-stage")) tapFocus(e); });
-  window.addEventListener("resize", () => { if (sc.running) layout(); });
-  document.addEventListener("visibilitychange", () => { if (document.hidden && (sc.running || sc.starting)) stop(); });
+  window.addEventListener("resize", () => { if (sc.running) layout(); sweepUi().resize(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden && (sc.running || sc.starting)) stop(); if (document.hidden && sweepUi().running) sweepUi().stop(); });
   // Seite schließen / in den Verlauf (bfcache) / App-Wechsel auf iOS: Kamera-Tracks ausnahmslos beenden
-  window.addEventListener("pagehide", () => { if (sc.running || sc.starting || sc.stream) stop(); });
+  window.addEventListener("pagehide", () => { if (sc.running || sc.starting || sc.stream) stop(); if (sweepUi().running) sweepUi().stop(); });
 }

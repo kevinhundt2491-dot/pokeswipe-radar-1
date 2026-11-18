@@ -12,6 +12,8 @@ import {
 } from "../../server/scan-logic.ts";
 import { buildTextIndex, decideText } from "../../server/scan-text-logic.ts";
 import { renderGlyphBitmaps } from "./glyph-render.js";
+import { createSweepEngine } from "./sweep-engine.js";
+import { cachedJson } from "./idb-cache.js";
 
 const idx = { keys: [], langs: [], localNum: new Int32Array(0), total: new Int32Array(0), words: new Uint32Array(0), colors: [], count: 0, perLang: {}, learned: 0 };
 let glyphs = null;
@@ -25,6 +27,10 @@ let busy = false;
 /** Zeitbudget je Live-Bild für Ersatz-Zuschnitte und Position, an der die Suche beim nächsten Bild weitermacht */
 const LIVE_BUDGET_MS = 35;
 let fbCursor = 0;
+/** Zählt jedes Neuladen des Index (Sweep-Set-Lock baut seine Zeilenliste dann neu) */
+let idxVersion = 0;
+/** Zero-Latency Sweep-Modus (rahmenlose Live-Erkennung) – nutzt denselben Index wie die Foto-Erkennung */
+const sweep = createSweepEngine({ getIdx: () => idx, getVersion: () => idxVersion, labelOf: (k) => labelOf(k), post: (m, t) => postMessage(m, t || []) });
 
 /** Ersatz-Zuschnitte in sinnvoller Reihenfolge: kleiner gehalten, schief (±5°/±9°), neben der Mitte (± leicht gedreht). */
 function fallbackQuads(base0) {
@@ -55,9 +61,8 @@ async function loadIndex(langs) {
   for (const lang of langs) {
     postMessage({ type: "progress", lang, state: "loading" });
     try {
-      const res = await fetch(`/api/scan/index?lang=${encodeURIComponent(lang)}`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      // IndexedDB-Zwischenspeicher: beim zweiten Start ist der Index ohne Netz in Millisekunden da (auch offline)
+      const { data } = await cachedJson(`/api/scan/index?lang=${encodeURIComponent(lang)}`, { fetchInit: { credentials: "same-origin" } });
       const words = unpackWords(decodeBase64(String(data.h || "")));
       const ids = String(data.ids || "").split("\n").filter(Boolean);
       const n = Math.min(ids.length, Math.floor(words.length / WORDS));
@@ -93,6 +98,7 @@ async function loadIndex(langs) {
     o += p.ids.length;
   }
   Object.assign(idx, { keys, langs: langOf, localNum, total, words, colors, count, perLang, learned });
+  idxVersion++;
   return { count, perLang, learned };
 }
 
@@ -100,9 +106,7 @@ async function loadIndex(langs) {
 async function loadTextIndex(langs) {
   const parts = await Promise.all(langs.map(async (lang) => {
     try {
-      const res = await fetch(`/api/scan/text-index?lang=${encodeURIComponent(lang)}`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const { data } = await cachedJson(`/api/scan/text-index?lang=${encodeURIComponent(lang)}`, { fetchInit: { credentials: "same-origin" } });
       return { lang, t: String(data.t || "") };
     } catch { return null; }
   }));
@@ -253,6 +257,7 @@ async function analyse(msg) {
 
 self.onmessage = async (e) => {
   const msg = e.data || {};
+  if (typeof msg.type === "string" && msg.type.startsWith("sweep-")) { await sweep.handle(msg); return; }
   if (msg.type === "init") {
     if (!glyphs) { try { glyphs = buildGlyphs(); } catch { glyphs = []; } }
     // Rückfall für Safari/iOS ohne OffscreenCanvas im Worker: Vorlagen vom Haupt-Thread anfordern
@@ -261,7 +266,7 @@ self.onmessage = async (e) => {
     const langs = Array.isArray(msg.langs) && msg.langs.length ? msg.langs : ["de"];
     langsOrder = langs;
     const [r, textCount] = await Promise.all([loadIndex(langs), loadTextIndex(langs)]);
-    postMessage({ type: "ready", ...r, textCount, ocr: glyphs.length ? (textDetector ? "text-detector" : "templates") : textDetector ? "text-detector" : "none" });
+    postMessage({ type: "ready", ...r, textCount, offscreen: sweep.offscreen, ocr: glyphs.length ? (textDetector ? "text-detector" : "templates") : textDetector ? "text-detector" : "none" });
     return;
   }
   // Vom Haupt-Thread gezeichnete Ziffern-Vorlagen (Main-Thread-Canvas-Rückfall)
