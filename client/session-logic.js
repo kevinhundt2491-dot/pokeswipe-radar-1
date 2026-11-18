@@ -290,3 +290,87 @@ export function guestMigrationPlan({ portfolio = [], wishlist = [], done = [] } 
     total: pf.length + wl.length,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Kein ungewollter Rauswurf (Analyse & Absicherung, getestet in tests/session-stability.test.ts)
+// ---------------------------------------------------------------------------
+//  • gotrue-js löscht beim Token-Refresh bei JEDEM Fehler die gespeicherte Sitzung – auch bei Netzwerk-Hängern,
+//    Timeouts oder 502/503 beim Kaltstart. Nach dem Aufwachen des Handys im Funkloch war man so abgemeldet.
+//    → Nur noch eindeutige Ablehnungen (400/401/403) beenden die Sitzung (session.js: hardenTokenRefresh).
+//  • Mehrere Tabs: Tab A erneuert (Refresh-Token rotiert), Tab B versucht es mit dem alten → 400 → Abmeldung überall.
+//    → Vor dem Löschen prüfen, ob ein anderer Tab bereits neue Tokens gespeichert hat, und diese übernehmen.
+//  • Der Server antwortete bei kurzem Identity-Ausfall mit 401 → jetzt 503 (server/auth.ts: authenticate).
+
+/** HTTP-Status, die beim Token-Refresh eindeutig „Sitzung ungültig“ bedeuten (alles andere = vorübergehend). */
+export const DEFINITIVE_AUTH_STATUS = [400, 401, 403];
+
+/** Ist ein Refresh-Fehler eine eindeutige Ablehnung (→ abmelden) statt eines vorübergehenden Problems (→ angemeldet bleiben)? */
+export function isDefinitiveAuthFailure(error) {
+  const status = Number(error?.status);
+  return Number.isFinite(status) && DEFINITIVE_AUTH_STATUS.includes(status);
+}
+
+/**
+ * Wie ein 401 einer API-Antwort zu werten ist.
+ * @param {{ hadToken: boolean, retried: boolean, refreshOutcome: "ok"|"invalid"|"transient"|"none", sessionStillStored: boolean }} p
+ * @returns {"retry" | "transient" | "unauthorized"}
+ *  • "retry"        – Token wurde gerade erneuert → Anfrage einmal wiederholen
+ *  • "transient"    – Erneuerung scheiterte nur am Netz/Server → NICHT abmelden (wie 503 behandeln)
+ *  • "unauthorized" – eindeutig nicht (mehr) angemeldet
+ */
+export function classifyUnauthorized({ hadToken = false, retried = false, refreshOutcome = "none", sessionStillStored = false } = {}) {
+  if (!hadToken) return "unauthorized";
+  if (retried) return "unauthorized"; // auch mit frischem Token abgelehnt
+  if (refreshOutcome === "ok") return "retry";
+  if (refreshOutcome === "transient" && sessionStillStored) return "transient";
+  return "unauthorized";
+}
+
+/** Kurzer, nicht umkehrbarer Fingerabdruck eines Tokens (nur zum Erkennen „hat sich geändert“). */
+export function tokenFingerprint(token) {
+  let h = 2166136261;
+  const s = String(token || "");
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36);
+}
+
+/** Server-Sitzungs-Cookie mindestens so oft verlängern (gleitender Ablauf, 180 Tage ab letzter Nutzung). */
+export const SESSION_SYNC_EVERY_MS = 12 * 3600_000;
+
+/** Muss das HttpOnly-Sitzungs-Cookie (neu) gesetzt bzw. verlängert werden? */
+export function shouldSyncSession({ last = null, fingerprint = "", now = Date.now(), force = false, every = SESSION_SYNC_EVERY_MS } = {}) {
+  if (!fingerprint) return false;
+  if (force) return true;
+  if (!last || typeof last !== "object") return true;
+  if (last.h !== fingerprint) return true; // Refresh-Token rotiert → Cookie muss den neuen kennen
+  const at = Number(last.at) || 0;
+  return now - at >= every || at > now + 60_000;
+}
+
+// ---------------------------------------------------------------------------
+// Tab & Unterbereich in der URL (bleibt beim Neuladen / App-Wechsel stehen)
+// ---------------------------------------------------------------------------
+export const URL_TABS = ["home", "swipe", "scan", "flip", "community", "map", "portfolio", "profile", "admin", "trades"];
+
+/**
+ * Neue Adresse mit gesetzten/entfernten Parametern – alle übrigen Parameter (z. B. ?ref=, ?post=) bleiben erhalten.
+ * `null`/`""` entfernt einen Parameter; „home“ als Reiter wird weggelassen (saubere Startadresse).
+ * @returns {string} Pfad + Suche + Hash
+ */
+export function withUrlParams(href, params = {}) {
+  let u;
+  try { u = new URL(href, "https://x.invalid"); } catch { return ""; }
+  for (const [k, v] of Object.entries(params)) {
+    if (v === null || v === undefined || v === "" || (k === "tab" && v === "home")) u.searchParams.delete(k);
+    else u.searchParams.set(k, String(v));
+  }
+  return u.pathname + u.search + u.hash;
+}
+
+/** Reiter aus der Adresse (nur bekannte Werte). */
+export function tabFromUrl(href) {
+  try {
+    const t = new URL(href, "https://x.invalid").searchParams.get("tab") || "";
+    return URL_TABS.includes(t) ? t : "";
+  } catch { return ""; }
+}

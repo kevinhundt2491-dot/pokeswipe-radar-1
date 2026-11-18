@@ -1422,25 +1422,30 @@
         if (hintL) hintL.style.opacity = "0";
         if (hintR) hintR.style.opacity = "0";
       };
+      let pid = null;
       img.addEventListener("pointerdown", (e) => {
-        active = true; horizontal = null; dx = 0; startX = e.clientX; startY = e.clientY;
+        // Nur ein Finger bzw. linke Maustaste – Zwei-Finger-Zoom/Scrollen löst keinen Swipe aus
+        if (active || (e.pointerType === "mouse" && e.button !== 0)) return;
+        active = true; horizontal = null; dx = 0; startX = e.clientX; startY = e.clientY; pid = e.pointerId;
         img.style.transition = "none";
         try { img.setPointerCapture(e.pointerId); } catch (err) {}
       });
       img.addEventListener("pointermove", (e) => {
-        if (!active) return;
+        if (!active || e.pointerId !== pid) return;
         const mx = e.clientX - startX, my = e.clientY - startY;
-        if (horizontal === null && (Math.abs(mx) > 8 || Math.abs(my) > 8)) horizontal = Math.abs(mx) > Math.abs(my);
+        // Richtung erst nach 12 px festlegen und nur deutlich waagerecht als Swipe werten (normales Scrollen bleibt Scrollen)
+        if (horizontal === null && (Math.abs(mx) > 12 || Math.abs(my) > 12)) horizontal = Math.abs(mx) > Math.abs(my) * 1.4;
         if (!horizontal) return;
         dx = mx;
         img.style.transform = `translateX(${dx}px) rotate(${dx / 18}deg)`;
         if (hintL) hintL.style.opacity = dx < -30 ? String(Math.min(1, -dx / 110)) : "0";
         if (hintR) hintR.style.opacity = dx > 30 ? String(Math.min(1, dx / 110)) : "0";
       });
-      const end = () => {
-        if (!active) return;
+      const end = (e) => {
+        if (!active || (e && e.pointerId !== pid)) return;
         active = false;
-        const go = Math.abs(dx) > 90 && horizontal;
+        // Abgebrochene Geste (Browser übernimmt das Scrollen) wählt nie eine Karte aus
+        const go = e && e.type !== "pointercancel" && Math.abs(dx) > 90 && horizontal;
         const dir = dx;
         if (go) {
           img.style.transition = "transform .2s ease";
@@ -1470,9 +1475,12 @@
     // Bereich → Navigationspunkt (Sammlung gehört zum Scanner, Community wird aus „Entdecken“ geöffnet)
     // 5 Hauptreiter: Start · Scanner · Marktplatz (+ Swipe-Tausch) · Sammlung (+ Preis-Radar) · Community; Profil über den Avatar
     const NAV_OF = { home: "home", swipe: "map", scan: "scan", portfolio: "portfolio", map: "map", flip: "portfolio", community: "community", profile: "profile" };
+    let activeTab = null;
     function switchTab(tab) {
       const tabs = ["home", "swipe", "scan", "flip", "community", "map", "portfolio", "profile"];
       if (!tabs.includes(tab)) tab = "home";
+      const changed = activeTab !== tab;
+      activeTab = tab;
       tabs.forEach(t => document.getElementById(`view-${t}`)?.classList.add("hidden"));
       document.getElementById(`view-${tab}`)?.classList.remove("hidden");
       const navKey = NAV_OF[tab] || tab;
@@ -1485,7 +1493,9 @@
 
       if (tab === "map") initOrUpdateMap();
       try { window.dispatchEvent(new CustomEvent("ps:tab", { detail: tab })); } catch (e) {}
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      // Nur bei echtem Reiterwechsel nach oben – erneutes Aufrufen desselben Reiters (Unterbereich, Deep-Link,
+      // Hintergrund-Aktualisierung) lässt die Leseposition stehen
+      if (changed) window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
     // START-INITIALISIERUNG

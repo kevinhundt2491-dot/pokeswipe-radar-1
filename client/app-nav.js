@@ -8,7 +8,8 @@
 //   5. Community    (view-community) – [Live-Chat] | [Pull-Wall]
 // Profil & Einstellungen (view-profile) öffnen sich über den Avatar oben rechts – nicht als eigener Reiter.
 // Jede Funktion hat genau einen festen Platz; Browser-/Android-Zurück wechselt zwischen den Bereichen (History-State).
-import { $, esc, state, api, btn } from "./core.js";
+import { $, esc, state, api, btn, syncUrl } from "./core.js";
+import { tabFromUrl } from "./session-logic.js";
 import { founderInviteHtml } from "./invite.js";
 import { langSwitchHtml } from "./i18n.js";
 import { inviteProgressHtml, proStatusText } from "./referral.js";
@@ -305,7 +306,11 @@ export async function renderProfileHub() {
     ${link("AGB", "/rechtliches#agb")}
     ${link("Widerrufsbelehrung", "/rechtliches#widerruf")}
     ${link("Verträge hier kündigen", "/kuendigen")}`));
+  // Hintergrund-Aktualisierung (/api/me, Tarif, Mitteilungen) darf aufgeklappte Bereiche – z. B. die Admin-Zentrale – nicht zuklappen
+  const accKey = (d) => d.id || d.querySelector("summary")?.textContent?.replace(/\s+/g, " ").trim() || "";
+  const openState = new Map([...box.querySelectorAll("details.ps-acc")].map((d) => [accKey(d), d.open]));
   box.innerHTML = `${head}${sections.join("")}${user ? btn("Abmelden", "PS.logout()", "w-full bg-rose-500/20 text-rose-300 border border-rose-500/40") : ""}`;
+  if (openState.size) box.querySelectorAll("details.ps-acc").forEach((d) => { const k = accKey(d); if (openState.has(k)) d.open = openState.get(k); });
   // Ansicht-Umschalter spiegeln (aria-pressed setzt shell.js über applyMode)
   const mode = localStorage.getItem("ps_ui_mode") || (document.body.classList.contains("ps-simple") ? "simple" : "pro");
   box.querySelectorAll("[data-mode-btn]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.modeBtn === mode)));
@@ -332,11 +337,18 @@ function onTab(tab) {
   if (tab === "map" && prev !== "map" && prev !== "swipe" && state.marketMode === "mine") state.marketMode = "buy";
   if (tab === "map") applyMarketMode();
   renderSegments();
-  if (!fromPop && prev !== tab) {
-    try { history.pushState({ psTab: tab }, "", location.href); } catch {}
+  // Aktiven Reiter in der Adresse halten (?tab=…) – beim Neuladen oder App-Wechsel bleibt er exakt stehen.
+  // Unterbereich (?sub=…) nur behalten, wenn der neue Reiter Unterbereiche hat; ?section= gehört zum Admin-Fenster.
+  if (state.urlSync && prev !== tab) {
+    const hasSubs = Boolean($(`view-${tab}`)?.querySelector("[data-sub]"));
+    const params = { tab, section: null, ...(hasSubs ? {} : { sub: null }) };
+    if (!fromPop) syncUrl(params, { push: true, state: { psTab: tab } });
+    else syncUrl(params, { state: { psTab: tab } });
   }
   fromPop = false;
 }
+// Erst nach dem Start (boot) schreibt die Navigation in die Adresse – sonst ginge ?tab=… vor dem Auswerten verloren
+export function enableTabUrlSync() { state.urlSync = true; }
 
 function navBack() {
   if (history.state?.psTab && history.length > 1) history.back();
@@ -351,7 +363,8 @@ export function initAppNav() {
     wrapped.__psNav = true;
     window.switchTab = wrapped;
   }
-  try { history.replaceState({ ...(history.state || {}), psTab: "home" }, "", location.href); } catch {}
+  const startTab = tabFromUrl(location.href);
+  try { history.replaceState({ ...(history.state || {}), psTab: PAGES[startTab] ? startTab : startTab === "admin" ? "profile" : "home" }, "", location.href); } catch {}
   window.addEventListener("popstate", (e) => {
     const tab = e.state?.psTab;
     if (!tab || !PAGES[tab]) return;

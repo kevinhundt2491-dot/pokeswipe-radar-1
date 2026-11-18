@@ -11,7 +11,7 @@ import { sanitizeAvatarUrl } from "./profile-prefs-logic.ts";
  * beliebige Nutzer (auch Admins) "bestätigt". Netlify setzt URL auf die Produktions-Adresse; die
  * Identity-Instanz ist für alle Deploys (auch Previews) dieselbe.
  */
-function identityOrigin(c: Context): string {
+export function identityOrigin(c: Context): string {
   const env = process.env.URL || "";
   try {
     if (env) return new URL(env).origin;
@@ -80,19 +80,28 @@ export function forgetUserSessions(userId: string) {
 }
 
 /**
- * Prüft das Netlify-Identity-JWT (Cookie nf_jwt oder Bearer-Header). Gefälschte oder abgelaufene Tokens werden abgelehnt.
+ * Ergebnis der Token-Prüfung. `unavailable` = Identity war kurz nicht erreichbar (Netzwerk, Timeout, 5xx, Kaltstart):
+ * Die Anmeldung ist dann NICHT ungültig – Aufrufer antworten mit 503 statt 401, damit der Browser niemanden abmeldet.
  */
-export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> {
+export type AuthCheck = { user: AuthUser | null; unavailable: boolean };
+
+/** Identity-Antwort → „vorübergehend nicht erreichbar“ (kein Grund für eine Abmeldung)? */
+export const identityUnavailableStatus = (status: number) => status >= 500 || status === 429 || status === 408;
+
+/**
+ * Prüft das Netlify-Identity-JWT (Cookie nf_jwt oder Bearer-Header) und unterscheidet „ungültig“ von „Identity kurz weg“.
+ */
+export async function authenticate(c: Context): Promise<AuthCheck> {
   const header = c.req.header("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : getCookie(c, "nf_jwt");
-  if (!token || token.length > 4096 || !/^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$/.test(token)) return null;
+  if (!token || token.length > 4096 || !/^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$/.test(token)) return { user: null, unavailable: false };
   const claims = inspectToken(token);
-  if (!claims) return null;
+  if (!claims) return { user: null, unavailable: false };
 
   const key = createHash("sha256").update(token).digest("base64url");
   const now = Date.now();
   const cached = tokenCache.get(key);
-  if (cached && cached.expires > now) return cached.user;
+  if (cached && cached.expires > now) return { user: cached.user, unavailable: false };
 
   let user: AuthUser | null = null;
   try {
@@ -101,6 +110,8 @@ export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> 
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(8_000),
     });
+    // Kaltstart/Störung bei Identity: nicht zwischenspeichern und NICHT als „abgemeldet“ werten
+    if (identityUnavailableStatus(res.status)) return { user: null, unavailable: true };
     if (res.ok) {
       const data: any = await res.json();
       if (data?.id && data?.email && String(data.id) === claims.sub) {
@@ -115,11 +126,19 @@ export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> 
       }
     }
   } catch {
-    // Identity kurz nicht erreichbar: nicht zwischenspeichern, damit der nächste Versuch neu prüft
-    return null;
+    // Identity kurz nicht erreichbar (Netzwerk/Timeout): nicht zwischenspeichern, damit der nächste Versuch neu prüft
+    return { user: null, unavailable: true };
   }
   remember(key, { user, expires: user ? Math.min(now + VERIFIED_TTL_MS, claims.exp * 1000) : now + NEGATIVE_TTL_MS });
-  return user;
+  return { user, unavailable: false };
+}
+
+/**
+ * Prüft das Netlify-Identity-JWT (Cookie nf_jwt oder Bearer-Header). Gefälschte oder abgelaufene Tokens werden abgelehnt.
+ * (Kompatible Kurzform von authenticate() für optionale Anmeldung – „Identity kurz weg“ zählt hier als Gast.)
+ */
+export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> {
+  return (await authenticate(c)).user;
 }
 
 function baseName(user: AuthUser) {

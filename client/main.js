@@ -26,7 +26,7 @@ import { demandApi, routeDemand, emptyMarketHtml } from "./demand.js";
 import { priceTagHtml } from "./price-tag.js";
 import { initDealsRadar, dealsRadarApi } from "./deals-radar.js";
 import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
-import { initAppNav, appNavApi, marketMode, renderProfileHub } from "./app-nav.js";
+import { initAppNav, appNavApi, marketMode, renderProfileHub, enableTabUrlSync } from "./app-nav.js";
 import { initFlip, flipApi, syncFlip } from "./flip.js";
 import { initCommunity, communityApi, syncCommunity, routeCommunity, communityAdminHtml } from "./community.js";
 import { profileApi, routeProfile, userSocialHtml } from "./profile.js";
@@ -48,6 +48,7 @@ import { variantSelect, conditionSelect, variantsOf, variantBadge, VARIANT_LABEL
 import {
   restoreSession, persistSessionCookies, ensureFreshToken, storedSession, cachedProfile, saveProfileCache, clearProfileCache,
   syncProfileAfterLogin, migrateGuestData, inAppEnv, savePref,
+  hardenTokenRefresh, lastRefreshOutcome, syncServerSession, restoreServerSession, endServerSession,
 } from "./session.js";
 import { oauthStrategy, externalBrowserUrl, IN_APP_LABEL, initialOf, displayNameFor, cleanDisplayName } from "./session-logic.js";
 import { filterListings, MARKET_CHIP_KEYS, setCodeOf, conditionShort } from "./market-filter-logic.js";
@@ -283,6 +284,8 @@ function authMsg(text, ok = false) {
  */
 async function completeLogin() {
   persistSessionCookies();
+  // Dauerhaftes HttpOnly-Sitzungs-Cookie (180 Tage) beim Server hinterlegen bzw. verlängern
+  syncServerSession().catch(() => {});
   await loadMe();
   if (!state.user) return;
   if (await syncProfileAfterLogin({ me: state.me, user: state.user, api })) await loadMe();
@@ -374,6 +377,8 @@ async function saveProfile() {
 
 async function doLogout() {
   await beforeLogout();
+  // Einziger Weg, auf dem die Dauer-Anmeldung endet: aktiver Klick auf „Abmelden“
+  await endServerSession();
   try { await logout(); } catch {}
   state.user = null; state.me = null; state.portfolio = null; state.alerts = null; state.trades = []; state.unread = 0;
   state.profileCache = null;
@@ -1546,9 +1551,12 @@ window.PS = {
 hooks.openAccount = openAccount;
 hooks.openPro = openPro;
 hooks.freshToken = ensureFreshToken;
+hooks.refreshOutcome = lastRefreshOutcome;
 window.activatePro = (plan) => checkout(plan === "VIP" || plan === "pro" ? "pro" : "premium");
 
 async function boot() {
+  // Zuerst: Token-Refresh absichern – Netz-Hänger/Kaltstarts dürfen die gespeicherte Anmeldung nie mehr löschen
+  hardenTokenRefresh();
   initNativePlatform(); // Plattform-Erkennung, Safe Area, Status-Leiste, natives Teilen & Haptik (Web: nur Safe Area)
   injectHeader();
   injectTracker();
@@ -1574,6 +1582,8 @@ async function boot() {
 
   // Dauerhaft eingeloggt: fehlendes Sitzungs-Cookie aus der gespeicherten Anmeldung wiederherstellen, BEVOR
   // getUser() läuft (sonst verwirft @netlify/identity die Sitzung nach jedem Browser-Neustart) – siehe client/session.js
+  // Browser-Sitzung komplett weg (Safari-ITP, In-App-Browser), dauerhaftes Server-Cookie aber vorhanden → wiederherstellen
+  try { await restoreServerSession(); } catch {}
   restoreSession();
   // Name & Avatar sofort aus dem Profil-Cache zeigen (noch bevor /api/me antwortet) – kein „Anmelden“-Flackern
   const saved = storedSession();
@@ -1616,7 +1626,16 @@ async function boot() {
   await confirmCheckoutFromUrl();
   const tab = new URLSearchParams(location.search).get("tab");
   if (tab === "trades") openTrades();
-  else if (tab === "admin") { switchTabSafe("profile"); if (state.me?.isAdmin) { openAdmin(); if (new URLSearchParams(location.search).get("section") === "creators") window.PS.openCreatorAdmin(); } }
+  else if (tab === "admin") {
+    const section = new URLSearchParams(location.search).get("section");
+    switchTabSafe("profile");
+    const openAdminFromUrl = () => { openAdmin(); if (section === "creators") window.PS.openCreatorAdmin(); };
+    if (state.me?.isAdmin) openAdminFromUrl();
+    else if (state.user && !state.me) {
+      // /api/me hing beim Start kurz (Kaltstart) – Admin-Bereich nach dem nächsten erfolgreichen Laden öffnen statt verlieren
+      setTimeout(async () => { await loadMe(); renderHeader(); if (state.me?.isAdmin) openAdminFromUrl(); }, 2500);
+    }
+  }
   else if (tab === "creator") { location.replace("/creator"); return; }
   else if (["home", "swipe", "scan", "flip", "community", "map", "portfolio", "profile"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
@@ -1629,17 +1648,24 @@ async function boot() {
   routeMarket();
   routeDemand();
   routeTrading();
+  // Ab jetzt spiegeln Reiter & Unterbereiche sich in der Adresse (history.replaceState/pushState, kein Neuladen)
+  enableTabUrlSync();
 
   onAuthChange(async (event, user) => {
     // Jede Anmeldung und jeder Token-Refresh: Cookies dauerhaft halten (nicht nur bis zum Schließen des Browsers)
-    if (event === "login" || event === "token_refresh") persistSessionCookies();
+    if (event === "login" || event === "token_refresh") { persistSessionCookies(); syncServerSession().catch(() => {}); }
     if (event === "login" && user && !state.user) { state.user = user; await completeLogin(); renderHeader(); refreshAll(); afterAuthFeatures(); }
     if (event === "logout") { state.user = null; state.me = null; state.profileCache = null; renderHeader(); refreshAll(); }
   });
 
   setInterval(() => pollNotifications(), 30_000);
   setInterval(() => { if (!document.hidden && !$("view-map")?.classList.contains("hidden")) loadListings(); }, 30_000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollNotifications(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    // Zurück in der App (Handy entsperrt, App-Wechsel): Token still erneuern & Dauer-Sitzung verlängern – ohne Neuladen
+    if (state.user) ensureFreshToken().then(() => syncServerSession()).catch(() => {});
+    pollNotifications();
+  });
 }
 
 boot();

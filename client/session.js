@@ -1,10 +1,12 @@
 // PokeSwipe & Radar – dauerhafte Anmeldung, Profil-Cache und Gast-Daten-Übernahme (Browser-Teil).
 // Reine Logik: client/session-logic.js (getestet). Konten laufen über Netlify Identity (Google, Facebook, E-Mail);
 // Firebase wird nur anonym für Live-Zähler genutzt und ist in public/js/legacy-app.js auf dauerhafte Persistenz gestellt.
-import { refreshSession } from "@netlify/identity";
+// Gleiche gotrue-js-Instanz wie in @netlify/identity (eine Kopie im Bundle) – für den abgesicherten Token-Refresh
+import { User as GoTrueUser } from "gotrue-js";
 import {
   GOTRUE_KEY, PROFILE_CACHE_KEY, parseStoredSession, sessionBootAction, authCookieStrings, needsRefresh,
   profileCacheFrom, readProfileCache, nameToSync, guestMigrationPlan, detectInAppBrowser, isGeneratedName,
+  isDefinitiveAuthFailure, tokenFingerprint, shouldSyncSession, hasCookie,
 } from "./session-logic.js";
 
 const secure = () => location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
@@ -37,23 +39,149 @@ export function restoreSession() {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Abgesicherter Token-Refresh (Hauptursache der ungewollten Abmeldungen)
+// ---------------------------------------------------------------------------
+// gotrue-js (von @netlify/identity genutzt) ruft bei JEDEM Refresh-Fehler clearSession() auf – also auch bei
+// Netzwerk-Hängern, Timeouts, 502/503 (Kaltstart) oder wenn ein anderer Tab den Refresh-Token schon rotiert hat.
+// Das löschte „gotrue.user“ und meldete den Nutzer in allen Tabs ab. Ersatz mit identischem Verhalten,
+// außer: Abmeldung nur noch bei eindeutiger Ablehnung (400/401/403) des Refresh-Tokens.
+let lastOutcome = "none"; // "ok" | "invalid" | "transient" | "none"
+export const lastRefreshOutcome = () => lastOutcome;
+
+export function hardenTokenRefresh() {
+  const proto = GoTrueUser?.prototype;
+  if (!proto || proto.__psHardened) return false;
+  const inflight = {};
+  proto._refreshToken = function psRefreshToken(refreshToken) {
+    if (inflight[refreshToken]) return inflight[refreshToken];
+    const request = this.api.request("/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`,
+    });
+    let timer = null;
+    const timeout = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("Token refresh timeout")), 30_000);
+    });
+    const promise = Promise.race([request, timeout]).then((response) => {
+      this._processTokenResponse(response);
+      this._refreshSavedSession();
+      if (!this.token) throw new Error("Gotrue-js: Token not set after refresh");
+      lastOutcome = "ok";
+      return this.token.access_token;
+    }).catch((error) => {
+      // Ein anderer Tab hat bereits erneuert (Refresh-Token rotiert) → dessen gespeicherte Tokens übernehmen
+      let stored = null;
+      try { stored = JSON.parse(localStorage.getItem(GOTRUE_KEY) || "null")?.token || null; } catch {}
+      if (stored?.access_token && stored.refresh_token && stored.refresh_token !== refreshToken) {
+        this._processTokenResponse({ ...stored });
+        lastOutcome = "ok";
+        return this.token.access_token;
+      }
+      if (isDefinitiveAuthFailure(error)) {
+        lastOutcome = "invalid";
+        this.clearSession(); // Refresh-Token wirklich ungültig/widerrufen
+      } else {
+        lastOutcome = "transient"; // Netz/Server kurz weg: Sitzung bleibt, nächster Versuch klappt
+      }
+      throw error;
+    }).finally(() => {
+      clearTimeout(timer);
+      delete inflight[refreshToken];
+    });
+    inflight[refreshToken] = promise;
+    return promise;
+  };
+  proto.__psHardened = true;
+  return true;
+}
+
 let refreshing = null;
-/** Zugangs-Token rechtzeitig erneuern (z. B. nach Tagen ohne Besuch), damit API-Aufrufe nicht mit 401 scheitern. */
+/**
+ * Zugangs-Token rechtzeitig erneuern (z. B. nach Tagen ohne Besuch), damit API-Aufrufe nicht mit 401 scheitern.
+ * `force: true` erneuert auch ein noch gültiges Token (z. B. wenn der Server es abgelehnt hat).
+ * @returns {Promise<boolean>} true = neues Token liegt vor; Grund eines Fehlschlags: lastRefreshOutcome()
+ */
 export async function ensureFreshToken({ force = false } = {}) {
   const s = storedSession();
   if (!s?.refreshToken) return false;
   if (!force && !needsRefresh(s.expiresAt)) return false;
   if (!refreshing) {
     refreshing = (async () => {
+      lastOutcome = "none";
       try {
-        const jwt = await refreshSession();
-        if (jwt) persistSessionCookies();
-        return Boolean(jwt);
-      } catch { return false; }
-      finally { setTimeout(() => { refreshing = null; }, 0); }
+        const user = GoTrueUser.recoverSession();
+        if (!user) return false;
+        const jwt = await user.jwt(true);
+        if (!jwt) return false;
+        persistSessionCookies();
+        syncServerSession({ force: true }).catch(() => {});
+        return true;
+      } catch {
+        if (lastOutcome === "none" || lastOutcome === "ok") lastOutcome = "transient";
+        return false;
+      } finally { setTimeout(() => { refreshing = null; }, 0); }
     })();
   }
   return refreshing;
+}
+
+// ---------------------------------------------------------------------------
+// Dauerhaftes Server-Sitzungs-Cookie (HttpOnly, 180 Tage, gleitend) – server/session.ts
+// ---------------------------------------------------------------------------
+const SYNC_KEY = "ps_session_sync";
+let syncing = null;
+
+/** Sitzung beim Server hinterlegen bzw. verlängern (nach Login, Token-Refresh, spätestens alle 12 h bei Nutzung). */
+export async function syncServerSession({ force = false } = {}) {
+  const s = storedSession();
+  if (!s?.accessToken || !s.refreshToken) return false;
+  const fingerprint = tokenFingerprint(s.refreshToken);
+  let last = null;
+  try { last = JSON.parse(ls.get(SYNC_KEY) || "null"); } catch {}
+  if (!shouldSyncSession({ last, fingerprint, force })) return false;
+  if (syncing) return syncing;
+  syncing = fetch("/api/session", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${s.accessToken}` },
+    body: JSON.stringify({ refreshToken: s.refreshToken }),
+  }).then((r) => {
+    if (r.ok) ls.set(SYNC_KEY, JSON.stringify({ at: Date.now(), h: fingerprint }));
+    return r.ok;
+  }).catch(() => false).finally(() => { syncing = null; });
+  return syncing;
+}
+
+/**
+ * VOR getUser(): Ist die Browser-Sitzung weg (Safari löscht Skript-Speicher nach 7 Tagen, In-App-Browser räumen auf),
+ * das dauerhafte Server-Cookie aber noch da, holt der Server neue Tokens und setzt die Cookies – getUser() übernimmt sie.
+ * Bei Netz-/Serverproblemen wird kurz erneut versucht; niemals wird dabei etwas gelöscht.
+ */
+export async function restoreServerSession() {
+  if (storedSession()) return false;
+  if (!hasCookie(document.cookie, "ps_auth")) return false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch("/api/session/restore", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", Accept: "application/json" }, body: "{}",
+      });
+      if (r.ok) { const d = await r.json().catch(() => ({})); return Boolean(d?.restored); }
+      if (r.status < 500 && r.status !== 429) return false;
+    } catch {}
+    await new Promise((res) => setTimeout(res, 1200 * (attempt + 1)));
+  }
+  return false;
+}
+
+/** NUR beim aktiven Klick auf „Abmelden“: dauerhafte Server-Sitzung beenden. */
+export async function endServerSession() {
+  ls.del(SYNC_KEY);
+  try {
+    await fetch("/api/session", { method: "DELETE", credentials: "same-origin", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: "{}" });
+  } catch {}
 }
 
 // ---------------------------------------------------------------------------

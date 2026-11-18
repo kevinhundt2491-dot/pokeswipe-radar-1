@@ -6,7 +6,7 @@ import {
   db, profiles, cards, priceHistory, portfolioItems, portfolioSnapshots, priceAlerts, notifications,
   listings, trades, tradeMessages, reviews, reports, payments, freeBoostUsage, calendarEvents, cardPrints,
 } from "../db/index.ts";
-import { verifyIdentityToken, ensureProfile, isAdmin, type AuthUser } from "./auth.ts";
+import { authenticate, ensureProfile, isAdmin, type AuthUser } from "./auth.ts";
 import { PLANS, BOOST_DAYS, BOOST_PRICE_CENTS, effectivePlan, listingLimit, type PlanId } from "./plans.ts";
 import { registerFeatures, ensureReferralCode, extraMe, applyShopUpdates, activeAlertCount, findSealed, notifySealedListing, trialDays } from "./features.ts";
 import { registerGrowth, notifyWishlistListing } from "./growth.ts";
@@ -61,6 +61,7 @@ import { registerShipping } from "./shipping.ts";
 import { registerAlerts } from "./alerts.ts";
 import { registerCreator } from "./creator.ts";
 import { registerPresence } from "./presence.ts";
+import { registerSession } from "./session.ts";
 
 type Profile = typeof profiles.$inferSelect;
 type Vars = { user: AuthUser; profile: Profile; plan: PlanId };
@@ -98,7 +99,12 @@ app.onError((err, c) => {
 // Login-Pflicht
 // ---------------------------------------------------------------------------
 const auth = async (c: any, next: any) => {
-  const user = await verifyIdentityToken(c);
+  const { user, unavailable } = await authenticate(c);
+  // Identity kurz nicht erreichbar (Kaltstart, Netzwerk): 503 statt 401 – sonst würde der Browser den Nutzer abmelden
+  if (!user && unavailable) {
+    c.header("Retry-After", "3");
+    return c.json({ error: "Anmeldedienst kurz nicht erreichbar – du bleibst angemeldet. Bitte gleich erneut versuchen.", retry: true }, 503);
+  }
   if (!user) return c.json({ error: "Bitte melde dich an." }, 401);
   let profile = await ensureProfile(user);
   profile = await syncProfilePlan(profile);
@@ -587,7 +593,8 @@ app.get("/api/listings", async (c) => {
   const idFilter = ids.length ? sql`AND l.id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})` : sql``;
   let userFilter = sql``;
   if (mine) {
-    const u = await verifyIdentityToken(c);
+    const { user: u, unavailable } = await authenticate(c);
+    if (!u && unavailable) return c.json({ error: "Anmeldedienst kurz nicht erreichbar – bitte gleich erneut versuchen.", retry: true }, 503);
     if (!u) return c.json({ error: "Bitte melde dich an." }, 401);
     userFilter = sql`AND l.user_id = ${u.id}`;
   }
@@ -1209,7 +1216,8 @@ registerValuation(app); // Phase 9: eigene Preis-Pipeline (NM … Damaged, PSA 8
 registerShipping(app, { auth, body }); // Phase 8: DHL-Versandetiketten mit eigenen Händler-Zugangsdaten
 registerAlerts(app, { auth, adminOnly, body }); // Phase 8: Browser-Fehlerberichte, Testalarm, Alarm-Verlauf
 registerCreator(app, { auth, adminOnly, body }); // Creator-Programm: /creator-Bewerbung, Creator-Finder & Resend-Outreach (Admin)
-registerPresence(app, { auth, body }); // Live-Online-Radar: verifizierte Präsenz, Binder-Vorschau, Sichtbarkeits-Schalter
+registerPresence(app, { auth, body });
+registerSession(app, { body }); // Dauer-Anmeldung: HttpOnly-Sitzungs-Cookie (180 Tage, gleitend), Wiederherstellung & Abmelden // Live-Online-Radar: verifizierte Präsenz, Binder-Vorschau, Sichtbarkeits-Schalter
 registerSellerImport(app, { auth, adminOnly, body });
 registerNative(app, { auth, body });
 registerCatalog(app, { auth, adminOnly, body });
