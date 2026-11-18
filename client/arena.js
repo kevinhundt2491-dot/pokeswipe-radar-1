@@ -2,7 +2,7 @@
 // Speist den Swipe-Stapel direkt aus dem mehrsprachigen Live-Katalog (de/en/ja), aus Tausch-Inseraten und der
 // Wunschliste. Filter: Sprache, Set, Seltenheit, Preisspanne, Wunschliste, „Nur Unter-Marktwert-Deals“.
 // Ohne Verbindung bleibt der feste Chase-Katalog aus index.html als Stapel aktiv.
-import { $, esc, jsArg, eur, toast, cm, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl, btn, sparkline } from "./core.js";
+import { $, esc, jsArg, safeUrl, eur, toast, cm, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl, btn, sparkline } from "./core.js";
 import { updatePrefs, encodePrefParam, prefSummary, sanitizeScores, COLD_START_SWIPES } from "../server/arena-logic.ts";
 import { haptic } from "./native.js";
 import { priceTagHtml, dealRating, CONDITION_INFO } from "./price-tag.js";
@@ -676,8 +676,8 @@ async function openBuySheet(item) {
       </div>`).join("")}</div>`
     : `<p class="text-xs text-slate-400">Gerade bietet kein PokeSwipe-Sammler diese Karte mit Sofort-Kauf an. Merke sie dir mit ❤️ – du bekommst eine Nachricht, sobald jemand sie inseriert.</p>`;
   const pd = catalogPrice(item);
-  const live = pd.mode === "offer" && pd.offerSource === "ebay" && item.offerUrl
-    ? `<a href="${esc(item.offerUrl)}" target="_blank" rel="noopener sponsored" class="block bg-emerald-400 text-slate-950 font-black py-2.5 rounded-xl text-xs text-center">🛒 Live-Angebot bei eBay: ${esc(eur(pd.offer))} inkl. Versand${pd.dealPct ? ` (−${pd.dealPct} % unter Markt)` : ""}*</a>`
+  const live = pd.mode === "offer" && pd.offerSource === "ebay" && safeUrl(item.offerUrl)
+    ? `<a href="${esc(safeUrl(item.offerUrl))}" target="_blank" rel="noopener sponsored" class="block bg-emerald-400 text-slate-950 font-black py-2.5 rounded-xl text-xs text-center">🛒 Live-Angebot bei eBay: ${esc(eur(pd.offer))} inkl. Versand${pd.dealPct ? ` (−${pd.dealPct} % unter Markt)` : ""}*</a>`
     : "";
   modal("ps-swipe-buy", `<h3 class="text-base font-black text-white">🛒 Kaufen</h3>${head}${live}${list}${ext}`);
 }

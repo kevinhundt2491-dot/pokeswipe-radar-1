@@ -1,7 +1,7 @@
 // Phase 4: P2P-Marktplatz mit Käuferschutz (Treuhand über Stripe Connect)
 // Verkäuferkonto einrichten, Sofort-Kauf & verbindliche Preisangebote, Bestellungen (Versand, Erhalt, Reklamation,
 // Bewertung) und die Admin-Ansicht für Reklamationen.
-import { $, esc, jsArg, eur, toast, cdn, state, api, bearer, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
+import { $, esc, jsArg, safeUrl, eur, toast, cdn, state, api, bearer, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
 import { variantSelect, variantsOf, variantBadge, VARIANT_KEYS } from "./variants.js";
 
 const mk = { meta: null, orders: [], seller: null };
@@ -252,7 +252,7 @@ function orderCard(o, m) {
         ${isS && o.payoutCents !== undefined ? `<p class="text-[11px] text-slate-400">Auszahlung an dich: <strong class="text-emerald-300">${cents(o.payoutCents)}</strong> (Provision ${cents(o.feeCents)})</p>` : ""}
         ${o.message ? `<p class="text-[11px] text-slate-400">„${esc(o.message)}“</p>` : ""}
         ${o.status === "awaiting_payment" && o.payBy ? `<p class="text-[11px] text-amber-300">Zahlung bis ${new Date(o.payBy).toLocaleString("de-DE")}</p>` : ""}
-        ${o.trackingNumber ? `<p class="text-[11px] text-slate-300">📦 ${esc(o.carrierLabel)} ${o.trackingUrl ? `<a href="${esc(o.trackingUrl)}" target="_blank" rel="noopener" class="underline text-cyan-300">${esc(o.trackingNumber)}</a>` : esc(o.trackingNumber)}${o.releaseAfter && o.status === "shipped" && (!o.trackable || o.deliveredAt) ? ` • automatische Auszahlung am ${new Date(o.releaseAfter).toLocaleDateString("de-DE")}` : ""}</p>` : ""}
+        ${o.trackingNumber ? `<p class="text-[11px] text-slate-300">📦 ${esc(o.carrierLabel)} ${safeUrl(o.trackingUrl) ? `<a href="${esc(safeUrl(o.trackingUrl))}" target="_blank" rel="noopener" class="underline text-cyan-300">${esc(o.trackingNumber)}</a>` : esc(o.trackingNumber)}${o.releaseAfter && o.status === "shipped" && (!o.trackable || o.deliveredAt) ? ` • automatische Auszahlung am ${new Date(o.releaseAfter).toLocaleDateString("de-DE")}` : ""}</p>` : ""}
         ${o.trackingNumber && o.trackingStatusLabel && ["shipped", "released"].includes(o.status) ? `<p class="text-[11px] ${o.trackingStatus === "delivered" ? "text-emerald-300" : o.trackingStatus === "failure" ? "text-rose-300" : "text-cyan-200"}">🛰️ DHL-Status: ${esc(o.trackingStatusLabel)}${o.deliveredAt ? ` am ${new Date(o.deliveredAt).toLocaleDateString("de-DE")}` : ""}${o.status === "shipped" && o.trackable && !o.deliveredAt ? " • Auszahlung erst nach Zustellung" : ""}</p>` : ""}
         ${o.releaseReview && o.status === "shipped" ? `<p class="text-[11px] text-amber-300">🔎 Auszahlung in Prüfung: noch kein Versandnachweis von DHL.</p>` : ""}
         ${o.disputeReason ? `<p class="text-[11px] text-rose-300">⚠️ ${esc(o.disputeReason)}</p>` : ""}
@@ -440,7 +440,7 @@ async function openMarketAdmin(status = "") {
       <div class="space-y-2 max-h-[28rem] overflow-y-auto">${d.orders.length ? d.orders.map((o) => `<div class="bg-slate-900 border ${o.status === "disputed" ? "border-rose-500/50" : "border-slate-800"} rounded-2xl p-3 text-xs space-y-1">
         <p><span class="text-[10px] font-black px-2 py-0.5 rounded-full ${(STATUS[o.status] || ["", "bg-slate-800"])[1]}">${(STATUS[o.status] || [o.status])[0]}</span> <strong class="text-white">#${Number(o.id)} ${esc(o.title)}</strong></p>
         <p class="text-slate-300">${cents(o.totalCents)} • Käufer ${esc(o.buyer.name)} → Verkäufer ${esc(o.seller.name)} • Provision ${cents(o.feeCents)}</p>
-        ${o.trackingNumber ? `<p class="text-slate-400">📦 ${esc(o.carrierLabel)} ${o.trackingUrl ? `<a href="${esc(o.trackingUrl)}" target="_blank" rel="noopener" class="underline">${esc(o.trackingNumber)}</a>` : esc(o.trackingNumber)} • versendet ${o.shippedAt ? new Date(o.shippedAt).toLocaleDateString("de-DE") : "–"}</p>` : ""}
+        ${o.trackingNumber ? `<p class="text-slate-400">📦 ${esc(o.carrierLabel)} ${safeUrl(o.trackingUrl) ? `<a href="${esc(safeUrl(o.trackingUrl))}" target="_blank" rel="noopener" class="underline">${esc(o.trackingNumber)}</a>` : esc(o.trackingNumber)} • versendet ${o.shippedAt ? new Date(o.shippedAt).toLocaleDateString("de-DE") : "–"}</p>` : ""}
         ${o.disputeReason ? `<p class="text-rose-300">⚠️ ${esc(o.disputeReason)}</p>` : ""}
         ${["paid", "shipped", "disputed"].includes(o.status) ? `<div class="flex flex-wrap gap-1.5">${btn("↩️ Käufer erstatten", `PS.resolveOrder(${Number(o.id)}, 'refund')`, "bg-rose-500/30 text-rose-200")}${btn("💸 An Verkäufer auszahlen", `PS.resolveOrder(${Number(o.id)}, 'release')`, "bg-emerald-500/30 text-emerald-200")}</div>` : ""}
       </div>`).join("") : `<p class="text-xs text-slate-500">Keine Bestellungen in dieser Ansicht.</p>`}</div>`, { wide: true });

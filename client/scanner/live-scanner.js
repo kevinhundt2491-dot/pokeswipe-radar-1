@@ -13,6 +13,7 @@ import {
 import { haptic, isNative } from "../native.js";
 import { openQuickList, quickListApi } from "./quick-list.js";
 import { priceTagHtml } from "../price-tag.js";
+import { renderGlyphBitmaps } from "./glyph-render.js";
 
 // Turbo-Upgrade (ohne KI): zusätzlich zur Bild-Erkennung liest der Scanner alle ~280 ms Kartenname und Sammlernummer
 // (TextDetector bzw. Tesseract.js, beides auf dem Gerät) und sucht sie unscharf im Katalog (~20.000 Karten, Text-Index im
@@ -271,10 +272,35 @@ async function loadStatus() {
 // ---------------------------------------------------------------------------
 function ensureWorker() {
   if (sc.worker) return sc.worker;
-  sc.worker = new Worker("/assets/scan-worker.js");
+  try { sc.worker = new Worker("/assets/scan-worker.js"); } catch {
+    // Kein Web Worker möglich (sehr alte Browser / Sperre) → statt Absturz ein Stub; Foto- und KI-Scan bleiben nutzbar
+    sc.worker = { postMessage() {}, terminate() {} };
+    toast("⚠️ Live-Erkennung nicht verfügbar", "Dein Browser unterstützt keine Hintergrund-Erkennung. Nutze den Foto- oder KI-Scan.");
+    return sc.worker;
+  }
   sc.worker.onmessage = (e) => onWorker(e.data || {});
   sc.worker.onerror = () => { toast("⚠️ Scanner-Fehler", "Die Erkennung konnte nicht starten. Bitte Seite neu laden oder den KI-Foto-Scan nutzen."); };
   return sc.worker;
+}
+
+/** Main-Thread-Canvas-Rückfall: Vorlagen zeichnen, als übertragbare Puffer an den Worker, Leinwand sofort freigeben. */
+function sendMainThreadGlyphs() {
+  try {
+    const cv = document.createElement("canvas");
+    const items = renderGlyphBitmaps(cv);
+    releaseCanvas(cv);
+    if (!items.length) return;
+    const payload = items.map((g) => ({ ch: g.ch, w: g.w, h: g.h, bits: g.bits.buffer }));
+    sc.worker?.postMessage({ type: "glyphs", items: payload }, payload.map((g) => g.bits));
+  } catch { /* ohne Vorlagen: Plattform-Texterkennung bzw. Name+Nummer-OCR laufen weiter */ }
+}
+
+/**
+ * Leinwand-Speicher sofort freigeben. iOS Safari hält Canvas-Speicher sonst bis zur Speicherbereinigung fest und bricht
+ * nach vielen Scans mit „Total canvas memory use exceeds the maximum limit“ ab.
+ */
+function releaseCanvas(cv) {
+  try { if (cv && cv !== sc.canvas) { cv.width = 0; cv.height = 0; } } catch { /* egal */ }
 }
 
 function loadIndex() {
@@ -372,15 +398,26 @@ async function start() {
   }
   if (sc.running || sc.starting) return;
   sc.starting = true;
+  const gen = (sc.camGen = (sc.camGen || 0) + 1);
+  let stream;
   try {
-    sc.stream = await openCamera();
+    stream = await openCamera();
   } catch (e) {
     sc.starting = false;
+    if (gen !== sc.camGen) return;
     const denied = e?.name === "NotAllowedError" || e?.name === "SecurityError";
     toast(denied ? "📷 Kamera nicht erlaubt" : "📷 Kamera nicht verfügbar", denied ? "Erlaube den Kamerazugriff in den Browser-Einstellungen – oder wähle ein Foto aus der Galerie (🖼️)." : "Keine passende Kamera gefunden. Wähle ein Foto aus der Galerie (🖼️).");
     return;
   }
   sc.starting = false;
+  // Während der Kamera-Freigabe wurde der Scanner verlassen/geschlossen oder die App ging in den Hintergrund:
+  // Stream sofort beenden (sonst bliebe die Kamera-LED an und der nächste Start schlüge mit NotReadableError fehl)
+  const panelNow = $("ps-live-scan");
+  if (gen !== sc.camGen || document.hidden || !panelNow || panelNow.offsetParent === null) {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+    return;
+  }
+  sc.stream = stream;
   sc.track = sc.stream.getVideoTracks()[0];
   const caps = await tuneTrack(sc.track);
   const video = $("ps-ls-video");
@@ -405,10 +442,13 @@ async function start() {
 
 function stop() {
   sc.running = false;
+  // Laufende Kamera-Freigabe ungültig machen – ihr Stream wird beim Eintreffen sofort beendet
+  sc.camGen = (sc.camGen || 0) + 1;
+  sc.starting = false;
   clearTimeout(sc.timer);
   clearTimeout(sc.focusTimer);
   try { sc.stream?.getTracks().forEach((t) => t.stop()); } catch {}
-  sc.stream = null; sc.track = null;
+  sc.stream = null; sc.track = null; sc.caps = null; sc.torch = false;
   const video = $("ps-ls-video");
   if (video) video.srcObject = null;
   ["ps-ls-video", "ps-ls-mask", "ps-ls-guide", "ps-ls-quad", "ps-ls-hint", "ps-ls-tools", "ps-ls-perf", "ps-ls-hud", "ps-ls-still"].forEach((id) => $(id)?.classList.add("hidden"));
@@ -591,6 +631,9 @@ function onWorker(m) {
     resolve(m);
     return;
   }
+  // Worker ohne OffscreenCanvas (ältere iOS/Safari): Ziffern-Vorlagen auf einem normalen Canvas im Haupt-Thread zeichnen
+  if (m.type === "need-glyphs") { sendMainThreadGlyphs(); return; }
+  if (m.type === "ocr-mode") { sc.ocrMode = m.ocr || sc.ocrMode; renderIndexLine(); return; }
   if (m.type === "progress") { if (m.state === "error") toast("⚠️ Index", `${LANG_LABEL[m.lang] || m.lang}: konnte nicht geladen werden.`); return; }
   if (m.type === "ready") {
     sc.ready = true; sc.loadingIndex = false; sc.indexCount = m.count || 0; sc.perLang = m.perLang || {}; sc.ocrMode = m.ocr || "none";
@@ -856,7 +899,9 @@ function cropToCard(src, corners, max = 900, quality = 0.9) {
     const ctx = cv.getContext("2d");
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(src, x0, y0, w, h, 0, 0, cv.width, cv.height);
-    return cv.toDataURL("image/jpeg", quality);
+    const out = cv.toDataURL("image/jpeg", quality);
+    releaseCanvas(cv);
+    return out;
   } catch { return null; }
 }
 
@@ -889,7 +934,9 @@ function capturePhoto(corners = null) {
     cx.imageSmoothingQuality = "high";
     cx.drawImage(video, x0, y0, w, h, 0, 0, W, H);
     const url = cv.toDataURL("image/jpeg", 0.85);
-    return url.length < 400_000 ? url : cv.toDataURL("image/jpeg", 0.6);
+    const out = url.length < 400_000 ? url : cv.toDataURL("image/jpeg", 0.6);
+    releaseCanvas(cv);
+    return out;
   } catch { return null; }
 }
 
@@ -1327,7 +1374,9 @@ function fileToDataUrl(file, max = 1600) {
       cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
       cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
       URL.revokeObjectURL(url);
-      resolve(cv.toDataURL("image/jpeg", 0.92));
+      const out = cv.toDataURL("image/jpeg", 0.92);
+      releaseCanvas(cv);
+      resolve(out);
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Bild nicht lesbar")); };
     img.src = url;
@@ -1520,6 +1569,7 @@ function photoScan() {
   // Letzter Fingerabdruck geht mit: erkennt die KI die Karte und der Nutzer übernimmt sie, lernt der Index (Stufe 2)
   window.__psScanProbe = sc.lastProbe && Date.now() - sc.lastProbe.at < 8000 ? sc.lastProbe : null;
   cv.toBlob((blob) => {
+    releaseCanvas(cv);
     if (!blob) return;
     stop();
     window.PS?.showSub?.("scan", "camera");
@@ -1540,7 +1590,9 @@ async function forceVision() {
     const corners = sc.prevCorners ? sc.prevCorners.map(([x, y]) => [x * f, y * f])
       : [[g.guide.x0 * f, g.guide.y0 * f], [g.guide.x1 * f, g.guide.y0 * f], [g.guide.x1 * f, g.guide.y1 * f], [g.guide.x0 * f, g.guide.y1 * f]];
     const probe = sc.lastProbe && Date.now() - sc.lastProbe.at < 8000 ? sc.lastProbe : null;
-    await runVision(cropToCard(cv, corners), { probe, photo: capturePhoto(sc.prevCorners) });
+    const crop = cropToCard(cv, corners), photo = capturePhoto(sc.prevCorners);
+    releaseCanvas(cv);
+    await runVision(crop, { probe, photo });
   } finally { sc.capturing = false; }
 }
 
@@ -2026,5 +2078,7 @@ export function initLiveScanner() {
   });
   document.addEventListener("click", (e) => { if (e.target?.closest?.("#ps-ls-stage")) tapFocus(e); });
   window.addEventListener("resize", () => { if (sc.running) layout(); });
-  document.addEventListener("visibilitychange", () => { if (document.hidden && sc.running) stop(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden && (sc.running || sc.starting)) stop(); });
+  // Seite schließen / in den Verlauf (bfcache) / App-Wechsel auf iOS: Kamera-Tracks ausnahmslos beenden
+  window.addEventListener("pagehide", () => { if (sc.running || sc.starting || sc.stream) stop(); });
 }

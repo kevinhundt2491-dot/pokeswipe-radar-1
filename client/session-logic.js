@@ -374,3 +374,60 @@ export function tabFromUrl(href) {
     return URL_TABS.includes(t) ? t : "";
   } catch { return ""; }
 }
+
+// ---------------------------------------------------------------------------
+// Anmelde-Domain & verständliche Fehlermeldungen
+// ---------------------------------------------------------------------------
+/** Hauptdomain der App – nur hier gilt die Anmeldung dauerhaft (Cookies & Speicher gehören zur Domain). */
+export const MAIN_ORIGIN = "https://pokeswipe-radar.de";
+
+/**
+ * Temporäre Netlify-Vorschau-Adresse (Deploy-Preview / Branch-Deploy / Permalink, z. B. „deploy-preview-12--pokeswipe-radar.netlify.app“
+ * oder „6afd…--pokeswipe-radar.netlify.app“) bzw. die netlify.app-Standardadresse? Dort ist eine Anmeldung nur für diese eine
+ * Adresse gültig und Google leitet nach dem Login auf die Hauptdomain zurück → Hinweis + 1-Klick-Wechsel zur Hauptdomain.
+ */
+export function isPreviewHost(hostname = "") {
+  const h = String(hostname || "").toLowerCase();
+  return /(^|--)pokeswipe-radar\.netlify\.app$/.test(h);
+}
+
+/** Gleicher Pfad/Parameter auf der Hauptdomain (ohne Hash – der kann Anmelde-Tokens enthalten). */
+export function mainDomainUrl(href = "") {
+  try {
+    const u = new URL(href);
+    return `${MAIN_ORIGIN}${u.pathname}${u.search}`;
+  } catch { return `${MAIN_ORIGIN}/`; }
+}
+
+/**
+ * Fehler von Login, Registrierung und „Passwort vergessen“ → verständliche deutsche Meldung.
+ * @param {any} error  AuthError/Fehler aus @netlify/identity bzw. fetch
+ * @param {"login"|"signup"|"recover"|"oauth"} kind
+ * @param {{ online?: boolean }} env
+ */
+export function authErrorMessage(error, kind = "login", { online = true } = {}) {
+  const msg = String(error?.message || error?.error_description || error?.msg || "").toLowerCase();
+  const status = Number(error?.status || error?.statusCode || 0);
+  if (!online || error?.name === "TypeError" || /failed to fetch|networkerror|network request failed|load failed|timeout|aborted/.test(msg))
+    return "📶 Keine Verbindung zum Anmeldedienst – bitte Internet prüfen und erneut versuchen.";
+  if (status === 429 || /too many|rate limit/.test(msg)) return "⏳ Zu viele Versuche – bitte kurz warten und dann erneut versuchen.";
+  if (status >= 500) return "⚠️ Der Anmeldedienst ist gerade gestört – bitte in einer Minute erneut versuchen.";
+  if (/provider is not enabled|unsupported provider|not enabled/.test(msg))
+    return "Diese Anmeldeart ist gerade nicht freigeschaltet – bitte mit E-Mail und Passwort anmelden.";
+  if (/not confirmed|confirm your email|email_not_confirmed/.test(msg))
+    return "📧 Bitte bestätige zuerst den Link in deiner E-Mail – danach klappt die Anmeldung.";
+  if (kind === "signup") {
+    if (/already|registered|exists/.test(msg)) return "Diese E-Mail ist bereits registriert – bitte anmelden oder „Passwort vergessen?“ nutzen.";
+    if (/password/.test(msg)) return "Das Passwort ist zu schwach – bitte mindestens 8 Zeichen verwenden.";
+    if (/email|invalid/.test(msg) || status === 422) return "Bitte eine gültige E-Mail-Adresse eingeben.";
+    if (/signups? not allowed|disabled/.test(msg)) return "Registrierungen sind gerade geschlossen.";
+    return "Registrierung fehlgeschlagen – bitte erneut versuchen.";
+  }
+  if (kind === "login") {
+    if (status === 400 || status === 401 || /invalid|grant|credentials|password/.test(msg))
+      return "E-Mail oder Passwort falsch. Mit Google registriert? Dann bitte „Mit Google anmelden“ nutzen.";
+    return "Anmeldung fehlgeschlagen – bitte erneut versuchen.";
+  }
+  if (kind === "oauth") return "Die Anmeldung mit Google konnte nicht gestartet werden – bitte erneut versuchen oder E-Mail nutzen.";
+  return "Das hat nicht geklappt – bitte erneut versuchen.";
+}

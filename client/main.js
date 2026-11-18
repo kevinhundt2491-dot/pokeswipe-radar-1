@@ -50,7 +50,7 @@ import {
   syncProfileAfterLogin, migrateGuestData, inAppEnv, savePref,
   hardenTokenRefresh, lastRefreshOutcome, syncServerSession, restoreServerSession, endServerSession,
 } from "./session.js";
-import { oauthStrategy, externalBrowserUrl, IN_APP_LABEL, initialOf, displayNameFor, cleanDisplayName } from "./session-logic.js";
+import { oauthStrategy, externalBrowserUrl, IN_APP_LABEL, initialOf, displayNameFor, cleanDisplayName, isPreviewHost, mainDomainUrl, authErrorMessage } from "./session-logic.js";
 import { filterListings, MARKET_CHIP_KEYS, setCodeOf, conditionShort } from "./market-filter-logic.js";
 import { initHome, homeApi, renderHome } from "./home.js";
 import { initPresence, presenceApi } from "./presence.js";
@@ -206,12 +206,16 @@ function renderLogin(hint = "", mode = "login") {
   const signupOff = state.settings?.disableSignup;
   if (mode === "signup" && signupOff) mode = "login";
   const guestName = (localStorage.getItem("pokeswipe_user") || "").slice(0, 24);
-  const providerBtn = (k, label, icon, cls) => {
+  const providerBtn = (k, label, icon, cls, off = false) => {
     const external = oauthStrategy(k, env) === "external";
-    return `<button type="button" onclick="PS.oauth('${k}')" data-provider="${k}" class="ps-oauth-btn ${cls}">${icon}<span>${external ? `${label} – im Browser öffnen` : `Weiter mit ${label}`}</span></button>`;
+    return `<button type="button" onclick="PS.oauth('${k}')" data-provider="${k}" class="ps-oauth-btn ${cls}${off ? " opacity-60" : ""}"${off ? ' aria-describedby="ps-google-off"' : ""}>${icon}<span>${external ? `${label} – im Browser öffnen` : `Mit ${label} anmelden`}</span></button>`;
   };
+  // 1-Klick-Google steht immer ganz oben. Ist Google im Anmeldedienst (noch) nicht freigeschaltet, bleibt der Knopf sichtbar,
+  // startet aber keine Weiterleitung ins Leere (sonst Fehlerseite) – stattdessen ein klarer Hinweis auf E-Mail.
+  const googleOff = Boolean(state.settings) && !p.google;
   const oauth = [
-    p.google ? providerBtn("google", "Google", GOOGLE_ICON, "bg-white text-slate-900") : "",
+    providerBtn("google", "Google", GOOGLE_ICON, "bg-white text-slate-900", googleOff),
+    googleOff ? `<p id="ps-google-off" class="text-[10px] text-slate-400 text-center">Google-Anmeldung wird gerade freigeschaltet – bis dahin bitte E-Mail nutzen.</p>` : "",
     p.facebook ? providerBtn("facebook", "Facebook", FACEBOOK_ICON, "bg-[#1877F2] text-white") : "",
     p.github ? providerBtn("github", "GitHub", "", "bg-slate-800 text-white") : "",
   ].filter(Boolean).join("");
@@ -225,6 +229,7 @@ function renderLogin(hint = "", mode = "login") {
         <span class="ps-pill">☁️ Sammlung auf allen Geräten</span><span class="ps-pill">💬 Chat &amp; Tausch</span><span class="ps-pill">🔔 Preisalarme</span>
       </div>
     </div>
+    ${previewHintHtml()}
     ${inAppHintHtml(env)}
     ${oauth ? `<div class="space-y-2">${oauth}</div><div class="ps-divider"><span>oder mit E-Mail</span></div>` : ""}
     ${signupOff ? "" : `<div class="flex bg-slate-950 border border-slate-700 rounded-2xl p-1 gap-1 text-xs font-black" role="tablist" aria-label="Anmelden oder registrieren">${seg("login", "Anmelden")}${seg("signup", "Registrieren")}</div>`}
@@ -233,7 +238,7 @@ function renderLogin(hint = "", mode = "login") {
       ${input("ps-email", 'type="email" placeholder="E-Mail" autocomplete="email" inputmode="email"')}
       <div class="relative">${input("ps-pass", `type="password" placeholder="Passwort (min. 8 Zeichen)" autocomplete="${mode === "signup" ? "new-password" : "current-password"}"`)}
         <button type="button" onclick="PS.togglePass()" class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400 px-2 py-1" aria-label="Passwort anzeigen">👁</button></div>
-      <button type="submit" class="w-full ${mode === "signup" ? "bg-emerald-500" : "bg-yellow-400"} text-slate-950 font-black py-3 px-3 rounded-xl text-sm">${mode === "signup" ? "Konto erstellen" : "Anmelden"}</button>
+      <button type="submit" id="ps-auth-submit" data-label="${mode === "signup" ? "Konto erstellen" : "Anmelden"}" class="w-full ${mode === "signup" ? "bg-emerald-500" : "bg-yellow-400"} text-slate-950 font-black py-3 px-3 rounded-xl text-sm disabled:opacity-60">${mode === "signup" ? "Konto erstellen" : "Anmelden"}</button>
     </form>
     ${mode === "signup" ? `<p class="text-[11px] text-slate-400">Mit der Registrierung gelten unsere <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline">AGB</a>. Wie wir deine Daten verarbeiten, erklärt die <a href="/datenschutz" target="_blank" rel="noopener" class="underline">Datenschutzerklärung</a>.</p>` : ""}
     <p id="ps-auth-msg" class="text-xs text-rose-300 min-h-[1rem]" role="status" aria-live="polite"></p>
@@ -244,8 +249,46 @@ function renderLogin(hint = "", mode = "login") {
   </div>`);
 }
 
+/**
+ * Temporäre Netlify-Vorschau-Adresse: Anmeldungen gelten nur für die Adresse, auf der sie stattfinden, und Google leitet
+ * nach dem Login immer zur Hauptdomain zurück → klarer Hinweis + 1-Klick-Wechsel (gleicher Pfad, ohne Hash/Tokens).
+ */
+function previewHintHtml() {
+  if (!isPreviewHost(location.hostname)) return "";
+  return `<div id="ps-preview-hint" class="ps-card border-amber-400/60 bg-amber-500/10 p-3 text-xs space-y-2" role="note">
+    <p class="text-amber-100"><strong class="text-white">Du bist auf einer Vorschau-Adresse.</strong> Die Anmeldung (vor allem mit Google) funktioniert dauerhaft nur auf der Hauptseite.</p>
+    <a href="${esc(mainDomainUrl(location.href))}" class="block text-center bg-amber-400 text-slate-950 font-black py-2 rounded-xl">➡️ Zu pokeswipe-radar.de wechseln</a>
+  </div>`;
+}
+
+/** Lade-Zustand des Absende-Knopfs: während der Anfrage gesperrt mit Spinner, danach (auch bei Fehlern) immer zurück. */
+function authBusy(on, text = "") {
+  const b = $("ps-auth-submit");
+  if (b) {
+    b.disabled = on;
+    b.setAttribute("aria-busy", String(on));
+    b.innerHTML = on ? `<span class="inline-block w-4 h-4 border-2 border-slate-950/40 border-t-slate-950 rounded-full animate-spin align-[-3px] mr-1.5" aria-hidden="true"></span>${esc(text || "Bitte warten …")}` : esc(b.dataset.label || "Anmelden");
+  }
+  document.querySelectorAll("#ps-login-view .ps-oauth-btn").forEach((x) => { x.disabled = on; });
+}
+
+const authFail = (e, kind) => authMsg(authErrorMessage(e, kind, { online: navigator.onLine !== false }));
+
 /** 1-Klick-Anmeldung: Weiterleitung statt Pop-up (kann nicht blockiert werden), im In-App-Browser Ausweg über den Standard-Browser. */
-function startOauth(provider) {
+async function startOauth(provider) {
+  // Anbieter vorher prüfen: ein nicht freigeschalteter Anbieter würde auf eine Fehlerseite des Anmeldedienstes führen
+  if (!state.settings?.providers?.[provider]) {
+    try { state.settings = await getSettings(); } catch {}
+    if (state.settings && !state.settings.providers?.[provider]) {
+      authMsg(`${provider === "google" ? "Google" : provider === "facebook" ? "Facebook" : "Diese"}-Anmeldung ist gerade nicht freigeschaltet – bitte mit E-Mail und Passwort anmelden oder registrieren.`);
+      return;
+    }
+  }
+  if (isPreviewHost(location.hostname)) {
+    authMsg("Google-Anmeldung klappt nur auf pokeswipe-radar.de – du wirst weitergeleitet …", true);
+    setTimeout(() => { location.href = mainDomainUrl(location.href); }, 900);
+    return;
+  }
   const env = inAppEnv();
   if (oauthStrategy(provider, env) === "external") {
     const ext = externalBrowserUrl(location.href, env.os);
@@ -258,7 +301,7 @@ function startOauth(provider) {
   authMsg("Weiterleitung zur Anmeldung …", true);
   try { oauthLogin(provider); } catch (e) {
     // oauthLogin() wirft absichtlich nach dem Setzen der Weiterleitung – nur echte Fehler anzeigen
-    if (!/Redirecting/i.test(e?.message || "")) authMsg(e?.message || "Anmeldung gerade nicht möglich – bitte E-Mail nutzen.");
+    if (!/Redirecting/i.test(e?.message || "")) authFail(e, "oauth");
   }
 }
 
@@ -305,31 +348,45 @@ async function afterLogin() {
 }
 
 async function doLogin() {
+  if ($("ps-auth-submit")?.disabled) return;
   const email = $("ps-email").value.trim(), pass = $("ps-pass").value;
   if (!email || !pass) return authMsg("Bitte E-Mail und Passwort eingeben.");
-  authMsg("Anmeldung läuft …", true);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return authMsg("Bitte eine gültige E-Mail-Adresse eingeben.");
+  authMsg("");
+  authBusy(true, "Anmeldung läuft …");
   try { await login(email, pass); await afterLogin(); }
-  catch (e) { authMsg(e?.status === 401 || /invalid/i.test(e?.message || "") ? "E-Mail oder Passwort falsch – oder E-Mail noch nicht bestätigt." : (e?.message || "Anmeldung fehlgeschlagen.")); }
+  catch (e) { authFail(e, "login"); }
+  finally { authBusy(false); }
 }
 
 async function doSignup() {
+  if ($("ps-auth-submit")?.disabled) return;
   const email = $("ps-email").value.trim(), pass = $("ps-pass").value, name = cleanDisplayName($("ps-su-name")?.value || "");
-  if (!email || pass.length < 8) return authMsg("Bitte gültige E-Mail und mindestens 8 Zeichen Passwort.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || pass.length < 8) return authMsg("Bitte gültige E-Mail und mindestens 8 Zeichen Passwort.");
   // Gewählten Namen sofort merken – er wird beim ersten Login fest ins Konto übernommen und nie wieder abgefragt
   if (name.length >= 4) { try { localStorage.setItem("pokeswipe_user", name); } catch {} }
-  authMsg("Konto wird erstellt …", true);
+  authMsg("");
+  authBusy(true, "Konto wird erstellt …");
   try {
     const u = await signup(email, pass, { full_name: name });
     if (u && u.confirmedAt) { await login(email, pass); await afterLogin(); }
     else authMsg("📧 Fast geschafft! Bitte bestätige den Link in deiner E-Mail – danach kannst du dich anmelden.", true);
-  } catch (e) { authMsg(e?.message?.includes("already") ? "Diese E-Mail ist bereits registriert." : (e?.message || "Registrierung fehlgeschlagen.")); }
+  } catch (e) { authFail(e, "signup"); }
+  finally { authBusy(false); }
 }
 
 async function forgot() {
   const email = $("ps-email")?.value.trim();
-  if (!email) return authMsg("Bitte zuerst deine E-Mail eintragen.");
-  try { await requestPasswordRecovery(email); authMsg("📧 Falls ein Konto existiert, ist der Link zum Zurücksetzen unterwegs.", true); }
-  catch { authMsg("📧 Falls ein Konto existiert, ist der Link zum Zurücksetzen unterwegs.", true); }
+  if (!email) { authMsg("Bitte zuerst deine E-Mail oben eintragen – dann „Passwort vergessen?“ tippen."); $("ps-email")?.focus(); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return authMsg("Bitte eine gültige E-Mail-Adresse eingeben.");
+  authMsg("Link wird angefordert …", true);
+  try { await requestPasswordRecovery(email); authMsg("📧 Falls ein Konto existiert, ist der Link zum Zurücksetzen unterwegs (auch im Spam-Ordner nachsehen).", true); }
+  catch (e) {
+    // Aus Datenschutzgründen nie verraten, ob ein Konto existiert – nur echte Verbindungs-/Dienstfehler melden
+    const net = navigator.onLine === false || e?.name === "TypeError" || Number(e?.status) >= 500 || Number(e?.status) === 429;
+    if (net) authFail(e, "recover");
+    else authMsg("📧 Falls ein Konto existiert, ist der Link zum Zurücksetzen unterwegs (auch im Spam-Ordner nachsehen).", true);
+  }
 }
 
 function renderRecovery() {
@@ -1600,6 +1657,15 @@ async function boot() {
   }
 
   let authResult = null;
+  // Abgebrochene/gescheiterte Google-Anmeldung kommt als #error=…&error_description=… zurück → verständlich melden
+  const oauthError = /(^|[#&])error=/.test(location.hash) ? new URLSearchParams(location.hash.slice(1)) : null;
+  if (oauthError) {
+    history.replaceState(null, "", location.pathname + location.search);
+    const desc = String(oauthError.get("error_description") || "");
+    toast("⚠️ Anmeldung nicht abgeschlossen", oauthError.get("error") === "access_denied"
+      ? "Die Google-Anmeldung wurde abgebrochen. Du kannst es jederzeit erneut versuchen."
+      : authErrorMessage({ message: desc }, "oauth"));
+  }
   try {
     const result = authResult = await handleAuthCallback();
     if (result?.type === "invite" && result.token) state.invite = result.token;
