@@ -42,24 +42,51 @@ import { valuationApi, loadValuation } from "./valuation.js";
 import { initNativePlatform, nativeApi } from "./native.js";
 import { initPayments, routePayments, paymentsApi } from "./payments.js";
 import { variantSelect, conditionSelect, variantsOf, variantBadge, VARIANT_LABEL, VARIANT_KEYS, CONDITION_LABEL } from "./variants.js";
+import {
+  restoreSession, persistSessionCookies, ensureFreshToken, storedSession, cachedProfile, saveProfileCache, clearProfileCache,
+  syncProfileAfterLogin, migrateGuestData, inAppEnv, savePref,
+} from "./session.js";
+import { oauthStrategy, externalBrowserUrl, IN_APP_LABEL, initialOf, displayNameFor, cleanDisplayName } from "./session-logic.js";
+import { filterListings, MARKET_CHIP_KEYS, setCodeOf, conditionShort } from "./market-filter-logic.js";
+import { initHome, homeApi, renderHome } from "./home.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
 // ---------------------------------------------------------------------------
 async function loadMe() {
-  if (!state.user) { state.me = null; return; }
+  if (!state.user) { state.me = null; state.profileCache = null; return; }
   try {
     state.me = await api("/api/me");
     // Früher wurde der Tarif in localStorage gespiegelt und daraus Pro-Funktionen freigeschaltet –
     // das ließ sich über die Konsole fälschen. Maßgeblich ist jetzt nur noch die Server-Antwort.
     localStorage.removeItem("pokeswipe_pro");
-    if (state.me.displayName) localStorage.setItem("pokeswipe_user", state.me.displayName);
+    // Name, Avatar & Einstellungen für den nächsten Start zwischenspeichern (sofort sichtbar, auch offline)
+    saveProfileCache(state.me, state.user.id);
+    state.profileCache = cachedProfile(state.user.id);
     try { renderPsttgBanner(); } catch {}
   } catch (e) {
     state.me = null;
-    if (e.status === 401) state.user = null;
+    // Nur bei wirklich ungültiger Sitzung abmelden (api() hat vorher schon einen Token-Refresh versucht) –
+    // Netzwerkfehler oder Serverprobleme behalten Anmeldung und zwischengespeicherten Namen.
+    if (e.status === 401) { state.user = null; state.profileCache = null; }
   }
   announcePlan();
+}
+
+/** Anzeigename & Avatar – auch bevor /api/me geantwortet hat (Profil-Cache). */
+export function profileView() {
+  const me = state.me, cache = state.profileCache;
+  const name = displayNameFor({ me, cache, providerName: state.user?.name || "", email: state.user?.email || "" });
+  const avatarUrl = me?.avatarUrl || cache?.avatarUrl || "";
+  const emoji = me?.prefs?.avatarEmoji || cache?.prefs?.avatarEmoji || "";
+  return { name, avatarUrl: safeUrl(avatarUrl), emoji, initial: initialOf(name) };
+}
+function avatarHtml(size = "w-7 h-7 text-xs") {
+  if (!state.user) return `<span class="ps-avatar ${size} ps-avatar-guest" aria-hidden="true">👤</span>`;
+  const v = profileView();
+  // Bild liegt über der Initiale – lädt es nicht (z. B. abgelaufener Google-Link), bleibt die Initiale sichtbar
+  const img = v.avatarUrl ? `<img src="${esc(v.avatarUrl)}" alt="" referrerpolicy="no-referrer" loading="lazy" class="absolute inset-0 w-full h-full object-cover rounded-full" onerror="this.remove()" />` : "";
+  return `<span class="ps-avatar relative overflow-hidden ${size}" aria-hidden="true">${esc(v.emoji || v.initial)}${img}</span>`;
 }
 
 /** Empfehlungs-Badges der Verkäufer im Marktplatz */
@@ -75,7 +102,10 @@ try { Object.defineProperty(window, "psVerifiedPlan", { get: verifiedPlan, confi
 
 function renderHeader() {
   const t = $("authBtnText");
-  if (t) t.textContent = state.me?.displayName || (state.user ? "Konto" : "Anmelden");
+  if (t) t.textContent = state.user ? profileView().name : "Anmelden";
+  const av = $("ps-head-avatar");
+  if (av) av.innerHTML = avatarHtml();
+  document.body.classList.toggle("ps-logged-in", Boolean(state.user));
   const badge = $("pro-badge");
   if (badge) badge.classList.toggle("hidden", !state.me || state.me.plan === "free");
   const bell = $("ps-bell-count");
@@ -85,7 +115,10 @@ function renderHeader() {
   if (tc) { tc.textContent = String(open); tc.classList.toggle("hidden", !open); }
   syncAdminTools();
   if (!$("view-profile")?.classList.contains("hidden")) renderProfileHub();
+  try { renderHome(); } catch {}
 }
+
+const AVATAR_EMOJIS = ["⚡", "🔥", "💧", "🌿", "🔮", "🐉", "⭐", "🎴"];
 
 function openAccount(hint = "") {
   if (state.recovery) return renderRecovery();
@@ -94,18 +127,30 @@ function openAccount(hint = "") {
   const m = state.me;
   const planLabel = m ? m.planInfo.label : "…";
   const until = m?.planUntil ? new Date(m.planUntil).toLocaleDateString("de-DE") : "";
+  const v = profileView();
+  const curEmoji = m?.prefs?.avatarEmoji || "";
+  // Konto & Einstellungen: nur Profil, Tarif und Datenschutz – alle weiteren Bereiche liegen genau einmal im Profil-Menü
   modal("ps-account", `
-    <h3 class="text-base font-black text-white">👤 Dein Sammler-Konto</h3>
-    <p class="text-xs text-slate-400">${esc(state.user.email || "")}</p>
-    <div class="flex items-center justify-between gap-2 text-xs text-slate-300"><span class="font-bold">🌐 Sprache / Language</span>${langSwitchHtml()}</div>
-    <div class="bg-slate-950 rounded-2xl p-3.5 border border-slate-800 space-y-2 text-xs">
-      <label class="block text-slate-300 font-bold">Öffentlicher Sammlername</label>
-      ${input("ps-name", `maxlength="24" value="${esc(m?.displayName || "")}"`)}
-      <label class="block text-slate-300 font-bold">Stadt (für Tausch in deiner Nähe)</label>
-      ${input("ps-city", `maxlength="60" value="${esc(m?.city || "")}" placeholder="z. B. Köln"`)}
-      ${btn("Speichern", "PS.saveProfile()", "w-full bg-emerald-500 text-slate-950")}
+    <div class="flex items-center gap-3">
+      ${avatarHtml("w-12 h-12 text-xl")}
+      <div class="min-w-0"><h3 class="text-base font-black text-white truncate">${esc(v.name)}</h3>
+        <p class="text-xs text-slate-400 truncate">${esc(state.user.email || "")}${state.user.provider && state.user.provider !== "email" ? ` · über ${esc(state.user.provider === "google" ? "Google" : state.user.provider === "facebook" ? "Facebook" : state.user.provider)}` : ""}</p></div>
     </div>
-    <div class="bg-slate-950 rounded-2xl p-3.5 border border-yellow-400/40 text-xs space-y-2">
+    <div class="ps-card p-3.5 space-y-2 text-xs">
+      <label class="block text-slate-300 font-bold" for="ps-name">Öffentlicher Sammlername</label>
+      ${input("ps-name", `maxlength="24" value="${esc(m?.displayName || "")}" autocomplete="nickname"`)}
+      <label class="block text-slate-300 font-bold" for="ps-city">Stadt (für Tausch in deiner Nähe)</label>
+      ${input("ps-city", `maxlength="60" value="${esc(m?.city || "")}" placeholder="z. B. Köln"`)}
+      <p class="text-slate-300 font-bold">Avatar</p>
+      <div class="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Avatar">
+        ${m?.avatarUrl ? `<button type="button" onclick="PS.pickAvatar('')" aria-pressed="${!curEmoji}" class="ps-avatar-pick">${avatarHtml("w-8 h-8 text-sm")}</button>` : ""}
+        ${AVATAR_EMOJIS.map((e) => `<button type="button" onclick="PS.pickAvatar(${jsArg(e)})" aria-pressed="${curEmoji === e}" class="ps-avatar-pick text-lg">${e}</button>`).join("")}
+      </div>
+      ${btn("Speichern", "PS.saveProfile()", "w-full bg-emerald-500 text-slate-950")}
+      <p class="text-[10px] text-slate-500">Name, Avatar und Einstellungen werden in deinem Konto gespeichert – du bleibst auf diesem Gerät angemeldet, bis du dich abmeldest.</p>
+    </div>
+    <div class="flex items-center justify-between gap-2 text-xs text-slate-300"><span class="font-bold">🌐 Sprache / Language</span>${langSwitchHtml()}</div>
+    <div class="ps-card p-3.5 border-yellow-400/40 text-xs space-y-2">
       <div class="flex justify-between items-center">
         <span class="font-black text-white">Tarif: <span class="text-yellow-400">${esc(planLabel)}</span></span>
         ${m?.rating?.count ? `<span class="text-amber-300 font-bold">⭐ ${Number(m.rating.avg) || 0} (${Number(m.rating.count) || 0})</span>` : ""}
@@ -118,58 +163,109 @@ function openAccount(hint = "") {
       <p class="text-[10px] text-slate-500 text-center"><a href="/rechtliches#agb" class="underline">AGB</a> · <a href="/rechtliches#widerruf" class="underline">Widerrufsbelehrung</a> · <a href="/rechtliches#impressum" class="underline">Impressum</a> · <a href="/datenschutz" class="underline">Datenschutz</a></p>
       ${m ? `<p class="text-slate-500">Portfolio ${m.usage.portfolio}/${m.planInfo.portfolio} • Alarme ${m.usage.alerts}/${m.planInfo.alerts} • Inserate ${m.usage.listings}/${m.planInfo.listings}${m.planInfo.freeBoostsPerMonth ? ` • Gratis-Boosts ${m.freeBoostsLeft}/${m.planInfo.freeBoostsPerMonth}` : ""}</p>` : ""}
     </div>
-    <div class="grid grid-cols-2 gap-2">
-      ${btn("🔔 Push auf diesem Gerät", "PS.enablePush()", "bg-slate-800 text-white")}
-      ${btn(m?.shop?.enabled ? "🏪 Mein Händler-Shop" : "🏪 Händler-Shop (Pro)", "PS.openShopSettings()", "bg-slate-800 text-cyan-300")}
-    </div>
-    ${referralHtml()}
     ${accountExtrasHtml()}
     <div class="grid grid-cols-2 gap-2">
-      ${btn(m?.publicProfile ? "🌐 Mein öffentliches Profil" : "🌐 Profil öffentlich machen", m?.publicProfile ? `PS.openProfile(${jsArg(m?.profileSlug || "")})` : "PS.openProfileSettings()", "bg-slate-800 text-yellow-300")}
-      ${btn("🛒 Käufe & Verkäufe", "PS.openOrders()", "bg-slate-800 text-white")}
-      ${btn(m?.sellerReady ? "🔒 Verkäuferkonto ✓" : "🔒 Verkaufen mit Käuferschutz", "PS.openSeller()", "bg-slate-800 text-cyan-300")}
-      ${btn("🛒 Warenkorb", "PS.openCart()", "bg-slate-800 text-white")}
-      ${btn("🏪 Händler-Bereich & Bestands-Import", "PS.openSellerHub()", "bg-slate-800 text-amber-200")}
-      ${btn("⭐ Gefolgt & Follower", "PS.openFollowing()", "bg-slate-800 text-white")}
-      ${btn("🚫 Blockierte Nutzer", "PS.openBlocks()", "bg-slate-800 text-slate-300")}
-      ${btn("📲 Als App installieren", "PS.installApp()", "bg-slate-800 text-white")}
-    </div>
-    <div class="grid grid-cols-2 gap-2">
-      ${btn("🤝 Meine Tausche", "PS.openTrades()", "bg-slate-800 text-white")}
-      ${btn("🔥 Meine Matches", "PS.openMatches()", "bg-slate-800 text-rose-200")}
-      ${btn("🔔 Mitteilungen", "PS.openNotifications()", "bg-slate-800 text-white")}
-      ${m?.isAdmin ? btn("🛡️ Admin-Zentrale", "PS.openAdmin()", "col-span-2 bg-purple-600 text-white") : ""}
-      ${m?.isAdmin ? btn("🎬 Auto-Reels-Generator", "PS.closeAll(); PS.openGenerator()", "col-span-2 bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950") : ""}
-      ${btn("Abmelden", "PS.logout()", "col-span-2 bg-rose-500/20 text-rose-300 border border-rose-500/40")}
+      ${btn("☰ Alle Bereiche", "PS.closeAll(); switchTab('profile')", "bg-slate-800 text-white")}
+      ${btn("Abmelden", "PS.logout()", "bg-rose-500/20 text-rose-300 border border-rose-500/40")}
     </div>`);
 }
 
-function renderLogin(hint = "", mode = "login") {
-  const p = state.settings?.providers || {};
-  const external = ["google", "github"].filter((k) => p[k]);
-  const signupOff = state.settings?.disableSignup;
-  modal("ps-account", `
-    <h3 class="text-base font-black text-white">${mode === "signup" ? "✨ Kostenloses Konto erstellen" : "🔐 Anmelden"}</h3>
-    ${hint ? `<p class="text-xs text-yellow-300">${esc(hint)}</p>` : ""}
-    <p class="text-xs text-slate-300">Mit Konto werden Portfolio, Preisalarme und Tausche sicher gespeichert – auf all deinen Geräten.</p>
-    ${external.map((k) => btn(`Weiter mit ${k === "google" ? "Google" : "GitHub"}`, `PS.oauth('${k}')`, "w-full bg-white text-slate-900")).join("")}
-    <div class="space-y-2">
-      ${mode === "signup" ? input("ps-su-name", 'maxlength="24" placeholder="Sammlername (z. B. GlurakKing)" autocomplete="nickname"') : ""}
-      ${input("ps-email", 'type="email" placeholder="E-Mail" autocomplete="email"')}
-      ${input("ps-pass", `type="password" placeholder="Passwort (min. 8 Zeichen)" autocomplete="${mode === "signup" ? "new-password" : "current-password"}"`)}
-      ${mode === "signup"
-        ? btn("Konto erstellen", "PS.doSignup()", "w-full bg-emerald-500 text-slate-950")
-        : btn("Anmelden", "PS.doLogin()", "w-full bg-yellow-400 text-slate-950")}
+const GOOGLE_ICON = `<svg viewBox="0 0 48 48" class="w-5 h-5" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>`;
+const FACEBOOK_ICON = `<svg viewBox="0 0 24 24" class="w-5 h-5" aria-hidden="true"><path fill="currentColor" d="M24 12a12 12 0 1 0-13.9 11.9v-8.4H7.1V12h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-2 .9-2 1.9V12h3.4l-.5 3.5h-2.9v8.4A12 12 0 0 0 24 12z"/></svg>`;
+
+/** Hinweis für TikTok-/Instagram-/Facebook-Browser: Google-Login nur im Standard-Browser, E-Mail & Gast klappen überall. */
+function inAppHintHtml(env) {
+  if (!env.inApp) return "";
+  const app = IN_APP_LABEL[env.app] || "dieser App";
+  const ext = externalBrowserUrl(location.href, env.os);
+  return `<div id="ps-inapp-hint" class="ps-card border-cyan-400/50 bg-cyan-500/10 p-3 text-xs space-y-2" role="note">
+    <p class="text-cyan-100"><strong class="text-white">Du bist im ${esc(app)}-Browser.</strong> Google erlaubt hier keine Anmeldung. Öffne PokeSwipe in ${env.os === "ios" ? "Safari" : env.os === "android" ? "Chrome" : "deinem Browser"} – oder melde dich direkt hier mit E-Mail${["facebook", "instagram", "messenger"].includes(env.app) ? " bzw. Facebook" : ""} an. Deine Gast-Daten bleiben erhalten.</p>
+    <div class="grid grid-cols-2 gap-2">
+      ${ext ? `<a href="${esc(ext)}" class="text-center bg-cyan-400 text-slate-950 font-black py-2 rounded-xl" rel="noopener">🌐 Im Browser öffnen</a>` : ""}
+      <button type="button" onclick="PS.copyAppLink()" class="bg-slate-800 text-white font-bold py-2 rounded-xl">🔗 Link kopieren</button>
     </div>
+    ${env.os === "ios" ? `<p class="text-[10px] text-cyan-200/80">Klappt der Knopf nicht: oben rechts auf „•••“ tippen → „Im Browser öffnen“.</p>` : ""}
+  </div>`;
+}
+
+function renderLogin(hint = "", mode = "login") {
+  // Anbieter-Einstellungen nachladen, falls noch nicht da – Ansicht danach mit Google/Facebook neu zeichnen
+  if (!state.settings && !renderLogin.waiting) {
+    renderLogin.waiting = true;
+    getSettings().then((s) => { state.settings = s; if ($("ps-login-view") && !$("ps-account")?.classList.contains("hidden")) renderLogin(hint, mode); })
+      .catch(() => {}).finally(() => { renderLogin.waiting = false; });
+  }
+  const p = state.settings?.providers || {};
+  const env = inAppEnv();
+  const signupOff = state.settings?.disableSignup;
+  if (mode === "signup" && signupOff) mode = "login";
+  const guestName = (localStorage.getItem("pokeswipe_user") || "").slice(0, 24);
+  const providerBtn = (k, label, icon, cls) => {
+    const external = oauthStrategy(k, env) === "external";
+    return `<button type="button" onclick="PS.oauth('${k}')" data-provider="${k}" class="ps-oauth-btn ${cls}">${icon}<span>${external ? `${label} – im Browser öffnen` : `Weiter mit ${label}`}</span></button>`;
+  };
+  const oauth = [
+    p.google ? providerBtn("google", "Google", GOOGLE_ICON, "bg-white text-slate-900") : "",
+    p.facebook ? providerBtn("facebook", "Facebook", FACEBOOK_ICON, "bg-[#1877F2] text-white") : "",
+    p.github ? providerBtn("github", "GitHub", "", "bg-slate-800 text-white") : "",
+  ].filter(Boolean).join("");
+  const seg = (k, label) => `<button type="button" role="tab" aria-selected="${mode === k}" onclick="PS.renderLogin(${jsArg(hint)}, '${k}')" class="flex-1 min-h-[38px] rounded-xl ${mode === k ? "bg-yellow-400 text-slate-950" : "text-slate-300"}">${label}</button>`;
+  modal("ps-account", `<div id="ps-login-view" class="space-y-3.5">
+    <div class="text-center space-y-1">
+      <p class="text-3xl" aria-hidden="true">🎴</p>
+      <h3 class="text-lg font-black text-white">${mode === "signup" ? "Kostenloses Konto in 20 Sekunden" : "Willkommen bei PokeSwipe"}</h3>
+      ${hint ? `<p class="text-xs text-yellow-300">${esc(hint)}</p>` : `<p class="text-xs text-slate-300">Mit einem Klick anmelden – du bleibst eingeloggt.</p>`}
+      <div class="flex flex-wrap justify-center gap-1.5 pt-1 text-[10px] font-bold text-slate-300">
+        <span class="ps-pill">☁️ Sammlung auf allen Geräten</span><span class="ps-pill">💬 Chat &amp; Tausch</span><span class="ps-pill">🔔 Preisalarme</span>
+      </div>
+    </div>
+    ${inAppHintHtml(env)}
+    ${oauth ? `<div class="space-y-2">${oauth}</div><div class="ps-divider"><span>oder mit E-Mail</span></div>` : ""}
+    ${signupOff ? "" : `<div class="flex bg-slate-950 border border-slate-700 rounded-2xl p-1 gap-1 text-xs font-black" role="tablist" aria-label="Anmelden oder registrieren">${seg("login", "Anmelden")}${seg("signup", "Registrieren")}</div>`}
+    <form class="space-y-2" onsubmit="event.preventDefault(); ${mode === "signup" ? "PS.doSignup()" : "PS.doLogin()"}" novalidate>
+      ${mode === "signup" ? input("ps-su-name", `maxlength="24" placeholder="Sammlername (z. B. GlurakKing)" autocomplete="nickname" value="${esc(guestName)}"`) : ""}
+      ${input("ps-email", 'type="email" placeholder="E-Mail" autocomplete="email" inputmode="email"')}
+      <div class="relative">${input("ps-pass", `type="password" placeholder="Passwort (min. 8 Zeichen)" autocomplete="${mode === "signup" ? "new-password" : "current-password"}"`)}
+        <button type="button" onclick="PS.togglePass()" class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400 px-2 py-1" aria-label="Passwort anzeigen">👁</button></div>
+      <button type="submit" class="w-full ${mode === "signup" ? "bg-emerald-500" : "bg-yellow-400"} text-slate-950 font-black py-3 px-3 rounded-xl text-sm">${mode === "signup" ? "Konto erstellen" : "Anmelden"}</button>
+    </form>
     ${mode === "signup" ? `<p class="text-[11px] text-slate-400">Mit der Registrierung gelten unsere <a href="/rechtliches#agb" target="_blank" rel="noopener" class="underline">AGB</a>. Wie wir deine Daten verarbeiten, erklärt die <a href="/datenschutz" target="_blank" rel="noopener" class="underline">Datenschutzerklärung</a>.</p>` : ""}
-    <p id="ps-auth-msg" class="text-xs text-rose-300 min-h-[1rem]"></p>
-    <div class="flex justify-between text-xs">
-      ${mode === "signup" ? `<button onclick="PS.renderLogin('', 'login')" class="text-slate-300 underline">Schon registriert? Anmelden</button>`
-        : signupOff ? "<span></span>" : `<button onclick="PS.renderLogin('', 'signup')" class="text-emerald-300 underline font-bold">Neu hier? Registrieren</button>`}
-      <button onclick="PS.forgot()" class="text-slate-400 underline">Passwort vergessen?</button>
-    </div>`);
-  setTimeout(() => $("ps-email")?.addEventListener("keydown", (e) => e.key === "Enter" && $("ps-pass").focus()), 0);
-  setTimeout(() => $("ps-pass")?.addEventListener("keydown", (e) => e.key === "Enter" && (mode === "signup" ? doSignup() : doLogin())), 0);
+    <p id="ps-auth-msg" class="text-xs text-rose-300 min-h-[1rem]" role="status" aria-live="polite"></p>
+    <div class="flex justify-between gap-2 text-xs">
+      <button type="button" onclick="PS.continueAsGuest()" class="text-slate-300 underline font-bold">Erst mal als Gast weiter</button>
+      ${mode === "login" ? `<button type="button" onclick="PS.forgot()" class="text-slate-400 underline">Passwort vergessen?</button>` : ""}
+    </div>
+  </div>`);
+}
+
+/** 1-Klick-Anmeldung: Weiterleitung statt Pop-up (kann nicht blockiert werden), im In-App-Browser Ausweg über den Standard-Browser. */
+function startOauth(provider) {
+  const env = inAppEnv();
+  if (oauthStrategy(provider, env) === "external") {
+    const ext = externalBrowserUrl(location.href, env.os);
+    authMsg(`Bitte öffne PokeSwipe in ${env.os === "ios" ? "Safari" : "deinem Browser"} und melde dich dort mit ${provider === "google" ? "Google" : "Facebook"} an – oder nutze hier E-Mail.`, true);
+    if (ext && env.os !== "other") { try { location.href = ext; } catch {} }
+    else copyAppLink();
+    return;
+  }
+  try { sessionStorage.setItem("ps_return_tab", document.body.dataset.tab || "home"); } catch {}
+  authMsg("Weiterleitung zur Anmeldung …", true);
+  try { oauthLogin(provider); } catch (e) {
+    // oauthLogin() wirft absichtlich nach dem Setzen der Weiterleitung – nur echte Fehler anzeigen
+    if (!/Redirecting/i.test(e?.message || "")) authMsg(e?.message || "Anmeldung gerade nicht möglich – bitte E-Mail nutzen.");
+  }
+}
+
+async function copyAppLink() {
+  const url = `${location.origin}${location.pathname}${location.search}`;
+  try { await navigator.clipboard.writeText(url); toast("🔗 Link kopiert", "Füge ihn in Safari oder Chrome ein – dort klappt die Anmeldung mit Google."); }
+  catch { prompt("Link kopieren und im Browser öffnen:", url); }
+}
+
+function continueAsGuest() {
+  try { localStorage.setItem("ps_guest_ok", "1"); } catch {}
+  closeModalEl("ps-account");
+  toast("👋 Gast-Modus", "Alles ausprobieren – deine Karten bleiben auf diesem Gerät und ziehen beim Anmelden mit ins Konto um.");
 }
 
 function authMsg(text, ok = false) {
@@ -177,15 +273,26 @@ function authMsg(text, ok = false) {
   if (el) { el.textContent = text; el.className = `text-xs min-h-[1rem] ${ok ? "text-emerald-300" : "text-rose-300"}`; }
 }
 
+/**
+ * Gemeinsamer Abschluss jeder Anmeldung (E-Mail, Google, Facebook, Einladung, Passwort-Reset und beim Start mit
+ * gespeicherter Sitzung): Cookies dauerhaft machen, Profil laden, Name/Avatar/Einstellungen sichern, Gast-Daten übernehmen.
+ */
+async function completeLogin() {
+  persistSessionCookies();
+  await loadMe();
+  if (!state.user) return;
+  if (await syncProfileAfterLogin({ me: state.me, user: state.user, api })) await loadMe();
+  await migrateLocalPortfolio();
+}
+
 async function afterLogin() {
   state.user = await getUser();
-  await loadMe();
-  await migrateLocalPortfolio();
+  await completeLogin();
   afterAuthFeatures();
   closeModalEl("ps-account");
   renderHeader();
   refreshAll();
-  toast("✅ Angemeldet", `Willkommen ${state.me?.displayName || ""}!`);
+  toast("✅ Angemeldet", `Willkommen ${profileView().name}! Du bleibst auf diesem Gerät angemeldet.`);
   await confirmCheckoutFromUrl();
 }
 
@@ -198,8 +305,10 @@ async function doLogin() {
 }
 
 async function doSignup() {
-  const email = $("ps-email").value.trim(), pass = $("ps-pass").value, name = $("ps-su-name")?.value.trim() || "";
+  const email = $("ps-email").value.trim(), pass = $("ps-pass").value, name = cleanDisplayName($("ps-su-name")?.value || "");
   if (!email || pass.length < 8) return authMsg("Bitte gültige E-Mail und mindestens 8 Zeichen Passwort.");
+  // Gewählten Namen sofort merken – er wird beim ersten Login fest ins Konto übernommen und nie wieder abgefragt
+  if (name.length >= 4) { try { localStorage.setItem("pokeswipe_user", name); } catch {} }
   authMsg("Konto wird erstellt …", true);
   try {
     const u = await signup(email, pass, { full_name: name });
@@ -241,6 +350,15 @@ async function saveInvite() {
   catch (e) { authMsg(e?.message || "Einladung ungültig oder abgelaufen."); }
 }
 
+async function pickAvatar(emoji) {
+  try {
+    await api("/api/me", { method: "PUT", body: { prefs: { avatarEmoji: emoji || "" } } });
+  } catch {}
+  // Leerer Wert = Profilbild (Google/Facebook) bzw. Initiale
+  if (state.me) state.me.prefs = { ...(state.me.prefs || {}), avatarEmoji: emoji || undefined };
+  await loadMe(); renderHeader(); openAccount();
+}
+
 async function saveProfile() {
   try {
     const r = await api("/api/me", { method: "PUT", body: { displayName: $("ps-name").value, city: $("ps-city").value } });
@@ -254,24 +372,21 @@ async function doLogout() {
   await beforeLogout();
   try { await logout(); } catch {}
   state.user = null; state.me = null; state.portfolio = null; state.alerts = null; state.trades = []; state.unread = 0;
+  state.profileCache = null;
   localStorage.removeItem("pokeswipe_pro");
+  clearProfileCache();
   announcePlan();
   closeModalEl("ps-account");
   renderHeader(); refreshAll();
   toast("👋 Abgemeldet", "Bis bald!");
 }
 
-// Lokales Portfolio (aus der Zeit vor dem Login) einmalig ins Konto übernehmen
+// Gast-Sammlung (aus der Zeit vor dem Login) ins Konto übernehmen – auch Karten, die nach einer früheren
+// Übernahme noch als Gast gespeichert wurden (ohne Doppelte, siehe client/session-logic.js)
 async function migrateLocalPortfolio() {
-  if (!state.user || localStorage.getItem("ps_migrated_" + state.user.id)) return;
-  const local = Array.isArray(window.portfolio) ? window.portfolio : (typeof portfolio !== "undefined" ? portfolio : []);
-  if (local.length) {
-    try {
-      const r = await api("/api/portfolio/import", { method: "POST", body: { items: local } });
-      if (r.imported) toast("💼 Portfolio übernommen", `${r.imported} Karten sind jetzt sicher in deinem Konto gespeichert.`);
-    } catch {}
-  }
-  localStorage.setItem("ps_migrated_" + state.user.id, "1");
+  if (!state.user) return;
+  const n = await migrateGuestData({ userId: state.user.id, api, toast });
+  if (n) loadPortfolio();
 }
 
 // ---------------------------------------------------------------------------
@@ -793,8 +908,9 @@ const pfSellApi = {
 window.addEventListener("ps:my-listings", () => { if (state.portfolio) renderServerPortfolio(); });
 
 async function loadPortfolio() {
-  if (!state.user) { state.portfolio = null; renderPortfolioDash(); origRenderPortfolio?.(); refreshDupes(); return; }
-  try { state.portfolio = await api("/api/portfolio"); renderServerPortfolio(); loadMyListings(); }
+  const done = () => { try { window.dispatchEvent(new CustomEvent("ps:portfolio")); } catch {} };
+  if (!state.user) { state.portfolio = null; renderPortfolioDash(); origRenderPortfolio?.(); refreshDupes(); done(); return; }
+  try { state.portfolio = await api("/api/portfolio"); renderServerPortfolio(); loadMyListings(); done(); }
   catch (e) { if (e.status === 401) { state.user = null; renderPortfolioDash(); } }
 }
 
@@ -884,26 +1000,81 @@ async function loadListings() {
 
 const priceBadge = { deal: ["🔥 Top-Deal", "bg-emerald-500 text-slate-950"], fair: ["✓ Fairer Preis", "bg-slate-700 text-slate-100"], high: ["Über Markt", "bg-rose-500/30 text-rose-200"] };
 
+let marketChip = (() => { try { const c = localStorage.getItem("ps_market_chip"); return MARKET_CHIP_KEYS.includes(c) ? c : "all"; } catch { return "all"; } })();
+
+function syncMarketChips() {
+  document.querySelectorAll("#ps-market-chips [data-chip]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.chip === marketChip)));
+}
+
+function setMarketFilter(chip) {
+  if (!MARKET_CHIP_KEYS.includes(chip)) return;
+  marketChip = chip;
+  try { localStorage.setItem("ps_market_chip", chip); } catch {}
+  if (state.user) savePref("marketFilter", chip, { api, loggedIn: true });
+  syncMarketChips();
+  renderMarket();
+}
+
 function renderMarket() {
   const box = $("market-list");
   if (!box) return;
-  const f = ($("market-search")?.value || "").toLowerCase().trim();
-  // Marktplatz-Tabs: „Marktplatz“ = Sofort-Kauf-Angebote zuerst, „Tausch-Hub“ = alle Inserate in Originalreihenfolge.
-  // Wiederherstellung: Es werden in jedem Modus ALLE Inserate angezeigt – keine Karte wird mehr ausgefiltert.
+  const f = ($("market-search")?.value || "").trim();
+  // „Alle Karten“ = Sofort-Kauf-Angebote zuerst, dann alle weiteren Inserate (es wird nie eine Karte ausgefiltert,
+  // außer der Nutzer wählt selbst einen Filter-Chip). Früherer „Tausch-Hub“ (?mode=trade) = Chip „Tausch“.
   const mode = marketMode();
-  const base = mode === "buy"
-    ? [...state.listings.filter((m) => m.buy_now), ...state.listings.filter((m) => !m.buy_now)]
-    : state.listings;
-  const list = f ? base.filter((m) => (m.card_name || "").toLowerCase().includes(f) || (m.city || "").toLowerCase().includes(f)) : base;
+  const chip = mode === "trade" && marketChip === "all" ? "trade" : marketChip;
+  const list = filterListings(state.listings, { q: f, chip, buyFirst: true });
   if ($("marketTotalBadge")) $("marketTotalBadge").textContent = state.listings.length;
   if ($("statMarketCount")) $("statMarketCount").textContent = state.listings.length;
+  syncMarketChips();
+  try { window.dispatchEvent(new CustomEvent("ps:listings", { detail: state.listings.length })); } catch {}
   if (!list.length) {
-    box.innerHTML = mode === "buy" && !f && state.listings.length
-      ? `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400 space-y-2"><p>Gerade keine Sofort-Kauf-Angebote. Im Tausch-Hub warten ${state.listings.length} Inserate.</p><button type="button" onclick="PS.marketMode('trade')" class="bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-xl">🤝 Zum Tausch-Hub</button></div>`
-      : emptyMarketHtml(Boolean(f));
+    box.innerHTML = `<div class="col-span-full">${chip !== "all" && state.listings.length
+      ? `<div class="ps-card p-6 text-center text-xs text-slate-300 space-y-2"><p>Keine Treffer für diesen Filter – insgesamt warten ${state.listings.length} Angebote.</p><button type="button" onclick="PS.marketFilter('all')" class="bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-xl">Alle anzeigen</button></div>`
+      : emptyMarketHtml(Boolean(f))}</div>`;
     return;
   }
-  box.innerHTML = list.map(listingCard).join("");
+  box.innerHTML = list.map(listingTile).join("");
+}
+
+/** Einheitliche Karten-Kachel im Marktplatz-Raster: Artwork, Name, Set-Kürzel, Zustand, Preis vs. Cardmarket, 1-Tap-Aktion. */
+function listingTile(l) {
+  const own = l.user_id === state.user?.id;
+  const pb = l.priceCheck ? priceBadge[l.priceCheck] : null;
+  const cond = conditionShort(l.condition);
+  const setCode = setCodeOf(l);
+  const photo = String(l.image || "").startsWith("/api/images/");
+  const primary = own
+    ? `<button type="button" onclick="PS.openListing(${Number(l.id)})" class="ps-tile-cta bg-slate-800 text-white">✏️ Verwalten</button>`
+    : l.buy_now
+      ? `<button type="button" onclick="PS.openBuy(${Number(l.id)})" class="ps-tile-cta bg-cyan-400 text-slate-950" title="Kauf mit Käuferschutz">🔒 Kaufen</button>`
+      : `<button type="button" onclick="PS.requestTrade(${Number(l.id)})" class="ps-tile-cta bg-emerald-500 text-slate-950">🤝 Anfragen</button>`;
+  return `<article class="ps-tile ${l.boosted ? "ps-tile-boost" : ""}" data-listing="${Number(l.id)}">
+    <button type="button" onclick="PS.openListing(${Number(l.id)})" class="ps-tile-art" aria-label="${esc(l.card_name)} ansehen">
+      <img src="${esc(cdn(l.image || FALLBACK_IMG, 360))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" alt="" class="${photo ? "object-cover" : "object-contain"}" />
+      <span class="ps-tile-badges">${cond ? `<span class="ps-badge ps-badge-cond">${esc(cond)}</span>` : ""}${l.boosted ? `<span class="ps-badge bg-yellow-400 text-slate-950">🚀 TOP</span>` : ""}</span>
+      ${pb ? `<span class="ps-badge ps-tile-deal ${pb[1]}" title="Vergleich mit Cardmarket-Trend">${pb[0]}</span>` : ""}
+    </button>
+    <div class="ps-tile-body">
+      <h4 class="ps-tile-title" title="${esc(l.card_name)}">${esc(l.card_name)}</h4>
+      <p class="ps-tile-meta">${setCode ? `<span class="font-bold text-slate-300">${esc(setCode)}</span> · ` : ""}📍 ${esc(l.city || "–")}</p>
+      <div class="flex items-baseline justify-between gap-1">
+        <span class="ps-tile-price">${Number(l.price) > 0 ? eur(l.price) : "Tausch"}</span>
+        ${l.market_price ? `<span class="text-[10px] text-slate-400" title="Cardmarket-Trend">CM ${eur(l.market_price)}</span>` : ""}
+      </div>
+      <div class="flex gap-1">${primary}<button type="button" onclick="PS.openListing(${Number(l.id)})" class="ps-tile-more" aria-label="Details & weitere Aktionen">⋯</button></div>
+    </div>
+  </article>`;
+}
+
+/** Detail-Ansicht eines Inserats mit ALLEN bisherigen Aktionen (Kaufen, Warenkorb, Angebot, Tausch, Melden, Boost, Verkauft, Löschen, CM, eBay). */
+function openListing(id) {
+  const l = state.listings.find((x) => Number(x.id) === Number(id));
+  if (!l) return toast("Inserat", "Nicht mehr verfügbar.");
+  modal("ps-listing", `<div class="space-y-3">
+    <div class="flex justify-center"><img src="${esc(cdn(l.image || FALLBACK_IMG, 480))}" onerror="this.src='${FALLBACK_IMG}'" alt="${esc(l.card_name)}" class="max-h-72 rounded-xl ${String(l.image || "").startsWith("/api/images/") ? "object-cover" : "object-contain"}" /></div>
+    ${listingCard(l)}
+  </div>`);
 }
 
 function listingCard(l) {
@@ -945,7 +1116,7 @@ function listingCard(l) {
 
 async function setListingStatus(id, status) {
   if (status === "removed" && !confirm("Inserat wirklich löschen?")) return;
-  try { await api(`/api/listings/${id}/status`, { method: "POST", body: { status } }); loadListings(); loadMe().then(renderHeader); }
+  try { await api(`/api/listings/${id}/status`, { method: "POST", body: { status } }); closeModalEl("ps-listing"); loadListings(); loadMe().then(renderHeader); }
   catch (e) { handleError(e); }
 }
 
@@ -1282,7 +1453,8 @@ function injectHeader() {
   injectCartButton();
   const authText = $("authBtnText");
   const profileBtn = authText?.closest("button");
-  if (profileBtn) profileBtn.onclick = () => openAccount();
+  // Avatar oben rechts öffnet das Profil- & Einstellungs-Menü (onclick im HTML); ohne neues Kopf-Markup wie bisher das Konto
+  if (profileBtn && profileBtn.id !== "ps-profile-btn") profileBtn.onclick = () => openAccount();
   const proBtn = [...document.querySelectorAll("header button")].find((b) => (b.getAttribute("onclick") || "").includes("pro-modal"));
   if (proBtn) proBtn.onclick = () => openPro();
   if (profileBtn && !$("ps-bell")) {
@@ -1294,7 +1466,7 @@ function injectHeader() {
       b.onclick = fn;
       profileBtn.before(b);
     };
-    mk("ps-trades-btn", "🤝", "ps-trade-count", "Meine Tausche", () => openTrades());
+    // „Meine Tausche“ liegt im Marktplatz unter „Meine Inserate“ (kein doppelter Kopf-Knopf mehr); Mitteilungen bleiben als Glocke
     mk("ps-bell", "🔔", "ps-bell-count", "Mitteilungen", () => openNotifications());
   }
 }
@@ -1312,7 +1484,12 @@ function refreshAll() {
 // Start
 // ---------------------------------------------------------------------------
 window.PS = {
-  openAccount, renderLogin, doLogin, doSignup, forgot, saveProfile, logout: doLogout, oauth: (p) => oauthLogin(p),
+  openAccount, renderLogin, doLogin, doSignup, forgot, saveProfile, logout: doLogout, oauth: startOauth,
+  continueAsGuest, copyAppLink, pickAvatar, profileView,
+  togglePass: () => { const el = $("ps-pass"); if (el) el.type = el.type === "password" ? "text" : "password"; },
+  isLoggedIn: () => Boolean(state.user),
+  savePref: (k, v) => savePref(k, v, { api, loggedIn: Boolean(state.user) }),
+  ...homeApi,
   ...valuationApi,
   ...paymentsApi,
   ...nativeApi,
@@ -1320,7 +1497,7 @@ window.PS = {
   listCard, submitCardListing, deleteAlert, editItem, saveItem, removeItem, setListingStatus,
   openTrades, selectTrade, tradeAction, sendMsg, pickStars, sendReview, openUser, report,
   openNotifications, openAdmin, resolveReport, openGenerator, runTracker: runTrackerNow, goMarket,
-  loadPortfolio, loadListings, listingCard, renderMarketList: () => renderMarket(), refreshMe: async () => { await loadMe(); renderHeader(); },
+  loadPortfolio, loadListings, listingCard, listingTile, openListing, marketFilter: setMarketFilter, renderMarketList: () => renderMarket(), refreshMe: async () => { await loadMe(); renderHeader(); },
   closeAll: () => ["ps-notifs", "ps-account"].forEach(closeModalEl),
   searchCards,
   scanQuickSearch: () => searchCards(($("scan-quick-q")?.value || "").trim(), "scan-quick-results"),
@@ -1346,6 +1523,7 @@ window.PS = {
 };
 hooks.openAccount = openAccount;
 hooks.openPro = openPro;
+hooks.freshToken = ensureFreshToken;
 window.activatePro = (plan) => checkout(plan === "VIP" || plan === "pro" ? "pro" : "premium");
 
 async function boot() {
@@ -1359,7 +1537,8 @@ async function boot() {
   initLazyAdminTools();
   initPhotoScanInputs(); // „Foto aufnehmen / Bild hochladen“ im Swiper und in der Sammlung
   initShell();
-  initAppNav(); // Mobile-First: 5 Hauptbereiche, Seitenköpfe mit Zurück, Marktplatz-Tabs, Profil-Bereich
+  initAppNav(); // 5 Hauptreiter: Start · Scanner · Marktplatz · Sammlung · Community (+ Unterreiter), Profil-Menü oben rechts
+  initHome(); // Start-Dashboard: Scanner-Hero, Marktplatz-Highlights, Live-Chat, Binder
   initArena();
   initFlip();
   initCommunity();
@@ -1367,8 +1546,21 @@ async function boot() {
   initPwa();
   initPayments(); // nach initPwa: ersetzt in der iOS-App den Stripe-Checkout durch In-App-Kauf
 
+  // Dauerhaft eingeloggt: fehlendes Sitzungs-Cookie aus der gespeicherten Anmeldung wiederherstellen, BEVOR
+  // getUser() läuft (sonst verwirft @netlify/identity die Sitzung nach jedem Browser-Neustart) – siehe client/session.js
+  restoreSession();
+  // Name & Avatar sofort aus dem Profil-Cache zeigen (noch bevor /api/me antwortet) – kein „Anmelden“-Flackern
+  const saved = storedSession();
+  if (saved?.id) {
+    state.profileCache = cachedProfile(saved.id);
+    const name = state.profileCache?.displayName || saved.name;
+    if (name && $("authBtnText")) $("authBtnText").textContent = name;
+    if (name && $("ps-head-avatar")) $("ps-head-avatar").innerHTML = `<span class="ps-avatar w-7 h-7 text-xs" aria-hidden="true">${esc(state.profileCache?.prefs?.avatarEmoji || initialOf(name))}</span>`;
+  }
+
+  let authResult = null;
   try {
-    const result = await handleAuthCallback();
+    const result = authResult = await handleAuthCallback();
     if (result?.type === "invite" && result.token) state.invite = result.token;
     if (result?.type === "recovery") state.recovery = true;
     if (result && result.type !== "invite") history.replaceState(null, "", location.pathname + location.search);
@@ -1378,17 +1570,28 @@ async function boot() {
   getSettings().then((s) => { state.settings = s; }).catch(() => {});
 
   state.user = await getUser();
-  await loadMe();
-  if (state.user) { await migrateLocalPortfolio(); afterAuthFeatures(); afterLoginPwa(); }
+  if (state.user) {
+    // Abgelaufenes Zugangs-Token (z. B. nach Tagen ohne Besuch) gleich erneuern statt beim ersten Aufruf zu scheitern
+    await ensureFreshToken();
+    await completeLogin();
+  } else await loadMe();
+  if (state.user) { afterAuthFeatures(); afterLoginPwa(); }
   renderHeader();
   refreshAll();
   if (state.recovery || state.invite) openAccount();
+  if (state.user && (authResult?.type === "oauth" || authResult?.type === "confirmation")) {
+    toast("✅ Angemeldet", `Willkommen ${profileView().name}! Du bleibst auf diesem Gerät angemeldet.`);
+    // Nach Google/Facebook zurück in den Bereich, aus dem die Anmeldung gestartet wurde
+    let back = "";
+    try { back = sessionStorage.getItem("ps_return_tab") || ""; sessionStorage.removeItem("ps_return_tab"); } catch {}
+    if (back && back !== "home" && !new URLSearchParams(location.search).get("tab")) setTimeout(() => switchTabSafe(back), 0);
+  }
 
   await confirmCheckoutFromUrl();
   const tab = new URLSearchParams(location.search).get("tab");
   if (tab === "trades") openTrades();
   else if (tab === "admin") { switchTabSafe("profile"); if (state.me?.isAdmin) openAdmin(); }
-  else if (["swipe", "scan", "flip", "community", "map", "portfolio", "profile"].includes(tab)) switchTabSafe(tab);
+  else if (["home", "swipe", "scan", "flip", "community", "map", "portfolio", "profile"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
   routeCart();
   if (state.user) refreshCartBadge();
@@ -1401,8 +1604,10 @@ async function boot() {
   routeTrading();
 
   onAuthChange(async (event, user) => {
-    if (event === "login" && user && !state.user) { state.user = user; await loadMe(); renderHeader(); refreshAll(); afterAuthFeatures(); }
-    if (event === "logout") { state.user = null; state.me = null; renderHeader(); refreshAll(); }
+    // Jede Anmeldung und jeder Token-Refresh: Cookies dauerhaft halten (nicht nur bis zum Schließen des Browsers)
+    if (event === "login" || event === "token_refresh") persistSessionCookies();
+    if (event === "login" && user && !state.user) { state.user = user; await completeLogin(); renderHeader(); refreshAll(); afterAuthFeatures(); }
+    if (event === "logout") { state.user = null; state.me = null; state.profileCache = null; renderHeader(); refreshAll(); }
   });
 
   setInterval(() => pollNotifications(), 30_000);

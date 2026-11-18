@@ -1285,8 +1285,19 @@
         const db = fbDb = firebase.database();
         if (authCfg && firebase.auth) {
           try {
-            const cred = await Promise.race([
-              firebase.auth().signInAnonymously(),
+            const fbAuth = firebase.auth();
+            // Dauerhafte lokale Persistenz (entspricht browserLocalPersistence): die Firebase-Kennung überlebt
+            // Neuladen, Browser-Neustart und lange Pausen – kein neuer anonymer Nutzer bei jedem Besuch
+            try { await fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch (e) {}
+            // Gespeicherte Anmeldung abwarten und wiederverwenden, statt sofort neu anzumelden
+            const existing = await new Promise((resolve) => {
+              let done = false;
+              const finish = (u) => { if (!done) { done = true; resolve(u || null); } };
+              try { const off = fbAuth.onAuthStateChanged((u) => { try { off(); } catch (e) {} finish(u); }); } catch (e) { finish(fbAuth.currentUser); }
+              setTimeout(() => finish(fbAuth.currentUser), 3000);
+            });
+            const cred = existing ? { user: existing } : await Promise.race([
+              fbAuth.signInAnonymously(),
               new Promise((_, rej) => setTimeout(() => rej(new Error("Auth-Timeout")), 6000)),
             ]);
             fbUid = cred && cred.user ? cred.user.uid : null;
@@ -1442,25 +1453,20 @@
 
     // NAVIGATION (5 HAUPTBEREICHE): Entdecken · Scanner & Sammlung · Marktplatz & Tausch · Radar · Profil
     // Bereich → Navigationspunkt (Sammlung gehört zum Scanner, Community wird aus „Entdecken“ geöffnet)
-    const NAV_OF = { swipe: "swipe", scan: "scan", portfolio: "scan", map: "map", flip: "flip", community: "swipe", profile: "profile" };
+    // 5 Hauptreiter: Start · Scanner · Marktplatz (+ Swipe-Tausch) · Sammlung (+ Preis-Radar) · Community; Profil über den Avatar
+    const NAV_OF = { home: "home", swipe: "map", scan: "scan", portfolio: "portfolio", map: "map", flip: "portfolio", community: "community", profile: "profile" };
     function switchTab(tab) {
-      const tabs = ["swipe", "scan", "flip", "community", "map", "portfolio", "profile"];
-      if (!tabs.includes(tab)) tab = "swipe";
-      tabs.forEach(t => {
-        document.getElementById(`view-${t}`)?.classList.add("hidden");
-        const desk = document.getElementById(`tab-${t}`);
-        if (desk) desk.className = "tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5";
-        const mob = document.getElementById(`mob-${t}`);
-        if (mob) mob.className = "mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center";
-      });
-
-      document.getElementById(`view-${tab}`).classList.remove("hidden");
+      const tabs = ["home", "swipe", "scan", "flip", "community", "map", "portfolio", "profile"];
+      if (!tabs.includes(tab)) tab = "home";
+      tabs.forEach(t => document.getElementById(`view-${t}`)?.classList.add("hidden"));
+      document.getElementById(`view-${tab}`)?.classList.remove("hidden");
       const navKey = NAV_OF[tab] || tab;
-      // Eigener Reiter (z. B. Sammlung, Community) hat Vorrang, sonst der übergeordnete Hauptbereich
-      const activeDesk = document.getElementById(`tab-${tab}`) || document.getElementById(`tab-${navKey}`);
-      if (activeDesk) activeDesk.className = "tab-btn bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow";
-      const activeMob = document.getElementById(`mob-${tab}`) || document.getElementById(`mob-${navKey}`);
-      if (activeMob) activeMob.className = "mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center";
+      // Aktiver Reiter nur über Zustand (aria-current/is-active) – das Aussehen kommt einheitlich aus theme.css
+      document.querySelectorAll(".tab-btn, .mob-nav").forEach(b => {
+        const on = b.id === `tab-${navKey}` || b.id === `mob-${navKey}`;
+        b.classList.toggle("is-active", on);
+        if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+      });
 
       if (tab === "map") initOrUpdateMap();
       try { window.dispatchEvent(new CustomEvent("ps:tab", { detail: tab })); } catch (e) {}

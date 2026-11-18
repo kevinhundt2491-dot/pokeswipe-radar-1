@@ -148,147 +148,46 @@
     </div>
   </div>
 
-  <!-- 1. TOP HEADER MIT POKÉBALL-OPTIK & LIVE-ZÄHLER -->
-  <header class="dex-header sticky top-0 z-40 px-3 sm:px-6 py-2.5">
-    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
-      <div class="flex items-center gap-3">
-        <!-- Pokédex-Linse (öffnet "Als App installieren") -->
-        <button type="button" onclick="openModal('install-modal')" class="dex-lens shrink-0" title="Als App installieren" aria-label="Als App installieren"></button>
-        <div class="hidden sm:flex gap-1 self-start mt-1" aria-hidden="true"><span class="dex-led r"></span><span class="dex-led y"></span><span class="dex-led g"></span></div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h1 class="dex-title text-xl sm:text-2xl leading-none">PokeSwipe <span class="accent">Radar</span></h1>
-            <span class="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-[#1a1420]/70 text-[#f5c84b] hidden sm:inline">Pokémon TCG</span>
-            <span id="pro-badge" class="hidden text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-500 text-white">👑 PRO VIP</span>
-          </div>
-          <p class="dex-sub text-[11px] hidden sm:block font-semibold">Der Pokédex für deine Sammelkarten – Preise, Sammlung, Tausch</p>
-        </div>
-      </div>
+  <!-- 1. KOPFBEREICH: Logo · (Desktop) schlanke Navigation mit 5 Hauptreitern · Suche, Sprache, Profil-Menü -->
+  <header class="dex-header sticky top-0 z-40 px-3 sm:px-6 py-2">
+    <div class="max-w-7xl mx-auto flex items-center justify-between gap-2 lg:gap-4">
+      <a href="/" onclick="switchTab('home'); return false" class="flex items-center gap-2.5 min-w-0 shrink-0" aria-label="PokeSwipe Radar – zur Startseite">
+        <span class="dex-lens shrink-0" aria-hidden="true"></span>
+        <span class="min-w-0">
+          <span class="flex items-center gap-2">
+            <span class="dex-title text-xl sm:text-2xl leading-none">PokeSwipe <span class="accent">Radar</span></span>
+            <span id="pro-badge" class="hidden text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-500 text-white">👑 PRO</span>
+          </span>
+          <span class="dex-sub text-[11px] hidden xl:block font-semibold">Der Pokédex für deine Sammelkarten</span>
+        </span>
+      </a>
 
-      <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-        <!-- Echter Live-Ticker -->
-        <div class="dex-ticker hidden md:flex items-center gap-1.5 bg-slate-950/90 border border-yellow-400/30 px-2.5 py-1.5 rounded-xl text-xs">
-          <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot"></span>
-          <strong id="liveVisitorCount" class="text-emerald-400 font-bold">1</strong>
-          <span class="text-slate-400 hidden md:inline">online</span>
-          <span class="text-slate-600">|</span>
-          <strong id="totalVisitsCount" class="text-yellow-400 font-bold">1</strong>
-          <span class="text-slate-400 hidden sm:inline">Aufrufe</span>
-        </div>
+      <!-- Desktop: schlanke Header-Navigation (Handy: Tab-Leiste unten) -->
+      <nav id="ps-top-nav" class="dex-nav hidden lg:flex items-center gap-1 p-1 rounded-2xl" aria-label="Hauptbereiche">
+        <button type="button" onclick="switchTab('home')" id="tab-home" class="tab-btn is-active" aria-current="page"><span>Start</span></button>
+        <button type="button" onclick="switchTab('scan')" id="tab-scan" class="tab-btn"><span>Scanner</span></button>
+        <button type="button" onclick="switchTab('map')" id="tab-map" class="tab-btn"><span>Marktplatz</span></button>
+        <button type="button" onclick="switchTab('portfolio')" id="tab-portfolio" class="tab-btn"><span>Sammlung</span></button>
+        <button type="button" onclick="switchTab('community')" id="tab-community" class="tab-btn"><span>Community</span></button>
+      </nav>
 
-        <!-- Kompakte Suche (Kartensuche im Bereich „Entdecken“) -->
-        <button type="button" onclick="PS.showSub('swipe', 'search')" class="ps-head-icon bg-slate-900 hover:bg-slate-800 text-white border border-slate-600 font-extrabold text-xs px-2.5 py-1.5 rounded-xl flex items-center gap-1" title="Karten suchen" aria-label="Karten suchen">
-          🔎 <span class="hidden md:inline">Suche</span>
-        </button>
-
-        <!-- Push-Zentrale Button -->
-        <button data-dex="push" onclick="openModal('push-modal')" class="ps-head-icon bg-slate-900 hover:bg-slate-800 text-yellow-300 border border-yellow-400/40 font-extrabold text-xs px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition" aria-label="Push-Radar und Benachrichtigungen">
-          🔔 <span id="pushStatusLabel" class="hidden sm:inline">Push-Radar</span>
-        </button>
-
-        <!-- App installieren (wiederhergestellt) -->
-        <button onclick="openModal('install-modal')" class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-bold text-xs px-2.5 py-1.5 rounded-xl hidden sm:flex items-center gap-1">
-          📲 <span>App</span>
-        </button>
-
-        <!-- Konto & Pro: wieder auf allen Geräten sichtbar (zusätzlich im Bereich „Profil“) -->
-        <button onclick="openModal('auth-modal')" class="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-2.5 py-1.5 rounded-xl border border-slate-600">
-          👤 <span id="authBtnText">Profil</span>
-        </button>
-
-        <button onclick="openModal('pro-modal')" class="inline-flex bg-gradient-to-r from-yellow-400 via-amber-500 to-red-500 text-slate-950 font-black text-xs px-3 py-1.5 rounded-xl shadow-md">
-          👑 PRO
-        </button>
-
-        <!-- Sprache: DE / EN (verdrahtet in client/i18n.js über data-ps-lang) – kompakt, auch im Profil -->
+      <div id="ps-head-actions" class="flex items-center gap-1.5 shrink-0">
+        <!-- Kartensuche (eine Stelle: Unterbereich „Kartensuche“) -->
+        <button type="button" onclick="PS.showSub('swipe', 'search')" class="ps-head-icon" title="Karten suchen" aria-label="Karten suchen">🔎</button>
+        <!-- Sprache: DE / EN (verdrahtet in client/i18n.js über data-ps-lang) -->
         <div class="ps-lang-switch inline-flex items-center gap-0.5 bg-slate-900 border border-slate-600 rounded-xl p-0.5 text-[11px]" role="group" aria-label="Sprache / Language" data-i18n-skip translate="no">
           <button type="button" data-ps-lang="de" title="Deutsch" class="px-2 py-1 rounded-lg font-black text-slate-300 hover:text-white">DE</button>
           <button type="button" data-ps-lang="en" title="English" class="px-2 py-1 rounded-lg font-black text-slate-300 hover:text-white">EN</button>
         </div>
+        <!-- Profil- & Einstellungs-Menü (Avatar): Konto, Pro-Pass, Push, App, Verkäuferkonto, Admin, Rechtliches -->
+        <button type="button" id="ps-profile-btn" onclick="switchTab('profile')" class="ps-profile-btn" aria-label="Profil und Einstellungen" title="Profil & Einstellungen">
+          <span id="ps-head-avatar" aria-hidden="true"><span class="ps-avatar ps-avatar-guest w-7 h-7 text-xs">👤</span></span>
+          <span id="authBtnText" class="hidden sm:inline">Anmelden</span>
+          <span class="text-slate-400 text-xs" aria-hidden="true">⚙️</span>
+        </button>
       </div>
     </div>
   </header>
-
-  <!-- 2. ATTRAKTIVES POKÉMON-HERO-DASHBOARD & NAVIGATION -->
-  <div class="dex-reveal relative z-10 max-w-7xl w-full mx-auto px-3 sm:px-6 mt-5 space-y-3">
-    <!-- Hero: Pokédex-Startbildschirm mit Holo-Kartenfächer -->
-    <section id="dex-hero" class="dex-hero p-5 sm:p-7 grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
-      <div class="md:col-span-7 space-y-4 relative z-10">
-        <div class="flex flex-wrap gap-1.5">
-          <span class="type-chip" style="--c:var(--t-electric)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></i>Live-Preise</span>
-          <span class="type-chip" style="--c:var(--t-fire)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M12 2c1 4 6 6 6 12a6 6 0 0 1-12 0c0-3 2-5 3-6 0 2 1 3 2 3 0-3-1-6 1-9z"/></svg></i>Preisalarme</span>
-          <span class="type-chip" style="--c:var(--t-water)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M12 2s7 8 7 13a7 7 0 0 1-14 0c0-5 7-13 7-13z"/></svg></i>KI-Scan</span>
-          <span class="type-chip" style="--c:var(--t-grass)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><path d="M20 4C9 4 4 9 4 16c0 1 0 2 .3 3L8 15c2-2 5-3 8-3-3 1-6 3-8 6l-1 2c8 1 13-5 13-16z"/></svg></i>Sets</span>
-          <span class="type-chip" style="--c:var(--t-psychic)"><i><svg viewBox="0 0 24 24" fill="#1a1420"><circle cx="12" cy="12" r="4"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zm10 4a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" fill-rule="evenodd"/></svg></i>Sicher tauschen</span>
-        </div>
-        <h2>Schnapp dir jede Karte –<br />zum <span class="hl">richtigen Preis.</span></h2>
-        <p class="text-sm text-[#d7d3e6] max-w-xl">Scanne deine Pokémon-Karten mit der Kamera, verfolge echte Cardmarket-Preise und tausche sicher mit Sammlern aus ganz Deutschland. Alarme kommen per Push, auch wenn die App zu ist.</p>
-        <div class="flex flex-wrap gap-2.5 pt-1">
-          <button onclick="PS.openScanner()" class="dex-cta primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><rect x="8.5" y="7" width="7" height="10" rx="1.2"/></svg>Karte scannen</button>
-          <button onclick="PS.showSub('flip', 'alerts')" class="dex-cta ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 20a1.9 1.9 0 0 0 3.4 0"/></svg>Preisalarm</button>
-          <button onclick="PS.showSub('map', 'market')" class="dex-cta ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></svg>Tauschen</button>
-        </div>
-      </div>
-      <div class="md:col-span-5 relative">
-        <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" alt="Pikachu" class="absolute -top-6 -left-2 w-24 sm:w-28 z-20 drop-shadow-2xl pointer-events-none" loading="eager" />
-        <div class="card-fan" aria-label="Beliebte Karten">
-          <div class="tcg"><img src="https://images.pokemontcg.io/sv8pt5/161.png" alt="Evoli-Karte" loading="lazy" /></div>
-          <div class="tcg"><img src="https://images.pokemontcg.io/sv3pt5/199.png" alt="Glurak-ex-Karte" loading="lazy" /></div>
-          <div class="tcg"><img src="https://images.pokemontcg.io/sv8/238.png" alt="Pikachu-ex-Karte" loading="lazy" /></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Schnellzugriff: Merkliste & Deals, Scanner, Restock-Radar, Marktplatz, Sammlung -->
-    <div id="dex-stats" class="grid grid-cols-2 lg:grid-cols-5 gap-2.5">
-      <div onclick="switchTab('swipe')" class="dex-stat cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
-        <div>
-          <p class="text-[10px] uppercase font-bold text-slate-400">💚 Merkliste & Deals</p>
-          <p class="text-base sm:text-lg font-black text-white"><span id="statMatches">0</span> Karten</p>
-        </div>
-        <span class="text-2xl">🃏</span>
-      </div>
-      <button type="button" onclick="PS.openScanner()" class="dex-stat text-left cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
-        <span>
-          <span class="block text-[10px] uppercase font-bold text-cyan-300">📷 Scanner</span>
-          <span class="block text-base sm:text-lg font-black text-white">Karte scannen</span>
-        </span>
-        <span class="text-2xl" aria-hidden="true">⚡</span>
-      </button>
-      <button type="button" onclick="PS.showSub('flip', 'drops')" class="dex-stat text-left cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
-        <span>
-          <span class="block text-[10px] uppercase font-bold text-amber-300">🚨 Restock-Radar</span>
-          <span class="block text-base sm:text-lg font-black text-yellow-400">UVP-Drops</span>
-        </span>
-        <span class="text-2xl" aria-hidden="true">📦</span>
-      </button>
-      <button type="button" onclick="switchTab('map')" class="dex-stat text-left cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
-        <span>
-          <span class="block text-[10px] uppercase font-bold text-emerald-300">🛒 Marktplatz</span>
-          <span class="block text-base sm:text-lg font-black text-emerald-400"><span id="statMarketCount">0</span> Angebote</span>
-        </span>
-        <span class="text-2xl" aria-hidden="true">🤝</span>
-      </button>
-      <button type="button" onclick="switchTab('portfolio')" class="dex-stat text-left cursor-pointer poke-glass rounded-2xl p-3 flex items-center justify-between hover:border-yellow-400 transition">
-        <span>
-          <span class="block text-[10px] uppercase font-bold text-purple-300">💼 Sammlung · <span id="statMatchesPf">0</span> gemerkt</span>
-          <span id="statPortfolioVal" class="block text-base sm:text-lg font-black text-white">0,00 €</span>
-        </span>
-        <span class="text-2xl" aria-hidden="true">💎</span>
-      </button>
-    </div>
-
-    <!-- Desktop-Navigation: alle Bereiche inkl. Meine Sammlung und Community (wiederhergestellt) -->
-    <nav class="dex-nav hidden lg:grid grid-cols-7 gap-2 p-1.5 rounded-2xl" aria-label="Hauptbereiche">
-      <button onclick="switchTab('swipe')" id="tab-swipe" class="tab-btn bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow">🃏 <span>Entdecken</span></button>
-      <button onclick="switchTab('scan')" id="tab-scan" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">📷 <span>Scanner &amp; Sammlung</span></button>
-      <button onclick="switchTab('portfolio')" id="tab-portfolio" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">💼 <span>Meine Sammlung</span></button>
-      <button onclick="switchTab('map')" id="tab-map" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">🛒 <span>Marktplatz &amp; Tausch</span></button>
-      <button onclick="switchTab('community')" id="tab-community" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">💬 <span>Community</span></button>
-      <button onclick="switchTab('flip')" id="tab-flip" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">📡 <span>Radar</span></button>
-      <button onclick="switchTab('profile')" id="tab-profile" class="tab-btn text-slate-200 hover:text-white font-extrabold py-2.5 px-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5">👤 <span>Profil</span></button>
-    </nav>
-  </div>
 
   <!-- 3. HAUPTINHALT -->
   <main class="relative z-10 max-w-7xl w-full mx-auto px-3 sm:px-6 mt-4 flex-grow">
@@ -296,7 +195,71 @@
     <!-- =================================================================== -->
     <!-- REITER 1: STARTSEITE / ARENA (SWIPE + TOP-DEALS)                    -->
     <!-- =================================================================== -->
-    <section id="view-swipe" class="space-y-6">
+    <!-- =================================================================== -->
+    <!-- REITER 1: START – kompaktes Dashboard (befüllt von client/home.js)  -->
+    <!-- =================================================================== -->
+    <section id="view-home" class="space-y-3" aria-label="Start">
+      <div id="ps-home-welcome"></div>
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
+        <!-- 1. Live-Karten-Scanner (Hero-Aktion) -->
+        <div id="home-scan" class="ps-card ps-hero lg:col-span-7 p-4 sm:p-5 flex flex-col justify-between gap-3">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="ps-kicker text-cyan-300">📷 Live-Karten-Scanner</p>
+              <h2 class="ps-hero-title">Karte vor die Kamera – Preis in Sekunden.</h2>
+              <p class="text-xs text-slate-300 mt-1">Erkennt Name, Nummer &amp; Sprache, zeigt den Cardmarket-Preis und legt die Karte mit einem Tipp in deinen Binder.</p>
+            </div>
+            <div class="ps-hero-cards hidden sm:flex" aria-hidden="true">
+              <img src="https://images.pokemontcg.io/sv3pt5/199.png" alt="" loading="lazy" />
+              <img src="https://images.pokemontcg.io/sv8/238.png" alt="" loading="lazy" />
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" onclick="PS.openScanner()" class="ps-btn-primary flex-1 sm:flex-none">📷 Karte scannen</button>
+            <label class="ps-btn-ghost cursor-pointer">🖼️ Foto hochladen<input data-photo-scan="portfolio" type="file" accept="image/*" class="hidden" /></label>
+          </div>
+        </div>
+        <!-- 4. Eigener Binder / Sammlung -->
+        <button type="button" id="home-binder" onclick="PS.collectionTab('binder')" class="ps-card lg:col-span-5 p-4 text-left flex flex-col justify-between gap-2">
+          <span class="flex items-center justify-between gap-2"><span class="ps-kicker text-purple-300">💼 Mein Binder</span><span class="text-xs text-slate-400">Öffnen ›</span></span>
+          <span class="grid grid-cols-3 gap-2 text-center">
+            <span class="ps-stat"><span class="ps-stat-label">Wert</span><span id="statPortfolioVal" class="ps-stat-num text-emerald-300">0,00 €</span></span>
+            <span class="ps-stat"><span class="ps-stat-label">Karten</span><span id="home-binder-count" class="ps-stat-num">0</span></span>
+            <span class="ps-stat"><span class="ps-stat-label">Gemerkt</span><span class="ps-stat-num"><span id="statMatches">0</span></span><span id="statMatchesPf" class="hidden">0</span></span>
+          </span>
+          <span id="home-binder-strip" class="flex gap-1.5 overflow-hidden h-14" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
+        <!-- 2. Marktplatz & Tausch-Radar (Vorschau) -->
+        <div id="home-market" class="ps-card lg:col-span-7 p-4 space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <p class="ps-kicker text-emerald-300">🛒 Marktplatz &amp; Tausch-Radar · <span id="statMarketCount">0</span> Angebote</p>
+            <button type="button" onclick="PS.marketTab('all')" class="text-xs font-bold text-slate-300 hover:text-white">Alle ansehen ›</button>
+          </div>
+          <div id="home-market-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+        </div>
+        <!-- 3. Live-Chat (kompakt, sofort sichtbare Community-Aktivität) -->
+        <div id="home-chat" class="ps-card lg:col-span-5 p-4 flex flex-col gap-2">
+          <div class="flex items-center justify-between gap-2">
+            <p class="ps-kicker text-yellow-300">💬 Live-Chat</p>
+            <span class="flex items-center gap-1.5 text-[11px] text-slate-400" title="Sammler gerade online · Aufrufe gesamt">
+              <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot" aria-hidden="true"></span>
+              <strong id="liveVisitorCount" class="text-emerald-300">1</strong> online · <strong id="totalVisitsCount" class="text-yellow-300">1</strong> Aufrufe
+            </span>
+          </div>
+          <div id="home-chat-list" class="space-y-1.5 text-xs min-h-[7.5rem]" aria-live="polite"><p class="text-slate-500 py-4 text-center">Chat wird geladen …</p></div>
+          <form class="flex gap-2" onsubmit="event.preventDefault(); PS.homeChatSend()">
+            <input id="home-chat-input" type="text" maxlength="500" placeholder="Hallo Sammler! 👋" autocomplete="off" class="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-yellow-400 outline-none" />
+            <button type="submit" class="bg-yellow-400 text-slate-950 font-black text-xs px-3.5 py-2 rounded-xl shrink-0">Senden</button>
+          </form>
+          <button type="button" onclick="PS.communityTab('chat')" class="text-[11px] font-bold text-slate-400 hover:text-white text-left">Ganzen Chat öffnen ›</button>
+        </div>
+      </div>
+      <span id="pushStatusLabel" class="hidden">Push-Radar</span>
+    </section>
+
+    <section id="view-swipe" class="hidden space-y-6">
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
         <!-- LINKE SPALTE (7 Cols): POKESWIPE HOLO-ARENA -->
@@ -493,8 +456,8 @@
     <!-- REITER 3: PULL-WALL & LIVE-CHAT                                     -->
     <!-- =================================================================== -->
     <section id="view-community" class="hidden space-y-5">
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div class="lg:col-span-7 space-y-4">
+      <div class="ps-community-grid grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div id="ps-wall-panel" class="lg:col-span-7 space-y-4">
           <div class="poke-glass rounded-3xl p-4 sm:p-5 space-y-3">
             <h2 class="text-base font-black text-white">📸 Eigenen Pull / Hit in die Community posten</h2>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
@@ -517,7 +480,7 @@
           <div id="pullwall-feed" class="space-y-3"></div>
         </div>
 
-        <div class="lg:col-span-5 poke-glass rounded-3xl p-4 sm:p-5 space-y-3">
+        <div id="ps-chat-panel" class="lg:col-span-5 poke-glass rounded-3xl p-4 sm:p-5 space-y-3">
           <div class="flex justify-between items-center">
             <h3 class="font-black text-sm text-white">💬 Live Sammler-Chat</h3>
             <span class="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold">Echtzeit</span>
@@ -534,11 +497,35 @@
     <!-- =================================================================== -->
     <!-- REITER 4: TAUSCH-HUB (UNBEGRENZT KARTEN INSERIEREN) & RADAR-KARTE   -->
     <!-- =================================================================== -->
-    <section id="view-map" class="hidden space-y-6">
+    <section id="view-map" class="hidden space-y-4">
 
-      <!-- NEU: UNBEGRENZT KARTEN AUF EINMAL INSERIEREN (STAPEL- & MASSEN-UPLOAD) -->
-      <div id="batch-card-box" class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div class="lg:col-span-6 poke-glass rounded-3xl p-5 space-y-4 border-2 border-yellow-400/50">
+      <!-- MARKTPLATZ: schlanke Suche + Filter-Chips + sofort sichtbares Karten-Raster (2 Spalten Handy, 3–4 Desktop) -->
+      <div id="ps-market-main" class="space-y-3">
+        <div class="ps-market-toolbar space-y-2">
+          <label class="ps-search">
+            <span aria-hidden="true">🔎</span>
+            <input id="market-search" type="search" oninput="renderMarket()" placeholder="Karte, Set-Kürzel oder Stadt suchen …" aria-label="Marktplatz durchsuchen" />
+            <span class="text-[11px] text-slate-400 shrink-0"><span id="marketTotalBadge">0</span> live</span>
+          </label>
+          <div id="ps-market-chips" class="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1" role="toolbar" aria-label="Filter">
+            <button type="button" data-chip="all" onclick="PS.marketFilter('all')" class="ps-chip" aria-pressed="true">Alle</button>
+            <button type="button" data-chip="trade" onclick="PS.marketFilter('trade')" class="ps-chip" aria-pressed="false">🤝 Tausch</button>
+            <button type="button" data-chip="sale" onclick="PS.marketFilter('sale')" class="ps-chip" aria-pressed="false">💶 Verkauf</button>
+            <button type="button" data-chip="nm" onclick="PS.marketFilter('nm')" class="ps-chip" aria-pressed="false">✨ Near Mint</button>
+            <button type="button" data-chip="price_asc" onclick="PS.marketFilter('price_asc')" class="ps-chip" aria-pressed="false">↑ Preis aufsteigend</button>
+          </div>
+        </div>
+        <div id="market-list" class="ps-market-grid grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+          <div class="ps-tile ps-skeleton" aria-hidden="true"></div><div class="ps-tile ps-skeleton" aria-hidden="true"></div>
+          <div class="ps-tile ps-skeleton" aria-hidden="true"></div><div class="ps-tile ps-skeleton" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <!-- STAPEL- & MASSEN-INSERAT: gehört zu „Meine Inserate“ (client/app-nav.js verschiebt den Block dorthin) -->
+      <span id="ps-batch-home" hidden></span>
+      <details id="ps-batch-details" class="ps-card overflow-hidden">
+        <summary class="flex items-center justify-between gap-2 px-4 py-3.5 cursor-pointer select-none text-sm font-black text-white min-h-[52px]">➕ Mehrere Karten auf einmal inserieren<span class="ps-acc-chevron text-slate-400" aria-hidden="true">▾</span></summary>
+        <div id="batch-card-box" class="px-4 pb-4 space-y-4">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div>
               <span class="text-[10px] font-black uppercase bg-yellow-400 text-slate-950 px-2.5 py-0.5 rounded-full">🚀 Stapel- & Massen-Inserat</span>
@@ -589,16 +576,7 @@
             </button>
           </div>
         </div>
-
-        <!-- RECHTE SPALTE: AKTIVE COMMUNITY-INSERATE -->
-        <div class="lg:col-span-6 space-y-3">
-          <div class="flex items-center justify-between">
-            <h3 class="text-base font-black text-white">📋 Live Tausch- & Verkaufs-Angebote (<span id="marketTotalBadge">0</span>)</h3>
-            <input id="market-search" type="text" oninput="renderMarket()" placeholder="Inserate filtern..." class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white" />
-          </div>
-          <div id="market-list" class="space-y-2.5 max-h-[540px] overflow-y-auto pr-1"></div>
-        </div>
-      </div>
+      </details>
 
       <!-- INTERAKTIVE SAMMLER-KARTE -->
       <div class="poke-glass rounded-3xl p-4 sm:p-5 space-y-3">
@@ -712,15 +690,14 @@
 
   </main>
 
-  <!-- 4. MOBILE BOTTOM-NAVIGATION: 5 feste Bereiche, mit dem Daumen erreichbar, respektiert Notch/Home-Indicator -->
+  <!-- 4. MOBILE TAB-BAR: 5 feste Hauptreiter, mit dem Daumen erreichbar, respektiert Notch/Home-Indicator -->
   <nav id="ps-bottom-nav" class="dex-bottom fixed bottom-0 left-0 right-0 z-40 lg:hidden" style="padding-bottom: env(safe-area-inset-bottom);" aria-label="Hauptnavigation">
-    <div class="max-w-md mx-auto grid grid-cols-6 gap-1 px-2 py-1.5">
-      <button onclick="switchTab('swipe')" id="mob-swipe" class="mob-nav bg-yellow-400 text-slate-950 font-black py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🃏</span><span class="text-[10px]">Entdecken</span></button>
-      <button onclick="switchTab('scan')" id="mob-scan" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">📷</span><span class="text-[10px]">Scanner</span></button>
-      <button onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">💼</span><span class="text-[10px]">Sammlung</span></button>
-      <button onclick="switchTab('map')" id="mob-map" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">🛒</span><span class="text-[10px]">Marktplatz</span></button>
-      <button onclick="switchTab('flip')" id="mob-flip" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">📡</span><span class="text-[10px]">Radar</span></button>
-      <button onclick="switchTab('profile')" id="mob-profile" class="mob-nav text-slate-300 py-1.5 rounded-xl flex flex-col items-center"><span class="text-sm">👤</span><span class="text-[10px]">Profil</span></button>
+    <div class="max-w-md mx-auto grid grid-cols-5 gap-1 px-2 py-1.5">
+      <button type="button" onclick="switchTab('home')" id="mob-home" class="mob-nav is-active" aria-current="page"><span class="text-[10px]">Start</span></button>
+      <button type="button" onclick="switchTab('scan')" id="mob-scan" class="mob-nav"><span class="text-[10px]">Scanner</span></button>
+      <button type="button" onclick="switchTab('map')" id="mob-map" class="mob-nav"><span class="text-[10px]">Marktplatz</span></button>
+      <button type="button" onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav"><span class="text-[10px]">Sammlung</span></button>
+      <button type="button" onclick="switchTab('community')" id="mob-community" class="mob-nav"><span class="text-[10px]">Community</span></button>
     </div>
   </nav>
 

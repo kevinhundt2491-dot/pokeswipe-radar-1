@@ -14,7 +14,9 @@ test("App lädt ohne JavaScript-Fehler", async ({ page }) => {
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await page.waitForFunction(() => Boolean((window as any).PS), null, { timeout: 20_000 });
-  await expect(page.locator("#tab-swipe")).toBeVisible();
+  // Start-Dashboard mit Live-Scanner als Hero-Aktion (Navigation: Header am Desktop, Tab-Leiste am Handy)
+  await expect(page.locator("#view-home")).toBeVisible();
+  await expect(page.locator("#ps-profile-btn")).toBeVisible();
   expect(errors).toEqual([]);
 });
 

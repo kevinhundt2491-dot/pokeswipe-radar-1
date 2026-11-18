@@ -48,13 +48,16 @@ export function emptyCart() {
   return { groups: [], unavailable: [], problems: [], itemsCents: 0, shippingCents: 0, totalCents: 0, count: 0, withdrawalDays: 14 };
 }
 
-/** Fake-Login: Netlify-Identity-Sitzung im localStorage + nf_jwt-Cookie, damit getUser() einen Nutzer liefert. */
-export async function fakeLogin(page: Page, baseURL: string) {
+/**
+ * Fake-Login: Netlify-Identity-Sitzung im localStorage + nf_jwt-Cookie, damit getUser() einen Nutzer liefert.
+ * `cookie: false` simuliert einen Browser-Neustart: Sitzungs-Cookie weg, gespeicherte Anmeldung noch da.
+ */
+export async function fakeLogin(page: Page, baseURL: string, { cookie = true }: { cookie?: boolean } = {}) {
   const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
   const exp = Math.floor(Date.now() / 1000) + 3600;
   const jwt = `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub: ME.id, email: ME.email, exp, app_metadata: {}, user_metadata: { full_name: ME.displayName } })}.sig`;
   const host = new URL(baseURL).hostname;
-  await page.context().addCookies([{ name: "nf_jwt", value: jwt, domain: host, path: "/" }]);
+  if (cookie) await page.context().addCookies([{ name: "nf_jwt", value: jwt, domain: host, path: "/" }]);
   await page.addInitScript(([token, email, id, exp]) => {
     localStorage.setItem("gotrue.user", JSON.stringify({
       url: `${location.origin}/.netlify/identity`, id, aud: "", role: "", email, confirmed_at: new Date().toISOString(),

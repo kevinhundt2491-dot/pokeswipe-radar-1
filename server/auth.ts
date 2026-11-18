@@ -3,6 +3,7 @@ import { getCookie } from "hono/cookie";
 import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db, profiles } from "../db/index.ts";
+import { sanitizeAvatarUrl } from "./profile-prefs-logic.ts";
 
 /**
  * Fester Origin der Identity-API. Bewusst NICHT aus Request-Headern (Origin, Host, X-Forwarded-Host)
@@ -25,6 +26,8 @@ export type AuthUser = {
   roles: string[];
   /** E-Mail-Adresse wurde in Netlify Identity bestätigt */
   confirmed: boolean;
+  /** Profilbild aus Google/Facebook (user_metadata.avatar_url), nur zur Übernahme ins Profil */
+  avatar?: string;
 };
 
 /**
@@ -107,6 +110,7 @@ export async function verifyIdentityToken(c: Context): Promise<AuthUser | null> 
           name: String(data.user_metadata?.full_name || data.user_metadata?.name || "").slice(0, 30),
           roles: Array.isArray(data.app_metadata?.roles) ? data.app_metadata.roles.map(String) : [],
           confirmed: Boolean(data.confirmed_at || data.email_confirmed_at),
+          avatar: sanitizeAvatarUrl(data.user_metadata?.avatar_url || data.user_metadata?.picture || ""),
         };
       }
     }
@@ -126,7 +130,16 @@ function baseName(user: AuthUser) {
 /** Legt beim ersten Login ein Profil an und liefert es zurück. */
 export async function ensureProfile(user: AuthUser) {
   const existing = await db.select().from(profiles).where(eq(profiles.userId, user.id)).limit(1);
-  if (existing[0]) return existing[0];
+  if (existing[0]) {
+    // Einmalig: Profilbild von Google/Facebook übernehmen, solange der Nutzer noch keinen eigenen Avatar hat
+    if (!existing[0].avatarUrl && user.avatar) {
+      try {
+        await db.update(profiles).set({ avatarUrl: user.avatar }).where(eq(profiles.userId, user.id));
+        return { ...existing[0], avatarUrl: user.avatar };
+      } catch {}
+    }
+    return existing[0];
+  }
 
   let name = baseName(user);
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -141,7 +154,7 @@ export async function ensureProfile(user: AuthUser) {
 
   const [created] = await db
     .insert(profiles)
-    .values({ userId: user.id, email: user.email, displayName: name })
+    .values({ userId: user.id, email: user.email, displayName: name, avatarUrl: user.avatar || "" })
     .onConflictDoNothing()
     .returning();
   if (created) return created;

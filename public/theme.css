@@ -378,3 +378,165 @@ details.ps-acc[open] > summary .ps-acc-chevron { transform: rotate(180deg); }
   /* kein Element darf breiter als der Bildschirm werden */
   main img, main video, main canvas, main table { max-width: 100%; }
 }
+
+/* ===========================================================================
+   Einheitliches App-Design (UI/UX-Upgrade): gleiche Abstände, Radien, Rahmen, Schatten und Schriftgrößen
+   über alle Reiter. Tokens → Komponenten (Karten, Kacheln, Segmente, Chips, Navigation, Avatar).
+   =========================================================================== */
+:root {
+  --ps-radius: 1.1rem;
+  --ps-radius-sm: 0.8rem;
+  --ps-gap: 0.75rem;
+  --ps-surface: linear-gradient(180deg, rgba(27, 36, 68, 0.94), rgba(19, 26, 51, 0.96));
+  --ps-surface-2: rgba(12, 16, 34, 0.85);
+  --ps-border: rgba(245, 200, 75, 0.16);
+  --ps-border-strong: rgba(245, 200, 75, 0.45);
+  --ps-shadow: 0 1px 0 rgba(243, 239, 228, 0.06) inset, 0 16px 34px -22px rgba(0, 0, 0, 0.85);
+  --ps-accent: var(--t-electric);
+}
+
+/* Karten / Module */
+.ps-card {
+  background: var(--ps-surface);
+  border: 1.5px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+  box-shadow: var(--ps-shadow);
+  position: relative;
+}
+button.ps-card { transition: border-color 0.15s ease, transform 0.15s ease; }
+button.ps-card:hover { border-color: var(--ps-border-strong); }
+button.ps-card:active { transform: scale(0.99); }
+.ps-kicker { font-size: 0.68rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; }
+.ps-page-title { font-family: var(--font-display); font-size: 1.2rem; line-height: 1.15; color: #fff; }
+.ps-pill { background: rgba(243, 239, 228, 0.07); border: 1px solid rgba(243, 239, 228, 0.12); border-radius: 999px; padding: 0.2rem 0.55rem; }
+.ps-empty { border: 1.5px dashed rgba(243, 239, 228, 0.14); border-radius: var(--ps-radius-sm); }
+.ps-divider { display: flex; align-items: center; gap: 0.6rem; color: #94a3b8; font-size: 0.7rem; font-weight: 700; }
+.ps-divider::before, .ps-divider::after { content: ""; flex: 1; height: 1px; background: rgba(243, 239, 228, 0.12); }
+
+/* Buttons */
+.ps-btn-primary, .ps-btn-ghost {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+  min-height: 46px; padding: 0.6rem 1.1rem; border-radius: 0.9rem; font-weight: 900; font-size: 0.85rem;
+}
+.ps-btn-primary { background: linear-gradient(90deg, #22d3ee, #34d399); color: #0f172a; box-shadow: 0 4px 0 #0e7490, 0 14px 30px -14px rgba(34, 211, 238, 0.8); }
+.ps-btn-primary:active { transform: translateY(2px); box-shadow: 0 2px 0 #0e7490; }
+.ps-btn-ghost { background: rgba(12, 16, 34, 0.7); color: #e2e8f0; border: 1.5px solid rgba(34, 211, 238, 0.45); }
+.ps-oauth-btn {
+  width: 100%; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 0.6rem;
+  border-radius: 0.9rem; font-weight: 900; font-size: 0.85rem; box-shadow: 0 10px 24px -16px rgba(0, 0, 0, 0.9);
+}
+
+/* Start-Dashboard */
+.ps-hero { background: radial-gradient(600px 240px at 100% 0%, rgba(34, 211, 238, 0.16), transparent 70%), var(--ps-surface); border-color: rgba(34, 211, 238, 0.35); }
+.ps-hero-title { font-family: var(--font-display); font-size: clamp(1.25rem, 2.6vw, 1.7rem); line-height: 1.1; color: #fff7e6; margin-top: 0.15rem; }
+.ps-hero-cards { position: relative; width: 96px; height: 92px; flex-shrink: 0; }
+.ps-hero-cards img { position: absolute; width: 58px; border-radius: 6px; box-shadow: 0 10px 22px -10px rgba(0, 0, 0, 0.9); }
+.ps-hero-cards img:first-child { left: 0; top: 6px; transform: rotate(-10deg); }
+.ps-hero-cards img:last-child { right: 0; top: 0; transform: rotate(8deg); }
+.ps-stat { background: var(--ps-surface-2); border: 1px solid rgba(243, 239, 228, 0.08); border-radius: var(--ps-radius-sm); padding: 0.45rem 0.3rem; display: flex; flex-direction: column; gap: 0.1rem; }
+.ps-stat-label { font-size: 0.62rem; text-transform: uppercase; font-weight: 800; color: #94a3b8; }
+.ps-stat-num { font-family: var(--font-display); font-size: 1.05rem; line-height: 1.1; color: #fff; }
+.ps-welcome { border-color: rgba(250, 204, 21, 0.4); background: linear-gradient(90deg, rgba(250, 204, 21, 0.1), transparent), var(--ps-surface); }
+.ps-chat-line { background: var(--ps-surface-2); border: 1px solid rgba(243, 239, 228, 0.07); border-radius: 0.7rem; padding: 0.35rem 0.6rem; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ps-mini-tile { display: block; min-width: 0; }
+.ps-mini-art { position: relative; display: block; aspect-ratio: 63 / 88; border-radius: 0.6rem; overflow: hidden; background: rgba(12, 16, 34, 0.8); border: 1px solid rgba(243, 239, 228, 0.08); }
+.ps-mini-art img { width: 100%; height: 100%; }
+
+/* Marktplatz: Suche, Filter-Chips, Karten-Raster */
+.ps-search {
+  display: flex; align-items: center; gap: 0.5rem; background: var(--ps-surface-2); border: 1.5px solid rgba(243, 239, 228, 0.12);
+  border-radius: 0.9rem; padding: 0.15rem 0.8rem; min-height: 44px;
+}
+.ps-search:focus-within { border-color: var(--ps-accent); }
+.ps-search input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #fff; font-size: 0.8rem; padding: 0.55rem 0; }
+.ps-chip, .ps-subchip {
+  flex-shrink: 0; white-space: nowrap; border-radius: 999px; padding: 0.42rem 0.85rem; font-size: 0.72rem; font-weight: 900;
+  background: rgba(12, 16, 34, 0.85); color: #cbd5e1; border: 1.5px solid rgba(243, 239, 228, 0.14); transition: background-color 0.15s ease, color 0.15s ease;
+}
+.ps-chip[aria-pressed="true"], .ps-subchip[aria-selected="true"] { background: var(--ps-accent); color: #1a1420; border-color: var(--ps-accent); }
+.ps-subchips { margin-top: 0.1rem; }
+.ps-subchip { font-family: var(--font-body) !important; font-size: 0.72rem !important; font-weight: 900 !important; letter-spacing: 0 !important; }
+.ps-tile {
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  background: var(--ps-surface); border: 1.5px solid var(--ps-border); border-radius: var(--ps-radius); box-shadow: var(--ps-shadow);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.ps-tile:hover { border-color: var(--ps-border-strong); transform: translateY(-2px); }
+.ps-tile-boost { border-color: rgba(250, 204, 21, 0.8); box-shadow: 0 0 22px -6px rgba(250, 204, 21, 0.45), var(--ps-shadow); }
+.ps-tile-art { position: relative; display: block; aspect-ratio: 63 / 88; background: radial-gradient(circle at 50% 30%, rgba(74, 155, 224, 0.2), rgba(12, 16, 34, 0.95) 70%); padding: 0.5rem; }
+.ps-tile-art img { width: 100%; height: 100%; border-radius: 0.45rem; image-rendering: auto; filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.55)); }
+.ps-tile-badges { position: absolute; top: 0.4rem; left: 0.4rem; right: 0.4rem; display: flex; justify-content: space-between; gap: 0.25rem; pointer-events: none; }
+.ps-tile-deal { position: absolute; bottom: 0.4rem; left: 0.4rem; }
+.ps-badge { font-size: 0.6rem; font-weight: 900; line-height: 1; padding: 0.25rem 0.4rem; border-radius: 0.4rem; letter-spacing: 0.02em; }
+.ps-badge-cond { background: #f3efe4; color: #1a1420; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
+.ps-tile-body { padding: 0.55rem 0.6rem 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; flex: 1; }
+.ps-tile-title { font-size: 0.78rem; font-weight: 900; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-tile-meta { font-size: 0.65rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-tile-price { font-family: var(--font-display); font-size: 1.02rem; color: #34d399; line-height: 1; }
+.ps-tile-cta { flex: 1; min-height: 36px; border-radius: 0.7rem; font-size: 0.72rem; font-weight: 900; }
+.ps-tile-more { min-width: 36px; min-height: 36px; border-radius: 0.7rem; background: rgba(243, 239, 228, 0.08); color: #e2e8f0; font-weight: 900; }
+.ps-skeleton { min-height: 250px; background: linear-gradient(100deg, rgba(27, 36, 68, 0.6) 30%, rgba(243, 239, 228, 0.06) 50%, rgba(27, 36, 68, 0.6) 70%); background-size: 200% 100%; animation: psShimmer 1.4s linear infinite; }
+@keyframes psShimmer { to { background-position: -200% 0; } }
+#market-list { max-height: none !important; overflow: visible !important; }
+
+/* Unterreiter (Segmented Control) */
+.ps-segment { display: flex; gap: 0.25rem; padding: 0.25rem; background: rgba(12, 16, 34, 0.9); border: 1.5px solid rgba(243, 239, 228, 0.12); border-radius: 1rem; }
+.ps-segment button {
+  flex: 1; min-height: 42px; padding: 0 0.4rem; border-radius: 0.75rem; font-size: 0.75rem; font-weight: 900; color: #cbd5e1; white-space: nowrap;
+}
+.ps-segment button[aria-selected="true"] { background: var(--ps-accent); color: #1a1420; box-shadow: 0 3px 0 #b38b1d; }
+@media (max-width: 380px) { .ps-segment button { font-size: 0.68rem; } }
+
+/* Sammlung: „Wunschliste“ und „Preis-Radar“ sind Unterreiter – keine doppelten Chips darunter */
+#view-portfolio [data-subbtn="wishlist"] { display: none !important; }
+#view-portfolio[data-seg="wishlist"] > [data-subchips] { display: none !important; }
+/* Community: Live-Chat | Pull-Wall */
+#view-community[data-seg="chat"] #ps-wall-panel,
+#view-community[data-seg="wall"] #ps-chat-panel { display: none !important; }
+#view-community[data-seg] #ps-chat-panel, #view-community[data-seg] #ps-wall-panel { grid-column: 1 / -1; }
+#view-community[data-seg="chat"] > [data-subchips] { display: none !important; }
+#view-community[data-seg="chat"] #chat-messages { height: min(60vh, 34rem); }
+
+/* Hauptnavigation: oben (Desktop) und Tab-Bar (Handy) – Zustand über .is-active/aria-current */
+#ps-top-nav { background: rgba(26, 20, 32, 0.45) !important; border: 1.5px solid rgba(243, 239, 228, 0.16) !important; }
+#ps-top-nav .tab-btn {
+  display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.85rem; border-radius: 0.8rem;
+  font-size: 0.85rem !important; color: #ffe9e4; background: transparent !important; border: 0 !important; white-space: nowrap;
+}
+#ps-top-nav .tab-btn:hover { background: rgba(26, 20, 32, 0.55) !important; }
+#ps-top-nav .tab-btn.is-active, #ps-top-nav .tab-btn[aria-current="page"] { background: var(--c, var(--t-electric)) !important; color: #1a1420 !important; box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); }
+#ps-top-nav .tab-btn.is-active .ico, #ps-top-nav .tab-btn[aria-current="page"] .ico { background: #1a1420; color: var(--c, var(--t-electric)); }
+#ps-bottom-nav .mob-nav {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.1rem;
+  min-height: 54px; border-radius: 0.9rem; color: #cbd5e1; font-family: var(--font-display); letter-spacing: 0.02em;
+}
+#ps-bottom-nav .mob-nav.is-active, #ps-bottom-nav .mob-nav[aria-current="page"] { background: var(--c, var(--t-electric)) !important; color: #1a1420 !important; box-shadow: none; }
+#ps-bottom-nav .mob-nav.is-active .ico, #ps-bottom-nav .mob-nav[aria-current="page"] .ico { background: #1a1420; color: var(--c, var(--t-electric)); }
+
+/* Kopfbereich: Avatar / Profil-Menü */
+.ps-head-icon { min-width: 36px; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: 0.8rem; border: 1px solid rgba(243, 239, 228, 0.22); color: #fff; font-size: 0.85rem; }
+.ps-profile-btn { display: inline-flex; align-items: center; gap: 0.35rem; min-height: 36px; padding: 0.2rem 0.55rem 0.2rem 0.25rem; border-radius: 999px; border: 1px solid rgba(243, 239, 228, 0.22); color: #fff; font-size: 0.75rem; font-weight: 800; }
+.ps-profile-btn[aria-current="page"] { box-shadow: 0 0 0 2px var(--t-electric); }
+.ps-avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: linear-gradient(135deg, var(--t-electric), #f59e0b); color: #1a1420; font-weight: 900; line-height: 1; flex-shrink: 0; }
+.ps-avatar-guest { background: rgba(243, 239, 228, 0.15); color: #fff; }
+.ps-avatar-pick { width: 2.4rem; height: 2.4rem; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: rgba(12, 16, 34, 0.85); border: 1.5px solid rgba(243, 239, 228, 0.14); }
+.ps-avatar-pick[aria-pressed="true"] { border-color: var(--t-electric); box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.35); }
+#ps-cart-btn:has(#ps-cart-count.hidden) { display: none; }
+body:not(.ps-logged-in) #ps-bell { display: none; }
+#authBtnText { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) {
+  header.dex-header .dex-lens { width: 32px; height: 32px; }
+  header.dex-header #ps-profile-btn { padding: 0.15rem 0.4rem 0.15rem 0.15rem !important; }
+}
+/* Einheitliche Abstände der Bereiche */
+main > section { scroll-margin-top: 5rem; }
+main > section > [data-page-top] + * { margin-top: var(--ps-gap); }
+/* Kopf: aktive Sprache lesbar (die allgemeine Kopf-Button-Farbe darf sie nicht überdecken) */
+html[lang="de"] header.dex-header [data-ps-lang="de"], html[lang="en"] header.dex-header [data-ps-lang="en"] { background-color: #facc15 !important; color: #0f172a !important; }
+@media (max-width: 640px) {
+  /* Handy: Kopf einzeilig – Name nur im Profil-Menü, oben reicht der Avatar */
+  #authBtnText { display: none !important; }
+  header.dex-header #ps-head-actions { flex-wrap: nowrap !important; }
+}
+/* Zweite Ebene (Chips unter den Unterreitern) bewusst kleiner und ruhiger als die Unterreiter */
+[role="tablist"].ps-subchips [data-subbtn].ps-subchip { font-family: var(--font-body) !important; font-size: 0.7rem !important; font-weight: 800 !important; letter-spacing: 0 !important; padding: 0.32rem 0.75rem; box-shadow: none !important; }

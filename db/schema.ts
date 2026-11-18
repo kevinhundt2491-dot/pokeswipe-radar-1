@@ -75,6 +75,9 @@ export const profiles = pgTable("profiles", {
   businessUpdatedAt: timestamp("business_updated_at", { withTimezone: true }),
   // Vom Admin freigegebenes Inserate-Limit für Händler mit großem Bestand (überschreibt das Tarif-Limit, wenn höher)
   listingLimitOverride: integer("listing_limit_override"),
+  // Profil-Upgrade: Avatar (z. B. von Google/Facebook) und geräteübergreifende App-Einstellungen (Sprache, Ansicht, Marktplatz-Filter)
+  avatarUrl: text("avatar_url").notNull().default(""),
+  uiPrefs: jsonb("ui_prefs").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("profiles_display_name_lower").on(t.displayName),

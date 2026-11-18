@@ -19,6 +19,8 @@ async function swipeReady(s) {
 }
 
 async function showArena(s) {
+  // Start ist seit dem UI-Upgrade das Dashboard – die Swipe-Arena liegt unter Marktplatz → Swipe-Tausch
+  if (s.$("#view-swipe")?.classList.contains("hidden")) { try { s.win.switchTab?.("swipe"); } catch {} }
   await swipeReady(s);
   const card = s.$("#swipe-img")?.closest(".poke-glass") || s.$("#swipe-img");
   const r = card.getBoundingClientRect();
@@ -518,8 +520,13 @@ export const CHOREO = {
         await nextCardLoaded(s, t);
       },
       async (s, d) => {
-        const nav = s.$("#mob-flip");
+        // Preis-Radar ist Unterreiter der Sammlung: Tab „Sammlung“ → Segment „📡 Preis-Radar“
+        const nav = s.$("#mob-portfolio");
         if (nav) await s.tap(nav, { reveal: false });
+        await s.idle({ quietMs: 200, timeoutMs: 2000 });
+        const radar = s.$('#view-portfolio [data-seg="radar"]');
+        if (radar) await s.tap(radar, { reveal: false });
+        else s.win.switchTab?.("flip");
         await s.waitFor(() => s.$$("#ps-flip-grid > div").length > 0, 8000).catch(() => {});
         await s.idle({ quietMs: 300, timeoutMs: 4000 });
         const live = s.$("#ps-flip-live");
@@ -528,11 +535,11 @@ export const CHOREO = {
         await s.scrollBy(VIEW_H * 0.6, Math.max(900, d * 1000 * 0.45));
       },
       async (s, d) => {
-        // Sammlung liegt seit dem Mobile-First-Umbau im Bereich „Scanner“ (Umschalter 📷 Scanner | 💼 Meine Sammlung)
-        const nav = s.$("#mob-scan");
+        // Sammlung ist ein eigener Hauptreiter (Unterreiter „💼 Mein Binder“)
+        const nav = s.$("#mob-portfolio");
         if (nav) await s.tap(nav, { reveal: false });
         await s.idle({ quietMs: 200, timeoutMs: 2000 });
-        const seg = s.$('#view-scan [data-seg="portfolio"]');
+        const seg = s.$('#view-portfolio [data-seg="binder"]');
         if (seg) await s.tap(seg, { reveal: false });
         else s.win.switchTab?.("portfolio");
         await s.idle({ quietMs: 300, timeoutMs: 4000 });
@@ -542,8 +549,13 @@ export const CHOREO = {
         if (total) await s.spotlight(total, Math.min(2200, d * 500));
       },
       async (s, d) => {
-        const nav = s.$("#mob-swipe");
+        // Swipe-Tausch ist Unterreiter des Marktplatzes
+        const nav = s.$("#mob-map");
         if (nav) await s.tap(nav, { reveal: false });
+        await s.idle({ quietMs: 200, timeoutMs: 2000 });
+        const swipe = s.$('#view-map [data-seg="swipe"]');
+        if (swipe) await s.tap(swipe, { reveal: false });
+        else s.win.switchTab?.("swipe");
         await s.idle({ quietMs: 300, timeoutMs: 4000 });
         s.hideFinger();
         await s.sleep(Math.min(1500, d * 300));
