@@ -1,1 +1,47 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="40" fill="#0b0f19"/><circle cx="96" cy="96" r="62" fill="#ef4444"/><path d="M34 96a62 62 0 0 0 124 0z" fill="#f8fafc"/><rect x="34" y="89" width="124" height="14" fill="#0b0f19"/><circle cx="96" cy="96" r="22" fill="#0b0f19"/><circle cx="96" cy="96" r="12" fill="#ffcb05"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"><title>PokeSwipe Radar</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2444"/><stop offset="1" stop-color="#070a14"/>
+    </linearGradient>
+    <radialGradient id="radarBg" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#0e7490" stop-opacity=".35"/><stop offset="1" stop-color="#0b1024" stop-opacity=".2"/>
+    </radialGradient>
+    <linearGradient id="sweep" x1="256" y1="256" x2="420" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity=".05"/><stop offset="1" stop-color="#22d3ee" stop-opacity=".55"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fde68a"/><stop offset=".5" stop-color="#facc15"/><stop offset="1" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="art" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ef4444"/><stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs><rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g>
+    <!-- Radar -->
+    <circle cx="256" cy="256" r="196" fill="url(#radarBg)"/>
+    <g fill="none" stroke="#22d3ee" stroke-opacity=".55">
+      <circle cx="256" cy="256" r="196" stroke-width="7"/>
+      <circle cx="256" cy="256" r="140" stroke-width="4" stroke-opacity=".4"/>
+      <circle cx="256" cy="256" r="84" stroke-width="4" stroke-opacity=".35"/>
+      <path d="M256 60v392M60 256h392" stroke-width="3" stroke-opacity=".25"/>
+    </g>
+    <!-- Radar-Strahl -->
+    <path d="M256 256 L256 60 A196 196 0 0 1 435 176 Z" fill="url(#sweep)"/>
+    <path d="M256 256 L435 176" stroke="#67e8f9" stroke-width="6" stroke-linecap="round"/>
+    <!-- Blips -->
+    <circle cx="372" cy="150" r="13" fill="#34d399"/>
+    <circle cx="372" cy="150" r="24" fill="none" stroke="#34d399" stroke-opacity=".5" stroke-width="5"/>
+    <circle cx="138" cy="340" r="9" fill="#facc15" fill-opacity=".9"/>
+    <!-- Sammelkarte (leicht gekippt) -->
+    <g transform="rotate(-12 246 270)">
+      <rect x="168" y="150" width="156" height="218" rx="18" fill="#000" fill-opacity=".45" transform="translate(10 14)"/>
+      <rect x="168" y="150" width="156" height="218" rx="18" fill="url(#gold)"/>
+      <rect x="180" y="162" width="132" height="194" rx="11" fill="#0f172a"/>
+      <rect x="190" y="174" width="112" height="92" rx="8" fill="url(#art)"/>
+      <path d="M252 186 l-24 44 h20 l-10 30 l34 -46 h-21 l12 -28 z" fill="#fff7e6"/>
+      <rect x="190" y="278" width="78" height="10" rx="5" fill="#f3efe4" fill-opacity=".85"/>
+      <rect x="190" y="298" width="112" height="7" rx="3.5" fill="#94a3b8" fill-opacity=".6"/>
+      <rect x="190" y="314" width="92" height="7" rx="3.5" fill="#94a3b8" fill-opacity=".45"/>
+      <rect x="250" y="330" width="52" height="16" rx="8" fill="#34d399"/>
+    </g>
+  </g></svg>

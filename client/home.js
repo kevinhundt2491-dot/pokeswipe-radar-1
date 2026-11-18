@@ -73,7 +73,7 @@ function renderChat(list) {
   const input = $("home-chat-input");
   if (input) input.placeholder = state.user ? "Nachricht an alle Sammler …" : "Mitschreiben? Kurz anmelden (1 Klick)";
   if (!msgs.length) { box.innerHTML = `<p class="text-slate-500 py-4 text-center">Noch ruhig hier – schreib die erste Nachricht! 💬</p>`; return; }
-  box.innerHTML = msgs.map((m) => `<p class="ps-chat-line"><strong class="text-yellow-300">${esc(m.author?.name || "Sammler")}</strong>
+  box.innerHTML = msgs.map((m) => `<p class="ps-chat-line"><strong class="text-yellow-300">${esc(m.author?.name || "Sammler")}</strong>${m.author?.founder ? ` <span class="ps-founder-chip" title="Verifizierter Gründer-Sammler">🏅</span>` : ""}
     <span class="text-slate-200" data-i18n-skip>${esc(m.body)}</span><span class="text-[9px] text-slate-500 ml-1">${esc(ago(m.createdAt))}</span></p>`).join("");
 }
 

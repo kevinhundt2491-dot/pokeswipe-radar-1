@@ -50,6 +50,9 @@ import { publicCache } from "./cache.ts";
 import { str, money, int, rows, rateLimit, clientIp, sameOriginWrites, securityHeaders, euro, trustedOrigin } from "./util.ts";
 import { log } from "./log.ts";
 import { registerOps } from "./ops.ts";
+import { registerFounder, founderInfo, syncFounderQuiet, isFounder } from "./founder.ts";
+import { isUploadPath, boostAllowance, alertAllowance } from "./founder-logic.ts";
+import { registerBinder } from "./binder.ts";
 import { registerConditionPrices } from "./condition-prices.ts";
 import { registerValuation, pricesDegraded } from "./valuation.ts";
 import { freshnessLabel, isStale } from "./valuation-logic.ts";
@@ -116,6 +119,8 @@ const auth = async (c: any, next: any) => {
   if (pendingReferral && !profile.emailConfirmed && c.res.status < 300 && isActiveActionPath(c.req.method, c.req.path)) {
     await qualifyReferral(profile.userId, "action").catch((e) => log.warn("viral", "Empfehlung nicht freigeschaltet", { err: e }));
   }
+  // Gründer-Sammler: nach jedem Karten-Upload (Binder oder Marktplatz) Zähler im Profil aktualisieren & ggf. freischalten
+  if (c.res.status < 300 && isUploadPath(c.req.method, c.req.path)) await syncFounderQuiet(profile.userId);
 };
 
 const adminOnly = async (c: any, next: any) => {
@@ -134,8 +139,9 @@ const body = async (c: any): Promise<Record<string, any>> => {
 
 const monthKey = () => new Date().toISOString().slice(0, 7);
 
-async function freeBoostsLeft(userId: string, plan: PlanId) {
-  const allowance = PLANS[plan].freeBoostsPerMonth;
+async function freeBoostsLeft(userId: string, plan: PlanId, founder = false) {
+  // Gründer-Sammler bekommen zusätzliche Gratis-Boosts (kostenlose Top-Platzierung)
+  const allowance = boostAllowance(PLANS[plan].freeBoostsPerMonth, founder);
   if (!allowance) return 0;
   const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(freeBoostUsage)
     .where(and(eq(freeBoostUsage.userId, userId), eq(freeBoostUsage.month, monthKey())));
@@ -188,11 +194,14 @@ app.get("/api/me", auth, async (c) => {
     psttg: profile.stripeAccountId ? await psttgNotice(user.id).catch(() => null) : null,
     usage: counts,
     rating: await ratingOf(user.id),
-    freeBoostsLeft: await freeBoostsLeft(user.id, plan),
+    freeBoostsLeft: await freeBoostsLeft(user.id, plan, isFounder(profile)),
     paymentsEnabled: Boolean(stripe()),
     plans: PLANS,
     boost: { priceCents: BOOST_PRICE_CENTS, days: BOOST_DAYS },
     ...(await extraMe(c, profile, plan)),
+    // „Freunde einladen & Karten hochladen“: Fortschritt & Gründer-Sammler-Vorteile (Zähler dauerhaft im Profil)
+    founder: await founderInfo(user.id).catch(() => null),
+    alertLimit: alertAllowance(PLANS[plan].alerts, isFounder(profile)),
   });
 });
 
@@ -446,7 +455,7 @@ app.get("/api/alerts", auth, async (c) => {
     : [];
   return c.json({
     alerts: list.map((a) => ({ ...a, price: cardPrice(a), history: hist.filter((h) => h.cardId === a.cardId).map((h) => Number(h.trend)) })),
-    limit: PLANS[c.get("plan")].alerts,
+    limit: alertAllowance(PLANS[c.get("plan")].alerts, isFounder(c.get("profile"))),
   });
 });
 
@@ -456,8 +465,9 @@ app.post("/api/alerts", auth, async (c) => {
   const cardId = str(b.cardId, 40);
   const target = money(b.targetPrice);
   if (!CARD_ID_RE.test(cardId) || !target || Number(target) <= 0) return c.json({ error: "Bitte Karte und Zielpreis angeben." }, 400);
-  if ((await activeAlertCount(user.id)) >= PLANS[plan].alerts) {
-    return c.json({ error: `Limit erreicht: ${PLANS[plan].alerts} Preisalarme im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+  const alertLimit = alertAllowance(PLANS[plan].alerts, isFounder(c.get("profile")));
+  if ((await activeAlertCount(user.id)) >= alertLimit) {
+    return c.json({ error: `Limit erreicht: ${alertLimit} Preisalarme im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
   }
   const card = await getCard(cardId);
   if (!card) return c.json({ error: "Karte nicht gefunden" }, 404);
@@ -539,6 +549,9 @@ app.get("/api/images/:key", async (c) => {
 app.get("/api/listings", async (c) => {
   const q = str(c.req.query("q"), 60).toLowerCase();
   const mine = c.req.query("mine") === "1";
+  // ?ids=1,2,3 – gezielt einzelne Inserate laden (z. B. Angebot zu einer fehlenden Binder-Karte)
+  const ids = String(c.req.query("ids") || "").split(",").map((x) => int(x, 1, 2 ** 31 - 1, 0)).filter(Boolean).slice(0, 50);
+  const idFilter = ids.length ? sql`AND l.id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})` : sql``;
   let userFilter = sql``;
   if (mine) {
     const u = await verifyIdentityToken(c);
@@ -552,6 +565,7 @@ app.get("/api/listings", async (c) => {
       (l.buy_now AND p.stripe_account_ready) AS buy_now, l.shipping_cents, l.condition, l.variant, l.lang,
       p.display_name AS seller, p.public_profile AS seller_public,
       (SELECT b.badge FROM user_badges b WHERE b.user_id = l.user_id AND b.badge IN ('ref-vip', 'ref-community') ORDER BY (b.badge = 'ref-vip') DESC LIMIT 1) AS seller_badge,
+      (p.founder_at IS NOT NULL) AS seller_founder,
       ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified,
       (CASE WHEN l.variant = 'reverse_holo' THEN COALESCE(c.reverse_trend, c.reverse_avg, c.trend, c.avg) ELSE COALESCE(c.trend, c.avg) END)::float AS market_price,
       (SELECT round(avg(r.stars)::numeric, 1)::float FROM reviews r WHERE r.reviewee_id = l.user_id) AS rating,
@@ -559,7 +573,7 @@ app.get("/api/listings", async (c) => {
     FROM listings l
     JOIN profiles p ON p.user_id = l.user_id
     LEFT JOIN cards c ON c.id = l.card_id
-    WHERE ${mine ? sql`l.status IN ('active','sold')` : sql`l.status = 'active' AND NOT p.banned`} ${userFilter}
+    WHERE ${mine ? sql`l.status IN ('active','sold')` : sql`l.status = 'active' AND NOT p.banned`} ${userFilter} ${idFilter}
       AND (${q}::text = '' OR lower(l.card_name) LIKE ${like} OR lower(l.city) LIKE ${like})
     ORDER BY (l.boosted_until > now()) DESC NULLS LAST, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) DESC, l.created_at DESC
     LIMIT 80
@@ -841,8 +855,8 @@ app.post("/api/billing/boost", auth, async (c) => {
     .where(and(eq(listings.id, listingId), eq(listings.userId, user.id), eq(listings.status, "active"))).limit(1);
   if (!listing) return c.json({ error: "Inserat nicht gefunden" }, 404);
 
-  const allowance = PLANS[plan].freeBoostsPerMonth;
-  if ((await freeBoostsLeft(user.id, plan)) > 0) {
+  const allowance = boostAllowance(PLANS[plan].freeBoostsPerMonth, isFounder(profile));
+  if ((await freeBoostsLeft(user.id, plan, isFounder(profile))) > 0) {
     // Erst reservieren, dann zählen: parallele Anfragen können das Monatskontingent nicht überschreiten
     const month = monthKey();
     const [usage] = await db.insert(freeBoostUsage).values({ userId: user.id, listingId, month }).returning({ id: freeBoostUsage.id });
@@ -1172,6 +1186,8 @@ registerQuickList(app, { auth, body }); // Schnell-Inserieren aus dem Scanner: f
 registerIntegrations(app, { auth, adminOnly });
 registerVoiceover(app, { auth, adminOnly, body });
 registerMake(app, { auth, adminOnly, body }); // Make.com-Webhook für Auto-Reels (Admin-Zentrale)
+registerFounder(app, { auth }); // „Freunde einladen & Karten hochladen“ → Gründer-Sammler-Vorteile
+registerBinder(app, { auth }); // Set-Ordner & Binder-Ansicht mit Live-Marktplatz-Abgleich
 registerOps(app, { auth, adminOnly }); // Betrieb: Job-Läufe, Circuits & Fehlerprotokoll für Admins
 
 // Öffentliche (nicht geheime) Client-Konfiguration. Der Firebase-Web-API-Schlüssel ist laut Firebase kein

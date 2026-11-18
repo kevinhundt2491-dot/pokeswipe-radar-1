@@ -78,6 +78,11 @@ export const profiles = pgTable("profiles", {
   // Profil-Upgrade: Avatar (z. B. von Google/Facebook) und geräteübergreifende App-Einstellungen (Sprache, Ansicht, Marktplatz-Filter)
   avatarUrl: text("avatar_url").notNull().default(""),
   uiPrefs: jsonb("ui_prefs").notNull().default({}),
+  // „Freunde einladen“-Belohnung: eigene Karten-Uploads (Binder + Marktplatz), erfolgreiche Einladungs-Anmeldungen
+  // und der Zeitpunkt, an dem die Gründer-Sammler-Vorteile freigeschaltet wurden (5 Uploads ODER 1 Anmeldung)
+  cardUploads: integer("card_uploads").notNull().default(0),
+  referralSignups: integer("referral_signups").notNull().default(0),
+  founderAt: timestamp("founder_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("profiles_display_name_lower").on(t.displayName),

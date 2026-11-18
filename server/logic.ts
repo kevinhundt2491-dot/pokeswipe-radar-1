@@ -10,6 +10,8 @@ export type BadgeStats = {
   referralsRewarded: number;
   /** Bestätigte geworbene Freunde (E-Mail verifiziert oder erste Aktion) – gestaffeltes Empfehlungssystem */
   referralsQualified?: number;
+  /** „Gründer-Sammler“: 5 eigene Karten hochgeladen ODER 1 Sammler über den Einladungslink angemeldet (server/founder.ts) */
+  founder?: boolean;
   reviewsAvg: number;
   reviewsCount: number;
 };
@@ -36,6 +38,7 @@ export const BADGES: Badge[] = [
   { id: "ref-starter", icon: "🌱", label: "Starter-Werber", description: "Ersten Freund erfolgreich eingeladen", test: (s) => (s.referralsQualified ?? 0) >= 1 },
   { id: "ref-community", icon: "🏗️", label: "Community-Builder", description: "3 Freunde erfolgreich eingeladen", test: (s) => (s.referralsQualified ?? 0) >= 3 },
   { id: "ref-vip", icon: "💎", label: "VIP-Sammler", description: "10 Freunde erfolgreich eingeladen", test: (s) => (s.referralsQualified ?? 0) >= 10 },
+  { id: "founder", icon: "🏅", label: "Gründer-Sammler", description: "5 eigene Karten hochgeladen oder einen Sammler-Kumpel eingeladen", test: (s) => Boolean(s.founder) },
   { id: "recruiter-25", icon: "👑", label: "Radar-Legende", description: "25 Freunde geworben, die ein Abo bezahlen", test: (s) => s.referralsRewarded >= 25 },
 ];
 
