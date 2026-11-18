@@ -212,10 +212,10 @@ test("Alle Doppelten inserieren: bereits inserierte Doppelte werden erkannt – 
   assert.deepEqual(chunk(Array.from({ length: 45 }, (_, i) => i)).map((c) => c.length), [20, 20, 5]);
 });
 
-test("Alle Doppelten inserieren: klarer Button in „Meine Inserate“ und kompakt im Set-Ordner, mit Bestätigung", () => {
+test("Alle Doppelten inserieren: klarer Button im Marktplatz-Unterreiter „Inserieren“ und kompakt im Set-Ordner, mit Bestätigung", () => {
   const nav = src("client/app-nav.js");
-  const mine = nav.slice(nav.indexOf("function mySalesHtml("), nav.indexOf("function placeBatchBox("));
-  assert.match(mine, /\$\{listPickerHtml\(\)\}/);
+  const sell = nav.slice(nav.indexOf("function sellHtml("), nav.indexOf("function mySalesHtml("));
+  assert.match(sell, /\$\{listPickerHtml\(\)\}/);
   const lp = src("client/list-picker.js");
   assert.match(lp, /onclick="PS\.listAllDupes\(\)"[^>]*>🏷️ Alle Doppelten inserieren</);
   assert.match(lp, /await loadMyListings\(\);\s+const plan = duplicatePlan/);

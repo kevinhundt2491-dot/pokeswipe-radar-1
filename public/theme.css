@@ -361,7 +361,9 @@ main { overflow-x: clip; }
 .ps-segment button { transition: background-color 0.15s ease, color 0.15s ease; }
 /* Marktplatz „Meine Verkäufe“: Inserate-Unterbereiche ausblenden */
 #view-map[data-market-mode="mine"] > [data-sub],
-#view-map[data-market-mode="mine"] > [role="tablist"] { display: none !important; }
+#view-map[data-market-mode="mine"] > [role="tablist"],
+#view-map[data-market-mode="sell"] > [data-sub],
+#view-map[data-market-mode="sell"] > [role="tablist"] { display: none !important; }
 /* Einklappbare Bereiche (Accordions) */
 details.ps-acc > summary { list-style: none; }
 details.ps-acc > summary::-webkit-details-marker { display: none; }
@@ -480,9 +482,9 @@ button.ps-card:active { transform: scale(0.99); }
 #market-list { max-height: none !important; overflow: visible !important; }
 
 /* Unterreiter (Segmented Control) */
-.ps-segment { display: flex; gap: 0.25rem; padding: 0.25rem; background: rgba(12, 16, 34, 0.9); border: 1.5px solid rgba(243, 239, 228, 0.12); border-radius: 1rem; }
+.ps-segment { display: flex; gap: 0.25rem; overflow-x: auto; scrollbar-width: none; padding: 0.25rem; background: rgba(12, 16, 34, 0.9); border: 1.5px solid rgba(243, 239, 228, 0.12); border-radius: 1rem; }
 .ps-segment button {
-  flex: 1; min-height: 42px; padding: 0 0.4rem; border-radius: 0.75rem; font-size: 0.75rem; font-weight: 900; color: #cbd5e1; white-space: nowrap;
+  flex: 1 0 auto; min-height: 42px; padding: 0 0.4rem; border-radius: 0.75rem; font-size: 0.75rem; font-weight: 900; color: #cbd5e1; white-space: nowrap;
 }
 .ps-segment button[aria-selected="true"] { background: var(--ps-accent); color: #1a1420; box-shadow: 0 3px 0 #b38b1d; }
 @media (max-width: 380px) { .ps-segment button { font-size: 0.68rem; } }
@@ -631,6 +633,9 @@ body.ps-binder-open { overflow: hidden; }
 .ps-bslot.missing.market { border-color: rgba(52, 211, 153, 0.65); }
 .ps-bslot.missing.market .ps-bslot-art img { opacity: 0.62; filter: grayscale(1) brightness(0.95); }
 .ps-binder-sheet-missing { filter: grayscale(1); opacity: 0.6; }
+/* 1-Klick „Inserieren“ auf vorhandenen Album-Karten */
+.ps-bslot-sell { position: absolute; left: 0.25rem; right: 0.25rem; bottom: 0.25rem; text-align: center; font-size: 0.55rem; font-weight: 900; color: #052e16; background: rgba(52, 211, 153, 0.92); border-radius: 0.4rem; padding: 0.2rem 0.25rem; cursor: pointer; opacity: 0.95; }
+.ps-bslot-sell:hover, .ps-bslot-sell:focus-visible { opacity: 1; outline: 2px solid #fde047; }
 .ps-bslot-missing { position: absolute; top: 0.25rem; right: 0.25rem; font-size: 0.5rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: #cbd5e1; background: rgba(0, 0, 0, 0.6); border-radius: 0.3rem; padding: 0.15rem 0.3rem; }
 .ps-bslot-cond { position: absolute; top: 0.25rem; left: 0.25rem; }
 .ps-bslot-qty { position: absolute; top: 0.25rem; right: 0.25rem; font-size: 0.6rem; font-weight: 900; background: #facc15; color: #1a1420; border-radius: 0.35rem; padding: 0.1rem 0.3rem; }

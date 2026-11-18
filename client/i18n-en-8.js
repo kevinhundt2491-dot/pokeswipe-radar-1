@@ -99,7 +99,8 @@ export default [
   ["Sammlerprofil ansehen", "View collector profile"],
   // Set-Binder: fehlende Karten, Marktplatz-Direktlink, Binder-Alarm, Startseiten-Schnellzugriff, Scanner-Auto-Save
   ["Jetzt auf dem Marktplatz verfügbar", "Available on the marketplace now"],
-  ["Jetzt im Marktplatz ansehen / kaufen", "View / buy on the marketplace now"],
+  ["Zum Angebot im Marktplatz", "Go to the marketplace offer"],
+  ["🏷️ Inserieren", "🏷️ List"],
   ["Auf Wunschliste – bei günstigeren Angeboten melden", "Add to wishlist – notify me about cheaper offers"],
   ["Gerade bietet niemand diese Karte auf dem Marktplatz an. Aktiviere den Suchauftrag – wir benachrichtigen dich automatisch (In-App & Push), sobald jemand sie einstellt.", "Nobody is offering this card on the marketplace right now. Turn on a search request – we'll notify you automatically (in-app & push) as soon as someone lists it."],
   ["Suchauftrag aktivieren (Wunschliste)", "Turn on search request (wishlist)"],
