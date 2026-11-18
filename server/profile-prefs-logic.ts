@@ -38,6 +38,8 @@ const PREF_RULES: Record<string, (v: unknown) => unknown> = {
   communityPanel: (v) => (v === "chat" || v === "wall" ? v : undefined),
   pushSound: (v) => (typeof v === "boolean" ? v : undefined),
   homeTips: (v) => (typeof v === "boolean" ? v : undefined),
+  // Set-Binder: Hinweis, sobald eine fehlende Karte eines angefangenen Sets auf dem Marktplatz auftaucht (Standard: an)
+  binderAlerts: (v) => (typeof v === "boolean" ? v : undefined),
   // "" = kein Emoji (Profilbild bzw. Initiale anzeigen)
   avatarEmoji: (v) => (v === "" || (typeof v === "string" && /^[\p{Extended_Pictographic}\u200d\ufe0f]{1,8}$/u.test(v)) ? v : undefined),
 };

@@ -6,7 +6,7 @@ import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, 
 import { SCORE_STRONG, SCORE_ACCEPT, quadMotion } from "../../server/scan-logic.ts";
 import { readCardText, warmupOcr, ocrKind, getOcr } from "./ocr.js";
 import {
-  SCAN_CONDS, SCAN_FINISHES, DEFAULT_CONDITION, RESULT_ACTIONS, conditionPrice, hasOwnFinishPrice,
+  SCAN_CONDS, SCAN_FINISHES, DEFAULT_CONDITION, RESULT_ACTIONS, conditionPrice, hasOwnFinishPrice, shouldAutoClose,
   newHitView, mainPrice, conditionOptions, conditionChipLabel, toggleConditionMenu, selectCondition, selectFinish,
   createActionRunner, createCooldown, zoomPlan, glareCheck, hashDecision, TARGET_ZOOM, shouldAutoFile, createAutoFiler,
 } from "./scan-ui-logic.js";
@@ -1035,7 +1035,53 @@ function presentHit(cur) {
   if (!cur.unsure) addToSeries(info);
   // Serien-Scan: dieselbe Karte nicht erneut melden, bis sie aus dem Rahmen genommen wurde
   if (sc.prefs.series) sc.suppress = sc.current.keys;
+  // Sicher erkannt → sofort in Sammlung & Set-Ordner speichern (kein Pflicht-Klick) und das Ergebnis nach kurzem Moment
+  // von selbst schließen, damit die Kamera direkt die nächste Karte scannt. „Inserieren“ oder Ändern hält das Fenster offen.
+  autoFileCurrent();
+  armAutoClose(sc.current);
   renderHud(sc.current);
+}
+
+// ---------------------------------------------------------------------------
+// Auto-Save + Auto-Close nach dem Scan
+// ---------------------------------------------------------------------------
+/** So lange bleibt das Ergebnis eines sicher erkannten (und schon gespeicherten) Treffers stehen. */
+const AUTO_CLOSE_MS = 3500;
+function armAutoClose(cur) {
+  clearTimeout(sc.hudTimer);
+  if (!cur || !shouldAutoClose(cur, { loggedIn: Boolean(state.user), stage: IS_STAGE })) return;
+  cur.autoCloseUntil = Date.now() + AUTO_CLOSE_MS;
+  sc.hudTimer = setTimeout(() => {
+    // Nur schließen, wenn noch derselbe Treffer offen ist und niemand damit arbeitet (Schnell-Inserat, Zustand, „⋯“)
+    // Nur im offenen Scanner (Live-Kamera oder Foto-Scan im Sucher) – nie die Kamera ungefragt im Hintergrund starten
+    const inScanner = sc.running || !$("ps-ls-still")?.classList.contains("hidden");
+    if (!inScanner || sc.current !== cur || cur.hold || document.querySelector("#ps-quicklist:not(.hidden)")) return;
+    nextCard();
+  }, AUTO_CLOSE_MS);
+}
+/** Nutzer arbeitet mit dem Treffer (Zustand, Variante, Alternativen, „⋯“) → Fenster bleibt offen, bis „Weiter scannen“. */
+function holdHud() {
+  clearTimeout(sc.hudTimer);
+  if (sc.current) { sc.current.hold = true; sc.current.autoCloseUntil = 0; }
+}
+
+/**
+ * Schon gespeicherten Treffer korrigieren (anderer Zustand, Variante oder andere Karte gewählt): das gespeicherte
+ * Exemplar zurücknehmen (Anzahl −1 bzw. löschen) und mit der neuen Auswahl erneut einsortieren. Läuft nacheinander.
+ */
+function refileCurrent() {
+  const cur = sc.current;
+  if (!cur?.filePromise || !state.user || IS_STAGE) return;
+  const choice = { condition: cur.condition || DEFAULT_CONDITION, variant: cur.finish || "normal" };
+  const info = cur.info;
+  cur.filePromise = cur.filePromise.then(async (item) => {
+    if (!item?.id) return item;
+    if (item.merged && Number(item.quantity) > 1) await api(`/api/portfolio/${Number(item.id)}`, { method: "PATCH", body: { quantity: Number(item.quantity) - 1 } });
+    else await api(`/api/portfolio/${Number(item.id)}`, { method: "DELETE" });
+    const next = await addOne(info, choice);
+    window.PS?.loadPortfolio?.();
+    return next || null;
+  }).catch((e) => { handleError(e); return null; });
 }
 
 async function showHit(group, m, photo = null) {
@@ -1097,7 +1143,7 @@ function renderHud(cur) {
       <div class="min-w-0 flex-1">
         <p data-hud-name class="text-sm font-black text-white leading-tight truncate">${FLAG[i.lang] || ""} ${esc(i.name)}</p>
         <p data-hud-set class="text-[11px] text-slate-400 truncate">${esc(num)}</p>
-        ${(state.user || (IS_STAGE && sc.demo?.autoFile)) && !cur.unsure ? `<p data-hud-autofile class="text-[9px] font-bold text-emerald-300 truncate">📒 ${cur.filed ? "Im Set-Ordner einsortiert" : "Wird automatisch in den Set-Ordner einsortiert"}</p>` : ""}
+        ${(state.user || (IS_STAGE && sc.demo?.autoFile)) && !cur.unsure ? `<p data-hud-autofile class="text-[9px] font-bold text-emerald-300 truncate">📒 ${cur.filed ? "Gespeichert · im Set-Ordner einsortiert" : "Wird automatisch in den Set-Ordner einsortiert"}</p>` : ""}
       </div>
       <div class="text-right shrink-0">
         <p class="text-[9px] uppercase font-bold text-slate-500 leading-none">${esc(cond)}${finish !== "normal" ? ` · ${finish === "holo" ? "Holo" : "Rev."}` : ""}</p>
@@ -1116,6 +1162,8 @@ function renderHud(cur) {
     ${showAlts ? `<div class="grid grid-cols-3 gap-1">${alts.map((a) => `<button onclick="PS.liveScanPick(${jsArg(a.key)})" class="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg p-1 text-left min-w-0">
         <img src="${esc(cdn(a.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" class="w-6 h-8 object-contain shrink-0" />
         <span class="min-w-0"><span class="block text-[9px] font-black text-white truncate">${FLAG[a.lang] || ""} ${esc(a.name)}</span><span class="block text-[9px] text-slate-400 truncate">${esc(a.number || "")} · ${priceTxt(a)}</span></span></button>`).join("")}</div>` : ""}
+    ${cur.autoCloseUntil > Date.now() && !cur.hold ? `<div data-hud-autoclose class="ps-ls-autoclose" aria-hidden="true"><span style="animation-duration:${Math.max(0, cur.autoCloseUntil - Date.now())}ms"></span></div>` : ""}
+    ${state.user && !cur.unsure && !IS_STAGE ? `<button type="button" data-hud-next onclick="PS.liveScanNext()" class="w-full bg-slate-800 text-white text-[11px] font-black py-2 rounded-xl">▶ Weiter scannen${cur.autoCloseUntil > Date.now() && !cur.hold ? " · schließt automatisch" : ""}</button>` : ""}
     <div class="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-1.5">
       ${act("binder", "bg-emerald-500 text-slate-950")}
       ${act("sell", "bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 !whitespace-normal leading-tight !py-1.5")}
@@ -1356,7 +1404,16 @@ function autoFileCurrent() {
   if (!shouldAutoFile(cur, { loggedIn: Boolean(state.user), stage: IS_STAGE })) return;
   const snap = hitSnapshot(cur.key);
   if (!snap) return;
-  fileHit(snap).then((item) => { if (item) scanToast(filedText(snap.info, item)); }).catch((e) => handleError(e));
+  const p = fileHit(snap).then((item) => {
+    if (item) {
+      scanToast(filedText(snap.info, item));
+      // Hinweis im noch offenen Ergebnisfeld aktualisieren (ohne Neuaufbau – der Countdown läuft weiter)
+      const el = sc.current === cur ? $("ps-ls-hud")?.querySelector("[data-hud-autofile]") : null;
+      if (el) el.textContent = `📒 Gespeichert · im Set-Ordner einsortiert${item.merged && Number(item.quantity) > 1 ? ` (jetzt ${Number(item.quantity)}x)` : ""}`;
+    }
+    return item;
+  }).catch((e) => { handleError(e); return null; });
+  cur.filePromise = p;
 }
 
 async function addToCollection(key) {
@@ -1364,7 +1421,7 @@ async function addToCollection(key) {
   if (!i || !requireLogin()) return;
   try {
     const choice = choiceFor(key);
-    if (sc.current?.key === key && sc.current.filed) { toast("📒 Schon einsortiert", `${i.name} liegt bereits in deinem Set-Ordner.`); return; }
+    if ((sc.current?.key === key && sc.current.filed) || (pq?.filedKey === key && !sc.current)) { toast("📒 Schon einsortiert", `${i.name} liegt bereits in deinem Set-Ordner.`); return; }
     await addOne(i, choice);
     if (sc.current?.key === key) sc.current.filed = true;
     markSeriesFiled(key);
@@ -1487,6 +1544,7 @@ function confirmCurrent(key) {
 // ---------------------------------------------------------------------------
 /** Ergebnis schließen, aktuelle Karte bis zum Herausnehmen ignorieren, Sucher bereit für die nächste Karte. */
 function nextCard() {
+  clearTimeout(sc.hudTimer);
   if (sc.current?.unsure && sc.current.info) { sc.current.unsure = false; addToSeries(sc.current.info); }
   sc.suppress = sc.current?.keys || sc.suppress;
   if (sc.current?.keys) sc.cooldown.mark(sc.current.keys);
@@ -1719,7 +1777,10 @@ function pqItemHtml(i, main) {
       <p class="text-xs"><span class="text-slate-500 font-bold">Marktpreis</span> <strong class="text-emerald-400">${priceTxt(i)}</strong>${i.psa10 ? ` <span class="text-slate-500 font-bold ml-1">PSA 10</span> <strong class="text-purple-300">${eur(i.psa10)}</strong>` : ""}</p>
       <div class="flex flex-wrap gap-1">
         <button onclick="PS.liveScanSwiper(${k})" class="text-[11px] font-black px-2.5 py-1.5 rounded-lg ${pq?.target === "swipe" ? "bg-cyan-400 text-slate-950" : "bg-slate-800 text-white"}">🃏 Im Swiper suchen</button>
-        <button onclick="PS.liveScanAdd(${k})" class="text-[11px] font-black px-2.5 py-1.5 rounded-lg ${pq?.target === "portfolio" ? "bg-emerald-500 text-slate-950" : "bg-slate-800 text-white"}">💼 Karte hinzufügen</button>
+        ${main && pq?.filedKey === i.key
+          ? `<span data-pq-filed class="text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">✅ Gespeichert · im Set-Ordner</span>
+             <button onclick="PS.liveScanSell(${k})" class="text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950">🏷️ Direkt auf dem Marktplatz inserieren</button>`
+          : `<button onclick="PS.liveScanAdd(${k})" class="text-[11px] font-black px-2.5 py-1.5 rounded-lg ${pq?.target === "portfolio" ? "bg-emerald-500 text-slate-950" : "bg-slate-800 text-white"}">💼 Karte hinzufügen</button>`}
         <button onclick="PS.liveScanWish(${k})" ${canWish ? "" : "disabled"} class="text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-slate-800 text-white disabled:opacity-40">❤️ Wunschliste</button>
       </div>
     </div>
@@ -1768,6 +1829,17 @@ async function photoQuick(file, target = "swipe") {
       // Swiper: direkt hinspringen – Marktpreis und Deals sofort sichtbar
       if (pq.target === "swipe") { successFeedback(); openInSwiper(infos[0].key); toast("✅ Erkannt", `${infos[0].name} ${infos[0].number || ""} – oben im Swiper mit Marktpreis und Deals.`); return; }
       successFeedback();
+      // Foto-Upload in der Sammlung: sicher erkannte Karte sofort speichern & in den Set-Ordner einsortieren
+      if (state.user && !IS_STAGE) {
+        try {
+          const item = await addOne(infos[0], { condition: DEFAULT_CONDITION, variant: "normal" });
+          pq.filedKey = infos[0].key;
+          learn(infos[0].key, pq.probe);
+          window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
+          window.PS?.loadPortfolio?.();
+          toast(filedText(infos[0], item));
+        } catch (e) { handleError(e); }
+      }
     }
     renderPq({ infos, unsure: !r.accepted });
   } catch (e) { closeModalEl(PQ_ID); handleError(e); }
@@ -1798,12 +1870,12 @@ export const liveScanApi = {
   /** Unter-Button „Zustand: Near Mint ▾“ – Dropdown mit allen Zuständen und Vergleichspreisen */
   liveScanCondMenu: () => {
     if (!sc.current?.info) return;
-    Object.assign(sc.current, toggleConditionMenu(sc.current)); haptic("select"); renderHud(sc.current);
+    holdHud(); Object.assign(sc.current, toggleConditionMenu(sc.current)); haptic("select"); renderHud(sc.current);
   },
   /** „⋯“: Swiper, Flip-Check, Details, Sprachvarianten und andere Treffer ein-/ausblenden */
   liveScanMore: () => {
     if (!sc.current?.info) return;
-    sc.current.more = !sc.current.more; renderHud(sc.current);
+    holdHud(); sc.current.more = !sc.current.more; renderHud(sc.current);
   },
   /** Optionaler dezenter Treffer-Ton */
   liveScanSound: () => {
@@ -1845,6 +1917,7 @@ export const liveScanApi = {
     const pick = cur.alts.find((a) => a.key === key);
     if (!pick) return;
     haptic("select");
+    holdHud();
     const prev = cur.info;
     cur.alts = [prev, ...cur.alts.filter((a) => a.key !== key)].slice(0, 3);
     cur.info = pick; cur.key = pick.key; cur.variants = [pick]; cur.unsure = false;
@@ -1852,17 +1925,23 @@ export const liveScanApi = {
     if (sc.series[0]?.key === prev.key) sc.series[0] = { ...pick, probe: sc.series[0].probe, photo: sc.series[0].photo, scanCondition: cur.condition, scanVariant: cur.finish };
     else addToSeries(pick);
     if (sc.prefs.series) sc.suppress = [...new Set([...(sc.suppress || []), pick.key])];
+    // Andere Karte gewählt: schon gespeicherten Fehltreffer korrigieren, sonst (unsicherer Treffer) jetzt speichern
+    if (cur.filePromise) refileCurrent(); else autoFileCurrent();
     renderHud(cur); renderSeries();
   },
   /** Zustand aus dem Dropdown übernehmen: Hauptpreis passt sich an, Dropdown schließt. Neue Scans starten wieder mit NM. */
   liveScanCondition: (c) => {
     if (!CONDS.includes(c) || !sc.current?.info) return;
-    Object.assign(sc.current, selectCondition(sc.current, c)); haptic("select"); renderHud(sc.current); syncSeriesHead();
+    const before = sc.current.condition;
+    holdHud(); Object.assign(sc.current, selectCondition(sc.current, c)); haptic("select"); renderHud(sc.current); syncSeriesHead();
+    if (sc.current.condition !== before) refileCurrent();
   },
   /** 1-Tap-Variante (Normal / Reverse / Holo) – zieht den eigenen Variantenpreis, wo vorhanden */
   liveScanFinish: (f) => {
     if (!FINISHES.some(([x]) => x === f) || !sc.current?.info) return;
-    Object.assign(sc.current, selectFinish(sc.current, f)); haptic("select"); renderHud(sc.current); syncSeriesHead();
+    const before = sc.current.finish;
+    holdHud(); Object.assign(sc.current, selectFinish(sc.current, f)); haptic("select"); renderHud(sc.current); syncSeriesHead();
+    if (sc.current.finish !== before) refileCurrent();
   },
   /** „Nächste Karte scannen“: Ergebnis schließen, aktuelle Karte bis zum Herausnehmen ignorieren, Kamera bereit */
   liveScanNext: () => { autoFileCurrent(); nextCard(); },

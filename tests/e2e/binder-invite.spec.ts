@@ -228,12 +228,16 @@ test("Live-Abgleich: fehlende Karte bekommt „Auf Marktplatz: 12,50 €“, Tip
   await expect(view).toContainText("1 fehlende auf dem Marktplatz");
   // Tipp → passendes Marktplatz-Angebot (wird gezielt nachgeladen)
   await missing.click();
+  // Erst Preis + Direkt-Button im Karten-Fenster, dann direkt zum Angebot
+  await expect(page.locator("#ps-binder-card")).toContainText("12,50");
+  await page.locator("#ps-binder-card [data-binder-buy]").click();
   await expect(page.locator("#ps-listing")).toBeVisible();
   await expect(page.locator("#ps-listing")).toContainText("Karte 3");
   await expect(page.locator("#ps-listing").getByRole("button", { name: /Anfragen/ })).toBeVisible();
   await page.locator("#ps-listing [data-close]").click();
   // Fehlende Karte ohne Angebot → Wunschliste / Preis-Radar
   await view.locator('[data-binder-card="sv08-4"]').click();
+  await expect(page.locator("#ps-binder-card [data-binder-market]")).toContainText("Zum Marktplatz gehen");
   await page.locator("#ps-binder-card [data-binder-wish]").click();
   await expect.poll(() => wishes.length).toBe(1);
   expect(wishes[0].cardId).toBe("sv08-4");

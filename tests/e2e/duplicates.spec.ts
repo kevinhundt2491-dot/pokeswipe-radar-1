@@ -1,5 +1,5 @@
 // E2E: Scan-Workflow & doppelte Karten
-//   • Scan → Karte landet automatisch im Set-Ordner (✕/Weiter-Scannen und „Als Inserat einstellen“), Server zählt Duplikate hoch
+//   • Scan → Karte wird sofort automatisch im Set-Ordner gespeichert, Ergebnis schließt sich selbst (außer „Inserieren“), Server zählt Duplikate hoch
 //   • Set-Ordner: Mengen-Badge „3x“ und Umschalter „Doppelte im Gesamtwert mitzählen“ (live, gemerkt)
 //   • Marktplatz → Meine Inserate: „Alle Doppelten inserieren“ (1 Exemplar bleibt, keine doppelten Inserate) + Suche & Filter-Chips
 import { test, expect, type Page } from "@playwright/test";
@@ -43,28 +43,34 @@ test("Scan: jede erkannte Karte landet automatisch im Set-Ordner – auch bei �
   await page.evaluate(() => (window as any).PS.openScanner());
   await expect(page.locator("#ps-ls-hud")).toBeAttached();
 
-  // 1. Scan → Ergebnis-Kästchen zeigt den Hinweis, ✕ (nächste Karte) sortiert automatisch ein
+  // 1. Scan → Karte wird SOFORT gespeichert (kein Pflicht-Klick); ✕/Weiter scannen speichert nicht doppelt
   let hud = await scanOnce(page);
-  await expect(hud.locator("[data-hud-autofile]")).toHaveText(/Wird automatisch in den Set-Ordner einsortiert/);
-  await expect(hud.locator('[data-act="sell"]')).toHaveText("🏷️ Als Inserat einstellen");
-  await hud.getByRole("button", { name: "Schließen und nächste Karte scannen" }).click();
   await expect.poll(() => posts.length).toBe(1);
   expect(posts[0]).toMatchObject({ cardId: "sv08-1", merge: true, condition: "NM", variant: "normal" });
+  await expect(hud.locator("[data-hud-autofile]")).toHaveText(/Gespeichert · im Set-Ordner einsortiert/);
+  await expect(hud.locator('[data-act="sell"]')).toHaveText("🏷️ Als Inserat einstellen");
+  await expect(hud.locator("[data-hud-next]")).toContainText("Weiter scannen");
+  await hud.getByRole("button", { name: "Schließen und nächste Karte scannen" }).click();
+  await expect(page.locator("#ps-ls-hud")).toBeHidden();
+  await page.waitForTimeout(300);
+  expect(posts.length).toBe(1);
 
   // 2. Dieselbe Karte erneut scannen und als Inserat einstellen → bleibt im Set-Ordner (Anzahl 2x) UND Schnell-Inserat öffnet
   hud = await scanOnce(page);
-  await hud.locator('[data-act="sell"]').click();
   await expect.poll(() => posts.length).toBe(2);
   expect(posts[1]).toMatchObject({ cardId: "sv08-1", merge: true });
+  await hud.locator('[data-act="sell"]').click();
   await expect(page.locator("#ps-quicklist")).toBeVisible();
   await expect(page.locator("#ps-quicklist")).toContainText("Karte Eins");
-
-  // 3. Wunschliste sortiert NICHT ein
-  await page.evaluate(() => document.getElementById("ps-quicklist")?.remove());
-  hud = await scanOnce(page);
-  await hud.locator('[data-act="wish"]').click();
   await page.waitForTimeout(300);
   expect(posts.length).toBe(2);
+
+  // 3. Ohne Klick: Ergebnis schließt sich nach kurzem Moment selbst, Kamera ist bereit für die nächste Karte
+  await page.evaluate(() => document.getElementById("ps-quicklist")?.remove());
+  hud = await scanOnce(page);
+  await expect.poll(() => posts.length).toBe(3);
+  await expect(page.locator("#ps-ls-hud")).toBeHidden({ timeout: 8000 });
+  expect(posts.length).toBe(3);
 });
 
 // ---------------------------------------------------------------------------

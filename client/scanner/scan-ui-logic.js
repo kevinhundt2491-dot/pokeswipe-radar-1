@@ -108,6 +108,15 @@ export function shouldAutoFile(cur, { loggedIn = false, stage = false } = {}) {
   return Boolean(cur?.info && !cur.loading && !cur.unsure && !cur.filed && loggedIn && !stage);
 }
 
+/**
+ * Auto-Close nach dem Scan: Ein sicher erkannter Treffer ist schon gespeichert – das Ergebnisfeld schließt sich nach
+ * kurzem Moment selbst (Kamera sofort bereit). Unsichere Treffer, Gäste (müssen erst speichern können), die Video-Bühne
+ * und Treffer, mit denen der Nutzer gerade arbeitet (hold), bleiben offen.
+ */
+export function shouldAutoClose(cur, { loggedIn = false, stage = false } = {}) {
+  return Boolean(cur?.info && !cur.loading && !cur.unsure && !cur.hold && loggedIn && !stage);
+}
+
 /** Aktionen im Ergebnisfeld, die die Karte (zusätzlich) im Set-Ordner speichern. Wunsch/Details/Flip/Swiper nicht. */
 export const AUTO_FILE_ACTIONS = ["binder", "sell", "instant"];
 

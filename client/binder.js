@@ -143,10 +143,30 @@ export async function renderFolders(force = false) {
         <button type="button" onclick="PS.openScanner()" class="bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl">📷 Erste Karte scannen</button></div>`;
 }
 
+/** Startseite: Schnellzugriff auf die Set-Ordner (Logo, Fortschritt in %, 1 Tipp öffnet den Binder zum Durchblättern). */
+export async function renderHomeFolders(force = false) {
+  const box = $("home-set-binder")?.querySelector("[data-home-folders]");
+  if (!box) return;
+  let folders = [];
+  try { folders = await loadFolders(force); } catch { folders = foldersCache.folders || []; }
+  box.innerHTML = folders.length
+    ? folders.slice(0, 8).map((f) => {
+      const img = f.logo || f.symbol || f.preview;
+      return `<button type="button" class="ps-home-folder" data-home-folder="${esc(f.setId)}" onclick="PS.openSetBinder(${esc(JSON.stringify(f.setId))})" aria-label="Set-Ordner ${esc(f.name)} öffnen">
+        <span class="ps-home-folder-logo">${img ? imgTag(img, 160, `alt="" loading="lazy"`) : "📒"}</span>
+        <span class="block text-[11px] font-black text-white truncate">${esc(f.name)}</span>
+        <span class="ps-folder-bar" aria-hidden="true"><span style="width:${Number(f.pct) || 0}%"></span></span>
+        <span class="flex justify-between text-[10px] text-slate-300"><span>${esc(f.progressLabel)}</span><strong class="text-emerald-300">${Number(f.pct) || 0} %</strong></span>
+      </button>`;
+    }).join("")
+    : `<p class="text-[11px] text-slate-400 py-2">Scanne deine erste Karte – sie wird automatisch in den passenden Set-Ordner an ihre exakte Position einsortiert. Fehlende Karten siehst du grau.</p>
+       <button type="button" onclick="PS.openScanner()" class="shrink-0 self-center bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl text-xs">📷 Scannen</button>`;
+}
+
 /** Live-Online-Radar: Privatsphäre-Schalter direkt im Set-Binder (Standard: sichtbar, jederzeit abschaltbar). */
 function syncVisibilityToggle(box, grid) {
   let el = box.querySelector("[data-binder-visibility]");
-  if (!state.user || IS_STAGE) { el?.remove(); return; }
+  if (!state.user || IS_STAGE) { el?.remove(); box.querySelector("[data-binder-alerts]")?.remove(); return; }
   if (!el) {
     el = document.createElement("label");
     el.setAttribute("data-binder-visibility", "");
@@ -156,6 +176,15 @@ function syncVisibilityToggle(box, grid) {
   const on = state.me?.binderVisible !== false;
   el.innerHTML = `<input type="checkbox" ${on ? "checked" : ""} onchange="PS.setBinderVisible(this.checked)" class="accent-yellow-400" />
     <span><strong class="text-white">Meine Sammlung / Tausch-Karten für andere Sammler sichtbar machen</strong> <span class="text-slate-500">· für Binder-Vorschau & 1-Klick-Tausch im Live-Chat</span></span>`;
+  let al = box.querySelector("[data-binder-alerts]");
+  if (!al) {
+    al = document.createElement("label");
+    al.setAttribute("data-binder-alerts", "");
+    al.className = el.className;
+    el.insertAdjacentElement("afterend", al);
+  }
+  al.innerHTML = `<input type="checkbox" ${binderAlertsOn() ? "checked" : ""} onchange="PS.setBinderAlerts(this.checked)" class="accent-yellow-400" />
+    <span><strong class="text-white">🔔 Benachrichtigen, wenn eine fehlende Karte meiner Set-Ordner auf dem Marktplatz auftaucht</strong> <span class="text-slate-500">· In-App & Push, mit Direktlink zum Angebot</span></span>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +245,8 @@ function headerHtml() {
       </div>
       <button type="button" onclick="PS.closeSetBinder()" class="ps-binder-close" aria-label="Binder schließen">✕</button>
     </div>
-    <div class="ps-folder-bar mx-1" aria-hidden="true"><span style="width:${sum.pct}%"></span></div>
+    <div class="flex items-center gap-2 mx-1"><div class="ps-folder-bar flex-1" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number(sum.pct) || 0}" aria-label="Set-Fortschritt"><span style="width:${sum.pct}%"></span></div>
+      <strong class="text-[11px] font-black text-emerald-300 shrink-0" data-binder-pct>${Number(sum.pct) || 0} %</strong></div>
     <div class="flex gap-1.5 overflow-x-auto no-scrollbar py-1" role="group" aria-label="Karten filtern">
       ${chip("all", "Alle")}${chip("missing", `Fehlend (${sum.missing})`)}${chip("market", `🛒 Auf Marktplatz (${sum.onMarket})`)}${chip("owned", `Meine (${sum.owned})`)}
     </div>
@@ -383,7 +413,7 @@ function closeSetBinder() {
 // ---------------------------------------------------------------------------
 function cardSheet(c, html) {
   modal("ps-binder-card", `<div class="flex gap-3">
-      ${imgTag(c.image, 360, `alt="${esc(c.name)}" class="w-28 rounded-xl object-contain shrink-0 ${c.owned ? "" : "opacity-60"}"`)}
+      ${imgTag(c.image, 360, `alt="${esc(c.name)}" class="w-28 rounded-xl object-contain shrink-0 ${c.owned ? "" : "ps-binder-sheet-missing"}"`)}
       <div class="min-w-0 space-y-1 text-xs">
         <p class="text-[10px] font-black text-slate-400">${esc(view.data?.set?.name || "")} · Nr. ${esc(c.number || c.localId)}</p>
         <h3 class="text-base font-black text-white leading-tight">${esc(c.name)}</h3>
@@ -400,7 +430,20 @@ async function binderCardTap(cardId) {
   if (view.demo && !c.owned && c.market?.listingId === DEMO_LISTING_ID) { closeSetBinder(); window.PS?.marketTab?.("all"); return; }
   if (view.demo && Number(c.myListing?.id) < 0) return; // Demo-Inserat der Aufnahme – kein echtes Inserat dahinter
   if (c.owned && c.myListing) { window.PS?.openListing?.(c.myListing.id); return; }
-  if (!c.owned && c.market) { window.PS?.openListing?.(c.market.listingId); return; }
+  if (!c.owned && c.market) {
+    // Fehlende Karte mit Angebot: Preis & Verkäufer sofort zeigen, 1 Tipp führt direkt zum Inserat
+    const m = c.market;
+    cardSheet(c, `<div class="space-y-2" data-binder-offer="${Number(m.listingId)}">
+      <div class="bg-emerald-500/10 border border-emerald-500/40 rounded-xl p-2.5 text-xs">
+        <p class="font-black text-emerald-300">🛒 Jetzt auf dem Marktplatz verfügbar</p>
+        <p class="text-white"><strong class="text-base">${m.trade ? "Tausch möglich" : eur(m.price)}</strong>${m.condition ? ` · ${esc(m.condition)}` : ""}${m.seller ? ` · von ${esc(m.seller)}` : ""}</p>
+        ${m.offers > 1 ? `<p class="text-[11px] text-slate-300">${Number(m.offers)} Angebote – das günstigste wird angezeigt.</p>` : ""}
+      </div>
+      <button type="button" onclick="PS.binderOpenOffer(${Number(m.listingId)})" data-binder-buy class="w-full bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">🛒 Jetzt im Marktplatz ansehen / kaufen</button>
+      <button type="button" onclick="PS.binderWish(${esc(JSON.stringify(c.cardId))})" data-binder-wish class="w-full bg-slate-800 text-yellow-200 font-bold py-2 rounded-xl text-xs">⭐ Auf Wunschliste – bei günstigeren Angeboten melden</button>
+    </div>`);
+    return;
+  }
   if (c.owned) {
     cardSheet(c, `<div class="grid grid-cols-1 gap-2">
       ${state.user && c.portfolioItemId ? `<button type="button" onclick="PS.binderSell(${Number(c.portfolioItemId)})" class="bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">💶 Im Marktplatz verkaufen / tauschen</button>` : ""}
@@ -409,8 +452,9 @@ async function binderCardTap(cardId) {
     return;
   }
   cardSheet(c, `<div class="space-y-2">
-    <p class="text-[11px] text-slate-300 bg-slate-900 rounded-xl p-2.5">Gerade bietet niemand diese Karte auf dem Marktplatz an. Aktiviere das Preis-Radar – wir benachrichtigen dich, sobald jemand sie einstellt.</p>
-    <button type="button" onclick="PS.binderWish(${esc(JSON.stringify(c.cardId))})" data-binder-wish class="w-full bg-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">⭐ Auf Wunschliste setzen / Preis-Radar aktivieren</button>
+    <p class="text-[11px] text-slate-300 bg-slate-900 rounded-xl p-2.5">Gerade bietet niemand diese Karte auf dem Marktplatz an. Aktiviere den Suchauftrag – wir benachrichtigen dich automatisch (In-App & Push), sobald jemand sie einstellt.</p>
+    <button type="button" onclick="PS.binderWish(${esc(JSON.stringify(c.cardId))})" data-binder-wish class="w-full bg-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">🔔 Suchauftrag aktivieren (Wunschliste)</button>
+    <button type="button" onclick="PS.binderMarketSearch(${esc(JSON.stringify(c.name))})" data-binder-market class="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs">🛒 Zum Marktplatz gehen</button>
   </div>`);
 }
 
@@ -420,6 +464,32 @@ async function binderWish(cardId) {
     const r = await api("/api/wishlist", { method: "POST", body: { cardId } });
     closeModalEl("ps-binder-card");
     toast("⭐ Preis-Radar aktiv", r?.offers ? `Es gibt schon ${Number(r.offers)} Angebot(e) ab ${eur(r.minPrice)}.` : "Wir benachrichtigen dich, sobald jemand diese Karte einstellt.");
+  } catch (e) { handleError(e); }
+}
+
+/** Angebot einer fehlenden Karte direkt öffnen (Inserat mit Kaufen/Anfragen über dem Binder – danach geht's weiter im Ordner). */
+function binderOpenOffer(listingId) {
+  closeModalEl("ps-binder-card");
+  window.PS?.openListing?.(listingId);
+}
+
+/** Zum Marktplatz mit vorausgefüllter Suche nach der fehlenden Karte. */
+function binderMarketSearch(name) {
+  closeModalEl("ps-binder-card");
+  closeSetBinder();
+  window.PS?.goMarket?.();
+  const inp = $("market-search");
+  if (inp) { inp.value = String(name || "").slice(0, 80); try { window.renderMarket?.(); } catch {} }
+}
+
+/** Hinweis „fehlende Binder-Karte jetzt auf dem Marktplatz“ an/aus (geräteübergreifend in den Profil-Einstellungen). */
+const binderAlertsOn = () => state.me?.prefs?.binderAlerts !== false;
+async function setBinderAlerts(on) {
+  if (!requireLogin()) return;
+  try {
+    await api("/api/me", { method: "PUT", body: { prefs: { binderAlerts: Boolean(on) } } });
+    if (state.me) state.me.prefs = { ...(state.me.prefs || {}), binderAlerts: Boolean(on) };
+    toast(on ? "🔔 Binder-Alarm an" : "🔕 Binder-Alarm aus", on ? "Wir melden uns, sobald eine fehlende Karte deiner Set-Ordner auf dem Marktplatz auftaucht." : "Keine automatischen Hinweise mehr zu fehlenden Binder-Karten.");
   } catch (e) { handleError(e); }
 }
 
@@ -542,10 +612,15 @@ export function initBinder() {
     // 1-Klick-Doppelte aus „Meine Inserate“ (Demo) → erscheinen im Ordner als eigene Inserate
     window.addEventListener("ps:reel-listed", (e) => { if (demo) demo.bulk = Array.isArray(e.detail) ? e.detail : []; });
   }
-  renderFolders();
-  window.addEventListener("ps:portfolio", () => { foldersCache.at = 0; if (!$("view-portfolio")?.classList.contains("hidden")) renderFolders(true); });
-  window.addEventListener("ps:plan", () => { foldersCache.at = 0; renderFolders(); });
-  window.addEventListener("ps:tab", (e) => { if (e.detail === "portfolio") renderFolders(); });
+  renderFolders().then(() => renderHomeFolders()).catch(() => {});
+  const homeVisible = () => !$("view-home")?.classList.contains("hidden");
+  window.addEventListener("ps:portfolio", () => {
+    foldersCache.at = 0;
+    if (!$("view-portfolio")?.classList.contains("hidden")) renderFolders(true).then(() => { if (homeVisible()) renderHomeFolders(); });
+    else if (homeVisible()) renderHomeFolders(true);
+  });
+  window.addEventListener("ps:plan", () => { foldersCache.at = 0; renderFolders().then(() => renderHomeFolders()).catch(() => {}); });
+  window.addEventListener("ps:tab", (e) => { if (e.detail === "portfolio") renderFolders(); if (e.detail === "home") renderHomeFolders(); });
   window.addEventListener("ps:sub", (e) => { if (e.detail?.view === "portfolio" && e.detail?.key === "overview") renderFolders(); });
   window.addEventListener("ps:listings", () => { if (view.setId) refreshMarket(); });
   window.addEventListener("ps:my-listings", () => { if (view.setId) refreshMarket(); });
@@ -553,7 +628,7 @@ export function initBinder() {
 
 export const binderApi = {
   ...(IS_STAGE ? { binderDemoPrepare, binderDemoOpen, binderDemoReveal, binderDemoSlot, binderDemoInventory } : {}),
-  openSetBinder, closeSetBinder, binderCardTap, binderWish, binderSell, renderFolders,
+  openSetBinder, closeSetBinder, binderCardTap, binderWish, binderSell, renderFolders, binderOpenOffer, binderMarketSearch, setBinderAlerts, renderHomeFolders,
   binderNext: () => go(1), binderPrev: () => go(-1),
   binderCountDupes: (on) => setCountDupes(typeof on === "boolean" ? on : !countDupes()),
   binderGoto: (i) => { view.page = clampPage(i, view.pages.length); updatePage(true); },

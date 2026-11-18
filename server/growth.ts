@@ -70,8 +70,43 @@ export async function notifyWishlistListing(row: typeof listings.$inferSelect, s
     LIMIT 300
   `));
   for (const w of watchers) {
-    await notify(w.user_id, "❤️ Wunschkarte im Tausch-Hub", `${row.cardName} für ${euro(Number(row.price))} in ${row.city} (${sellerName}).`, "/?tab=portfolio&sub=wishlist");
+    // Direktlink zum Angebot (öffnet Marktplatz + Inserat, auch aus der Push-Nachricht heraus)
+    await notify(w.user_id, "❤️ Wunschkarte im Tausch-Hub", `${row.cardName} für ${euro(Number(row.price))} in ${row.city} (${sellerName}).`, listingLink(row.id));
     await db.update(wishlistItems).set({ lastNotifiedAt: new Date() }).where(eq(wishlistItems.id, w.id));
+  }
+  await notifyBinderGapListing(row, sellerName, sellerId).catch((e) => console.warn("Binder-Lücken-Hinweis fehlgeschlagen", e));
+}
+
+/** Direktlink auf ein Inserat (Marktplatz-Reiter + Inserat-Fenster), siehe client/market.js → routeMarket. */
+export const listingLink = (id: number) => `/?tab=map&listing=${Number(id)}`;
+export const BINDER_GAP_TITLE = "📒 Fehlende Binder-Karte verfügbar";
+
+/**
+ * Set-Binder: Sammler, die schon Karten aus diesem Set besitzen, denen aber genau diese Karte noch fehlt, bekommen einen
+ * In-App-/Push-Hinweis mit Direktlink. Wunschlisten-/Preisalarm-Beobachter sind oben schon abgedeckt (keine Doppel-Nachricht),
+ * je Sammler & Karte höchstens alle 6 Stunden; abschaltbar über die Einstellung binderAlerts = false.
+ */
+export async function notifyBinderGapListing(row: typeof listings.$inferSelect, sellerName: string, sellerId: string) {
+  const cardId = String(row.cardId || "");
+  const cut = cardId.lastIndexOf("-");
+  if (cut <= 0) return;
+  const like = `${cardId.slice(0, cut).replace(/[%_\\]/g, (m) => `\\${m}`)}-%`;
+  const bodyPrefix = `${row.cardName} `;
+  const collectors = rows(await db.execute(sql`
+    SELECT DISTINCT pi.user_id FROM portfolio_items pi
+    JOIN profiles p ON p.user_id = pi.user_id AND NOT p.banned
+    WHERE pi.card_id LIKE ${like} AND pi.user_id <> ${sellerId}
+      AND (p.ui_prefs->>'binderAlerts') IS DISTINCT FROM 'false'
+      AND NOT EXISTS (SELECT 1 FROM portfolio_items o WHERE o.user_id = pi.user_id AND o.card_id = ${cardId})
+      AND NOT EXISTS (SELECT 1 FROM wishlist_items w WHERE w.user_id = pi.user_id AND w.card_id = ${cardId})
+      AND NOT EXISTS (SELECT 1 FROM price_alerts a WHERE a.user_id = pi.user_id AND a.card_id = ${cardId}
+        AND a.active AND a.direction = 'below' AND a.target_price >= ${row.price})
+      AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = pi.user_id AND n.title = ${BINDER_GAP_TITLE}
+        AND n.body LIKE ${`${bodyPrefix.replace(/[%_\\]/g, (m) => `\\${m}`)}%`} AND n.created_at > now() - interval '6 hours')
+    LIMIT 300
+  `));
+  for (const u of collectors) {
+    await notify(u.user_id, BINDER_GAP_TITLE, `${bodyPrefix}fehlt noch in deinem Set-Ordner – jetzt für ${euro(Number(row.price))} in ${row.city} (${sellerName}).`, listingLink(row.id));
   }
 }
 

@@ -233,6 +233,14 @@
           <span id="home-binder-strip" class="flex gap-1.5 overflow-hidden h-14" aria-hidden="true"></span>
         </button>
       </div>
+      <!-- Schnellzugriff: Set-Binder (Ordner öffnen & seitenweise durchblättern, befüllt von client/binder.js) -->
+      <div id="home-set-binder" class="ps-card p-4 space-y-2" aria-label="Set-Binder Schnellzugriff">
+        <div class="flex items-center justify-between gap-2">
+          <p class="ps-kicker text-yellow-300">📒 Set-Binder · Ordner öffnen &amp; durchblättern</p>
+          <button type="button" onclick="PS.collectionTab('binder')" class="text-xs font-bold text-slate-300 hover:text-white shrink-0">Alle Ordner ›</button>
+        </div>
+        <div data-home-folders class="flex gap-2 overflow-x-auto no-scrollbar pb-1"></div>
+      </div>
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
         <!-- 2. Marktplatz & Tausch-Radar (Vorschau) -->
         <div id="home-market" class="ps-card lg:col-span-7 p-4 space-y-3">

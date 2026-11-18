@@ -621,9 +621,16 @@ body.ps-binder-open { overflow: hidden; }
 .ps-bslot-art img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .ps-bslot.owned { border-color: rgba(250, 204, 21, 0.45); box-shadow: 0 0 16px -6px rgba(250, 204, 21, 0.55); }
 .ps-bslot.owned .ps-bslot-art img { filter: saturate(1.1) drop-shadow(0 6px 12px rgba(0, 0, 0, 0.6)); }
-.ps-bslot.missing .ps-bslot-art img { opacity: 0.38; filter: grayscale(0.75) brightness(0.7); }
+/* Startseite: Set-Binder-Schnellzugriff */
+.ps-home-folder { flex: 0 0 auto; width: 9.5rem; display: flex; flex-direction: column; gap: 0.25rem; text-align: left; padding: 0.5rem; border-radius: 0.9rem; background: rgba(19, 26, 51, 0.9); border: 1px solid rgba(250, 204, 21, 0.25); }
+.ps-home-folder:hover { border-color: rgba(250, 204, 21, 0.6); }
+.ps-home-folder-logo { display: flex; align-items: center; justify-content: center; height: 2.6rem; font-size: 1.4rem; }
+.ps-home-folder-logo img { max-height: 100%; max-width: 100%; object-fit: contain; }
+/* Fehlende Karten: offizielles Kartenbild in Graustufen, leicht transparent – die Lücke ist sofort erkennbar */
+.ps-bslot.missing .ps-bslot-art img { opacity: 0.5; filter: grayscale(1) brightness(0.85) contrast(0.9); }
 .ps-bslot.missing.market { border-color: rgba(52, 211, 153, 0.65); }
-.ps-bslot.missing.market .ps-bslot-art img { opacity: 0.55; filter: grayscale(0.35) brightness(0.85); }
+.ps-bslot.missing.market .ps-bslot-art img { opacity: 0.62; filter: grayscale(1) brightness(0.95); }
+.ps-binder-sheet-missing { filter: grayscale(1); opacity: 0.6; }
 .ps-bslot-missing { position: absolute; top: 0.25rem; right: 0.25rem; font-size: 0.5rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: #cbd5e1; background: rgba(0, 0, 0, 0.6); border-radius: 0.3rem; padding: 0.15rem 0.3rem; }
 .ps-bslot-cond { position: absolute; top: 0.25rem; left: 0.25rem; }
 .ps-bslot-qty { position: absolute; top: 0.25rem; right: 0.25rem; font-size: 0.6rem; font-weight: 900; background: #facc15; color: #1a1420; border-radius: 0.35rem; padding: 0.1rem 0.3rem; }
@@ -645,3 +652,9 @@ body.ps-binder-open { overflow: hidden; }
 .ps-bslot-name { font-size: 0.64rem; font-weight: 900; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ps-bslot.missing .ps-bslot-name { color: #94a3b8; }
 @media (min-width: 640px) { .ps-bslot-badge { font-size: 0.62rem; } .ps-bslot-name { font-size: 0.7rem; } .ps-bslot-info { font-size: 0.62rem; } }
+
+/* Live-Scanner: Countdown bis das Ergebnisfeld sich selbst schließt (Karte ist schon gespeichert) */
+.ps-ls-autoclose { height: 3px; border-radius: 999px; background: rgba(243, 239, 228, 0.12); overflow: hidden; }
+.ps-ls-autoclose > span { display: block; height: 100%; background: #34d399; transform-origin: left center; animation: psAutoClose linear forwards; }
+@keyframes psAutoClose { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .ps-ls-autoclose > span { animation: none; } }
