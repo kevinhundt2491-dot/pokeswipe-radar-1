@@ -43,8 +43,8 @@ test("Starter-Liste: Dario, The Zero of Time und Platzhalter-Slots ohne geratene
 });
 
 test("Vorlagen A–D: Platzhalter werden ersetzt, passende Vorlage je Kategorie", () => {
-  assert.deepEqual(TEMPLATE_IDS, ["A", "B", "C", "D"]);
-  for (const id of TEMPLATE_IDS) {
+  assert.deepEqual(TEMPLATE_IDS, ["A", "B", "C", "D", "E"]);
+  for (const id of TEMPLATE_IDS.filter((x) => x !== "E")) {
     const t = TEMPLATES[id];
     for (const part of [t.subject + t.body, t.dm]) assert.ok(part.includes("[Kanalname]"), `${id} ohne [Kanalname]`);
     assert.ok(t.body.includes("[PromoCode]") && t.body.includes("[CreatorLink]"), `${id} ohne Code/Link`);
@@ -294,4 +294,63 @@ test("Auto-Finder & Massenversand sind verdrahtet (Funktion, Buttons, Doppelvers
   const srv = readFileSync(new URL("../server/creator.ts", import.meta.url), "utf8");
   assert.match(srv, /opts\.bulk && \(l\.sentAt/);
   assert.match(srv, /inArray\(creatorLeads\.status, lockStatus\)/, "atomare Sperre gegen Doppelversand");
+});
+
+test("Vorlage E (TikTok Käufer/Verkäufer, Launch-Offer): Text, DM, Kommentar-Hook, Video-Link", async () => {
+  const m = await import("../server/creator-logic.ts");
+  const t = m.TEMPLATES.E;
+  assert.equal(t.label, "E – TikTok Käufer/Verkäufer (Launch-Offer)");
+  assert.equal(m.LAUNCH_TEMPLATE, "E");
+  assert.equal(m.CREATOR_VIDEO_URL, "https://pokeswipe-radar.de/creator#video");
+  const v = { name: "PokeMax", code: "POKEMAX30", link: "l", platform: "tiktok" };
+  const subject = m.fillTemplate(t.subject, v);
+  assert.equal(subject, "Kurze Idee für deine Pokémon-Deals – 0 % Gebühren + eigener Code (POKEMAX30) für PokeMax");
+  const body = m.fillTemplate(t.body, v);
+  assert.ok(body.startsWith("Hey PokeMax,\n\nwir feiern deine Videos rund ums Kaufen, Verkaufen und Tauschen von Pokémon-Karten auf TikTok!"));
+  assert.ok(body.includes("👉 https://pokeswipe-radar.de/creator#video"));
+  assert.ok(body.includes('Dein eigener Community-Code "POKEMAX30"'));
+  assert.ok(body.endsWith("Beste Grüße\nKevin von PokeSwipe Radar"));
+  assert.ok(!/\{[A-Z_]+\}/.test(subject + body), "keine Platzhalter übrig");
+  // Gleiche Mail an YouTube-Creator nennt die richtige Plattform
+  assert.ok(m.fillTemplate(t.body, { ...v, platform: "youtube" }).includes("Pokémon-Karten auf YouTube!"));
+  const dm = m.fillTemplate(t.dm, v);
+  assert.ok(dm.startsWith("Hey PokeMax! 🙌") && dm.includes("https://pokeswipe-radar.de/creator#video") && dm.includes("deinen eigenen Code POKEMAX30"));
+  const c = m.fillTemplate(t.comment!, v);
+  assert.equal(c, "Starke Deals! 🙌 Hab dir als App-Gründer gerade 0 % Verkaufsgebühren + einen eigenen Code (POKEMAX30) für deine Community reserviert – folg kurz zurück, dann schick ich dir das Video dazu!");
+  // TikTok → standardmäßig Vorlage E; andere Plattformen wie bisher
+  assert.equal(m.chooseTemplate("micro", 5_000, "tiktok"), "E");
+  assert.equal(m.chooseTemplate("packopening", 60_000, "tiktok"), "E");
+  assert.equal(m.chooseTemplate("community", 2_000, "tiktok"), "D");
+  assert.equal(m.chooseTemplate("packopening", 4_000, "youtube"), "C");
+  // Status „DM gesendet“
+  assert.ok(m.LEAD_STATUSES.includes("dm_sent"));
+  assert.equal(m.displayStatus({ status: "dm_sent", email: "", sentAt: null }).label, "DM gesendet");
+  // Schnellleiste kleine TikTok-Käufer & -Verkäufer
+  assert.deepEqual(m.TIKTOK_BUYER_SELLER_SEARCHES.map((x) => x.url), [
+    "https://www.tiktok.com/search/user?q=pokemon%20karten%20verkaufen",
+    "https://www.tiktok.com/search/user?q=pokemon%20flohmarkt",
+    "https://www.tiktok.com/search/user?q=pokemon%20cardshow%20deutsch",
+    "https://www.tiktok.com/search/user?q=pokemon%20rip%20and%20ship%20deutsch",
+    "https://www.tiktok.com/search/user?q=pokemon%20sammlung%20verkaufen",
+  ]);
+});
+
+test("Showcase-Video: Range-Anfragen je Stück, Datei-Erkennung", async () => {
+  const v = await import("../server/creator-video.ts");
+  const MB3 = 3 * 1024 * 1024, size = 10 * 1024 * 1024;
+  assert.deepEqual(v.rangeFor("bytes=0-1", size, MB3), { ok: true, start: 0, end: 1, partial: true, chunk: 0 });
+  const r = v.rangeFor("bytes=0-", size, MB3);
+  assert.equal(r.end, MB3 - 1, "höchstens ein Stück pro Antwort");
+  const r2 = v.rangeFor(`bytes=${MB3 + 5}-`, size, MB3);
+  assert.equal(r2.chunk, 1);
+  assert.equal(r2.end, 2 * MB3 - 1);
+  const last = v.rangeFor("bytes=-100", size, MB3);
+  assert.equal(last.start, size - 100);
+  assert.equal(last.end, size - 1);
+  assert.equal(v.rangeFor(`bytes=${size}-`, size, MB3).ok, false);
+  assert.equal(v.rangeFor(undefined, size, MB3).partial, false);
+  const mp4 = new Uint8Array([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
+  assert.equal(v.sniffVideoType(mp4), "video/mp4");
+  assert.equal(v.sniffVideoType(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])), "video/webm");
+  assert.equal(v.sniffVideoType(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0])), "");
 });

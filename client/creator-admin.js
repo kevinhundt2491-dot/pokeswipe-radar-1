@@ -5,11 +5,14 @@
 // • Kontrollierter Versand über Resend: „Freigeben & senden“ oder gestaffelte Warteschlange (max. 15/Tag), Follow-up nach 4 Tagen
 // • Creator-Bewerbungen von /creator freigeben, Viral-Hook- & Kommentar-Generator, Schnellstart Pro-Video-Generator
 import { $, esc, jsArg, safeUrl, toast, api, handleError, modal, btn } from "./core.js";
+import { uploadCreatorVideo, creatorVideoStatus, deleteCreatorVideo } from "./creator-video-upload.js";
 
 const ca = {
   data: null, tab: "finder", filter: "all", selected: new Set(), open: new Set(), hook: { type: "restock", topic: "" },
   // Laufende 1-Klick-Aktionen (Auto-Finder / Massenversand) – verhindert Doppelklicks und zeigt den Fortschritt
   finder: null, bulk: null, lastSummary: "",
+  // Turbo: Auto-Finder + anschließender Launch-Massenversand in einem Klick; Showcase-Video für /creator#video
+  turbo: false, video: undefined, videoUpload: null,
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Creator, die der Massenversand anschreibt: echte E-Mail, noch nicht angeschrieben, nicht abgemeldet/Platzhalter. */
@@ -20,7 +23,7 @@ const finderOpen = (d) => d.leads.filter((l) => !l.email && !l.placeholder && ["
 const STATUS_CLS = {
   ready: "bg-sky-500/20 text-sky-200", queued: "bg-violet-500/20 text-violet-200", sending: "bg-violet-500/20 text-violet-200",
   sent: "bg-emerald-500/20 text-emerald-200", followup: "bg-amber-500/25 text-amber-200", replied: "bg-yellow-400/25 text-yellow-200",
-  active: "bg-fuchsia-500/25 text-fuchsia-200", paused: "bg-slate-700 text-slate-300", optout: "bg-rose-500/20 text-rose-200", no_email: "bg-slate-700 text-slate-300",
+  active: "bg-fuchsia-500/25 text-fuchsia-200", dm_sent: "bg-cyan-500/20 text-cyan-200", paused: "bg-slate-700 text-slate-300", optout: "bg-rose-500/20 text-rose-200", no_email: "bg-slate-700 text-slate-300",
 };
 const fmt = (d) => (d ? new Date(d).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
 const fmtDay = (d) => (d ? new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
@@ -35,6 +38,7 @@ async function load() {
 export async function openCreatorAdmin() {
   modal("ps-creators", `<p class="text-yellow-400 text-xs text-center py-6">⏳ Lade Creator-Finder …</p>`, { wide: true });
   try { await load(); render(); } catch (e) { handleError(e); }
+  loadVideoStatus();
 }
 
 function render() {
@@ -72,13 +76,14 @@ function sendingBox(s) {
 // ---------------------------------------------------------------------------
 // Creator-Finder
 // ---------------------------------------------------------------------------
-const FILTERS = [["all", "Alle"], ["ready", "Bereit"], ["no_email", "Ohne E-Mail"], ["queued", "Warteschlange"], ["sent", "Gesendet"], ["followup", "Follow-up fällig"], ["replied", "Antwort"], ["active", "Aktiv"]];
+const FILTERS = [["all", "Alle"], ["ready", "Bereit"], ["no_email", "Ohne E-Mail"], ["queued", "Warteschlange"], ["sent", "Gesendet"], ["dm_sent", "DM gesendet"], ["followup", "Follow-up fällig"], ["replied", "Antwort"], ["active", "Aktiv"]];
 
 function finderHtml(d) {
   const leads = d.leads.filter((l) => ca.filter === "all" || l.display.key === ca.filter || (ca.filter === "queued" && l.status === "sending"));
   const totalSignups = d.leads.reduce((s, l) => s + (Number(l.signups) || 0), 0);
   const sendable = d.leads.filter((l) => ca.selected.has(l.id) && ["ready", "paused"].includes(l.status) && l.email && !l.placeholder).length;
   return `
+    ${buyerSellerBarHtml(d)}
     ${bigActionsHtml(d)}
     ${tiktokFinderHtml(d)}
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -108,12 +113,32 @@ function finderHtml(d) {
     <div class="space-y-2">${leads.length ? leads.map((l) => leadCard(l, d)).join("") : `<p class="text-xs text-slate-500">Keine Einträge in diesem Filter.</p>`}</div>`;
 }
 
+// Schnellleiste: kleinere TikTok-Käufer & -Verkäufer (500–15k Follower) + Direktlink zum Showcase-Video
+const BUYER_SELLER_FALLBACK = [
+  { label: "TikTok: Pokemon Karten verkaufen", url: "https://www.tiktok.com/search/user?q=pokemon%20karten%20verkaufen" },
+  { label: "TikTok: Pokemon Flohmarkt Deals", url: "https://www.tiktok.com/search/user?q=pokemon%20flohmarkt" },
+  { label: "TikTok: Pokemon Cardshow / Tausch", url: "https://www.tiktok.com/search/user?q=pokemon%20cardshow%20deutsch" },
+  { label: "TikTok: Pokemon Rip & Ship DE", url: "https://www.tiktok.com/search/user?q=pokemon%20rip%20and%20ship%20deutsch" },
+  { label: "TikTok: Pokemon Sammlung auflösen", url: "https://www.tiktok.com/search/user?q=pokemon%20sammlung%20verkaufen" },
+];
+function buyerSellerBarHtml(d) {
+  const list = d.buyerSellerSearches?.length ? d.buyerSellerSearches : BUYER_SELLER_FALLBACK;
+  const video = d.videoUrl || "https://pokeswipe-radar.de/creator#video";
+  return `<div class="bg-gradient-to-r from-fuchsia-500/15 to-yellow-400/10 border border-fuchsia-400/40 rounded-2xl p-3 space-y-2 text-xs">
+    <p class="font-black text-white text-sm">🎯 Kleine TikTok Käufer &amp; Verkäufer finden (500–15k Follower)</p>
+    <div class="flex flex-wrap gap-1.5">${list.map((x) => `<a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener" class="bg-slate-950 border border-fuchsia-400/40 hover:border-yellow-300 text-white font-bold px-2.5 py-1.5 rounded-lg">${esc(x.label)} ↗</a>`).join("")}</div>
+    <p class="text-[10px] text-slate-300">Profil gefunden? Oben unter „TikTok-Creator mit 1 Klick anlegen“ eintragen (Code NAME30 entsteht automatisch, Vorlage <strong>E – Launch-Offer</strong>) und dann „⚡ DM kopieren &amp; TikTok-Profil öffnen“. Video-Link in allen Vorlagen:
+      <a href="${esc(safeUrl(video))}" target="_blank" rel="noopener" class="underline text-yellow-300">${esc(video.replace(/^https?:\/\//, ""))}</a>
+      ${ca.video === undefined ? "" : ca.video ? '<span class="text-emerald-300">· 🎬 MP4 hinterlegt</span>' : '<span class="text-amber-300">· interaktive Live-Vorschau aktiv (MP4 im Tab „🔥 Viral-Hooks &amp; Video“ veröffentlichen)</span>'}</p>
+  </div>`;
+}
+
 // Große 1-Klick-Aktionen oben im Creator-Finder: Auto-Finder, Massenversand, Schnell-Import
 function bigActionsHtml(d) {
   const ready = bulkReady(d).length;
   const open = finderOpen(d).length;
   const f = ca.finder, b = ca.bulk;
-  const busy = Boolean(f || b);
+  const busy = Boolean(f || b || ca.turbo);
   const big = "w-full text-left font-black text-sm sm:text-base px-4 py-3.5 rounded-2xl shadow-lg disabled:opacity-60 disabled:cursor-not-allowed";
   const finderLabel = f
     ? `⏳ Suche läuft … ${Number(f.done)} geprüft · ${Number(f.found)} gefunden${f.remaining != null ? ` · ${Number(f.remaining)} offen` : ""}`
@@ -121,7 +146,12 @@ function bigActionsHtml(d) {
   const bulkLabel = b
     ? `⏳ Sende … ${Number(b.sent)}/${Number(b.total)} versendet${b.failed ? ` · ${Number(b.failed)} Fehler` : ""}`
     : `🚀 Alle bereiten Creator jetzt auf einmal per Resend anschreiben <span class="font-bold text-xs opacity-80">(${ready} bereit)</span>`;
+  const turboLabel = ca.turbo
+    ? (f ? `⏳ Schritt 1/2: E-Mails suchen … ${Number(f.done)} geprüft · ${Number(f.found)} gefunden` : b ? `⏳ Schritt 2/2: Launch-Mail … ${Number(b.sent)}/${Number(b.total)} versendet` : "⏳ Starte …")
+    : `🔍 E-Mails automatisch suchen &amp; alle offenen Creator per Resend anschreiben <span class="font-bold text-xs opacity-80">(${open} ohne E-Mail · ${ready} bereit)</span>`;
   return `<div class="space-y-2">
+    <button type="button" onclick="PS.caTurbo()" ${busy || (!open && !ready) || !d.sending.configured ? "disabled" : ""} class="${big} bg-gradient-to-r from-fuchsia-500 via-pink-500 to-yellow-400 text-slate-950 ring-4 ring-fuchsia-300/60">${turboLabel}
+      <span class="block text-[10px] font-bold opacity-80 mt-0.5">${d.sending.configured ? "1. Auto-Finder (Impressum · Linktree · Beacons · Website · MX-Prüfung) → 2. Launch-Mail (Vorlage E) inkl. Video-Link pokeswipe-radar.de/creator#video &amp; eigenem Code an alle noch nicht angeschriebenen Creator mit gültiger E-Mail" : "Resend nicht eingerichtet (RESEND_API_KEY / MAIL_FROM)"}</span></button>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
       <button type="button" onclick="PS.caAutoFind()" ${busy || (!open && !f) ? "disabled" : ""} class="${big} bg-gradient-to-r from-cyan-500 to-sky-500 text-slate-950 ring-2 ring-cyan-300/50">${finderLabel}
         <span class="block text-[10px] font-bold opacity-80 mt-0.5">Impressum · Linktree · Beacons · Website · Web-Suche – nur echte, MX-geprüfte Adressen</span></button>
@@ -204,10 +234,12 @@ function leadCard(l, d) {
     <div class="flex flex-wrap gap-1.5">
       ${canSend ? btn(l.status === "queued" ? "Jetzt statt geplant über Resend senden" : "✅ Freigeben & über Resend senden", `PS.caSend(${Number(l.id)})`, "bg-emerald-500 text-slate-950 font-black ring-2 ring-emerald-300/60") : ""}
       ${followDue ? btn("🔁 Follow-up senden", `PS.caFollowup(${Number(l.id)})`, "bg-amber-400 text-slate-950") : ""}
-      ${btn("📋 DM kopieren", `PS.caCopyDm(${Number(l.id)})`, hasMail ? "bg-slate-800 text-white" : "bg-cyan-500 text-slate-950 font-black")}
+      ${l.platform === "tiktok" && l.tiktokUrl ? btn("⚡ DM kopieren & TikTok-Profil öffnen", `PS.caTurboDm(${Number(l.id)})`, "bg-gradient-to-r from-cyan-400 to-fuchsia-500 text-slate-950 font-black ring-2 ring-cyan-300/60") : ""}
+      ${l.platform === "tiktok" ? btn("💬 Video-Kommentar kopieren", `PS.caCopyComment(${Number(l.id)})`, "bg-slate-800 text-white text-[11px]") : ""}
+      ${btn("📋 DM kopieren", `PS.caCopyDm(${Number(l.id)})`, hasMail || l.platform === "tiktok" ? "bg-slate-800 text-white" : "bg-cyan-500 text-slate-950 font-black")}
       <select onchange="PS.caStatus(${Number(l.id)}, this.value)" class="bg-slate-800 text-white rounded-xl px-2 text-[11px] font-bold">
         <option value="">Status setzen …</option>
-        ${[["replied", "💬 Antwort erhalten"], ["active", "🎬 Aktiv (macht mit)"], ["paused", "⏸ Pausieren"], ["ready", "↺ Zurück auf Bereit"], ["optout", "🚫 Abgemeldet / kein Interesse"]].map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}
+        ${[["dm_sent", "📩 DM gesendet"], ["replied", "💬 Antwort erhalten"], ["active", "🎬 Aktiv (macht mit)"], ["paused", "⏸ Pausieren"], ["ready", "↺ Zurück auf Bereit"], ["optout", "🚫 Abgemeldet / kein Interesse"]].map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}
       </select>
       ${["replied", "active"].includes(l.status) ? btn("🎟️ VIP-Creator-Pass vergeben", `PS.caGrantPass(${Number(l.id)})`, "bg-fuchsia-600 text-white") : ""}
     </div>
@@ -238,6 +270,7 @@ function leadDetails(l, d) {
       ${btn("🗑 Eintrag löschen", `PS.caDelete(${Number(l.id)})`, "bg-rose-500/30 text-rose-200")}
     </div>
     <p class="text-[10px] text-slate-500">Kurz-DM: <span class="text-slate-300">${esc(l.dm)}</span></p>
+    ${l.comment ? `<p class="text-[10px] text-slate-500">Kommentar-Hook (wenn DMs erst nach gegenseitigem Folgen offen sind): <span class="text-slate-300">${esc(l.comment)}</span></p>` : ""}
   </div>`;
 }
 
@@ -316,11 +349,35 @@ function hooksHtml() {
       <li>Keine Links (wirkt wie Spam und wird oft automatisch ausgeblendet). Höchstens 1 Kommentar pro Kanal & Woche.</li>
       <li>Erst Mehrwert (Preis-Info, Tipp, Frage) – die App höchstens beiläufig erwähnen, wenn jemand fragt.</li>
     </ul>
+    ${videoBoxHtml()}
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
       ${btn("🎬 Pro-Video-Generator öffnen", "PS.openGenerator()", "bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white")}
       ${btn("🎥 Make.com & Auto-Reels", "PS.openMakeAdmin()", "bg-slate-800 text-white")}
     </div>
   </div>`;
+}
+
+// Showcase-Video (Set-Binder + 1-Klick-Inserieren) für /creator#video
+function videoBoxHtml() {
+  const v = ca.video, up = ca.videoUpload;
+  const state = v === undefined ? "⏳ Lade Status …"
+    : v ? `✅ Veröffentlicht am ${esc(fmt(v.uploadedAt))} · ${(Number(v.size) / 1048576).toFixed(1).replace(".", ",")} MB · ${esc(v.type)}${v.source ? ` · Quelle: ${esc(v.source)}` : ""}`
+    : "Noch kein MP4 hinterlegt – /creator#video zeigt bis dahin die interaktive Live-Vorschau (Set-Binder blättern + 1-Klick-Inserieren).";
+  return `<div class="bg-slate-950 border border-yellow-400/40 rounded-2xl p-3 space-y-2">
+    <p class="font-black text-white">🎬 Showcase-Video für <a href="/creator#video" target="_blank" class="underline text-yellow-300">pokeswipe-radar.de/creator#video</a></p>
+    <p class="text-[11px] ${v ? "text-emerald-300" : "text-slate-300"}">${state}</p>
+    ${v ? `<video src="/api/creator/video?v=${esc(v.version)}" controls muted playsinline preload="metadata" class="w-40 rounded-xl border border-slate-700" style="aspect-ratio:9/16;object-fit:cover"></video>` : ""}
+    <p class="text-[10px] text-slate-400">Am schnellsten: Im Pro-Video-Generator die Master-Vorlage „📒 Reel: Neuer automatischer Binder &amp; Bulk-Marktplatz-Power“ aufnehmen und beim fertigen Video auf „📌 Auf /creator#video veröffentlichen“ klicken. Alternativ hier eine MP4-Datei (max. 95 MB) hochladen.</p>
+    <div class="flex flex-wrap items-center gap-1.5">
+      <input id="ca-video-file" type="file" accept="video/mp4,video/webm" class="text-[11px] text-slate-300" ${up ? "disabled" : ""} />
+      ${btn(up ? `⏳ Lade hoch … ${Math.round(up * 100)} %` : "📤 Hochladen & veröffentlichen", "PS.caVideoUpload()", "bg-yellow-400 text-slate-950 font-black")}
+      ${v && !up ? btn("🗑 Video entfernen", "PS.caVideoDelete()", "bg-rose-500/30 text-rose-200") : ""}
+    </div>
+  </div>`;
+}
+async function loadVideoStatus() {
+  try { const r = await creatorVideoStatus(); ca.video = r.video || null; } catch { ca.video = null; }
+  render();
 }
 
 // ---------------------------------------------------------------------------
@@ -379,14 +436,15 @@ async function runAutoFind() {
   finally { ca.finder = null; await refreshAll(); }
 }
 
-/** Massenversand: nacheinander (~500 ms Abstand) an alle bereiten Creator – der Server sperrt jeden Eintrag atomar (nie doppelt). */
-async function runBulkSend() {
+/** Massenversand: nacheinander (~500 ms Abstand) an alle bereiten Creator – der Server sperrt jeden Eintrag atomar (nie doppelt).
+ *  `template` (z. B. „E“) = Launch-Vorlage für alle Creator ohne eigenen Text; `confirmed` = Rückfrage schon erfolgt (Turbo). */
+async function runBulkSend({ template = "", confirmed = false } = {}) {
   if (ca.bulk || ca.finder) return;
   const d = ca.data;
   if (!d?.sending?.configured) return toast("Resend nicht eingerichtet", "RESEND_API_KEY / MAIL_FROM fehlen.");
   const list = bulkReady(d);
   if (!list.length) return toast("Massenversand", "Keine bereiten Creator mit E-Mail – zuerst „🔍 E-Mails automatisch finden“ oder Liste einfügen.");
-  if (!confirm(`${list.length} personalisierte Kooperations-Mails jetzt über Resend senden?\n\nJeder Creator bekommt seinen eigenen 30-Tage-Code und den Link pokeswipe-radar.de/creator. Bereits angeschriebene Creator werden nie erneut angeschrieben.`)) return;
+  if (!confirmed && !confirm(`${list.length} personalisierte Kooperations-Mails jetzt über Resend senden?\n\nJeder Creator bekommt seinen eigenen 30-Tage-Code und den Link pokeswipe-radar.de/creator. Bereits angeschriebene Creator werden nie erneut angeschrieben.`)) return;
   const gap = Number(d.sending.bulkGapMs) || 500;
   ca.bulk = { total: list.length, sent: 0, failed: 0, skipped: 0, errors: [] };
   ca.lastSummary = ""; render();
@@ -395,7 +453,7 @@ async function runBulkSend() {
       let tries = 0;
       while (true) {
         try {
-          await api(`/api/admin/creators/${l.id}/send`, { method: "POST", body: { bulk: true } });
+          await api(`/api/admin/creators/${l.id}/send`, { method: "POST", body: { bulk: true, ...(template ? { template } : {}) } });
           ca.bulk.sent++;
           const x = leadById(l.id);
           if (x) { x.status = "sent"; x.sentAt = new Date().toISOString(); x.display = { key: "sent", label: "E-Mail gesendet" }; }
@@ -420,10 +478,63 @@ async function runBulkSend() {
   finally { ca.bulk = null; await refreshAll(); }
 }
 
+/** Turbo: erst alle Creator ohne E-Mail durchsuchen, danach die Launch-Mail (Vorlage E) an alle bereiten Creator senden. */
+async function runTurbo() {
+  if (ca.turbo || ca.finder || ca.bulk) return;
+  const d = ca.data;
+  if (!d?.sending?.configured) return toast("Resend nicht eingerichtet", "RESEND_API_KEY / MAIL_FROM fehlen.");
+  const open = finderOpen(d).length;
+  if (!confirm(`Turbo-Outreach starten?\n\n1. Auto-Finder prüft ${open} Creator ohne E-Mail (Impressum, Linktree, Beacons, Website + MX-Prüfung).\n2. Danach geht die Launch-Mail „${d.templates.find((t) => t.id === (d.launchTemplate || "E"))?.label || "E – Launch-Offer"}“ inkl. Video-Link & eigenem Promo-Code über Resend an alle Creator mit gültiger E-Mail, die noch nicht angeschrieben wurden.\n\nEigene, gespeicherte Texte bleiben erhalten. Abgemeldete oder schon angeschriebene Creator werden nie (erneut) angeschrieben.`)) return;
+  ca.turbo = true; render();
+  try {
+    if (open) await runAutoFind();
+    const findSummary = ca.lastSummary;
+    if (!bulkReady(ca.data).length) {
+      ca.lastSummary = `${findSummary ? `${findSummary}\n\n` : ""}📭 Keine bereiten Creator mit gültiger E-Mail – für reine TikTok-Accounts „⚡ DM kopieren & TikTok-Profil öffnen“ nutzen.`;
+      toast("Turbo-Outreach", "Keine neuen E-Mail-Kontakte zum Anschreiben.");
+      return;
+    }
+    await runBulkSend({ template: ca.data.launchTemplate || "E", confirmed: true });
+    if (findSummary) ca.lastSummary = `${findSummary}\n\n${ca.lastSummary}`;
+  } finally { ca.turbo = false; render(); }
+}
+
 export const creatorAdminApi = {
   openCreatorAdmin,
   caAutoFind: () => runAutoFind(),
   caBulkSend: () => runBulkSend(),
+  caTurbo: () => runTurbo(),
+  /** ⚡ DM in die Zwischenablage, Status „DM gesendet“ und TikTok-Profil im neuen Tab – alles in einem Klick. */
+  caTurboDm(id) {
+    const l = leadById(id);
+    if (!l) return;
+    // Zwischenablage zuerst (solange dieses Fenster den Fokus hat), dann sofort den Tab öffnen (Popup-Blocker: noch im Klick)
+    let copied = Promise.reject(new Error("no clipboard"));
+    try { if (navigator.clipboard?.writeText) copied = navigator.clipboard.writeText(String(l.dm || "")); } catch {}
+    window.open(l.tiktokUrl, "_blank", "noopener");
+    copied.then(
+      () => toast("⚡ DM kopiert", "TikTok-Profil ist offen: Nachricht → Einfügen → Senden."),
+      () => prompt("DM zum Kopieren (TikTok-Profil ist im neuen Tab offen):", String(l.dm || "")),
+    );
+    if (["ready", "paused"].includes(l.status)) patch(id, { status: "dm_sent" });
+  },
+  caCopyComment: (id) => { const l = leadById(id); if (l) copy(l.comment, "Kommentar-Hook kopiert – unter einem aktuellen Video des Creators posten."); },
+  async caVideoUpload() {
+    const file = $("ca-video-file")?.files?.[0];
+    if (!file) return toast("Showcase-Video", "Bitte zuerst eine MP4-Datei wählen.");
+    if (ca.videoUpload) return;
+    ca.videoUpload = 0.01; render();
+    try {
+      const r = await uploadCreatorVideo(file, { source: `Upload: ${file.name}`.slice(0, 80), onProgress: (p) => { ca.videoUpload = Math.max(0.01, p); render(); } });
+      ca.video = r.video;
+      toast("🎬 Video veröffentlicht", "Läuft jetzt auf pokeswipe-radar.de/creator#video.");
+    } catch (e) { handleError(e); }
+    finally { ca.videoUpload = null; render(); }
+  },
+  async caVideoDelete() {
+    if (!confirm("Showcase-Video entfernen? /creator#video zeigt dann wieder die interaktive Live-Vorschau.")) return;
+    try { await deleteCreatorVideo(); ca.video = null; render(); toast("🗑 Entfernt", "Live-Vorschau ist wieder aktiv."); } catch (e) { handleError(e); }
+  },
   async caImport() {
     const text = $("ca-import")?.value || "";
     if (!text.trim()) return toast("Import", "Bitte Zeilen im Format „Name - email@domain.de“ oder E-Mail-Adressen einfügen.");
@@ -436,7 +547,7 @@ export const creatorAdminApi = {
       toast("📋 Import fertig", `${r.created.length} angelegt · ${r.skipped.length} übersprungen – jetzt „🚀 Alle bereiten Creator anschreiben“.`);
     } catch (e) { handleError(e); }
   },
-  caTab: (k) => { ca.tab = k; render(); },
+  caTab: (k) => { ca.tab = k; render(); if (k === "hooks") loadVideoStatus(); },
   caFilter: (k) => { ca.filter = k; render(); },
   caToggle: (id) => { ca.open.has(id) ? ca.open.delete(id) : ca.open.add(id); render(); },
   caSelect: (id, on) => { on ? ca.selected.add(id) : ca.selected.delete(id); render(); },
