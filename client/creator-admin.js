@@ -4,7 +4,7 @@
 // • Automatischer 30-Tage-Promo-Code je Creator, 4 Anschreiben-Vorlagen mit Platzhaltern
 // • Kontrollierter Versand über Resend: „Freigeben & senden“ oder gestaffelte Warteschlange (max. 15/Tag), Follow-up nach 4 Tagen
 // • Creator-Bewerbungen von /creator freigeben, Viral-Hook- & Kommentar-Generator, Schnellstart Pro-Video-Generator
-import { $, esc, jsArg, toast, api, handleError, modal, btn } from "./core.js";
+import { $, esc, jsArg, safeUrl, toast, api, handleError, modal, btn } from "./core.js";
 
 const ca = {
   data: null, tab: "finder", filter: "all", selected: new Set(), open: new Set(), hook: { type: "restock", topic: "" },
@@ -153,7 +153,7 @@ function tiktokFinderHtml(d) {
   const searches = d.tiktokSearches?.length ? d.tiktokSearches : TIKTOK_SEARCHES_FALLBACK;
   return `<div class="bg-gradient-to-r from-cyan-500/10 to-fuchsia-500/10 border border-cyan-400/30 rounded-2xl p-3 space-y-2 text-xs">
     <p class="font-black text-white">🎯 Aktive deutsche TikTok-Creator (1k–15k Follower) finden</p>
-    <div class="flex flex-wrap gap-1.5">${searches.map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener" class="bg-slate-950 border border-slate-700 hover:border-cyan-400 text-white font-bold px-2.5 py-1.5 rounded-lg">${esc(x.label)} ↗</a>`).join("")}</div>
+    <div class="flex flex-wrap gap-1.5">${searches.map((x) => `<a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener" class="bg-slate-950 border border-slate-700 hover:border-cyan-400 text-white font-bold px-2.5 py-1.5 rounded-lg">${esc(x.label)} ↗</a>`).join("")}</div>
     <div class="grid grid-cols-1 sm:grid-cols-5 gap-1.5">
       <input id="ca-tt-name" placeholder="TikTok-Name oder @handle *" class="${inputCls} sm:col-span-2" onkeydown="if(event.key==='Enter')PS.caQuickTikTok()" />
       <input id="ca-tt-bio" placeholder="Linktree / Beacons / Website aus der Bio (optional)" class="${inputCls} sm:col-span-2" onkeydown="if(event.key==='Enter')PS.caQuickTikTok()" />
@@ -190,17 +190,17 @@ function leadCard(l, d) {
       <button type="button" onclick="PS.caToggle(${Number(l.id)})" class="text-slate-300 font-bold text-[11px] shrink-0">${open ? "▲ zu" : "▼ öffnen"}</button>
     </div>
     <div class="flex flex-wrap gap-1.5">
-      <a href="${esc(l.research.youtubeAbout)}" target="_blank" rel="noopener" class="bg-rose-600/80 text-white font-bold px-2 py-1 rounded-lg">▶ YouTube Kanalinfo / Impressum öffnen</a>
-      <a href="${esc(l.research.tiktok)}" target="_blank" rel="noopener" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg">TikTok suchen</a>
-      <a href="${esc(l.research.instagram)}" target="_blank" rel="noopener" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg">Instagram suchen</a>
-      <a href="${esc(l.research.google)}" target="_blank" rel="noopener" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg">Impressum googeln</a>
-      ${l.channelUrl ? `<a href="${esc(l.channelUrl)}" target="_blank" rel="noopener" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg">Kanal ↗</a>` : ""}
+      <a href="${esc(safeUrl(l.research.youtubeAbout))}" target="_blank" rel="noopener" class="bg-rose-600/80 text-white font-bold px-2 py-1 rounded-lg">▶ YouTube Kanalinfo / Impressum öffnen</a>
+      <a href="${esc(safeUrl(l.research.tiktok))}" target="_blank" rel="noopener" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg">TikTok suchen</a>
+      <a href="${esc(safeUrl(l.research.instagram))}" target="_blank" rel="noopener" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg">Instagram suchen</a>
+      <a href="${esc(safeUrl(l.research.google))}" target="_blank" rel="noopener" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg">Impressum googeln</a>
+      ${safeUrl(l.channelUrl, { http: true }) ? `<a href="${esc(safeUrl(l.channelUrl, { http: true }))}" target="_blank" rel="noopener" class="bg-slate-800 text-white font-bold px-2 py-1 rounded-lg">Kanal ↗</a>` : ""}
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
       <div class="flex gap-1"><input id="ca-email-${Number(l.id)}" type="email" value="${esc(l.email)}" placeholder="Kontakt-E-Mail" class="${inputCls}" />${btn("✓", `PS.caSaveEmail(${Number(l.id)})`, "bg-emerald-500 text-slate-950 px-3")}</div>
       <div class="flex gap-1"><input id="ca-extract-${Number(l.id)}" value="${esc(l.bioLink || "")}" placeholder="Linktree / Beacons / Instagram / Website / Impressum-URL" class="${inputCls}" />${btn("🔎 Extrahieren", `PS.caExtract(${Number(l.id)})`, "bg-cyan-600 text-white px-2 shrink-0")}</div>
     </div>
-    ${(l.socials || []).length ? `<p class="text-[10px] text-slate-400 break-all">Gefunden: ${(l.socials || []).map((s) => `<a href="${esc(s)}" target="_blank" rel="noopener" class="underline text-slate-300">${esc(String(s).replace(/^https?:\/\/(www\.)?/, ""))}</a>`).join(" · ")}</p>` : ""}
+    ${(l.socials || []).length ? `<p class="text-[10px] text-slate-400 break-all">Gefunden: ${(l.socials || []).filter((s) => safeUrl(s, { http: true })).map((s) => `<a href="${esc(safeUrl(s, { http: true }))}" target="_blank" rel="noopener" class="underline text-slate-300">${esc(String(s).replace(/^https?:\/\/(www\.)?/, ""))}</a>`).join(" · ")}</p>` : ""}
     <div class="flex flex-wrap gap-1.5">
       ${canSend ? btn(l.status === "queued" ? "Jetzt statt geplant über Resend senden" : "✅ Freigeben & über Resend senden", `PS.caSend(${Number(l.id)})`, "bg-emerald-500 text-slate-950 font-black ring-2 ring-emerald-300/60") : ""}
       ${followDue ? btn("🔁 Follow-up senden", `PS.caFollowup(${Number(l.id)})`, "bg-amber-400 text-slate-950") : ""}
@@ -251,7 +251,7 @@ function appsHtml(d) {
       <div class="flex flex-wrap items-center gap-1.5"><strong class="text-white text-sm">${esc(a.channelName)}</strong><span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-300">${esc(a.platformLabel)}</span>
         <span class="text-[10px] text-slate-400">${Number(a.followers).toLocaleString("de-DE")} Follower · ${esc(fmt(a.createdAt))}</span>
         <span class="text-[10px] font-black px-1.5 py-0.5 rounded-full ${a.status === "new" ? "bg-yellow-400/25 text-yellow-200" : a.status === "approved" ? "bg-emerald-500/20 text-emerald-200" : "bg-slate-700 text-slate-300"}">${a.status === "new" ? "Neu" : a.status === "approved" ? "Freigegeben" : "Abgelehnt"}</span></div>
-      <p><a href="${esc(a.channelUrl)}" target="_blank" rel="noopener" class="underline text-slate-300 break-all">${esc(a.channelUrl)}</a> · <span class="text-slate-300">${esc(a.email)}</span></p>
+      <p><a href="${esc(safeUrl(a.channelUrl, { http: true }) || "#")}" target="_blank" rel="noopener" class="underline text-slate-300 break-all">${esc(a.channelUrl)}</a> · <span class="text-slate-300">${esc(a.email)}</span></p>
       <p>Code-Entwurf: <span class="font-mono font-black text-yellow-300">${esc(a.promoCode || a.wishCode || "–")}</span></p>
       ${a.message ? `<p class="text-slate-300 bg-slate-950 rounded-lg p-2" data-i18n-skip>${esc(a.message)}</p>` : ""}
       ${a.status === "new" ? `<div class="flex gap-1.5">${btn("✅ Freigeben & Code aktivieren", `PS.caApp(${Number(a.id)}, 'approve')`, "bg-emerald-500 text-slate-950")}${btn("Ablehnen", `PS.caApp(${Number(a.id)}, 'reject')`, "bg-slate-800 text-slate-300")}</div>` : ""}

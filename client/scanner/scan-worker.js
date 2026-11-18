@@ -11,6 +11,7 @@ import {
   glareMask, maskBits, topMatchesMasked, prepareStrip,
 } from "../../server/scan-logic.ts";
 import { buildTextIndex, decideText } from "../../server/scan-text-logic.ts";
+import { renderGlyphBitmaps } from "./glyph-render.js";
 
 const idx = { keys: [], langs: [], localNum: new Int32Array(0), total: new Int32Array(0), words: new Uint32Array(0), colors: [], count: 0, perLang: {}, learned: 0 };
 let glyphs = null;
@@ -113,28 +114,9 @@ async function loadTextIndex(langs) {
 // Ziffern-Vorlagen (einmalig mit OffscreenCanvas gezeichnet; mehrere Schriften, normal und schmal)
 // ---------------------------------------------------------------------------
 function buildGlyphs() {
+  // Ohne OffscreenCanvas (bzw. ohne 2D-Kontext darin) zeichnet der Haupt-Thread die Vorlagen (Nachricht „need-glyphs“)
   if (typeof OffscreenCanvas === "undefined") return [];
-  const out = [];
-  const cv = new OffscreenCanvas(64, 80);
-  const ctx = cv.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return [];
-  const fonts = ["bold 56px Arial, Helvetica, sans-serif", "56px Arial, Helvetica, sans-serif", "bold 56px 'Roboto Condensed', 'Arial Narrow', sans-serif", "600 56px Verdana, sans-serif"];
-  for (const font of fonts) for (const squeeze of [1, 0.8]) for (const ch of "0123456789/") {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 64, 80);
-    ctx.setTransform(squeeze, 0, 0, 1, 32 * (1 - squeeze), 0);
-    ctx.fillStyle = "#000"; ctx.font = font; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(ch, 32, 42);
-    const { data } = ctx.getImageData(0, 0, 64, 80);
-    let x0 = 64, y0 = 80, x1 = -1, y1 = -1;
-    for (let y = 0; y < 80; y++) for (let x = 0; x < 64; x++) if (data[(y * 64 + x) * 4] < 128) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-    if (x1 < 0) continue;
-    const w = x1 - x0 + 1, h = y1 - y0 + 1;
-    const bits = new Float32Array(w * h);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) bits[y * w + x] = data[((y0 + y) * 64 + x0 + x) * 4] < 128 ? 1 : 0;
-    out.push({ ch, v: glyphVector(bits, w, h) });
-  }
-  return out;
+  return renderGlyphBitmaps(new OffscreenCanvas(64, 80)).map((g) => ({ ch: g.ch, v: glyphVector(g.bits, g.w, g.h) }));
 }
 
 async function platformOcr(strip) {
@@ -273,11 +255,22 @@ self.onmessage = async (e) => {
   const msg = e.data || {};
   if (msg.type === "init") {
     if (!glyphs) { try { glyphs = buildGlyphs(); } catch { glyphs = []; } }
+    // Rückfall für Safari/iOS ohne OffscreenCanvas im Worker: Vorlagen vom Haupt-Thread anfordern
+    if (!glyphs.length) postMessage({ type: "need-glyphs" });
     try { if (!textDetector && typeof self.TextDetector === "function") textDetector = new self.TextDetector(); } catch { textDetector = null; }
     const langs = Array.isArray(msg.langs) && msg.langs.length ? msg.langs : ["de"];
     langsOrder = langs;
     const [r, textCount] = await Promise.all([loadIndex(langs), loadTextIndex(langs)]);
     postMessage({ type: "ready", ...r, textCount, ocr: glyphs.length ? (textDetector ? "text-detector" : "templates") : textDetector ? "text-detector" : "none" });
+    return;
+  }
+  // Vom Haupt-Thread gezeichnete Ziffern-Vorlagen (Main-Thread-Canvas-Rückfall)
+  if (msg.type === "glyphs") {
+    try {
+      const items = Array.isArray(msg.items) ? msg.items : [];
+      const built = items.filter((g) => g && g.w > 0 && g.h > 0 && g.bits).map((g) => ({ ch: String(g.ch), v: glyphVector(new Float32Array(g.bits), g.w, g.h) }));
+      if (built.length) { glyphs = built; postMessage({ type: "ocr-mode", ocr: textDetector ? "text-detector" : "templates" }); }
+    } catch { /* bleibt ohne Vorlagen – Text-Erkennung läuft weiter */ }
     return;
   }
   // Gelesener Text (Name + Nummer) → Karte. Bild-Treffer der letzten 1,5 s (bzw. des Fotos) bestätigen/entscheiden.

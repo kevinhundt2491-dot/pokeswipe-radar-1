@@ -2,7 +2,7 @@
 // • Match-Vorschlag (nach gegenseitigem Interesse) mit Marktwert-Vergleich und Wertausgleich
 // • Strukturierte Tauschanfrage: Karten aus der eigenen Sammlung auswählen statt Freitext
 // • Tausch-Schritte: Versand mit Sendungsnummer je Seite, Erhalt je Seite, Abschluss
-import { $, esc, jsArg, eur, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
+import { $, esc, jsArg, safeUrl, eur, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
 
 const VARIANT_LABEL = { normal: "Normal", reverse_holo: "Reverse Holo", holo: "Holo", first_edition: "1st Edition", shadowless: "Shadowless", promo: "Promo" };
 const cents = (c) => eur((Number(c) || 0) / 100);
@@ -243,7 +243,7 @@ export function tradeDetailHtml(x) {
   const mineItems = x.items.filter((i) => i.side === mineSide), theirItems = x.items.filter((i) => i.side === otherSide);
   const myShipped = x[`${mineSide}_shipped_at`], theirShipped = x[`${otherSide}_shipped_at`];
   const iReceived = x[`${otherSide}_received_at`];
-  const theirTrack = x[`${otherSide}TrackingUrl`];
+  const theirTrack = safeUrl(x[`${otherSide}TrackingUrl`]);
   const cashLine = Number(x.cash_cents) ? `<p class="text-xs text-slate-300">Wertausgleich: <strong class="text-white">${cents(x.cash_cents)}</strong> ${x.cash_payer === mineSide ? "zahlst du" : "zahlt dein Partner"} (bei Übergabe/Versand vereinbaren, nur mit Käuferschutz).</p>` : "";
   const giveValue = mineItems.reduce((s, i) => s + i.valueCents * i.quantity, 0), getValue = theirItems.reduce((s, i) => s + i.valueCents * i.quantity, 0);
   const cashMine = x.cash_payer === mineSide ? Number(x.cash_cents) : 0, cashTheirs = x.cash_payer === otherSide ? Number(x.cash_cents) : 0;
