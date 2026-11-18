@@ -217,3 +217,81 @@ test("Extraktor: Linktree-/Beacons-JSON mit \\u0040 und kaputtem mailto", () => 
   const r = extractContacts(html, "https://linktr.ee/pokemax");
   assert.ok(r.emails.includes("business@pokemax.de"), JSON.stringify(r.emails));
 });
+
+// ---------------------------------------------------------------------------
+// Auto-Finder (Impressum / Linktree / Web-Suche) & Schnell-Import
+// ---------------------------------------------------------------------------
+import {
+  parseCreatorImport, nameFromEmail, rankEmailFinds, pageMentions, emailMatchesName, imprintCandidates, extractExternalLinks,
+  extractUrlsFromText, emailSourceLabel, emailSearchQueries, isLinkHub, isSearchSkipHost, OUTREACH_BULK_DAILY_CAP, BULK_SEND_GAP_MS,
+} from "../server/creator-logic.ts";
+
+test("Auto-Finder: Suchanfragen, Kandidaten-Seiten und Link-Hubs", () => {
+  assert.deepEqual(emailSearchQueries("ZockerEule"), ['"ZockerEule" Pokemon Impressum "@"', '"ZockerEule" Pokemon Kontakt E-Mail']);
+  assert.deepEqual(imprintCandidates("https://zockereule.de/"), ["https://zockereule.de/", "https://zockereule.de/impressum", "https://zockereule.de/kontakt", "https://zockereule.de/imprint", "https://zockereule.de/contact"]);
+  assert.deepEqual(imprintCandidates("https://linktr.ee/dario"), ["https://linktr.ee/dario"], "kein /impressum an Linktree anhängen");
+  assert.ok(isLinkHub("linktr.ee") && isLinkHub("beacons.ai") && !isLinkHub("zockereule.de"));
+  assert.ok(isSearchSkipHost("de.wikipedia.org") && isSearchSkipHost("www.youtube.com") && !isSearchSkipHost("zockereule.de"));
+  const links = extractExternalLinks(`<a href="https://www.youtube.com/@x">yt</a><a href="https://zockereule.de/shop">site</a><a href="https://linktr.ee/x">lt</a>`, "https://linktr.ee/zockereule");
+  assert.deepEqual(links, ["https://zockereule.de/shop"]);
+  assert.deepEqual(extractUrlsFromText("Impressum: https://zockereule.de/impressum. Mail: fake@erfunden.de"), ["https://zockereule.de/impressum"], "E-Mails aus KI-Text werden ignoriert");
+  assert.equal(OUTREACH_BULK_DAILY_CAP, 100);
+  assert.equal(BULK_SEND_GAP_MS, 500);
+});
+
+test("Auto-Finder: Fremde Adressen aus Suchtreffern werden nicht übernommen", () => {
+  assert.ok(pageMentions("<p>Impressum – Zocker Eule, Musterstraße</p>", "ZockerEule"));
+  assert.ok(pageMentions("<h1>The Zero of Time</h1>", "The Zero of Time"));
+  assert.ok(!pageMentions("<h1>Pokémon Presse</h1>", "ZockerEule"));
+  assert.ok(emailMatchesName("business@zockereule.de", "ZockerEule"));
+  assert.ok(!emailMatchesName("redaktion@zeitung.de", "ZockerEule"));
+  const ranked = rankEmailFinds([
+    { email: "redaktion@zeitung.de", pageUrl: "https://zeitung.de/artikel", prio: 3, viaSearch: true, mentions: true },
+    { email: "info@shop.de", pageUrl: "https://shop.de/", prio: 3, viaSearch: true, mentions: false },
+    { email: "kontakt@max-muster.de", pageUrl: "https://max-muster.de/impressum", prio: 2, viaSearch: true, mentions: true },
+    { email: "business@zockereule.de", pageUrl: "https://zockereule.de/", prio: 1, viaSearch: true, mentions: true },
+  ], "ZockerEule");
+  assert.deepEqual(ranked.map((f) => f.email), ["kontakt@max-muster.de", "business@zockereule.de"]);
+  // Eigene Links (nicht über die Suche) zählen immer
+  assert.equal(rankEmailFinds([{ email: "hi@bazi.de", pageUrl: "https://linktr.ee/bazi", prio: 1, viaSearch: false, mentions: false }], "PokeBazi").length, 1);
+  assert.equal(emailSourceLabel("https://zockereule.de/impressum", false), "Verifiziert aus Impressum · zockereule.de/impressum");
+  assert.equal(emailSourceLabel("https://linktr.ee/dario", false), "Verifiziert aus Linktree · linktr.ee/dario");
+  assert.match(emailSourceLabel("https://x.de/kontakt", true), /^Verifiziert aus Kontaktseite \(Web-Suche\)/);
+});
+
+test("Schnell-Import: „Name - mail“, Listen, Dubletten und Müll", () => {
+  const r = parseCreatorImport(`Dario - business@dario-tcg.de
+ZockerEule: Kontakt@ZockerEule.de
+"PokeBazi" <hallo@pokebazi.de>
+info@fanmade-tim.de
+max.mueller@gmail.com, lisa_karten@web.de
+business@dario-tcg.de
+keine adresse hier
+test@example.com`);
+  assert.deepEqual(r.entries.map((e) => [e.name, e.email]), [
+    ["Dario", "business@dario-tcg.de"],
+    ["ZockerEule", "kontakt@zockereule.de"],
+    ["PokeBazi", "hallo@pokebazi.de"],
+    ["Fanmade Tim", "info@fanmade-tim.de"],
+    ["Max Mueller", "max.mueller@gmail.com"],
+    ["Lisa Karten", "lisa_karten@web.de"],
+  ]);
+  assert.ok(r.invalid.includes("keine adresse hier"));
+  assert.ok(r.invalid.includes("test@example.com"));
+  assert.equal(nameFromEmail("kontakt@gmail.com"), "Kontakt");
+  assert.equal(parseCreatorImport("a@b.de\nc@d.de\ne@f.de", 2).truncated, true);
+});
+
+test("Auto-Finder & Massenversand sind verdrahtet (Funktion, Buttons, Doppelversand-Schutz)", () => {
+  const fn = readFileSync(new URL("../netlify/functions/auto-find-creator-emails.mts", import.meta.url), "utf8");
+  assert.match(fn, /isAdmin\(user\)/);
+  const finder = readFileSync(new URL("../server/creator-email-finder.ts", import.meta.url), "utf8");
+  assert.match(finder, /resolveMx/);
+  const ui = readFileSync(new URL("../client/creator-admin.js", import.meta.url), "utf8");
+  assert.match(ui, /E-Mails für alle Creator automatisch finden/);
+  assert.match(ui, /Alle bereiten Creator jetzt auf einmal per Resend anschreiben/);
+  assert.match(ui, /Mehrere Creator \/ E-Mails auf einmal einfügen/);
+  const srv = readFileSync(new URL("../server/creator.ts", import.meta.url), "utf8");
+  assert.match(srv, /opts\.bulk && \(l\.sentAt/);
+  assert.match(srv, /inArray\(creatorLeads\.status, lockStatus\)/, "atomare Sperre gegen Doppelversand");
+});

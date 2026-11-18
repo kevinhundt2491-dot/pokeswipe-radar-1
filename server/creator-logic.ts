@@ -454,3 +454,164 @@ export const COMMENT_RULES = [
   "Höchstens 1 Kommentar pro Kanal und Woche; nie denselben Text zweimal posten.",
   "Erst Mehrwert (Preis-Info, Tipp, Frage), dann – wenn überhaupt – die App beiläufig erwähnen.",
 ];
+
+// ---------------------------------------------------------------------------
+// Auto-Finder für Geschäfts-E-Mails (netlify/functions/auto-find-creator-emails.mts)
+// Regel: Es wird nie eine Adresse „erraten“ – nur, was wörtlich auf einer tatsächlich abgerufenen öffentlichen Seite steht,
+// passt zum Creator und hat einen MX-Eintrag (DNS), wird gespeichert.
+// ---------------------------------------------------------------------------
+/** Mehr Mails pro Tag beim 1-Klick-Massenversand (Resend-Free-Tarif: 100/Tag). Abstand zwischen Mails dort ~500 ms. */
+export const OUTREACH_BULK_DAILY_CAP = 100;
+export const BULK_SEND_GAP_MS = 500;
+
+/** Link-in-Bio-Dienste: Seite abrufen, E-Mails + verlinkte eigene Website übernehmen – aber dort kein /impressum anhängen. */
+const LINK_HUB_HOSTS = /(^|\.)(linktr\.ee|beacons\.ai|beacons\.page|lnk\.bio|carrd\.co|bio\.link|linkin\.bio|campsite\.bio|taplink\.cc|solo\.to|msha\.ke|komi\.io|hoo\.be|allmylinks\.com|link\.me|stan\.store|ko-fi\.com|linkpop\.com)$/i;
+export const isLinkHub = (host: string) => LINK_HUB_HOSTS.test(host);
+export function linkHubLabel(host: string) {
+  const h = host.replace(/^www\./i, "").toLowerCase();
+  if (/linktr\.ee$/.test(h)) return "Linktree";
+  if (/beacons\./.test(h)) return "Beacons";
+  return h;
+}
+
+/** Suchtreffer dieser Seiten gehören fast nie dem Creator selbst (Verzeichnisse, Shops, Foren, Wikis) – nicht auswerten. */
+const SEARCH_SKIP_HOSTS = /(^|\.)(google\.[a-z.]+|gstatic\.com|wikipedia\.org|wikimedia\.org|fandom\.com|reddit\.com|amazon\.[a-z.]+|ebay\.[a-z.]+|cardmarket\.com|pokemon\.com|pokemon\.de|pokewiki\.de|bulbapedia\.bulbagarden\.net|socialblade\.com|noxinfluencer\.com|hypeauditor\.com|playboard\.co|starngage\.com|influencermarketinghub\.com|linkedin\.com|pinterest\.[a-z.]+|kleinanzeigen\.de|vinted\.[a-z.]+|trustpilot\.com|duckduckgo\.com|bing\.com|pokeswipe-radar\.de)$/i;
+export const isSearchSkipHost = (host: string) => SEARCH_SKIP_HOSTS.test(host) || NO_FETCH_HOSTS.test(host);
+
+/** Gezielte Web-Suchanfragen nach dem öffentlichen Impressum / der Kontakt-Adresse. */
+export function emailSearchQueries(name: string) {
+  const n = String(name || "").replace(/"/g, "").trim().slice(0, 60);
+  return [`"${n}" Pokemon Impressum "@"`, `"${n}" Pokemon Kontakt E-Mail`];
+}
+
+const squash = (s: string) => String(s || "").toLowerCase()
+  .replace(/[äöüß]/g, (ch) => ({ ä: "ae", ö: "oe", ü: "ue", ß: "ss" } as Record<string, string>)[ch])
+  .normalize("NFKD").replace(/[^a-z0-9]+/g, "");
+const NAME_STOP = new Set(["pokemon", "karten", "official", "offiziell", "channel", "kanal", "cards", "the"]);
+/** Aussagekräftige Wörter des Namens (≥ 4 Zeichen) – „The Zero of Time“ → ["zero", "time"]. */
+function nameWords(name: string) {
+  return String(name || "").split(/[^\p{L}\p{N}]+/u).map(squash).filter((w) => w.length >= 4 && !NAME_STOP.has(w));
+}
+/** Namens-Tokens: Wörter + zusammengeschriebener Name („zerooftime“). */
+export function nameTokens(name: string) {
+  const joined = squash(String(name || "").replace(/^the\s+/i, ""));
+  return [...new Set([...nameWords(name), ...(joined.length >= 4 ? [joined] : [])])];
+}
+/** Nennt die Seite den Creator (Name zusammengeschrieben oder alle aussagekräftigen Wörter)? */
+export function pageMentions(html: string, name: string) {
+  const text = squash(String(html || "").slice(0, 2_000_000).replace(/<[^>]+>/g, " "));
+  const joined = squash(String(name || "").replace(/^the\s+/i, ""));
+  if (joined.length >= 4 && text.includes(joined)) return true;
+  const words = nameWords(name);
+  return words.length > 0 && words.every((w) => text.includes(w));
+}
+/** Enthält die Adresse (lokaler Teil oder Domain) erkennbar den Creator-Namen? */
+export function emailMatchesName(email: string, name: string) {
+  const e = squash(email);
+  return nameTokens(name).some((t) => e.includes(t));
+}
+/** Impressum-/Kontaktseite? */
+export const isImprintUrl = (url: string) => /impressum|imprint|kontakt|contact|legal|about/i.test(String(url || ""));
+
+/** Kandidaten-Seiten für eine eigene Website: Startseite + typische Impressum-/Kontakt-Pfade (gleiche Domain). */
+export function imprintCandidates(raw: string): string[] {
+  let u: URL;
+  try { u = new URL(raw); } catch { return []; }
+  const origin = u.origin;
+  const list = [u.toString()];
+  if (!isLinkHub(u.hostname) && !NO_FETCH_HOSTS.test(u.hostname)) for (const p of ["/impressum", "/kontakt", "/imprint", "/contact"]) list.push(origin + p);
+  return [...new Set(list)];
+}
+
+/** Verlinkte externe Seiten (z. B. eigene Website aus dem Linktree) – keine Plattformen, keine Link-Hubs, keine Suchmaschinen. */
+export function extractExternalLinks(html: string, baseUrl: string): string[] {
+  const out = new Set<string>();
+  let base: URL | null = null;
+  try { base = new URL(baseUrl); } catch {}
+  for (const m of String(html || "").slice(0, 2_000_000).matchAll(/href\s*=\s*["'](https?:\/\/[^"'\s<>]{4,300})["']/gi)) {
+    try {
+      const u = new URL(m[1].replace(/&amp;/g, "&"));
+      if (base && u.hostname === base.hostname) continue;
+      if (isLinkHub(u.hostname) || isSearchSkipHost(u.hostname) || /\.(png|jpe?g|gif|webp|svg|css|js|pdf|mp4)$/i.test(u.pathname)) continue;
+      if (/(^|\.)(apple\.com|spotify\.com|paypal\.(com|me)|patreon\.com|throne\.com|streamelements\.com|cloudflare\.com|w3\.org|schema\.org|gravatar\.com)$/i.test(u.hostname)) continue;
+      out.add(`${u.origin}${u.pathname === "/" ? "" : u.pathname}`);
+    } catch {}
+    if (out.size >= 4) break;
+  }
+  return [...out];
+}
+
+/** Aus einem Text (z. B. Antwort der Web-Suche) nur echte http(s)-Links herausziehen – E-Mails im Text werden bewusst ignoriert. */
+export function extractUrlsFromText(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of String(text || "").matchAll(/https?:\/\/[^\s<>"')\]]{4,300}/gi)) out.add(m[0].replace(/[.,;:!?]+$/, ""));
+  return [...out].slice(0, 12);
+}
+
+/** Quellen-Hinweis fürs Kontakt-Feld. */
+export function emailSourceLabel(pageUrl: string, viaSearch: boolean) {
+  let host = "", path = "";
+  try { const u = new URL(pageUrl); host = u.hostname.replace(/^www\./, ""); path = u.pathname; } catch {}
+  const kind = isLinkHub(host) ? linkHubLabel(host) : /impressum|imprint/i.test(path) ? "Impressum" : /kontakt|contact/i.test(path) ? "Kontaktseite" : "Website";
+  return `Verifiziert aus ${kind}${viaSearch ? " (Web-Suche)" : ""} · ${host}${path && path !== "/" ? path : ""}`.slice(0, 200);
+}
+
+/**
+ * Wählt aus den Funden die beste Adresse. Bei Funden aus der Web-Suche muss die Seite den Creator nennen UND
+ * (die Adresse den Namen enthalten ODER die Seite ein Impressum/Kontakt sein ODER die Domain den Namen tragen) –
+ * so landen keine Adressen fremder Seiten (Presse, Shops) beim Creator.
+ */
+export type EmailFind = { email: string; pageUrl: string; prio: number; viaSearch: boolean; mentions: boolean };
+export function rankEmailFinds(finds: EmailFind[], name: string): EmailFind[] {
+  const ok = finds.filter((f) => {
+    if (!f.viaSearch) return true;
+    if (!f.mentions) return false;
+    let host = "";
+    try { host = new URL(f.pageUrl).hostname; } catch {}
+    return emailMatchesName(f.email, name) || isImprintUrl(f.pageUrl) || nameTokens(name).some((t) => squash(host).includes(t));
+  });
+  const score = (f: EmailFind) => f.prio * 10 + (isImprintUrl(f.pageUrl) ? 6 : 0) + (emailMatchesName(f.email, name) ? 5 : 0)
+    + (/^(business|kooperation|koop|anfragen|collab|partner|contact|kontakt|info|mail|hello|hallo|management)[@.+_-]/i.test(f.email) ? 3 : 0) - (f.viaSearch ? 2 : 0);
+  const seen = new Set<string>();
+  return ok.sort((a, b) => score(b) - score(a)).filter((f) => (seen.has(f.email) ? false : (seen.add(f.email), true)));
+}
+
+// ---------------------------------------------------------------------------
+// Schnell-Import „Name - email@domain.de“ / reine E-Mail-Listen
+// ---------------------------------------------------------------------------
+const GENERIC_LOCAL = /^(info|kontakt|contact|business|mail|email|hello|hallo|hi|anfragen|anfrage|office|team|kooperation|koop|collab|partner|management|presse|press|support|service)$/i;
+const FREEMAIL = /^(gmail|googlemail|outlook|hotmail|live|yahoo|gmx|web|t-online|icloud|me|mail|posteo|freenet|proton|protonmail|aol|arcor|online)$/i;
+/** Anzeigename aus einer Adresse ableiten (nur für reine E-Mail-Listen): info@zockereule.de → „Zockereule“, max.mueller@gmail.com → „Max Mueller“. */
+export function nameFromEmail(email: string) {
+  const [local, domain = ""] = String(email).toLowerCase().split("@");
+  const dom = domain.split(".").slice(-2, -1)[0] || domain.split(".")[0] || "";
+  const pick = GENERIC_LOCAL.test(local.replace(/[0-9]+$/, "")) && !FREEMAIL.test(dom) ? dom : local;
+  const words = pick.replace(/\+.*$/, "").split(/[._-]+/).map((w) => w.replace(/\d+$/, "")).filter((w) => w.length >= 2);
+  const nm = words.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ").slice(0, 80);
+  return nm.length >= 2 ? nm : "Creator";
+}
+
+/** Zerlegt eingefügten Text in { name, email }. Akzeptiert „Name - mail“, „Name: mail“, „Name <mail>“, „mail, Name“, CSV/Tab und reine Adressen. */
+export function parseCreatorImport(text: string, max = 200) {
+  const out: { name: string; email: string; derived: boolean }[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+  const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  for (const raw of lines) {
+    // Mehrere Adressen in einer Zeile ohne Namen (z. B. „a@x.de, b@y.de“)
+    const all = [...raw.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}/g)].map((m) => m[0]);
+    if (!all.length) { invalid.push(raw.slice(0, 120)); continue; }
+    const rest = raw.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}/g, " ").replace(/mailto:/gi, " ")
+      .replace(/[<>()\[\]"';,\t|]+/g, " ").replace(/\s+/g, " ").trim().replace(/\s[-–—:]+\s/g, " ").replace(/^[-–—:\s]+|[-–—:\s]+$/g, "");
+    const nameGiven = all.length === 1 && rest.length >= 2 ? rest.slice(0, 80) : "";
+    for (const e of all) {
+      const email = e.toLowerCase().replace(/[.]+$/, "");
+      if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,24}$/.test(email) || JUNK_EMAIL.test(email)) { invalid.push(e); continue; }
+      if (seen.has(email)) continue;
+      seen.add(email);
+      out.push({ name: nameGiven || nameFromEmail(email), email, derived: !nameGiven });
+      if (out.length >= max) return { entries: out, invalid, truncated: true };
+    }
+  }
+  return { entries: out, invalid, truncated: false };
+}

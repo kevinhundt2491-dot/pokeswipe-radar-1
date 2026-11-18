@@ -1500,6 +1500,11 @@ export const creatorLeads = pgTable("creator_leads", {
   channelUrl: text("channel_url").notNull().default(""),
   followers: integer().notNull().default(0),
   email: text().notNull().default(""),
+  // Auto-Finder / Import: Herkunft der E-Mail („Verifiziert aus Impressum (…)“), MX-Prüfung, letzter Suchlauf
+  emailSource: text("email_source").notNull().default(""),
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+  emailSearchedAt: timestamp("email_searched_at", { withTimezone: true }),
+  emailSearchNote: text("email_search_note").notNull().default(""),
   socials: jsonb().notNull().default([]), // gefundene Social-Handles (Kontakt-Extraktor)
   promoId: integer("promo_id").references(() => promoCodes.id, { onDelete: "set null" }),
   promoCode: text("promo_code").notNull().default(""),

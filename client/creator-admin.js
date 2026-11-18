@@ -6,7 +6,16 @@
 // • Creator-Bewerbungen von /creator freigeben, Viral-Hook- & Kommentar-Generator, Schnellstart Pro-Video-Generator
 import { $, esc, jsArg, toast, api, handleError, modal, btn } from "./core.js";
 
-const ca = { data: null, tab: "finder", filter: "all", selected: new Set(), open: new Set(), hook: { type: "restock", topic: "" } };
+const ca = {
+  data: null, tab: "finder", filter: "all", selected: new Set(), open: new Set(), hook: { type: "restock", topic: "" },
+  // Laufende 1-Klick-Aktionen (Auto-Finder / Massenversand) – verhindert Doppelklicks und zeigt den Fortschritt
+  finder: null, bulk: null, lastSummary: "",
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Creator, die der Massenversand anschreibt: echte E-Mail, noch nicht angeschrieben, nicht abgemeldet/Platzhalter. */
+const bulkReady = (d) => d.leads.filter((l) => ["ready", "paused", "queued"].includes(l.status) && !l.placeholder && EMAIL_OK.test(String(l.email || "")) && !l.sentAt);
+/** Creator, für die der Auto-Finder sucht. */
+const finderOpen = (d) => d.leads.filter((l) => !l.email && !l.placeholder && ["ready", "paused"].includes(l.status));
 
 const STATUS_CLS = {
   ready: "bg-sky-500/20 text-sky-200", queued: "bg-violet-500/20 text-violet-200", sending: "bg-violet-500/20 text-violet-200",
@@ -52,9 +61,9 @@ function sendingBox(s) {
     ${!s.canSend && s.reason ? `<p class="text-amber-300">${esc(s.reason)}</p>` : ""}
     <details class="text-[11px] text-slate-400"><summary class="cursor-pointer text-slate-300 font-bold">⚖️ Spielregeln für saubere Zustellbarkeit & Rechtssicherheit</summary>
       <ul class="list-disc pl-4 mt-1 space-y-0.5">
-        <li>Nur einzelne, persönliche Kooperationsanfragen an <strong>öffentlich als geschäftlich angegebene</strong> Adressen (Kanalinfo, Impressum, „Business-Anfragen“). Keine gekauften Listen, keine Massen-Mails.</li>
+        <li>Nur persönliche Kooperationsanfragen an <strong>öffentlich als geschäftlich angegebene</strong> Adressen (Kanalinfo, Impressum, Linktree, „Business-Anfragen“) – jede automatisch gefundene Adresse stammt wörtlich von einer abgerufenen Seite und ist per MX-Eintrag geprüft. Keine gekauften Listen.</li>
         <li>Jede Mail enthält Absender, Impressum-Link und einen Abmelde-Link (auch als One-Click-Header). Abgemeldete Adressen landen auf der Sperrliste und werden nie wieder angeschrieben.</li>
-        <li>Höchstens ${Number(s.cap)} Mails pro Tag, mindestens ${Number(s.minGapMin)} Minuten Abstand, genau ein Follow-up – danach ist Schluss.</li>
+        <li>Einzelversand & Warteschlange: höchstens ${Number(s.cap)} Mails pro Tag, mindestens ${Number(s.minGapMin)} Minuten Abstand. 1-Klick-Massenversand: ~${Number(s.bulkGapMs || 500)} ms Abstand, höchstens ${Number(s.bulkCap || 100)} Mails pro Tag. Genau ein Follow-up – danach ist Schluss.</li>
         <li>Antworten gehen an die erste Adresse aus ADMIN_EMAILS. Absendername in den Vorlagen: ${s.senderName ? `„${esc(s.senderName)}“` : "„das Team“ (eigenen Namen über die Umgebungsvariable OUTREACH_SENDER_NAME setzen)"}.</li>
       </ul></details>
   </div>`;
@@ -70,6 +79,7 @@ function finderHtml(d) {
   const totalSignups = d.leads.reduce((s, l) => s + (Number(l.signups) || 0), 0);
   const sendable = d.leads.filter((l) => ca.selected.has(l.id) && ["ready", "paused"].includes(l.status) && l.email && !l.placeholder).length;
   return `
+    ${bigActionsHtml(d)}
     ${tiktokFinderHtml(d)}
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
       ${[["Creator", d.leads.filter((l) => !l.placeholder).length], ["Gesendet", d.leads.filter((l) => l.sentAt).length], ["Follow-up fällig", d.leads.filter((l) => l.display.key === "followup").length], ["Anmeldungen über Codes", totalSignups]]
@@ -96,6 +106,40 @@ function finderHtml(d) {
       <span class="text-[10px] text-slate-400 w-full">Die Warteschlange verschickt alle ~6 Min. eine Mail (Job alle 5 Min.), höchstens ${Number(d.sending.cap)} pro Tag – der Rest rutscht automatisch auf den nächsten Morgen.</span>
     </div>
     <div class="space-y-2">${leads.length ? leads.map((l) => leadCard(l, d)).join("") : `<p class="text-xs text-slate-500">Keine Einträge in diesem Filter.</p>`}</div>`;
+}
+
+// Große 1-Klick-Aktionen oben im Creator-Finder: Auto-Finder, Massenversand, Schnell-Import
+function bigActionsHtml(d) {
+  const ready = bulkReady(d).length;
+  const open = finderOpen(d).length;
+  const f = ca.finder, b = ca.bulk;
+  const busy = Boolean(f || b);
+  const big = "w-full text-left font-black text-sm sm:text-base px-4 py-3.5 rounded-2xl shadow-lg disabled:opacity-60 disabled:cursor-not-allowed";
+  const finderLabel = f
+    ? `⏳ Suche läuft … ${Number(f.done)} geprüft · ${Number(f.found)} gefunden${f.remaining != null ? ` · ${Number(f.remaining)} offen` : ""}`
+    : `🔍 E-Mails für alle Creator automatisch finden <span class="font-bold text-xs opacity-80">(${open} ohne E-Mail)</span>`;
+  const bulkLabel = b
+    ? `⏳ Sende … ${Number(b.sent)}/${Number(b.total)} versendet${b.failed ? ` · ${Number(b.failed)} Fehler` : ""}`
+    : `🚀 Alle bereiten Creator jetzt auf einmal per Resend anschreiben <span class="font-bold text-xs opacity-80">(${ready} bereit)</span>`;
+  return `<div class="space-y-2">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+      <button type="button" onclick="PS.caAutoFind()" ${busy || (!open && !f) ? "disabled" : ""} class="${big} bg-gradient-to-r from-cyan-500 to-sky-500 text-slate-950 ring-2 ring-cyan-300/50">${finderLabel}
+        <span class="block text-[10px] font-bold opacity-80 mt-0.5">Impressum · Linktree · Beacons · Website · Web-Suche – nur echte, MX-geprüfte Adressen</span></button>
+      <button type="button" onclick="PS.caBulkSend()" ${busy || !ready || !d.sending.configured ? "disabled" : ""} class="${big} bg-gradient-to-r from-emerald-400 to-lime-400 text-slate-950 ring-4 ring-emerald-300/60">${bulkLabel}
+        <span class="block text-[10px] font-bold opacity-80 mt-0.5">${d.sending.configured ? "Persönliche Mail inkl. eigenem 30-Tage-Code & Link pokeswipe-radar.de/creator · nie doppelt" : "Resend nicht eingerichtet (RESEND_API_KEY / MAIL_FROM)"}</span></button>
+    </div>
+    ${ca.lastSummary ? `<div class="bg-emerald-500/10 border border-emerald-400/40 rounded-xl p-2 text-xs text-emerald-100 whitespace-pre-line">${esc(ca.lastSummary)}</div>` : ""}
+    <details class="bg-slate-900 border border-slate-800 rounded-2xl p-3 text-xs">
+      <summary class="cursor-pointer font-black text-white">📋 Mehrere Creator / E-Mails auf einmal einfügen</summary>
+      <textarea id="ca-import" rows="5" class="${inputCls} mt-2 font-mono" placeholder="Dario - business@beispiel.de&#10;ZockerEule: kontakt@beispiel.de&#10;info@kanal-beispiel.de"></textarea>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 mt-1.5">
+        <select id="ca-import-platform" class="${inputCls}">${d.platforms.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("")}</select>
+        <select id="ca-import-category" class="${inputCls}">${d.categories.map((c) => `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join("")}</select>
+        ${btn("➕ Alle anlegen inkl. Promo-Code", "PS.caImport()", "col-span-2 sm:col-span-1 bg-purple-600 text-white")}
+      </div>
+      <p class="text-[10px] text-slate-400 mt-1">Eine Zeile pro Creator: „Name - email@domain.de“ (auch „Name: …“, „Name &lt;…&gt;“, CSV) oder nur Adressen – dann wird der Name aus der Adresse abgeleitet. Jede Adresse wird per MX-Eintrag geprüft, Dubletten und abgemeldete Adressen werden übersprungen.</p>
+    </details>
+  </div>`;
 }
 
 // Schnellsuche: aktive deutsche TikTok-Creator (1k–15k) + 1-Klick-Anlage mit optionalem Linktree/Bio-Link
@@ -139,6 +183,8 @@ function leadCard(l, d) {
         <div class="flex items-center gap-2 mt-1"><span class="text-[10px] text-slate-400">${esc(l.tierLabel)}${l.followers ? ` · ${Number(l.followers).toLocaleString("de-DE")} Follower` : ""}</span>
           <span class="inline-flex items-center gap-1 text-[10px] text-slate-300" title="Antwort-Wahrscheinlichkeit"><span class="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden inline-block"><span class="block h-full ${scoreCls}" style="width:${Number(l.score)}%"></span></span>${Number(l.score)} %</span></div>
         ${l.promoCode ? `<p class="mt-1"><span class="font-mono font-black text-yellow-300">${esc(l.promoCode)}</span> <span class="text-slate-400">· ${Number(l.signups) || 0} Anmeldungen über den Code</span>${l.promoActive === false ? ' <span class="text-amber-300">(Code inaktiv)</span>' : ""} <button type="button" onclick="PS.caCopy(${jsArg(l.link)}, 'Link kopiert')" class="text-[10px] underline text-slate-300">Link kopieren</button></p>` : `<p class="mt-1 text-slate-500">Promo-Code entsteht, sobald der Platzhalter einen echten Namen bekommt.</p>`}
+        ${l.email && l.emailSource ? `<p class="text-[10px] mt-0.5 ${l.emailVerifiedAt ? "text-emerald-300" : "text-amber-300"}">${l.emailVerifiedAt ? "✓" : "⚠"} ${esc(l.emailSource)}</p>` : ""}
+        ${!l.email && l.emailSearchNote ? `<p class="text-[10px] text-slate-400 mt-0.5">🔍 Auto-Finder${l.emailSearchedAt ? ` (${esc(fmt(l.emailSearchedAt))})` : ""}: ${esc(l.emailSearchNote)}</p>` : ""}
         ${l.lastError ? `<p class="text-rose-300 text-[10px]">⚠ ${esc(l.lastError)}</p>` : ""}
       </div>
       <button type="button" onclick="PS.caToggle(${Number(l.id)})" class="text-slate-300 font-bold text-[11px] shrink-0">${open ? "▲ zu" : "▼ öffnen"}</button>
@@ -299,8 +345,97 @@ async function copy(text, msg = "In die Zwischenablage kopiert") {
   catch { prompt("Zum Kopieren:", String(text || "")); }
 }
 
+/** Auto-Finder: ruft die Netlify-Funktion so lange auf, bis alle offenen Creator geprüft sind. */
+async function runAutoFind() {
+  if (ca.finder || ca.bulk) return;
+  ca.finder = { done: 0, found: 0, remaining: finderOpen(ca.data).length, since: null, emails: [] };
+  ca.lastSummary = ""; render();
+  let rounds = 0, errors = 0;
+  try {
+    while (rounds++ < 80) {
+      let r;
+      try {
+        r = await api("/.netlify/functions/auto-find-creator-emails", { method: "POST", body: { since: ca.finder.since } });
+      } catch (e) {
+        if (e.status === 401 || e.status === 403) throw e;
+        if (++errors > 3) throw e;
+        await sleep(e.status === 429 ? 8000 : 2500); continue;
+      }
+      errors = 0;
+      ca.finder.since = r.since;
+      ca.finder.done += Number(r.processed) || 0;
+      ca.finder.found += Number(r.found) || 0;
+      ca.finder.remaining = Number(r.remaining) || 0;
+      for (const x of r.results || []) if (x.email) ca.finder.emails.push(`${x.name}: ${x.email} (${x.source})`);
+      render();
+      if (!r.processed || !r.remaining) break;
+    }
+    const f = ca.finder;
+    ca.lastSummary = f.found
+      ? `✅ ${f.found} von ${f.done} Creator-E-Mails automatisch gefunden & MX-geprüft:\n${f.emails.join("\n")}`
+      : `🔍 ${f.done} Creator geprüft – keine öffentliche Geschäfts-E-Mail gefunden. Tipp: Linktree/Website-Link beim Creator hinterlegen oder „📋 DM kopieren“.`;
+    toast(f.found ? "✅ E-Mails gefunden" : "🔍 Suche beendet", f.found ? `${f.found} Adressen übernommen` : `${f.done} Creator geprüft`);
+  } catch (e) { handleError(e); }
+  finally { ca.finder = null; await refreshAll(); }
+}
+
+/** Massenversand: nacheinander (~500 ms Abstand) an alle bereiten Creator – der Server sperrt jeden Eintrag atomar (nie doppelt). */
+async function runBulkSend() {
+  if (ca.bulk || ca.finder) return;
+  const d = ca.data;
+  if (!d?.sending?.configured) return toast("Resend nicht eingerichtet", "RESEND_API_KEY / MAIL_FROM fehlen.");
+  const list = bulkReady(d);
+  if (!list.length) return toast("Massenversand", "Keine bereiten Creator mit E-Mail – zuerst „🔍 E-Mails automatisch finden“ oder Liste einfügen.");
+  if (!confirm(`${list.length} personalisierte Kooperations-Mails jetzt über Resend senden?\n\nJeder Creator bekommt seinen eigenen 30-Tage-Code und den Link pokeswipe-radar.de/creator. Bereits angeschriebene Creator werden nie erneut angeschrieben.`)) return;
+  const gap = Number(d.sending.bulkGapMs) || 500;
+  ca.bulk = { total: list.length, sent: 0, failed: 0, skipped: 0, errors: [] };
+  ca.lastSummary = ""; render();
+  try {
+    for (const l of list) {
+      let tries = 0;
+      while (true) {
+        try {
+          await api(`/api/admin/creators/${l.id}/send`, { method: "POST", body: { bulk: true } });
+          ca.bulk.sent++;
+          const x = leadById(l.id);
+          if (x) { x.status = "sent"; x.sentAt = new Date().toISOString(); x.display = { key: "sent", label: "E-Mail gesendet" }; }
+          break;
+        } catch (e) {
+          if ((e.status === 429 || e.transient) && tries++ < 3) { await sleep(6000); continue; }
+          if (e.status === 401 || e.status === 403) throw e;
+          if (e.data?.skip || /bereits gesendet|schon gesendet|abgemeldet/i.test(e.message)) ca.bulk.skipped++;
+          else { ca.bulk.failed++; ca.bulk.errors.push(`${l.name}: ${e.message}`); }
+          if (e.data?.stop) { ca.bulk.errors.push(`⛔ ${e.message}`); ca.bulk.stopped = true; }
+          break;
+        }
+      }
+      render();
+      if (ca.bulk.stopped) break;
+      await sleep(gap);
+    }
+    const b = ca.bulk;
+    ca.lastSummary = `${b.sent ? `✅ ${b.sent} Kooperations-Mail${b.sent === 1 ? "" : "s"} erfolgreich über Resend versendet` : "⚠️ Keine Mail versendet"}${b.skipped ? ` · ${b.skipped} übersprungen` : ""}${b.failed ? ` · ${b.failed} fehlgeschlagen` : ""}${b.errors.length ? `\n${b.errors.slice(0, 8).join("\n")}` : ""}`;
+    toast(b.sent ? "📤 Massenversand fertig" : "Massenversand", ca.lastSummary.split("\n")[0]);
+  } catch (e) { handleError(e); }
+  finally { ca.bulk = null; await refreshAll(); }
+}
+
 export const creatorAdminApi = {
   openCreatorAdmin,
+  caAutoFind: () => runAutoFind(),
+  caBulkSend: () => runBulkSend(),
+  async caImport() {
+    const text = $("ca-import")?.value || "";
+    if (!text.trim()) return toast("Import", "Bitte Zeilen im Format „Name - email@domain.de“ oder E-Mail-Adressen einfügen.");
+    try {
+      const r = await api("/api/admin/creators/import", { method: "POST", body: { text, platform: $("ca-import-platform")?.value, category: $("ca-import-category")?.value } });
+      ca.data.leads = r.leads; ca.filter = "all";
+      ca.lastSummary = `📋 ${r.created.length} Creator angelegt/ergänzt${r.created.length ? `: ${r.created.map((x) => `${x.name} (${x.promoCode || "–"})`).join(", ")}` : ""}${r.skipped.length ? `\nÜbersprungen: ${r.skipped.map((x) => `${x.email} – ${x.reason}`).join("; ")}` : ""}${r.truncated ? "\nHinweis: höchstens 200 Einträge pro Import." : ""}`;
+      render();
+      const ta = $("ca-import"); if (ta && r.created.length) ta.value = "";
+      toast("📋 Import fertig", `${r.created.length} angelegt · ${r.skipped.length} übersprungen – jetzt „🚀 Alle bereiten Creator anschreiben“.`);
+    } catch (e) { handleError(e); }
+  },
   caTab: (k) => { ca.tab = k; render(); },
   caFilter: (k) => { ca.filter = k; render(); },
   caToggle: (id) => { ca.open.has(id) ? ca.open.delete(id) : ca.open.add(id); render(); },
