@@ -1,7 +1,7 @@
 // Video-Einstellungen der Pro-Reels (Admin-Zentrale) – reine Logik, testbar.
 // Muss zu client/reel-pro.js passen (Vorlagen-Schlüssel, Bitraten, FPS, 95-MB-Grenze).
 
-export const PRO_TEMPLATE_KEYS = ["overview", "radar", "swipe", "market", "portfolio", "scansell", "quicklist"] as const;
+export const PRO_TEMPLATE_KEYS = ["overview", "radar", "swipe", "market", "portfolio", "scansell", "quicklist", "fomo", "flea", "chase"] as const;
 export const PRO_TEMPLATE_LABELS: Record<string, string> = {
   overview: "Komplett-Überblick (All-in-One-App)",
   radar: "Live-Preis-Radar (Cardmarket € & TCGplayer $)",
@@ -10,7 +10,12 @@ export const PRO_TEMPLATE_LABELS: Record<string, string> = {
   portfolio: "Sammlung, Portfolio & Release-Kalender",
   scansell: "Karten scannen & in Sekunden verkaufen (15–20 s, Promo START30)",
   quicklist: "Scannen & direkt inserieren – schnell & unkompliziert",
+  fomo: "Hook-Preset: Schnäppchen-FOMO (Live Flip-Radar, 15–17 s, 8 Mbit/s)",
+  flea: "Hook-Preset: Flohmarkt- & Tausch-Schutz (Browser-Scanner, 15–17 s, 8 Mbit/s)",
+  chase: "Hook-Preset: Tinder für Sammler (Swipe, Tausch-Hub & Sammler-Radar, 15–17 s, 8 Mbit/s)",
 };
+/** Die 3 Hook-Presets (4 Szenen, 15–17 s) – im Generator einzeln oder gemeinsam per Klick erzeugbar. */
+export const HOOK_PRESET_KEYS = ["fomo", "flea", "chase"] as const;
 export const HOOK_VARIANTS = 2;
 export const SAFE_MB_MAX = 95;
 

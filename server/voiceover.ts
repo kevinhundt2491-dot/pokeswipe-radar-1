@@ -24,8 +24,9 @@ const ENERGETIC_SETTINGS = { stability: 0.36, similarity_boost: 0.8, style: 0.45
 export type Tone = "calm" | "energetic";
 export const toneSettings = (tone: unknown) => (tone === "energetic" ? ENERGETIC_SETTINGS : VOICE_SETTINGS);
 // Erlaubter Tempo-Spielraum (ElevenLabs "speed" ändert das Tempo OHNE die Tonhöhe zu verfälschen).
-// Bewusst eng gehalten, damit die Sprecherin immer wie ein normaler Muttersprachler klingt.
-export const SPEED_MIN = 0.9, SPEED_MAX = 1.12;
+// Bewusst eng gehalten, damit die Sprecherin immer wie ein normaler Muttersprachler klingt. Standard-Vorlagen
+// nutzen höchstens 1,12; nur die kurzen 15–17-s-Hook-Presets dürfen bis zum ElevenLabs-Maximum 1,2 gehen.
+export const SPEED_MIN = 0.9, SPEED_MAX = 1.2;
 const NARRATION_MAX_CHARS = 900;
 // Ein 30-s-Take mit Zeitstempeln kann bei ElevenLabs deutlich länger als 20 s dauern
 const NARRATION_TIMEOUT_MS = 75_000;

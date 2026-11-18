@@ -6,7 +6,7 @@
 // Bedienelemente über das Video. Texte und Untertitel bleiben deshalb in x 80–930, y 230–1500.
 
 import { OUT_W as W, OUT_H as H } from "./live-stage.js";
-import { DOMAIN, CTA_TEXT } from "./reel-pro.js";
+import { DOMAIN, CTA_TEXT, isHook4 } from "./reel-pro.js";
 
 const EMOJI = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
 const DISPLAY = `"Lilita One", "Figtree", system-ui, ${EMOJI}, sans-serif`;
@@ -26,6 +26,12 @@ const HIGHLIGHT = {
   quicklist: "⚡ Scannen → Preis steht → Inserat live",
 };
 const XFADE = 0.35; // weicher Übergang (s)
+// Hook-Presets: engere Safe Zone für TikTok / Reels / Shorts (rechter Icon-Balken ab x ≈ 930,
+// Caption- und Musikzeile unten ab y ≈ 1450). Alle Texte bleiben in x 80–920, y 250–1440.
+const HZ = { left: 80, right: 920, top: 250, bottom: 1440 };
+const HX = (HZ.left + HZ.right) / 2;
+const CAP_Y_HOOK = 1352;
+const GREEN = "#22c55e", RED = "#ef4444";
 
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 const ease = (x) => 1 - Math.pow(1 - clamp(x), 3);
@@ -34,7 +40,7 @@ const back = (x) => { const c = 1.6; x = clamp(x); return 1 + (c + 1) * Math.pow
 /** Schriften laden, damit schon Frame 0 mit der echten Markenschrift gezeichnet wird. */
 export async function loadProFonts() {
   try {
-    await Promise.all(["400 80px \"Lilita One\"", "900 40px Figtree", "800 40px Figtree", "700 40px Figtree"].map((f) => document.fonts.load(f, "PokeSwipe Radar ÄÖÜ€")));
+    await Promise.all(["400 80px \"Lilita One\"", "900 40px Figtree", "800 40px Figtree", "700 40px Figtree"].map((f) => document.fonts.load(f, "PokeSwipe Radar ÄÖÜäöüß€ Schnäppchen Flohmarkt-Fund Nächstes")));
   } catch { /* System-Schrift als Rückfall */ }
 }
 
@@ -478,21 +484,394 @@ export class ProCompositor {
     ctx.restore();
   }
 
+
+  // ================================================================ Hook-Presets (4 Szenen)
+  /** Live-App im Smartphone mit Fokus-Zoom auf die gerade bediente Stelle (wie Szene 2, frei platzierbar). */
+  #livePhone(ctx, t, p, live, x, y, w, h, { rot = 0, zoomIn = 1.5, rest = 1.12 } = {}) {
+    const f = this.focus();
+    const tx = f ? f.x : 0.5, ty = f ? f.y : 0.38 + 0.08 * Math.sin(t * 0.55);
+    const k = this.#follow(t, f ? 3.2 : 1.4), kz = this.#follow(t, 1.8);
+    this.fx += (tx - this.fx) * k; this.fy += (ty - this.fy) * k;
+    this.zoom += ((f ? zoomIn : rest + 0.06 * ease(p)) - this.zoom) * kz;
+    const bob = Math.sin(t * 1.3) * 5;
+    ctx.save();
+    ctx.translate(x + w / 2, y + h / 2 + bob); ctx.rotate(rot + Math.sin(t * 0.7) * 0.01); ctx.translate(-(x + w / 2), -(y + h / 2));
+    this.#phone(ctx, live, x, y, w, h, this.zoom, 1, { spot: f ? { x: f.x, y: f.y, a: clamp((this.zoom - rest) / 0.4), t } : null });
+    ctx.restore();
+    return f;
+  }
+
+  /** Kontrast-Banner oben (Hook): volle Safe-Zone-Breite, fette Schrift mit dunkler Kontur, leichtes Pulsieren. */
+  #banner(ctx, text, t, y = 268) {
+    const v = this.tpl.visual;
+    const bg = v === "scan" ? "#facc15" : v === "swipe" ? "#db2777" : RED, fg = v === "scan" ? "#111111" : "#ffffff";
+    const w = HZ.right - HZ.left, h = 190;
+    const s = 1 + 0.018 * Math.sin(t * 7);
+    ctx.save();
+    ctx.translate(HX, y + h / 2); ctx.scale(s, s); ctx.rotate(-0.018); ctx.translate(-HX, -(y + h / 2));
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 40; ctx.shadowOffsetY = 12;
+    rr(ctx, HZ.left, y, w, h, 28); ctx.fillStyle = bg; ctx.fill();
+    ctx.shadowColor = "transparent";
+    if (v === "scan") { // Warn-Streifen
+      ctx.save(); rr(ctx, HZ.left, y, w, h, 28); ctx.clip();
+      ctx.fillStyle = "#111111";
+      for (let x = HZ.left - 60; x < HZ.right + 60; x += 56) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 26, y); ctx.lineTo(x - 2, y + 18); ctx.lineTo(x - 28, y + 18); ctx.fill(); ctx.beginPath(); ctx.moveTo(x, y + h - 18); ctx.lineTo(x + 26, y + h - 18); ctx.lineTo(x - 2, y + h); ctx.lineTo(x - 28, y + h); ctx.fill(); }
+      ctx.restore();
+    }
+    ctx.lineWidth = 5; ctx.strokeStyle = "#ffffff"; rr(ctx, HZ.left, y, w, h, 28); ctx.stroke();
+    const ft = fitText(ctx, text, (n) => `400 ${n}px ${DISPLAY}`, w - 60, 2, 92, 52);
+    ctx.font = `400 ${ft.size}px ${DISPLAY}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ft.lines.forEach((l, i) => {
+      const ly = y + h / 2 + (i - (ft.lines.length - 1) / 2) * ft.size * 1.05 + 4;
+      ctx.lineJoin = "round"; ctx.lineWidth = 10; ctx.strokeStyle = fg === "#ffffff" ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.6)"; ctx.strokeText(l, HX, ly);
+      ctx.fillStyle = fg; ctx.fillText(l, HX, ly);
+    });
+    ctx.restore();
+  }
+
+  /** Durchgestrichener Preis → großer grüner Preis (Hook-Badge „Marktwert 65 € → Deal 29 €“ / „Verkäufer 45 € vs. Echt 14 €“). */
+  #priceDrop(ctx, x, y, w, t) {
+    const b = this.tpl.hookBadge;
+    if (!b) return;
+    const h = 380, s = 1 + 0.03 * Math.sin(t * 6);
+    ctx.save();
+    ctx.translate(x + w / 2, y + h / 2); ctx.scale(s, s); ctx.rotate(0.03); ctx.translate(-(x + w / 2), -(y + h / 2));
+    ctx.shadowColor = hexA(GREEN, 0.6); ctx.shadowBlur = 50;
+    rr(ctx, x, y, w, h, 30); ctx.fillStyle = "rgba(6,10,22,0.95)"; ctx.fill();
+    ctx.shadowBlur = 0; ctx.lineWidth = 5; ctx.strokeStyle = GREEN; ctx.stroke();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    // oben: alter Preis, rot durchgestrichen
+    ctx.font = `800 32px ${BODY}`; ctx.fillStyle = "#fca5a5"; ctx.fillText(b.label, x + w / 2, y + 48);
+    ctx.font = `400 84px ${DISPLAY}`; ctx.fillStyle = "#fecaca"; ctx.fillText(b.from, x + w / 2, y + 118);
+    const fw = ctx.measureText(b.from).width;
+    ctx.lineWidth = 9; ctx.strokeStyle = RED; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(x + w / 2 - fw / 2 - 12, y + 136); ctx.lineTo(x + w / 2 + fw / 2 + 12, y + 100); ctx.stroke();
+    // Pfeil (gezeichnet, nicht als Glyphe – sieht in jeder Schrift gleich aus)
+    const ay = y + 182;
+    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(x + w / 2 - 12, ay - 22); ctx.lineTo(x + w / 2 + 12, ay - 22); ctx.lineTo(x + w / 2 + 12, ay + 2);
+    ctx.lineTo(x + w / 2 + 28, ay + 2); ctx.lineTo(x + w / 2, ay + 30); ctx.lineTo(x + w / 2 - 28, ay + 2); ctx.lineTo(x + w / 2 - 12, ay + 2); ctx.closePath(); ctx.fill();
+    // unten: neuer Preis, groß und grün
+    ctx.font = `800 32px ${BODY}`; ctx.fillStyle = "#bbf7d0"; ctx.fillText(b.tag, x + w / 2, y + 240);
+    ctx.font = `400 116px ${DISPLAY}`; ctx.lineJoin = "round"; ctx.lineWidth = 10; ctx.strokeStyle = "#04130a";
+    ctx.strokeText(b.to, x + w / 2, y + 318); ctx.fillStyle = GREEN; ctx.fillText(b.to, x + w / 2, y + 318);
+    ctx.restore();
+    const pct = Math.round((1 - num(b.to) / num(b.from)) * 100);
+    if (pct > 0) this.#pill(ctx, `−${pct} %`, x + w / 2, y - 6, { size: 38, bg: GREEN, fg: "#04130a", border: "#ffffff" });
+  }
+
+  /** Swipe-Karte (echtes Kartenmotiv) fliegt nach rechts mit „LIKE“-Stempel – läuft in Schleife. */
+  #swipeCard(ctx, cx, cy, t, { period = 1.6, w = 330, h = 460 } = {}) {
+    const ph = (t % period) / period;
+    const out = ease(clamp((ph - 0.35) / 0.45));
+    // Karte darunter (nächste)
+    ctx.save(); ctx.translate(cx, cy + 16); ctx.scale(0.92 + 0.08 * out, 0.92 + 0.08 * out); this.#cardFace(ctx, w, h, 0.55 + 0.45 * out); ctx.restore();
+    ctx.save();
+    ctx.translate(cx + out * 520, cy - out * 60); ctx.rotate(out * 0.45 + Math.sin(ph * Math.PI * 2) * 0.02 * (1 - out));
+    ctx.globalAlpha = (1 - clamp((out - 0.7) / 0.3)) * this.m;
+    this.#cardFace(ctx, w, h, 1);
+    const st = clamp((ph - 0.15) / 0.2);
+    if (st > 0) {
+      ctx.save(); ctx.rotate(-0.3); ctx.globalAlpha *= st;
+      ctx.lineWidth = 8; ctx.strokeStyle = GREEN; rr(ctx, -w / 2 + 20, -h / 2 + 40, 210, 90, 16); ctx.stroke();
+      ctx.font = `400 64px ${DISPLAY}`; ctx.fillStyle = GREEN; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("LIKE", -w / 2 + 125, -h / 2 + 88);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+  #cardFace(ctx, w, h, a) {
+    const c = this.coverCard;
+    ctx.save(); ctx.globalAlpha *= a;
+    ctx.shadowColor = hexA(this.accent, 0.8); ctx.shadowBlur = 50;
+    rr(ctx, -w / 2 - 7, -h / 2 - 7, w + 14, h + 14, 24); ctx.fillStyle = this.accent; ctx.fill();
+    ctx.shadowBlur = 0;
+    rr(ctx, -w / 2, -h / 2, w, h, 18); ctx.save(); ctx.clip();
+    if (c?.img) ctx.drawImage(c.img, -w / 2, -h / 2, w, h);
+    else {
+      const g = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
+      g.addColorStop(0, "#3b1f5e"); g.addColorStop(1, "#0b0f22"); ctx.fillStyle = g; ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.fillStyle = "rgba(255,255,255,0.14)"; rr(ctx, -w / 2 + 22, -h / 2 + 46, w - 44, h * 0.45, 12); ctx.fill();
+      ctx.font = `400 40px ${DISPLAY}`; ctx.fillStyle = "#ffffff"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("Chase-Karte", 0, h * 0.25);
+    }
+    ctx.restore(); ctx.restore();
+  }
+
+  /** Kleiner Info-Toast (Deal-Listing, Treffer, Pin) mit grünem Badge links. */
+  #toast(ctx, x, y, w, a, { badge, title, sub, badgeBg = GREEN }) {
+    if (a <= 0) return;
+    const h = 118;
+    ctx.save(); ctx.globalAlpha = clamp(a) * this.m;
+    ctx.shadowColor = "rgba(0,0,0,0.65)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+    rr(ctx, x, y, w, h, 26); ctx.fillStyle = "rgba(9,13,28,0.96)"; ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.lineWidth = 3; ctx.strokeStyle = hexA(badgeBg, 0.9); ctx.stroke();
+    ctx.font = `900 34px ${BODY}`;
+    const bw = Math.max(118, ctx.measureText(badge).width + 30);
+    rr(ctx, x + 16, y + 22, bw, h - 44, 18); ctx.fillStyle = badgeBg; ctx.fill();
+    ctx.fillStyle = "#04130a"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(badge, x + 16 + bw / 2, y + h / 2 + 1);
+    ctx.textAlign = "left";
+    const tx = x + bw + 34, tw = w - bw - 50;
+    const ft = fitText(ctx, title, (n) => `900 ${n}px ${BODY}`, tw, 1, 32, 20);
+    ctx.font = `900 ${ft.size}px ${BODY}`; ctx.fillStyle = "#ffffff"; ctx.fillText(ft.lines[0], tx, y + 42);
+    const fs = fitText(ctx, sub, (n) => `700 ${n}px ${BODY}`, tw, 1, 26, 16);
+    ctx.font = `700 ${fs.size}px ${BODY}`; ctx.fillStyle = "#cbd5e1"; ctx.fillText(fs.lines[0], tx, y + 82);
+    ctx.restore();
+  }
+
+  /** H1 · Hook (0–3 s): Kontrast-Banner, echte App im Smartphone, Preis-Badge bzw. Swipe-Animation. Frame 0 = fertiges Vorschaubild. */
+  sceneHook(ctx, t, p, live) {
+    this.#backdrop(ctx, t);
+    const v = this.tpl.visual;
+    if (v === "swipe") {
+      this.#livePhone(ctx, t, p, live, HZ.left + 10, 500, 380, 676, { rot: -0.05 });
+      this.#swipeCard(ctx, 690, 820, t);
+      this.#pill(ctx, "👉 Rechts = will ich haben", 690, 1150, { size: 30, border: GREEN });
+    } else {
+      this.#livePhone(ctx, t, p, live, HZ.left + 10, 500, 400, 711, { rot: -0.045 });
+      this.#priceDrop(ctx, 520, 640, 400, t);
+    }
+    this.#banner(ctx, this.cover, t);
+  }
+
+  /** H2 · UI-Beweis (3–8 s): großes Smartphone mit der echten App + animierte Live-Overlays. */
+  sceneProof(ctx, t, p, live) {
+    this.#backdrop(ctx, t);
+    const v = this.tpl.visual, pr = this.tpl.proof || {};
+    const w = 540, h = 960, x = HX - w / 2, y = 340;
+    this.#livePhone(ctx, t, p, live, x, y, w, h, { zoomIn: v === "flip" ? 1.45 : 1.55 });
+    this.#pill(ctx, `${pr.title || this.tpl.label}  ●  LIVE`, HX, 282, { size: 36, border: GREEN });
+    const lt = t - (this.scenes[1]?.start || 0); // Sekunden seit Szenenbeginn
+    if (v === "flip") {
+      const deals = (pr.deals || []).map(([n, set, from, to]) => ({ n, set, from, to }));
+      const f = this.facts || {};
+      if (f.card && f.pct) deals[0] = { n: String(f.card).slice(0, 28), set: "gerade live im Radar", pct: String(f.pct).replace(/\s/g, ""), price: f.price };
+      deals.slice(0, 3).forEach((d, i) => {
+        const a = back((lt - 0.35 - i * 0.9) * 2.6);
+        const left = i % 2 === 1;
+        const tw = 470, tx = left ? HZ.left + (1 - clamp(a)) * -120 : HZ.right - tw + (1 - clamp(a)) * 120, ty = 470 + i * 250;
+        const pct = d.pct ? (d.pct.includes("%") ? `−${d.pct.replace(/^[−-]/, "")}` : `−${d.pct} %`) : `−${Math.round((1 - d.to / d.from) * 100)} %`;
+        const sub = d.from ? `${d.set} · ${d.from} € → ${d.to} €` : `${d.set}${d.price ? ` · ${d.price}` : ""}`;
+        this.#toast(ctx, tx, ty, tw, a, { badge: pct, title: d.n, sub });
+      });
+    } else if (v === "scan") {
+      // Kamera-Scan-Rahmen über dem Bildschirm + Laser-Linie, danach Live-Preis-Popup
+      const fx = x + 70, fy = y + 190, fw = w - 140, fh = 560, L = 70;
+      ctx.save(); ctx.lineWidth = 10; ctx.lineCap = "round"; ctx.strokeStyle = GREEN; ctx.shadowColor = GREEN; ctx.shadowBlur = 24;
+      const corner = (cx, cy, dx, dy) => { ctx.beginPath(); ctx.moveTo(cx, cy + dy * L); ctx.lineTo(cx, cy); ctx.lineTo(cx + dx * L, cy); ctx.stroke(); };
+      const pulse = 4 * Math.sin(t * 6);
+      corner(fx - pulse, fy - pulse, 1, 1); corner(fx + fw + pulse, fy - pulse, -1, 1); corner(fx - pulse, fy + fh + pulse, 1, -1); corner(fx + fw + pulse, fy + fh + pulse, -1, -1);
+      const found = lt > 1.6;
+      if (!found) {
+        const ly = fy + ((Math.sin(lt * 3.2 - Math.PI / 2) + 1) / 2) * fh;
+        const g = ctx.createLinearGradient(0, ly - 40, 0, ly + 4);
+        g.addColorStop(0, "rgba(34,197,94,0)"); g.addColorStop(1, "rgba(34,197,94,0.45)");
+        ctx.fillStyle = g; ctx.fillRect(fx, ly - 40, fw, 44);
+        ctx.fillStyle = "#86efac"; ctx.fillRect(fx, ly - 2, fw, 5);
+      }
+      ctx.restore();
+      if (!found) this.#pill(ctx, "🔍 Scanne Karte …", HX, fy + fh + 70, { size: 34, border: GREEN });
+      const a = back((lt - 1.6) * 3);
+      if (a > 0) {
+        const f = this.facts || {};
+        const price = f.price || pr.fallbackPrice || "";
+        const pw = 640, ph = 210, px = HX - pw / 2, py = fy + fh - 120;
+        ctx.save(); ctx.globalAlpha = clamp(a) * this.m;
+        ctx.translate(HX, py + ph / 2); ctx.scale(0.85 + 0.15 * clamp(a), 0.85 + 0.15 * clamp(a)); ctx.translate(-HX, -(py + ph / 2));
+        ctx.shadowColor = hexA(GREEN, 0.7); ctx.shadowBlur = 50;
+        rr(ctx, px, py, pw, ph, 32); ctx.fillStyle = "rgba(5,12,10,0.96)"; ctx.fill();
+        ctx.shadowBlur = 0; ctx.lineWidth = 5; ctx.strokeStyle = GREEN; ctx.stroke();
+        ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        const nm = fitText(ctx, `✓ Erkannt: ${f.card || "Pokémon-Karte"}`, (n) => `900 ${n}px ${BODY}`, pw - 60, 1, 34, 22);
+        ctx.font = `900 ${nm.size}px ${BODY}`; ctx.fillStyle = "#bbf7d0"; ctx.fillText(nm.lines[0], px + 30, py + 50);
+        ctx.font = `800 30px ${BODY}`; ctx.fillStyle = "#e2e8f0"; ctx.fillText(pr.popup || "Echter Marktwert", px + 30, py + 110);
+        ctx.font = `400 92px ${DISPLAY}`; ctx.textAlign = "right"; ctx.fillStyle = GREEN; ctx.fillText(price, px + pw - 30, py + 140);
+        ctx.restore();
+      }
+    } else if (v === "swipe") {
+      // Swipe-Richtungen, LIKE-/NOPE-Stempel und Match-Animation über dem echten Swipe-Modus
+      const ph = (lt % 1.8) / 1.8, right = Math.floor(lt / 1.8) % 2 === 0;
+      this.#pill(ctx, "👈 Weiter", HZ.left + 95, 1170, { size: 30, border: "#94a3b8", fg: right ? "#94a3b8" : "#ffffff" });
+      this.#pill(ctx, "Like 👉", HZ.right - 95, 1170, { size: 30, border: GREEN, fg: right ? "#bbf7d0" : "#94a3b8" });
+      const st = Math.sin(clamp(ph / 0.5) * Math.PI);
+      if (st > 0.05 && lt < 3.6) {
+        ctx.save(); ctx.globalAlpha = st * this.m;
+        ctx.translate(right ? HX - 150 : HX + 150, 560); ctx.rotate(right ? -0.25 : 0.25);
+        const col = right ? GREEN : RED, txt = right ? "LIKE" : "NOPE";
+        ctx.lineWidth = 9; ctx.strokeStyle = col; rr(ctx, -130, -55, 260, 110, 18); ctx.stroke();
+        ctx.font = `400 78px ${DISPLAY}`; ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(txt, 0, 4);
+        ctx.restore();
+      }
+      const m = back((lt - 3.4) * 2.8);
+      if (m > 0) {
+        ctx.save(); ctx.globalAlpha = clamp(m) * this.m;
+        for (let i = 0; i < 14; i++) { // Herzchen-Burst
+          const ang = (i / 14) * Math.PI * 2, r = 120 + 230 * clamp(m) + (i % 3) * 30;
+          ctx.font = `${34 + (i % 3) * 8}px ${EMOJI}`; ctx.textAlign = "center"; ctx.fillText(i % 2 ? "💚" : "✨", HX + Math.cos(ang) * r, 760 + Math.sin(ang) * r * 0.8);
+        }
+        ctx.translate(HX, 760); ctx.scale(clamp(m, 0, 1.15), clamp(m, 0, 1.15)); ctx.rotate(-0.06);
+        ctx.font = `400 120px ${DISPLAY}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.lineJoin = "round"; ctx.lineWidth = 16; ctx.strokeStyle = "#05070f"; ctx.strokeText("MATCH!", 0, 0);
+        ctx.fillStyle = GREEN; ctx.fillText("MATCH!", 0, 0);
+        ctx.restore();
+        this.#pill(ctx, "⭐ Fehlt mir – auf die Wunschliste", HX, 900, { size: 34, bg: GREEN, fg: "#04130a", border: "#ffffff" });
+      }
+    }
+  }
+
+  /** H3 · USP (8–13 s): kein Download, aktives Deals-Finden & Tauschen. */
+  sceneUsp(ctx, t, p, live) {
+    this.#backdrop(ctx, t);
+    const v = this.tpl.visual, u = this.tpl.usp || {};
+    const lt = t - (this.scenes[2]?.start || 0);
+    if (v === "flip") {
+      const w = 470, h = 836, x = HX - w / 2, y = 450;
+      this.#livePhone(ctx, t, p, live, x, y, w, h, { zoomIn: 1.4 });
+      // Klick-Animation: Fingertipp mit Ripple auf den Deal, danach „Gesichert“-Toast
+      const f = this.focus();
+      const cx = x + w * (f ? clamp(f.x, 0.15, 0.85) : 0.62), cy = y + h * (f ? clamp(f.y, 0.2, 0.8) : 0.55);
+      for (const d of [0.5, 0.75]) {
+        const r = clamp((lt - d) / 0.6);
+        if (r > 0 && r < 1) { ctx.beginPath(); ctx.arc(cx, cy, 30 + r * 120, 0, Math.PI * 2); ctx.lineWidth = 8 * (1 - r); ctx.strokeStyle = hexA("#ffffff", 0.9 * (1 - r)); ctx.stroke(); }
+      }
+      if (lt > 0.3 && lt < 1.1) { ctx.beginPath(); ctx.arc(cx, cy, 34, 0, Math.PI * 2); ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.fill(); }
+      this.#toast(ctx, HZ.left, 1110, HZ.right - HZ.left, back((lt - 1.0) * 3), { badge: "✓", title: u.title || "Deal gesichert", sub: "Schneller als alle anderen – direkt zum Angebot" });
+      this.#badgeBig(ctx, u.badge, 330, back((lt - 0.2) * 3), GREEN);
+    } else if (v === "scan") {
+      // Browser-Adressleiste mit der echten Domain
+      const by = 268, bh = 100;
+      ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 30;
+      rr(ctx, HZ.left, by, HZ.right - HZ.left, bh, 50); ctx.fillStyle = "#f8fafc"; ctx.fill(); ctx.restore();
+      ctx.save(); ctx.textBaseline = "middle"; ctx.textAlign = "left";
+      ctx.font = `800 34px ${BODY}`; ctx.fillStyle = "#16a34a"; ctx.fillText("🔒", HZ.left + 34, by + bh / 2 + 2);
+      const typed = DOMAIN.slice(0, Math.max(0, Math.min(DOMAIN.length, Math.floor(lt * 22))));
+      ctx.font = `900 46px ${BODY}`; ctx.fillStyle = "#0f172a"; ctx.fillText(typed || DOMAIN.slice(0, 1), HZ.left + 96, by + bh / 2 + 2);
+      if (typed.length < DOMAIN.length && Math.floor(t * 3) % 2 === 0) { const tw = ctx.measureText(typed).width; ctx.fillRect(HZ.left + 100 + tw, by + 28, 4, 46); }
+      ctx.font = `800 34px ${BODY}`; ctx.textAlign = "right"; ctx.fillStyle = "#475569"; ctx.fillText("⟳", HZ.right - 36, by + bh / 2 + 2);
+      ctx.restore();
+      this.#livePhone(ctx, t, p, live, HZ.left + 20, 430, 420, 746, { rot: -0.03 });
+      // durchgestrichenes App-Store-Symbol (neutral gezeichnet, keine fremde Marke)
+      const a = back((lt - 0.5) * 2.8), ix = 690, iy = 640, S = 230;
+      if (a > 0) {
+        ctx.save(); ctx.globalAlpha = clamp(a) * this.m; ctx.translate(ix, iy); ctx.scale(clamp(a, 0, 1.1), clamp(a, 0, 1.1));
+        const g = ctx.createLinearGradient(-S / 2, -S / 2, S / 2, S / 2); g.addColorStop(0, "#60a5fa"); g.addColorStop(1, "#2563eb");
+        rr(ctx, -S / 2, -S / 2, S, S, 52); ctx.fillStyle = g; ctx.fill();
+        ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 16; ctx.lineCap = "round"; // Download-Pfeil
+        ctx.beginPath(); ctx.moveTo(0, -60); ctx.lineTo(0, 30); ctx.moveTo(-40, -8); ctx.lineTo(0, 32); ctx.lineTo(40, -8); ctx.moveTo(-58, 66); ctx.lineTo(58, 66); ctx.stroke();
+        ctx.font = `900 26px ${BODY}`; ctx.fillStyle = "#ffffff"; ctx.textAlign = "center"; ctx.fillText("APP-STORE", 0, -S * 0.66 - 34);
+        ctx.strokeStyle = RED; ctx.lineWidth = 22; // Verbots-Kreis
+        ctx.beginPath(); ctx.arc(0, 0, S * 0.66, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-S * 0.47, -S * 0.47); ctx.lineTo(S * 0.47, S * 0.47); ctx.stroke();
+        ctx.restore();
+      }
+      this.#pill(ctx, u.badge || "Kein Download nötig", 690, 900, { size: 34, bg: RED, fg: "#ffffff", border: "#ffffff", maxW: 440 });
+      this.#pill(ctx, "⚡ Sofort startklar", 690, 1000, { size: 30, border: GREEN, maxW: 440 });
+      this.#pill(ctx, "📱 Auf jedem Handy", 690, 1090, { size: 30, border: GREEN, maxW: 440 });
+    } else {
+      // Tausch-Hub (echte App) + Sammler-Radar mit Pins in der Nähe
+      this.#pill(ctx, u.title || "Tausch-Hub & Sammler-Radar", HX, 282, { size: 36, border: this.accent });
+      this.#livePhone(ctx, t, p, live, HZ.left + 10, 380, 360, 640, { rot: -0.03 });
+      const cx = 700, cy = 650, R = 205;
+      ctx.save();
+      rr(ctx, cx - R - 15, cy - R - 15, (R + 15) * 2, (R + 15) * 2, 36); ctx.fillStyle = "rgba(8,14,30,0.95)"; ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = hexA(this.accent, 0.8); ctx.stroke();
+      ctx.save(); rr(ctx, cx - R - 15, cy - R - 15, (R + 15) * 2, (R + 15) * 2, 36); ctx.clip();
+      ctx.strokeStyle = "rgba(148,163,184,0.12)"; ctx.lineWidth = 2; // Straßenraster
+      for (let k = -R; k <= R; k += 52) { ctx.beginPath(); ctx.moveTo(cx + k, cy - R - 20); ctx.lineTo(cx + k + 40, cy + R + 20); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx - R - 20, cy + k); ctx.lineTo(cx + R + 20, cy + k - 30); ctx.stroke(); }
+      for (let i = 3; i >= 1; i--) { ctx.beginPath(); ctx.arc(cx, cy, (R * i) / 3, 0, Math.PI * 2); ctx.strokeStyle = hexA(this.accent, 0.18 + 0.1 * i); ctx.lineWidth = 3; ctx.stroke(); }
+      ctx.translate(cx, cy); ctx.rotate(t * 2.2);
+      const sw = ctx.createLinearGradient(0, 0, R, 0); sw.addColorStop(0, hexA(this.accent, 0.55)); sw.addColorStop(1, hexA(this.accent, 0));
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, R, -0.55, 0); ctx.closePath(); ctx.fillStyle = sw; ctx.fill();
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(cx, cy, 16, 0, Math.PI * 2); ctx.fillStyle = "#38bdf8"; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+      ctx.font = `900 24px ${BODY}`; ctx.fillStyle = "#e0f2fe"; ctx.textAlign = "center"; ctx.fillText("Du", cx, cy + 44);
+      const pins = u.pins || [], pos = [[-0.45, -0.5], [0.55, -0.15], [-0.2, 0.62]];
+      pins.forEach((pin, i) => {
+        const a = back((lt - 0.4 - i * 0.55) * 3);
+        if (a <= 0) return;
+        const px = cx + pos[i % 3][0] * R, py = cy + pos[i % 3][1] * R;
+        ctx.save(); ctx.translate(px, py); ctx.scale(clamp(a, 0, 1.2), clamp(a, 0, 1.2));
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(-26, -30, -26, -62, 0, -62); ctx.bezierCurveTo(26, -62, 26, -30, 0, 0); ctx.fillStyle = this.accent; ctx.fill();
+        ctx.beginPath(); ctx.arc(0, -42, 9, 0, Math.PI * 2); ctx.fillStyle = "#ffffff"; ctx.fill();
+        ctx.restore();
+      });
+      ctx.restore();
+      pins.forEach(([name, dist, card], i) => {
+        this.#toast(ctx, HZ.left + (1 - clamp(back((lt - 0.6 - i * 0.55) * 3))) * -80, 1040 + i * 128, HZ.right - HZ.left, back((lt - 0.6 - i * 0.55) * 3) * (i < 2 ? 1 : 0), // 3. Pin nur auf der Karte – sonst kollidiert die Liste mit den Untertiteln
+          { badge: `📍 ${dist}`, title: `${name} gibt ab: ${card}`, sub: "🤝 Tausch anfragen im Tausch-Hub", badgeBg: this.accent });
+      });
+    }
+  }
+
+  /** Großes Badge über die ganze Breite (z. B. „Kostenlos im Browser – Kein Download“). */
+  #badgeBig(ctx, text, y, a, col) {
+    if (!text || a <= 0) return;
+    ctx.save(); ctx.globalAlpha = clamp(a) * this.m;
+    ctx.translate(HX, y); ctx.scale(0.8 + 0.2 * clamp(a, 0, 1.1), 0.8 + 0.2 * clamp(a, 0, 1.1));
+    const ft = fitText(ctx, text, (n) => `900 ${n}px ${BODY}`, HZ.right - HZ.left - 60, 2, 44, 28);
+    const h = ft.lines.length * ft.size * 1.2 + 40, w = HZ.right - HZ.left;
+    ctx.shadowColor = hexA(col, 0.6); ctx.shadowBlur = 36;
+    rr(ctx, -w / 2, -h / 2, w, h, 30); ctx.fillStyle = col; ctx.fill(); ctx.shadowBlur = 0;
+    ctx.lineWidth = 4; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+    ctx.font = `900 ${ft.size}px ${BODY}`; ctx.fillStyle = "#04130a"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ft.lines.forEach((l, i) => ctx.fillText(l, 0, (i - (ft.lines.length - 1) / 2) * ft.size * 1.2 + 2));
+    ctx.restore();
+  }
+
+  /** H4 · Frage-Endscreen (13–17 s): Domain groß + echte Sammler-Frage als Kommentar-Trigger. Kein „Like & Abo“. */
+  sceneAsk(ctx, t, p) {
+    this.#backdrop(ctx, t);
+    const lt = t - (this.scenes[3]?.start || 0);
+    const a = ease(lt * 4);
+    ctx.save(); ctx.globalAlpha = a * this.m;
+    this.#logo(ctx, HX, 330, 54);
+    // Domain als Browser-Adresse, so groß wie möglich
+    const by = 440, bh = 150;
+    ctx.save(); ctx.shadowColor = hexA(this.accent, 0.7); ctx.shadowBlur = 50;
+    rr(ctx, HZ.left, by, HZ.right - HZ.left, bh, 75); ctx.fillStyle = "#ffffff"; ctx.fill(); ctx.restore();
+    let df = 88; // einzelnes Wort: nach Breite verkleinern (wrap() bricht ein Wort nicht um)
+    do { ctx.font = `400 ${df}px ${DISPLAY}`; df -= 2; } while (ctx.measureText(DOMAIN).width > HZ.right - HZ.left - 170 && df > 44);
+    df += 2;
+    ctx.font = `800 44px ${BODY}`; ctx.textBaseline = "middle"; ctx.textAlign = "left"; ctx.fillStyle = "#16a34a"; ctx.fillText("🔒", HZ.left + 40, by + bh / 2 + 2);
+    ctx.font = `400 ${df}px ${DISPLAY}`; ctx.fillStyle = "#0b0f22"; ctx.textAlign = "center"; ctx.fillText(DOMAIN, HX + 34, by + bh / 2 + 4);
+    ctx.font = `800 34px ${BODY}`; ctx.fillStyle = "#e2e8f0";
+    ctx.fillText("Kostenlos im Browser · kein Download", HX, by + bh + 58);
+    // Frage-Box (Kommentar-Trigger) mit Sprechblasen-Spitze
+    const s = 1 + 0.02 * Math.sin(t * 5), qy = 760, qw = HZ.right - HZ.left, q = this.tpl.question || "";
+    const ft = fitText(ctx, q, (n) => `400 ${n}px ${DISPLAY}`, qw - 90, 3, 80, 50);
+    const qh = ft.lines.length * ft.size * 1.1 + 110;
+    ctx.save(); ctx.translate(HX, qy + qh / 2); ctx.scale(s, s); ctx.translate(-HX, -(qy + qh / 2));
+    ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 40; ctx.shadowOffsetY = 12;
+    rr(ctx, HZ.left, qy, qw, qh, 40); ctx.fillStyle = this.accent; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(HZ.left + 110, qy + qh - 2); ctx.lineTo(HZ.left + 90, qy + qh + 60); ctx.lineTo(HZ.left + 190, qy + qh - 2); ctx.closePath(); ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.font = `900 32px ${BODY}`; ctx.fillStyle = "#0b0f22"; ctx.textAlign = "left"; ctx.fillText("💬 Sammler-Frage", HZ.left + 40, qy + 48);
+    ctx.font = `400 ${ft.size}px ${DISPLAY}`; ctx.textAlign = "center"; ctx.fillStyle = "#0b0f22";
+    ft.lines.forEach((l, i) => ctx.fillText(l, HX, qy + 100 + ft.size * 0.5 + i * ft.size * 1.1));
+    ctx.restore();
+    // Kommentarzeile mit blinkendem Cursor – zeigt, wo die Antwort hingehört
+    const cy = Math.min(HZ.bottom - 70, qy + qh + 130);
+    rr(ctx, HZ.left, cy - 46, HZ.right - HZ.left, 92, 46); ctx.fillStyle = "rgba(15,23,42,0.92)"; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(148,163,184,0.6)"; ctx.stroke();
+    ctx.font = `700 34px ${BODY}`; ctx.fillStyle = "#94a3b8"; ctx.textAlign = "left"; ctx.fillText("Kommentar schreiben …", HZ.left + 40, cy + 2);
+    if (Math.floor(t * 2.5) % 2 === 0) { ctx.fillStyle = "#ffffff"; ctx.fillRect(HZ.left + 38 + ctx.measureText("Kommentar schreiben …").width + 8, cy - 22, 4, 44); }
+    ctx.restore();
+  }
+
   /** Untertitel (Karaoke-Stil, aktuelles Wort in Akzentfarbe) im mittleren, geschützten Bereich. */
   subtitles(ctx, t) {
     const sc = this.sceneAt(t);
-    if (sc.key === "cover" || sc.key === "cta") return;
+    if (sc.key === "cover" || sc.key === "cta" || sc.key === "ask") return;
     const c = this.captions.find((x) => t >= x.start - 0.05 && t < x.end + 0.15);
     if (!c) return;
     ctx.save();
     ctx.font = `900 58px ${BODY}`; ctx.textBaseline = "middle";
     const txt = c.words.map((w) => w.w).join(" ");
-    const maxW = SAFE.right - SAFE.left - 60;
+    const hook4 = isHook4(this.tpl);
+    const maxW = hook4 ? HZ.right - HZ.left - 70 : SAFE.right - SAFE.left - 60;
     let size = 58;
     while (ctx.measureText(txt).width > maxW && size > 38) { size -= 4; ctx.font = `900 ${size}px ${BODY}`; }
     const tw = Math.min(maxW, ctx.measureText(txt).width), h = size * 1.7;
     const pop = 0.94 + 0.06 * ease((t - c.start) * 8);
-    ctx.translate(CX, sc.key === "focus" ? CAP_Y_PHONE : CAP_Y); ctx.scale(pop, pop);
+    ctx.translate(hook4 ? HX : CX, hook4 ? CAP_Y_HOOK : sc.key === "focus" ? CAP_Y_PHONE : CAP_Y); ctx.scale(pop, pop);
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 28; ctx.shadowOffsetY = 8;
     rr(ctx, -tw / 2 - 34, -h / 2, tw + 68, h, 30); ctx.fillStyle = "rgba(5,7,15,0.88)"; ctx.fill();
@@ -512,10 +891,16 @@ export class ProCompositor {
   }
 
   sceneAt(t) { return this.scenes.find((s) => t < s.end) || this.scenes[this.scenes.length - 1]; }
+  /** Braucht der Frame zur Zeit t ein frisches Live-Bild? (Cover/Endscreens zeigen keine Live-Aktion.) */
+  showsLive(t) { const k = this.sceneAt(t).key; return k !== "cover" && k !== "cta" && k !== "ask"; }
 
   #scene(ctx, s, t, live) {
     const p = clamp((t - s.start) / Math.max(0.01, s.end - s.start));
-    if (s.key === "cover") this.sceneCover(ctx, t, p, live);
+    if (s.key === "hook") this.sceneHook(ctx, t, p, live);
+    else if (s.key === "proof") this.sceneProof(ctx, t, p, live);
+    else if (s.key === "usp") this.sceneUsp(ctx, t, p, live);
+    else if (s.key === "ask") this.sceneAsk(ctx, t, p);
+    else if (s.key === "cover") this.sceneCover(ctx, t, p, live);
     else if (s.key === "focus") this.focusScene(ctx, t, p, live);
     else if (s.key === "benefit") this.sceneBenefit(ctx, t, p, live);
     else if (s.key === "trust") this.sceneTrust(ctx, t, p, live);
@@ -549,6 +934,7 @@ export class ProCompositor {
   }
 }
 
+const num = (s) => { const m = String(s || "").replace(/\./g, "").replace(",", ".").match(/\d+(\.\d+)?/); return m ? Number(m[0]) : NaN; };
 const eurFmt = (v) => `${Number(v).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 
 function hexA(hex, a) {

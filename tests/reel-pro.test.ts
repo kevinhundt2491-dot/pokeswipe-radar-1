@@ -6,7 +6,7 @@ import { cleanVideoConfig, rotationAt, PRO_TEMPLATE_KEYS, DEFAULT_VIDEO } from "
 
 test("Pro-Videos: alle Vorlagen, je 5 Sätze, Wortlimit für 20–30 s, Server-Grenze 72 Wörter", () => {
   assert.deepEqual(PRO_TEMPLATES.map((t: any) => t.key), [...PRO_TEMPLATE_KEYS]);
-  for (const t of PRO_TEMPLATES) for (const v of [0, 1]) {
+  for (const t of PRO_TEMPLATES.filter((x: any) => x.format !== "hook4")) for (const v of [0, 1]) {
     const s = proScript(t, v);
     assert.equal(s.say.length, 5); assert.equal(s.show.length, 5);
     const chk = checkProScript(s.say);
@@ -60,7 +60,7 @@ test("Pro-Videos: Untertitel in kurzen Häppchen, zeitlich innerhalb der Sätze"
 });
 
 test("Pro-Videos: Beschreibungstext mit Hook, CTA zu pokeswipe-radar.de und Hashtags", () => {
-  for (const t of PRO_TEMPLATES) {
+  for (const t of PRO_TEMPLATES.filter((x: any) => x.format !== "hook4")) {
     const c = proCaption(t, 1, { card: "Glurak ex" });
     assert.ok(c.caption.startsWith(proScript(t, 1).cover));
     assert.ok(c.caption.includes("pokeswipe-radar.de"));
@@ -87,13 +87,14 @@ import { coverHistory } from "../server/make.ts";
 
 test("Startbilder: jede Vorlage hat Themen-Badge und eigene Schlagzeile je Variante", () => {
   const covers = new Set();
-  for (const t of PRO_TEMPLATES) for (const v of [0, 1]) {
+  const std = PRO_TEMPLATES.filter((x: any) => x.format !== "hook4");
+  for (const t of std) for (const v of [0, 1]) {
     const s = proScript(t, v);
     assert.ok(s.badge && s.badge === s.badge.toUpperCase(), `${t.key}/${v} Badge`);
     assert.ok(s.cover.length >= 20 && s.cover.length <= 60, `${t.key}/${v}: ${s.cover}`);
     covers.add(s.cover);
   }
-  assert.equal(covers.size, PRO_TEMPLATES.length * 2);
+  assert.equal(covers.size, std.length * 2);
 });
 
 test("Startbilder: aufeinanderfolgende Videos unterscheiden sich in Farbe UND Layout", () => {
