@@ -322,8 +322,19 @@ type LookupRow = {
   number: string; image: string; rarity: string; price: number | null; priceSource: string; psa10: number | null; psa10Source: string;
   baseCardId: string | null;
   /** Scanner-Upgrade: Reverse-Holo-Preis (Cardmarket, nur deutsche Karten) und eBay-Spanne (Verkäufe der letzten 90 Tage, roh) */
-  reversePrice?: number | null; ebayLow?: number | null; ebayHigh?: number | null; ebayMedian?: number | null; ebaySales?: number;
+  reversePrice?: number | null; holoPrice?: number | null; ebayLow?: number | null; ebayHigh?: number | null; ebayMedian?: number | null; ebaySales?: number;
 };
+
+/** Varianten-Preise eines Drucks (TCGplayer, in EUR) für den 1-Tap-Varianten-Umschalter im Scanner. */
+export function variantPriceFields(vp: unknown): { reversePrice?: number; holoPrice?: number } {
+  const v = (vp && typeof vp === "object" ? vp : {}) as Record<string, { price?: unknown } | undefined>;
+  const pick = (k: string) => { const x = Number(v[k]?.price); return Number.isFinite(x) && x > 0 ? Math.round(x * 100) / 100 : undefined; };
+  const out: { reversePrice?: number; holoPrice?: number } = {};
+  const rev = pick("reverse_holo"), holo = pick("holo");
+  if (rev) out.reversePrice = rev;
+  if (holo) out.holoPrice = holo;
+  return out;
+}
 
 /** Name, Bild, Marktpreis und PSA-10-Wert für erkannte Karten (ein Aufruf für alle Sprachvarianten). */
 export async function lookup(keys: string[]): Promise<LookupRow[]> {
@@ -348,7 +359,7 @@ export async function lookup(keys: string[]): Promise<LookupRow[]> {
         c.image, c.rarity, COALESCE(c.trend, c.avg, c.low)::float AS price, COALESCE(c.reverse_trend, c.reverse_avg)::float AS reverse_price
       FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id WHERE c.id IN (${sql.join(cardIds.map((i) => sql`${i}`), sql`, `)})`).then(rows) : Promise.resolve([] as any[]),
     printIds.length ? db.execute(sql`
-      SELECT p.id, p.lang, p.name, p.set_name, p.set_code, p.number, p.image, p.rarity, p.price_eur::float AS price, p.price_source, p.base_card_id,
+      SELECT p.id, p.lang, p.name, p.set_name, p.set_code, p.number, p.image, p.rarity, p.price_eur::float AS price, p.price_source, p.base_card_id, p.variant_prices,
         CASE WHEN p.lang = 'ja' THEN ps.name_de ELSE NULL END AS alt_name
       FROM card_prints p LEFT JOIN pokemon_species ps ON ps.dex_id = p.dex_id WHERE p.id IN (${sql.join(printIds.map((i) => sql`${i}`), sql`, `)})`).then(rows) : Promise.resolve([] as any[]),
   ]);
@@ -371,7 +382,7 @@ export async function lookup(keys: string[]): Promise<LookupRow[]> {
       key: `print:${r.id}`, kind: "print", id: String(r.id), lang: String(r.lang), name: String(r.name), altName: String(r.alt_name || ""),
       setName: String(r.set_name || ""), setCode: String(r.set_code || ""), number: String(r.number || ""), image: String(r.image || ""),
       rarity: String(r.rarity || ""), price: r.price ?? null, priceSource: String(r.price_source || ""), psa10: p.v, psa10Source: p.src,
-      baseCardId: r.base_card_id ? String(r.base_card_id) : null, ...p.ebay,
+      baseCardId: r.base_card_id ? String(r.base_card_id) : null, ...variantPriceFields(r.variant_prices), ...p.ebay,
     });
   });
   return keys.map((k) => out.find((o) => o.key === k)).filter(Boolean) as LookupRow[];

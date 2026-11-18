@@ -64,6 +64,8 @@ const LIVE_SCAN_KEYS = [
   // Turbo-Upgrade: Foto-Scan im Swiper/in der Sammlung, Sprung in den Swiper, optionaler KI-Tiefenscan
   "liveScanPhotoQuick", "liveScanSwiper", "liveScanDeepScan",
   "liveScanShutter", "liveScanUpload", "liveScanPick", "liveScanCondition", "liveScanFinish", "liveScanNext", "liveScanSeriesMode", "liveScanAutoAi",
+  // Ergebnisfeld: Auto-Close-Aktionen, Zustands-Dropdown, „⋯“, Treffer-Ton
+  "liveScanAct", "liveScanCondMenu", "liveScanMore", "liveScanSound",
   "quickListSet", "quickListPhoto", "quickListGo", "quickListPrice", "quickListUse", "quickListStrategy", "quickListConditionAll", "quickListRemove", "quickListSubmit",
   "quickListPreview", "quickListCancel", "quickListUndo",
   // nur in der Pro-Video-Aufnahme (Live-Stage) vorhanden – sonst liefern sie null

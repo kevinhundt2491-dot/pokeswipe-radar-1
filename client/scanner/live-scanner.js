@@ -5,7 +5,11 @@
 import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError, requireLogin, modal, closeModalEl } from "../core.js";
 import { SCORE_STRONG, SCORE_ACCEPT, quadMotion } from "../../server/scan-logic.ts";
 import { readCardText, warmupOcr, ocrKind, getOcr } from "./ocr.js";
-import { CONDITION_FACTORS } from "../../server/variant-logic.ts";
+import {
+  SCAN_CONDS, SCAN_FINISHES, DEFAULT_CONDITION, RESULT_ACTIONS, conditionPrice, hasOwnFinishPrice,
+  newHitView, mainPrice, conditionOptions, conditionChipLabel, toggleConditionMenu, selectCondition, selectFinish,
+  createActionRunner, createCooldown, zoomPlan, glareCheck, hashDecision, TARGET_ZOOM,
+} from "./scan-ui-logic.js";
 import { haptic, isNative } from "../native.js";
 import { openQuickList, quickListApi } from "./quick-list.js";
 import { priceTagHtml } from "../price-tag.js";
@@ -47,7 +51,7 @@ const STABLE_MOTION = 0.045;
  */
 const OCR_INTERVAL_MS = 140;
 /** Kamera-Zoom (wo das Gerät ihn kann): Karte wird etwas weiter weg gehalten – dort stellen Handykameras scharf */
-const CAMERA_ZOOM = 1.4;
+const CAMERA_ZOOM = TARGET_ZOOM;
 /** Ein Bild ist beim Worker in Arbeit – länger als das gilt es als verloren und das nächste wird geschickt */
 const FRAME_STALE_MS = 1200;
 /**
@@ -65,9 +69,9 @@ const GONE_FRAMES = 5;
 /** Knapper Hash-Treffer, der über mehrere Bilder gleich bleibt, wird mit Alternativen angezeigt */
 const NEAR_FRAMES = 3;
 
-const CONDS = ["NM", "EX", "GD", "LP", "PL"];
-const COND_LABEL = { NM: "Near Mint", EX: "Excellent", GD: "Good", LP: "Light Played", PL: "Played" };
-const FINISHES = [["normal", "Normal"], ["reverse_holo", "Reverse Holo"], ["holo", "Holo"]];
+/** Zustände (inkl. Poor) und Varianten des Ergebnisfelds – Logik in scan-ui-logic.js */
+const CONDS = SCAN_CONDS;
+const FINISHES = SCAN_FINISHES;
 
 const sc = {
   stream: null, track: null, worker: null, ready: false, loadingIndex: false, indexCount: 0, perLang: {}, ocrMode: "none",
@@ -80,12 +84,15 @@ const sc = {
   // Turbo-Upgrade: Texterkennung
   textCount: 0, ocrBusy: false, lastOcrAt: 0, ocrRuns: 0, ocrMsSum: 0, ocrAlt: 0, textLock: null, cornersAt: 0, lastText: "", lastStill: null,
   hitMs: [],
+  /** Kein Doppel-Scan derselben Karte innerhalb von ~0,9 s (beim Durchblättern eines Stapels) */
+  cooldown: createCooldown(),
   prefs: readPrefs(),
 };
 
 function readPrefs() {
   // KI-Auto ist jetzt standardmäßig aus – nur wer es nach dem Upgrade selbst einschaltet (aiOptIn), bekommt es
-  const def = { condition: "NM", series: false, autoAi: false, aiOptIn: false };
+  // sound: optionaler dezenter Ton beim Treffer (standardmäßig aus – Vibration reicht meist)
+  const def = { condition: "NM", series: false, autoAi: false, aiOptIn: false, sound: false };
   try {
     const p = { ...def, ...(JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}) };
     if (!p.aiOptIn) p.autoAi = false;
@@ -178,6 +185,7 @@ export function liveScanPanelHtml() {
         <button id="ps-ls-torch" onclick="PS.liveScanTorch()" class="hidden w-10 h-10 rounded-full bg-slate-900/80 text-white text-lg" aria-label="Taschenlampe" aria-pressed="false">🔦</button>
         <button onclick="PS.liveScanStop()" class="w-10 h-10 rounded-full bg-slate-900/80 text-white text-lg" aria-label="Kamera beenden">✕</button>
       </div>
+      <p id="ps-ls-toast" role="status" aria-live="polite" class="absolute top-11 left-1/2 -translate-x-1/2 max-w-[86%] truncate text-center text-[12px] font-black text-slate-950 bg-emerald-400/95 px-3 py-1.5 rounded-full shadow-lg pointer-events-none transition-opacity duration-200 hidden"></p>
       <p id="ps-ls-perf" class="ps-pro-only absolute top-10 left-2 text-[10px] font-mono text-emerald-300 bg-slate-950/70 rounded px-1.5 py-0.5 hidden"></p>
       <div id="ps-ls-hud" class="absolute inset-x-2 bottom-2 hidden max-h-[88%] overflow-y-auto" aria-live="polite"></div>
     </div>
@@ -190,6 +198,7 @@ export function liveScanPanelHtml() {
     <div class="flex flex-wrap justify-center gap-1.5">
       <button id="ps-ls-series-mode" onclick="PS.liveScanSeriesMode()" class="${chip(false)}" aria-pressed="false" title="Stapel durchscannen: jede Karte landet in der Liste, der Scanner ist sofort für die nächste bereit">🔁 Serien-Scan</button>
       <button id="ps-ls-autoai" onclick="PS.liveScanAutoAi()" class="${chip(false)}" aria-pressed="false" title="Standardmäßig aus. Wenn an: ist die Erkennung auf dem Gerät unsicher, prüft die KI den Kartenausschnitt automatisch (zählt als KI-Scan)">🤖 KI-Auto</button>
+      <button id="ps-ls-sound" onclick="PS.liveScanSound()" class="${chip(false)}" aria-pressed="false" title="Optional: dezenter Ton bei jedem Treffer (Vibration gibt es immer, wo das Gerät sie kann)">🔔 Ton</button>
       <button id="ps-ls-ai" onclick="PS.liveScanPhoto()" class="text-[11px] bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg" title="Optional – nur nötig, wenn die schnelle Erkennung auf dem Gerät eine Karte nicht findet (z. B. Promo, starke Spiegelung). Zählt als KI-Scan.">🧠 KI-Tiefenscan</button>
       <button onclick="PS.showSub('scan', 'camera')" class="text-[11px] bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg">🔎 Suche ohne Kamera</button>
     </div>
@@ -203,6 +212,7 @@ function renderToggles() {
   const set = (id, on) => { const b = $(id); if (b) { b.className = chip(on); b.setAttribute("aria-pressed", String(on)); } };
   set("ps-ls-series-mode", !!sc.prefs.series);
   set("ps-ls-autoai", !!sc.prefs.autoAi);
+  set("ps-ls-sound", !!sc.prefs.sound);
 }
 
 function renderLangChips() {
@@ -304,9 +314,19 @@ async function tuneTrack(track) {
   if (!caps.focusMode) { try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {} }
   // Leichter Zoom: Handykameras stellen unter ~10–15 cm nicht scharf – genau dort hielt man die Karte, um den Rahmen zu
   // füllen. Mit Zoom füllt die Karte den Rahmen schon aus größerem Abstand, Nummer und Name sind dann scharf.
-  const z = caps.zoom;
-  if (z && Number(z.max) >= CAMERA_ZOOM && Number(z.min ?? 1) <= 1) {
-    try { await track.applyConstraints({ advanced: [{ zoom: CAMERA_ZOOM }] }); } catch {}
+  // Sauberer Fähigkeits-Check: iOS Safari (und ältere Browser) melden oft gar keinen oder einen zu kleinen Zoom-Bereich
+  // – dann bleibt es ohne Versuch beim Standard-Zoom. Scheitert das Setzen trotzdem, wird auf 1× zurückgesetzt.
+  const plan = zoomPlan(caps, CAMERA_ZOOM);
+  sc.zoom = 1;
+  if (plan.apply) {
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: plan.zoom }] });
+      const got = Number(track.getSettings?.().zoom);
+      sc.zoom = Number.isFinite(got) && got > 0 ? got : plan.zoom;
+    } catch {
+      try { await track.applyConstraints({ advanced: [{ zoom: Math.max(1, Number(caps.zoom?.min) || 1) }] }); } catch {}
+      sc.zoom = 1;
+    }
   }
   return caps;
 }
@@ -452,8 +472,37 @@ function successFeedback() {
   const f = $("ps-ls-flash");
   if (f) { f.classList.remove("on"); void f.offsetWidth; f.classList.add("on"); }
   if (isNative()) haptic("success");
-  else { try { navigator.vibrate?.(40); } catch {} }
+  else { try { if (typeof navigator.vibrate === "function") navigator.vibrate(40); } catch {} }
+  if (sc.prefs.sound) beep();
 }
+
+/** Optionaler, dezenter Treffer-Ton (kurzer Sinus, leise) – nur wenn „🔔 Ton“ eingeschaltet ist. */
+function beep() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    sc.audio ||= new AC();
+    const ctx = sc.audio;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    const o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime;
+    o.type = "sine"; o.frequency.setValueAtTime(1320, t);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.08, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 0.13);
+  } catch {}
+}
+
+/** Kurze, nicht blockierende Bestätigung direkt im Sucher (Kamera läuft weiter, kein Ton, nach ~1,6 s weg). */
+function scanToast(text) {
+  const el = $("ps-ls-toast");
+  if (!el) { toast(text); return; }
+  el.textContent = text;
+  el.classList.remove("hidden", "opacity-0");
+  clearTimeout(sc.toastTimer);
+  sc.toastTimer = setTimeout(() => { el.classList.add("opacity-0"); setTimeout(() => el.classList.add("hidden"), 220); }, 1600);
+}
+
+/** Ein Dialog (Schnell-Inserieren, Details, Flip-Check …) liegt über dem Scanner → keine neuen Treffer dahinter. */
+const overlayOpen = () => Boolean(document.querySelector("body > div.fixed.inset-0:not(.hidden)[id]"));
 
 function tick() {
   if (!sc.running) return;
@@ -467,7 +516,9 @@ function tick() {
   // Handys Bilder in der Worker-Warteschlange – ausgewertet wurde dann ein veraltetes Bild, und die Text-Anfragen
   // standen hinten an.
   const inFlight = sc.frameAt && now - sc.frameAt < FRAME_STALE_MS;
-  if (sc.ready && !sc.capturing && !inFlight && video.readyState >= 2 && now - sc.lastSent >= interval) {
+  // Dialog über dem Scanner (z. B. Schnell-Inserieren nach „Verkaufen“): Kamera läuft weiter, erkannt wird erst danach
+  const paused = overlayOpen();
+  if (sc.ready && !sc.capturing && !paused && !inFlight && video.readyState >= 2 && now - sc.lastSent >= interval) {
     const g = sc.geometry && sc.geometry.vw === video.videoWidth ? sc.geometry : layout();
     if (g) {
       g.vw = video.videoWidth;
@@ -479,7 +530,7 @@ function tick() {
       sc.worker.postMessage({ type: "frame", w: g.W, h: g.H, data: img.data.buffer, guide: g.guide, ocr: sc.ocrMode !== "none" }, [img.data.buffer]);
     }
   }
-  if (sc.ready && sc.textCount && !sc.capturing && video.readyState >= 2) liveOcr(video);
+  if (sc.ready && sc.textCount && !sc.capturing && !paused && video.readyState >= 2) liveOcr(video);
   const next = () => tick();
   if (typeof video.requestVideoFrameCallback === "function") video.requestVideoFrameCallback(next);
   else sc.timer = setTimeout(next, 60);
@@ -566,10 +617,12 @@ function onWorker(m) {
     const same = sc.streakKey && keys.some((k) => sc.streakKey.includes(k));
     sc.streak = same ? sc.streak + 1 : 1;
     sc.streakKey = keys;
-    // Klarer Treffer (oder passende Kartennummer) sofort, sonst nach zwei übereinstimmenden Bildern
-    if (m.byNumber || m.score <= SCORE_STRONG || sc.streak >= 2) {
+    // Bild-Fingerabdruck zuerst: klarer Treffer, passende Kartennummer oder eindeutiges Artwork sofort – auch wenn die
+    // (fett-kursive) Sammlernummer nicht lesbar ist –, sonst nach zwei übereinstimmenden Bildern
+    if (hashDecision(m, sc.streak) === "hit") {
       if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte in den Rahmen legen"); return; }
       if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); setUi("hit", "✅ Erkannt!"); return; }
+      if (sc.cooldown.blocked(keys)) return;
       if (!sc.capturing) showHit(group, m, capturePhoto(m.corners));
       return;
     }
@@ -628,6 +681,19 @@ function liveCardRect(g) {
   return { x: x0 + (w * (1 - k)) / 2, y: y0 + (h * (1 - k)) / 2, w: w * k, h: h * k };
 }
 
+/** Blendungs-Anteil des Lese-Bereichs auf einem winzigen Vorschaubild (~1 ms). */
+function glareOf(src, rect) {
+  try {
+    const w = 64, h = Math.max(16, Math.round((w * rect.h) / Math.max(1, rect.w)));
+    sc.glareCv ||= document.createElement("canvas");
+    const cv = sc.glareCv;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(src, rect.x, rect.y, rect.w, rect.h, 0, 0, w, h);
+    return glareCheck(ctx.getImageData(0, 0, w, h).data, w, h, { stride: 1 });
+  } catch { return { ratio: 0, high: false, skip: false }; }
+}
+
 /** Text-Anfrage an den Worker (Text-Index + letzte Bild-Treffer). */
 function workerText(text, useHash = true, timeoutMs = 3000) {
   const reqId = `t${++sc.reqSeq}`;
@@ -657,6 +723,11 @@ async function liveOcr(video) {
   sc.ocrBusy = true; sc.lastOcrAt = now;
   try {
     const rect = liveCardRect(g);
+    // Blendungs-Check vor dem OCR-Schnitt: starker Holo-/Sleeve-Glanz → dezenter Hinweis; bei extremer Überbelichtung
+    // diese Lesung auslassen (wäre ohnehin leer) – das Bild-Matching im Worker läuft unabhängig weiter
+    const gl = glareOf(video, rect);
+    if (gl.high) { sc.glare = true; if (!sc.current) hint("✨ Spiegelung – Karte leicht kippen"); }
+    if (gl.skip) return;
     const r = await readCardText(video, rect);
     if (!r || !sc.running) return;
     sc.ocrRuns++; sc.ocrMsSum += r.ms; sc.lastText = r.text;
@@ -691,6 +762,7 @@ function hitFromText(d, photo = null) {
   const keys = group.map((x) => x.key);
   if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte vor die Kamera"); return; }
   if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); return; }
+  if (!photo && sc.cooldown.blocked(keys)) return;
   sc.textLock = null;
   showHit(group, { probe: sc.lastProbe, candidates: (d.candidates || []).map((k) => ({ key: k, score: 0 })), byNumber: Boolean(d.number), via: d.via, label: d.label }, photo || capturePhoto(sc.prevCorners));
 }
@@ -701,16 +773,20 @@ function hitFromText(d, photo = null) {
  */
 async function recognizePhoto(dataUrl, { ocrWaitMs = 9000 } = {}) {
   const t0 = performance.now();
-  const { m, cv, corners } = await analyseImage(dataUrl);
+  const prep = await prepareImage(dataUrl);
+  const until = performance.now() + ocrWaitMs;
+  // Bild-Fingerabdruck und Texterkennung parallel: die Name-/Nummern-Lesung des ganzen Rahmens startet sofort, statt
+  // erst nach dem Hash-Abgleich – reicht der Fingerabdruck allein (z. B. schwer lesbare fett-kursive Nummern der
+  // deutschen Karmesin-&-Purpur-Sets), wird auf die Texterkennung gar nicht erst gewartet
+  const wideP = readTextTimed(prep.cv, rectOfQuad(prep.guideQuad), ocrWaitMs);
+  const { m, cv, corners } = await hashImage(prep);
   const strongHash = Boolean(m.accepted && (m.byNumber || m.score <= SCORE_STRONG) && !m.glareHigh);
   let d = null;
   if (!strongHash && sc.textCount) {
-    // Kanten gefunden: erst die entzerrten, engen Streifen (schnell, genau); bleibt das ohne Treffer, zusätzlich der
-    // großzügige Bereich um die Karte
-    const rects = m.found ? [{ ...rectOfQuad(corners), quad: corners }, rectOfQuad(corners)] : [rectOfQuad(corners)];
-    const until = performance.now() + ocrWaitMs;
-    for (const rect of rects) {
-      const rt = await readTextTimed(cv, rect, Math.max(800, until - performance.now()));
+    // Kanten gefunden: zusätzlich die entzerrten, engen Streifen (genauer); bewertet wird eng vor großzügig
+    const tight = m.found ? await readTextTimed(cv, { ...rectOfQuad(corners), quad: corners }, Math.max(800, until - performance.now())) : null;
+    const wide = await wideP;
+    for (const rt of [tight, wide]) {
       if (!rt?.text?.trim()) continue;
       sc.lastText = rt.text;
       const r = await workerText(rt.text, true);
@@ -831,6 +907,10 @@ async function capture({ auto = false } = {}) {
     ctx.drawImage(video, g.sx0, g.sy0, g.sw, g.sh, 0, 0, W, H);
     const guide = { x0: g.guide.x0 * f, y0: g.guide.y0 * f, x1: g.guide.x1 * f, y1: g.guide.y1 * f };
     const guideQuad = [[guide.x0, guide.y0], [guide.x1, guide.y0], [guide.x1, guide.y1], [guide.x0, guide.y1]];
+    // Parallel zum Fingerabdruck schon Name + Nummer lesen – auf den frisch erkannten Kanten des Live-Bilds, sonst im Rahmen
+    const freshQuad = sc.prevCorners && Date.now() - sc.cornersAt < 700 ? sc.prevCorners.map(([x, y]) => [x * f, y * f]) : null;
+    const earlyRect = freshQuad ? { ...rectOfQuad(freshQuad), quad: freshQuad } : rectOfQuad(guideQuad);
+    const earlyP = sc.textCount ? readTextTimed(cv, earlyRect, auto ? 1500 : 4000) : Promise.resolve(null);
     const m = sc.ready ? await workerFrame({ w: W, h: H, data: ctx.getImageData(0, 0, W, H).data.buffer, guide, ocr: true, capture: true }) : {};
     const liveCorners = m.found ? m.corners.map(([x, y]) => [x / f, y / f]) : null;
     const photo = capturePhoto(liveCorners);
@@ -847,8 +927,14 @@ async function capture({ auto = false } = {}) {
     if (sc.textCount) {
       // Kanten gefunden: entzerrte, enge Streifen (schnell und genau), sonst der großzügige Bereich um den Rahmen
       const rect = m.found ? { ...rectOfQuad(m.corners), quad: m.corners } : rectOfQuad(guideQuad);
-      let rt = await readTextTimed(cv, rect, auto ? 1500 : 4000);
+      let rt = await earlyP;
       let d = rt?.text?.trim() ? await workerText(rt.text, true) : null;
+      // Frühe Lesung ohne Treffer, Kanten erst jetzt sicher → einmal auf den exakten Kanten nachlesen
+      if (!d?.accepted && m.found && !freshQuad) {
+        rt = await readTextTimed(cv, rect, auto ? 1500 : 4000);
+        const d1 = rt?.text?.trim() ? await workerText(rt.text, true) : null;
+        if (d1?.accepted || !d) d = d1;
+      }
       if (!d?.accepted && rect.quad && !auto) {
         rt = await readTextTimed(cv, rectOfQuad(m.corners), 3000);
         const d2 = rt?.text?.trim() ? await workerText(rt.text, true) : null;
@@ -930,9 +1016,11 @@ function presentHit(cur) {
     key: info.key, keys: [...new Set([...(cur.variants || [info]).map((v) => v.key), ...(cur.alts || []).map((a) => a.key)])],
     info, variants: cur.variants || [info], alts: cur.alts || [], probe: cur.probe || null, photo: cur.photo || null,
     unsure: Boolean(cur.unsure), source: cur.source || "device", byNumber: Boolean(cur.byNumber), aiNote: cur.aiNote || "", via: cur.via || "",
-    finish: cur.finish || "normal", condition: sc.prefs.condition || "NM",
+    // Jeder neue Treffer startet mit „Near Mint“, Zustands-Dropdown zu
+    ...newHitView({ finish: cur.finish }),
   };
   sc.currentAt = Date.now();
+  sc.cooldown.mark(sc.current.keys);
   if (sc.searchSince && sc.running && (cur.source || "device") === "device") {
     sc.hitMs = [...sc.hitMs, Date.now() - sc.searchSince].slice(-20);
     sc.searchSince = 0;
@@ -956,6 +1044,7 @@ async function showHit(group, m, photo = null) {
   const token = Symbol("hit");
   sc.current = { key: keys[0], keys, info: null, loading: token, probe: m.probe || null, photo: photo || capturePhoto(m.corners) };
   sc.currentAt = Date.now();
+  sc.cooldown.mark(keys);
   successFeedback(); sc.feedbackAt = Date.now();
   setUi("hit", m.label ? `✅ ${m.label}` : "✅ Erkannt!");
   // Name sofort zeigen (aus dem Index auf dem Gerät), Preis lädt dahinter
@@ -971,10 +1060,8 @@ async function showHit(group, m, photo = null) {
 }
 
 const priceTxt = (i) => (i.price ? eur(i.price) : "–");
-/** Richtwert je Variante: Reverse Holo hat bei deutschen Karten einen eigenen Cardmarket-Preis. */
-const basePrice = (i, finish) => (finish === "reverse_holo" && Number(i.reversePrice) > 0 ? Number(i.reversePrice) : Number(i.price) || 0);
-/** Preis nach Zustand (gleiche Faktoren wie Portfolio und Marktplatz: EX 85 %, GD 70 %, LP 60 %, PL 45 %). */
-const condPrice = (i, finish, cond) => { const b = basePrice(i, finish); return b ? Math.round(b * (CONDITION_FACTORS[cond] ?? 1) * 100) / 100 : 0; };
+/** Preis nach Variante und Zustand (gleiche Faktoren wie Portfolio und Marktplatz: EX 85 %, GD 70 %, LP 60 %, PL 45 %, PO 30 %). */
+const condPrice = (i, finish, cond) => conditionPrice(i, finish, cond);
 
 function ebayHtml(i) {
   if (Number(i.ebayLow) > 0 && Number(i.ebayHigh) > 0) {
@@ -993,67 +1080,62 @@ function renderHud(cur) {
   const i = cur.info;
   const k = jsArg(i.key);
   const canWish = i.kind === "card" || !!i.baseCardId;
-  const photo = cur.photo;
-  const finish = cur.finish || "normal", cond = cur.condition || sc.prefs.condition || "NM";
-  const price = condPrice(i, finish, cond);
+  const finish = cur.finish || "normal", cond = cur.condition || DEFAULT_CONDITION;
+  const price = mainPrice(i, cur);
   const alts = cur.alts || [], variants = cur.variants || [i];
-  const btnCls = (on) => `text-[10px] font-black px-2 py-1 rounded-lg ${on ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-200"}`;
-  hud.innerHTML = `<div class="bg-slate-950/92 backdrop-blur rounded-2xl p-2.5 border ${cur.unsure ? "border-yellow-400/70" : "border-emerald-400/60"} shadow-2xl space-y-2">
-    ${cur.unsure ? `<p class="text-[11px] font-black text-yellow-300">🤔 Meinst du diese Karte? Sonst unten die passende Alternative antippen.</p>` : ""}
-    <div class="flex gap-2.5 items-start">
-      <div class="relative shrink-0 flex gap-1">
-        ${photo ? `<img src="${esc(photo)}" alt="Dein Scan-Foto" title="Dein Scan-Foto" class="w-12 h-16 object-cover rounded bg-slate-900 border border-cyan-400/60" />` : ""}
-        <img src="${esc(cdn(i.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" class="w-12 h-16 object-contain rounded bg-slate-900" />
-        ${price ? `<div class="absolute -bottom-1.5 left-0 ps-price-tag-tilt">${priceTagHtml({ price }, "sm")}</div>` : ""}
-      </div>
+  const showAlts = alts.length && (cur.unsure || cur.more);
+  const num = [i.setCode || i.setName, i.number].filter(Boolean).join(" · ");
+  const act = (name, cls, extra = "") => `<button data-act="${name}" onclick="PS.liveScanAct('${name}', ${k})" ${extra} class="${cls} text-[11px] font-black py-2.5 rounded-xl truncate px-1 disabled:opacity-40">${RESULT_ACTIONS[name].label}</button>`;
+  // Minimal: Bild, Name, Set + Nummer, Hauptpreis (Zustand/Variante), Haupt-Aktionen. Alles andere hinter „Zustand ▾“ bzw. „⋯“.
+  hud.innerHTML = `<div data-hud="result" class="bg-slate-950/92 backdrop-blur rounded-2xl p-2.5 border ${cur.unsure ? "border-yellow-400/70" : "border-emerald-400/60"} shadow-2xl space-y-2">
+    ${cur.unsure ? `<p class="text-[11px] font-black text-yellow-300">🤔 Meinst du diese Karte?${alts.length ? " Sonst Alternative antippen." : ""}</p>` : ""}
+    <div class="flex gap-2.5 items-center">
+      <img src="${esc(cur.photo || cdn(i.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="${cur.photo ? "Dein Scan-Foto" : ""}" class="w-11 h-[60px] ${cur.photo ? "object-cover" : "object-contain"} rounded bg-slate-900 shrink-0" />
       <div class="min-w-0 flex-1">
-        <p class="text-sm font-black text-white leading-tight truncate">${esc(i.name)} <span class="text-slate-400 font-bold">${esc(i.number || "")}</span></p>
-        <p class="text-[10px] text-slate-400 truncate">${FLAG[i.lang] || ""} ${esc(LANG_LABEL[i.lang] || i.lang)}${i.altName ? ` · 🇩🇪 ${esc(i.altName)}` : ""} · ${esc(i.setName)}${i.rarity ? ` · ${esc(i.rarity)}` : ""}</p>
-        ${cur.source === "ai" ? `<p class="text-[9px] text-cyan-300 truncate">🤖 KI-Vision${cur.aiNote ? ` · ${esc(cur.aiNote)}` : ""}</p>` : /name/.test(cur.via || "") ? `<p class="text-[9px] text-emerald-300">🔤 per Name${/number/.test(cur.via) ? " + Sammlernummer" : ""} erkannt · ohne KI</p>` : cur.byNumber ? `<p class="text-[9px] text-emerald-300">🔢 per Sammlernummer bestätigt · ohne KI</p>` : ""}
-        <div class="flex items-end gap-3 mt-0.5 flex-wrap">
-          <div><p class="text-[9px] uppercase font-bold text-slate-500">Cardmarket ${esc(cond)}</p><p class="text-lg font-black text-emerald-400 leading-none">${price ? eur(price) : "–"}</p></div>
-          ${ebayHtml(i)}
-          <div><p class="text-[9px] uppercase font-bold text-slate-500">PSA 10</p><p class="text-sm font-black text-purple-300 leading-none">${i.psa10 ? `${i.psa10Source === "ask" ? "ab " : ""}${eur(i.psa10)}` : "–"}</p></div>
-        </div>
+        <p data-hud-name class="text-sm font-black text-white leading-tight truncate">${FLAG[i.lang] || ""} ${esc(i.name)}</p>
+        <p data-hud-set class="text-[11px] text-slate-400 truncate">${esc(num)}</p>
       </div>
-      <button onclick="PS.liveScanDismiss()" class="text-slate-400 hover:text-white text-sm px-1" aria-label="Ergebnis schließen">✕</button>
+      <div class="text-right shrink-0">
+        <p class="text-[9px] uppercase font-bold text-slate-500 leading-none">${esc(cond)}${finish !== "normal" ? ` · ${finish === "holo" ? "Holo" : "Rev."}` : ""}</p>
+        <p data-hud-price class="text-xl font-black text-emerald-400 leading-tight">${price ? eur(price) : "–"}</p>
+      </div>
+      <button onclick="PS.liveScanNext()" class="self-start text-slate-400 hover:text-white text-base w-7 h-7 -mr-1 -mt-1" aria-label="Schließen und nächste Karte scannen">✕</button>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <div role="group" aria-label="Variante" class="flex bg-slate-800/80 rounded-lg p-0.5">${FINISHES.map(([f, l]) => `<button data-finish="${f}" onclick="PS.liveScanFinish('${f}')" aria-pressed="${f === finish}" title="${hasOwnFinishPrice(i, f) ? "" : "Kein eigener Preis – Basispreis"}" class="text-[10px] font-black px-2 py-1 rounded-md ${f === finish ? "bg-yellow-400 text-slate-950" : "text-slate-300"}">${l}</button>`).join("")}</div>
+      <button data-hud-cond onclick="PS.liveScanCondMenu()" aria-haspopup="listbox" aria-expanded="${cur.condMenu ? "true" : "false"}" class="ml-auto text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-100">${esc(conditionChipLabel(cur))}</button>
+    </div>
+    ${cur.condMenu ? `<div data-hud-cond-menu role="listbox" aria-label="Zustand und Vergleichspreise" class="bg-slate-900 border border-slate-700 rounded-xl p-1 space-y-0.5">
+      ${conditionOptions(i, cur).map((o) => `<button role="option" data-cond="${o.code}" aria-selected="${o.active}" onclick="PS.liveScanCondition('${o.code}')" class="w-full flex items-center justify-between text-[11px] font-bold px-2 py-1.5 rounded-lg ${o.active ? "bg-yellow-400 text-slate-950" : "text-slate-200 hover:bg-slate-800"}"><span>${o.active ? "✓ " : ""}${esc(o.label)}</span><span class="font-black">${o.price ? eur(o.price) : "–"}</span></button>`).join("")}
+      <div class="flex gap-3 px-2 pt-1 pb-0.5 border-t border-slate-800">${ebayHtml(i)}<div><p class="text-[9px] uppercase font-bold text-slate-500">PSA 10</p><p class="text-xs font-black text-purple-300 leading-none">${i.psa10 ? `${i.psa10Source === "ask" ? "ab " : ""}${eur(i.psa10)}` : "–"}</p></div></div>
+    </div>` : ""}
+    ${showAlts ? `<div class="grid grid-cols-3 gap-1">${alts.map((a) => `<button onclick="PS.liveScanPick(${jsArg(a.key)})" class="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg p-1 text-left min-w-0">
+        <img src="${esc(cdn(a.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" class="w-6 h-8 object-contain shrink-0" />
+        <span class="min-w-0"><span class="block text-[9px] font-black text-white truncate">${FLAG[a.lang] || ""} ${esc(a.name)}</span><span class="block text-[9px] text-slate-400 truncate">${esc(a.number || "")} · ${priceTxt(a)}</span></span></button>`).join("")}</div>` : ""}
+    <div class="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-1.5">
+      ${act("binder", "bg-emerald-500 text-slate-950")}
+      ${act("sell", "bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950")}
+      ${act("instant", "bg-yellow-400 text-slate-950", 'title="1-Tap: fairer Preis, gemerkte Angaben, geht nach kurzem Countdown live"')}
+      ${act("wish", "bg-rose-400 text-slate-950", canWish ? "" : 'disabled title="Wunschliste gibt es für deutsche und englische Karten"')}
+      <button onclick="PS.liveScanMore()" aria-expanded="${cur.more ? "true" : "false"}" aria-label="Weitere Aktionen" class="bg-slate-800 text-white text-sm font-black px-2.5 rounded-xl">⋯</button>
+    </div>
+    ${cur.more ? `<div class="grid grid-cols-3 gap-1.5">
+      ${act("swiper", "bg-slate-800 text-white")}${act("flip", "bg-slate-800 text-white")}${act("details", "bg-slate-800 text-white")}
     </div>
     ${variants.length > 1 ? `<div class="flex flex-wrap gap-1">${variants.map((v) => `<button onclick="PS.liveScanVariant(${jsArg(v.key)})" class="text-[10px] font-black px-2 py-0.5 rounded-full ${v.key === i.key ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-200"}">${FLAG[v.lang] || ""} ${esc(v.setCode || v.setName || "")} ${esc(v.number || "")} · ${priceTxt(v)}</button>`).join("")}</div>` : ""}
-    ${alts.length ? `<div><p class="text-[9px] uppercase font-bold text-slate-500 mb-0.5">Andere Treffer – antippen statt neu scannen</p><div class="grid grid-cols-3 gap-1">${alts.map((a) => `<button onclick="PS.liveScanPick(${jsArg(a.key)})" class="flex items-center gap-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg p-1 text-left min-w-0">
-        <img src="${esc(cdn(a.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" class="w-6 h-8 object-contain shrink-0" />
-        <span class="min-w-0"><span class="block text-[9px] font-black text-white truncate">${FLAG[a.lang] || ""} ${esc(a.name)}</span><span class="block text-[9px] text-slate-400 truncate">${esc(a.number || "")} ${esc(a.setCode || "")} · ${priceTxt(a)}</span></span></button>`).join("")}</div></div>` : ""}
-    <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Variante">
-      <span class="text-[9px] uppercase font-bold text-slate-500 w-14">Variante</span>
-      ${FINISHES.map(([f, l]) => `<button onclick="PS.liveScanFinish('${f}')" aria-pressed="${f === finish}" class="${btnCls(f === finish)}">${l}${f === "reverse_holo" && Number(i.reversePrice) > 0 ? ` · ${eur(i.reversePrice)}` : ""}</button>`).join("")}
-    </div>
-    <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Zustand">
-      <span class="text-[9px] uppercase font-bold text-slate-500 w-14">Zustand</span>
-      ${CONDS.map((c) => `<button onclick="PS.liveScanCondition('${c}')" aria-pressed="${c === cond}" title="${COND_LABEL[c]}" class="${btnCls(c === cond)}">${c}${basePrice(i, finish) ? ` ${eur(condPrice(i, finish, c))}` : ""}</button>`).join("")}
-    </div>
-    <div class="grid grid-cols-[1fr_auto] gap-1.5">
-      <button onclick="PS.liveScanSell(${k})" class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-xs font-black py-2.5 rounded-xl shadow truncate px-2">🏷️ Verkaufen · im Marktplatz inserieren${price ? ` · ${eur(price)}` : ""}</button>
-      <button onclick="PS.liveScanSell(${k}, 'instant')" title="1-Tap: fairer Preis, gemerkte Angaben, geht nach kurzem Countdown live" class="bg-yellow-400 text-slate-950 text-xs font-black px-3 py-2.5 rounded-xl shadow disabled:opacity-40">⚡ 1-Tap live</button>
-    </div>
-    <div class="grid grid-cols-5 gap-1.5">
-      <button onclick="PS.liveScanAdd(${k})" class="bg-emerald-500 text-slate-950 text-[11px] font-black py-2 rounded-xl">💼 + Sammlung</button>
-      <button onclick="PS.liveScanSwiper(${k})" title="Im Swiper ansehen: Marktpreis und Deals" class="bg-cyan-400 text-slate-950 text-[11px] font-black py-2 rounded-xl">🃏 Swiper</button>
-      <button onclick="PS.liveScanWish(${k})" ${canWish ? "" : 'disabled title="Wunschliste gibt es für deutsche und englische Karten"'} class="bg-rose-400 text-slate-950 text-[11px] font-black py-2 rounded-xl disabled:opacity-40">❤️ Wunsch</button>
-      <button onclick="PS.liveScanFlip(${k})" class="bg-yellow-400 text-slate-950 text-[11px] font-black py-2 rounded-xl">📈 Flip-Check</button>
-      <button onclick="PS.liveScanDetails(${k})" class="bg-slate-800 text-white text-[11px] font-black py-2 rounded-xl">ℹ️ Details</button>
-    </div>
-    <button onclick="PS.liveScanNext()" class="w-full bg-slate-800 hover:bg-slate-700 text-cyan-200 text-xs font-black py-2 rounded-xl">➡️ Nächste Karte scannen${sc.prefs.series ? " (Serien-Scan)" : ""}${sc.series.length ? ` · ${sc.series.length} in der Liste` : ""}</button>
+    ${cur.source === "ai" ? `<p class="text-[9px] text-cyan-300 truncate">🤖 KI-Vision${cur.aiNote ? ` · ${esc(cur.aiNote)}` : ""}</p>` : /name/.test(cur.via || "") ? `<p class="text-[9px] text-emerald-300">🔤 per Name${/number/.test(cur.via) ? " + Sammlernummer" : ""} erkannt · ohne KI</p>` : cur.byNumber ? `<p class="text-[9px] text-emerald-300">🔢 per Sammlernummer bestätigt · ohne KI</p>` : `<p class="text-[9px] text-emerald-300">🖼️ per Bild-Fingerabdruck erkannt · ohne KI</p>`}` : ""}
   </div>`;
 }
 
 /** Zustand/Variante des aktuellen Treffers (für Sammlung, Inserat und Serie). */
 function choiceFor(key) {
-  if (sc.current?.key === key) return { condition: sc.current.condition || sc.prefs.condition || "NM", variant: sc.current.finish || "normal" };
+  if (sc.current?.key === key) return { condition: sc.current.condition || DEFAULT_CONDITION, variant: sc.current.finish || "normal" };
   const s = sc.series.find((x) => x.key === key);
-  return { condition: s?.scanCondition || sc.prefs.condition || "NM", variant: s?.scanVariant || "normal" };
+  return { condition: s?.scanCondition || DEFAULT_CONDITION, variant: s?.scanVariant || "normal" };
 }
 
 function addToSeries(info) {
-  const pick = { scanCondition: sc.current?.condition || sc.prefs.condition || "NM", scanVariant: sc.current?.finish || "normal" };
+  const pick = { scanCondition: sc.current?.condition || DEFAULT_CONDITION, scanVariant: sc.current?.finish || "normal" };
   if (sc.series[0]?.key === info.key) { sc.series[0] = { ...sc.series[0], ...pick }; renderSeries(); return; }
   info = { ...info, probe: sc.current?.probe || null, photo: sc.current?.photo || null, ...pick };
   sc.series = [info, ...sc.series.filter((s) => s.key !== info.key)].slice(0, 60);
@@ -1131,8 +1213,8 @@ function waitReady(timeoutMs = 12_000) {
   });
 }
 
-/** Foto (Data-URL) auf dem Gerät auswerten: Worker-Ergebnis + Canvas des Fotos (für den exakten Zuschnitt). */
-async function analyseImage(dataUrl) {
+/** Foto auf Canvas bringen + Rahmen bestimmen (ohne Erkennung) – Grundlage für parallelen Hash und OCR. */
+async function prepareImage(dataUrl) {
   const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
   // 1100 px statt früher 900 px: mehr Pixel für die Sammlernummer
   const scale = Math.min(1, 1100 / Math.max(img.width, img.height));
@@ -1145,6 +1227,11 @@ async function analyseImage(dataUrl) {
   const gh = Math.min(H * 0.92, (W * 0.92) / (63 / 88)), gw = gh * (63 / 88);
   const guide = { x0: (W - gw) / 2, y0: (H - gh) / 2, x1: (W + gw) / 2, y1: (H + gh) / 2 };
   const guideQuad = [[guide.x0, guide.y0], [guide.x1, guide.y0], [guide.x1, guide.y1], [guide.x0, guide.y1]];
+  return { cv, ctx, W, H, guide, guideQuad };
+}
+
+/** Bild-Fingerabdruck eines vorbereiteten Fotos im Worker. */
+async function hashImage({ cv, ctx, W, H, guide, guideQuad }) {
   const ready = (await waitReady()) && sc.indexCount;
   const m = ready ? await workerFrame({ w: W, h: H, data: ctx.getImageData(0, 0, W, H).data.buffer, guide, ocr: true, capture: true }) : {};
   return { m, cv, corners: m.found ? m.corners : guideQuad };
@@ -1343,6 +1430,83 @@ function confirmCurrent(key) {
   if (sc.current?.key === key && sc.current.unsure) { sc.current.unsure = false; addToSeries(sc.current.info); renderHud(sc.current); }
 }
 
+// ---------------------------------------------------------------------------
+// Auto-Close: Aktion im Ergebnisfeld → Feld sofort zu, Kamera scannt direkt weiter, kurze Bestätigung im Sucher
+// ---------------------------------------------------------------------------
+/** Ergebnis schließen, aktuelle Karte bis zum Herausnehmen ignorieren, Sucher bereit für die nächste Karte. */
+function nextCard() {
+  if (sc.current?.unsure && sc.current.info) { sc.current.unsure = false; addToSeries(sc.current.info); }
+  sc.suppress = sc.current?.keys || sc.suppress;
+  if (sc.current?.keys) sc.cooldown.mark(sc.current.keys);
+  sc.current = null; sc.currentAt = 0; sc.stable = 0; sc.autoArmed = true; sc.autoAiUsed = false; sc.searchSince = 0; sc.textLock = null; sc.prevRead = null;
+  renderHud(null);
+  if (!sc.running) {
+    if (IS_STAGE) return;
+    $("ps-ls-still")?.classList.add("hidden");
+    start();
+    return;
+  }
+  setUi("search", "🔁 Nächste Karte in den Rahmen halten");
+}
+
+const runHitAction = createActionRunner({
+  close: () => nextCard(),
+  notify: (text) => scanToast(text),
+  onError: (e) => handleError(e),
+});
+
+/** Alles, was eine Aktion über den Treffer wissen muss – vor dem Schließen festgehalten. */
+function hitSnapshot(key) {
+  const cur = sc.current;
+  const info = cur?.key === key ? cur.info : infoOf(key);
+  if (!info) return null;
+  return {
+    key, info, choice: choiceFor(key), probe: probeFor(key),
+    photo: (cur?.key === key ? cur.photo : null) || sc.series.find((s) => s.key === key)?.photo || null,
+    source: cur?.source === "ai" && cur.keys?.includes(key) ? "ai" : "confirm",
+  };
+}
+
+const HIT_ACTIONS = {
+  async binder(x) {
+    await addOne(x.info, x.choice);
+    learn(x.key, x.probe, x.source);
+    window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
+    window.PS?.loadPortfolio?.();
+    return `${RESULT_ACTIONS.binder.toast} · ${x.info.name} (${x.choice.condition})`;
+  },
+  sell(x, mode = "") {
+    learn(x.key, x.probe, x.source);
+    openQuickList([{ ...x.info, photo: x.photo, source: "scan", condition: x.choice.condition.toLowerCase(), variant: x.choice.variant }], { instant: mode === "instant" });
+  },
+  instant(x) { return HIT_ACTIONS.sell(x, "instant"); },
+  async wish(x) {
+    const cardId = x.info.kind === "card" ? x.info.id : x.info.baseCardId;
+    const r = await api("/api/wishlist", { method: "POST", body: { cardId } });
+    learn(x.key, x.probe, x.source);
+    return r?.offers ? `${RESULT_ACTIONS.wish.toast} · ${r.offers} Angebot${r.offers > 1 ? "e" : ""} ab ${eur(r.minPrice)}` : RESULT_ACTIONS.wish.toast;
+  },
+  // Diese öffnen eine eigene Ansicht – dort ist die Bestätigung sichtbar, kein zusätzlicher Toast
+  flip(x) { flipCheck(x.key); return false; },
+  details(x) { details(x.key); return false; },
+  swiper(x) { learn(x.key, x.probe, x.source); window.PS?.arenaShowScanned?.(x.info); if (sc.running) stop(); return false; },
+};
+
+/** Aktionsklick im Ergebnisfeld (Binder, Verkaufen, Inserat, Wunsch, …): ausführen und das Feld sofort schließen. */
+function actOnHit(name, key) {
+  if (!HIT_ACTIONS[name]) return null;
+  const snap = hitSnapshot(key);
+  if (!snap) return null;
+  const login = name === "binder" || name === "wish" || ((name === "sell" || name === "instant") && !IS_STAGE);
+  // Login vor dem Schließen prüfen – sonst wäre der Treffer weg, während der Anmelde-Dialog aufgeht
+  if (login && !requireLogin()) return null;
+  if (name === "wish" && !(snap.info.kind === "card" || snap.info.baseCardId)) { toast("❤️ Nicht möglich", "Die Wunschliste gibt es bisher für deutsche und englische Karten."); return null; }
+  haptic("select");
+  // Unsicherer Treffer + Aktion = bestätigt → in die Serie (mit gewähltem Zustand/Variante)
+  if (sc.current?.key === key && sc.current.unsure) { sc.current.unsure = false; addToSeries(sc.current.info); }
+  return runHitAction(name, () => HIT_ACTIONS[name](snap));
+}
+
 function setLang(l) {
   if (!FLAG[l]) return;
   const next = sc.langs.includes(l) ? sc.langs.filter((x) => x !== l) : [...sc.langs, l];
@@ -1419,7 +1583,7 @@ async function demoScan(ms = 1200) {
   if (frame) { frame.style.borderColor = "#34d399"; frame.style.boxShadow = "0 0 0 9999px rgba(2,6,23,.45),0 0 28px 4px rgba(52,211,153,.8)"; }
   if (hintEl) hintEl.textContent = "✅ Erkannt";
   const info = sc.demo.info;
-  sc.current = { key: info.key, keys: [info.key], info, variants: [info], alts: [], probe: null, photo: null, finish: "normal", condition: sc.prefs.condition || "NM" };
+  sc.current = { key: info.key, keys: [info.key], info, variants: [info], alts: [], probe: null, photo: null, ...newHitView() };
   sc.currentAt = Date.now();
   addToSeries(info);
   renderHud(sc.current);
@@ -1527,6 +1691,23 @@ export const liveScanApi = {
   liveScanTorch: () => toggleTorch(),
   liveScanLang: setLang,
   liveScanAdd: addToCollection,
+  /** Aktion im Ergebnisfeld mit Auto-Close (binder | sell | instant | wish | flip | details | swiper) */
+  liveScanAct: (name, key) => actOnHit(name, key),
+  /** Unter-Button „Zustand: Near Mint ▾“ – Dropdown mit allen Zuständen und Vergleichspreisen */
+  liveScanCondMenu: () => {
+    if (!sc.current?.info) return;
+    Object.assign(sc.current, toggleConditionMenu(sc.current)); haptic("select"); renderHud(sc.current);
+  },
+  /** „⋯“: Swiper, Flip-Check, Details, Sprachvarianten und andere Treffer ein-/ausblenden */
+  liveScanMore: () => {
+    if (!sc.current?.info) return;
+    sc.current.more = !sc.current.more; renderHud(sc.current);
+  },
+  /** Optionaler dezenter Treffer-Ton */
+  liveScanSound: () => {
+    sc.prefs.sound = !sc.prefs.sound; savePrefs(); renderToggles();
+    if (sc.prefs.sound) beep();
+  },
   liveScanAddAll: addAll,
   liveScanWish: addWish,
   liveScanFlip: flipCheck,
@@ -1571,26 +1752,18 @@ export const liveScanApi = {
     if (sc.prefs.series) sc.suppress = [...new Set([...(sc.suppress || []), pick.key])];
     renderHud(cur); renderSeries();
   },
-  /** Zustands-Schnellwahl (NM/EX/GD/LP/PL) mit direkter Preisanpassung; wird als Standard gemerkt */
+  /** Zustand aus dem Dropdown übernehmen: Hauptpreis passt sich an, Dropdown schließt. Neue Scans starten wieder mit NM. */
   liveScanCondition: (c) => {
-    if (!CONDS.includes(c)) return;
-    sc.prefs.condition = c; savePrefs();
-    if (sc.current?.info) { sc.current.condition = c; haptic("select"); renderHud(sc.current); syncSeriesHead(); }
+    if (!CONDS.includes(c) || !sc.current?.info) return;
+    Object.assign(sc.current, selectCondition(sc.current, c)); haptic("select"); renderHud(sc.current); syncSeriesHead();
   },
-  /** Variante (Normal / Reverse Holo / Holo) – Reverse Holo nutzt den eigenen Cardmarket-Preis */
+  /** 1-Tap-Variante (Normal / Reverse / Holo) – zieht den eigenen Variantenpreis, wo vorhanden */
   liveScanFinish: (f) => {
     if (!FINISHES.some(([x]) => x === f) || !sc.current?.info) return;
-    sc.current.finish = f; haptic("select"); renderHud(sc.current); syncSeriesHead();
+    Object.assign(sc.current, selectFinish(sc.current, f)); haptic("select"); renderHud(sc.current); syncSeriesHead();
   },
   /** „Nächste Karte scannen“: Ergebnis schließen, aktuelle Karte bis zum Herausnehmen ignorieren, Kamera bereit */
-  liveScanNext: () => {
-    if (sc.current?.unsure && sc.current.info) { sc.current.unsure = false; addToSeries(sc.current.info); }
-    sc.suppress = sc.current?.keys || sc.suppress;
-    sc.current = null; sc.currentAt = 0; sc.stable = 0; sc.autoArmed = true; sc.autoAiUsed = false; sc.searchSince = 0; sc.textLock = null; sc.prevRead = null;
-    renderHud(null);
-    if (!sc.running) { $("ps-ls-still")?.classList.add("hidden"); start(); return; }
-    setUi("search", "🔁 Nächste Karte in den Rahmen halten");
-  },
+  liveScanNext: () => nextCard(),
   liveScanSeriesMode: () => {
     sc.prefs.series = !sc.prefs.series; savePrefs(); renderToggles();
     toast(sc.prefs.series ? "🔁 Serien-Scan an" : "🔁 Serien-Scan aus", sc.prefs.series ? "Lege Karte für Karte in den Rahmen – jede erkannte Karte landet sofort in der Liste, doppelte werden übersprungen." : "Der Scanner zeigt wieder jede Karte einzeln.");
