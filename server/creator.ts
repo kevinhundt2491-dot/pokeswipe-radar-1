@@ -11,7 +11,9 @@ import {
   tierOf, responseScore, suggestPromoCode, cleanWishCode, researchLinks, chooseTemplate, fillTemplate, creatorLink, legalFooter,
   displayStatus, canSendNow, staggerSchedule, checkFetchUrl, isPlatformHost, isPrivateIp, extractContacts, type TemplateId,
   FEATURED_CREATORS, TIKTOK_NICHE_SEARCHES, TIKTOK_DM, tiktokProfileUrl, creatorPage,
+  OUTREACH_BULK_DAILY_CAP, BULK_SEND_GAP_MS, parseCreatorImport, linkHubLabel, isLinkHub,
 } from "./creator-logic.ts";
+import { hasMx } from "./creator-email-finder.ts";
 import { PROMO_RE } from "./referral-logic.ts";
 import { adminEmails } from "./alerts.ts";
 import { mailConfigured, sendMail } from "./legal.ts";
@@ -67,7 +69,7 @@ const currentMail = (l: Lead) => (l.customBody ? { subject: l.subject, body: l.b
 async function createLead(input: {
   name: string; category: string; platform: string; channelUrl?: string; followers?: number; email?: string; notes?: string;
   placeholder?: boolean; source?: string; status?: string; promoId?: number | null; promoCode?: string; template?: string; createdBy: string; withPromo?: boolean;
-  socials?: string[];
+  socials?: string[]; emailSource?: string; emailVerified?: boolean;
 }) {
   let promoId = input.promoId ?? null, promoCode = input.promoCode ?? "";
   if (!promoId && input.withPromo !== false && !input.placeholder) {
@@ -79,7 +81,8 @@ async function createLead(input: {
   const mail = composeMail({ name: input.name, promoCode, template, platform: input.platform });
   const [lead] = await db.insert(creatorLeads).values({
     name: input.name.slice(0, 80), category: input.category, platform: input.platform, channelUrl: input.channelUrl ?? "", followers,
-    email: input.email ?? "", socials: (input.socials ?? []).slice(0, 16), promoId, promoCode, template, subject: mail.subject, body: mail.body, status: input.status ?? "ready",
+    email: input.email ?? "", emailSource: (input.emailSource ?? "").slice(0, 200), emailVerifiedAt: input.emailVerified ? new Date() : null,
+    socials: (input.socials ?? []).slice(0, 16), promoId, promoCode, template, subject: mail.subject, body: mail.body, status: input.status ?? "ready",
     placeholder: Boolean(input.placeholder), source: input.source ?? "manual", notes: (input.notes ?? "").slice(0, 1000), optoutToken: newToken(),
   }).returning();
   return lead;
@@ -177,7 +180,7 @@ async function resendSend(to: string, subject: string, text: string, unsubscribe
 }
 
 /** Sendet die Erst- oder Follow-up-Mail an einen Lead. Prüft alle Schutzregeln. */
-export async function sendLead(leadId: number, kind: "initial" | "followup", opts: { ignoreGap?: boolean } = {}) {
+export async function sendLead(leadId: number, kind: "initial" | "followup", opts: { ignoreGap?: boolean; bulk?: boolean } = {}) {
   if (!mailConfigured()) return { ok: false, error: "E-Mail-Versand ist nicht eingerichtet (RESEND_API_KEY / MAIL_FROM)." };
   const [l] = await db.select().from(creatorLeads).where(eq(creatorLeads.id, leadId)).limit(1);
   if (!l) return { ok: false, error: "Creator nicht gefunden." };
@@ -189,8 +192,18 @@ export async function sendLead(leadId: number, kind: "initial" | "followup", opt
   }
   if (kind === "initial" && !["ready", "queued", "paused"].includes(l.status)) return { ok: false, error: "Diese Mail wurde bereits gesendet." };
   if (kind === "followup" && (l.status !== "sent" || l.followupSentAt)) return { ok: false, error: "Follow-up nicht möglich (schon gesendet oder bereits geantwortet)." };
+  // Massenversand: nie an Creator, die schon einmal angeschrieben wurden (auch wenn der Status später zurückgesetzt wurde)
+  if (opts.bulk && (l.sentAt || kind !== "initial")) return { ok: false, error: "Wurde bereits angeschrieben – kein zweiter Versand.", skip: true };
+  // Massenversand: nur an zustellbare Adressen (MX-Eintrag) – noch ungeprüfte Adressen werden jetzt geprüft
+  if (opts.bulk && !l.emailVerifiedAt) {
+    if (!(await hasMx(l.email))) {
+      await db.update(creatorLeads).set({ lastError: "Domain ohne MX-Eintrag – E-Mail nicht zustellbar.", updatedAt: new Date() }).where(eq(creatorLeads.id, l.id));
+      return { ok: false, error: "Domain ohne MX-Eintrag – E-Mail nicht zustellbar.", skip: true };
+    }
+    await db.update(creatorLeads).set({ emailVerifiedAt: new Date(), emailSource: l.emailSource || "MX geprüft" }).where(eq(creatorLeads.id, l.id));
+  }
   const st = await sendStats();
-  const gate = canSendNow({ ...st, gapMs: opts.ignoreGap ? 0 : OUTREACH_MIN_GAP_MS });
+  const gate = canSendNow({ ...st, gapMs: opts.ignoreGap || opts.bulk ? 0 : OUTREACH_MIN_GAP_MS, cap: opts.bulk ? OUTREACH_BULK_DAILY_CAP : OUTREACH_DAILY_CAP });
   if (!gate.ok) return { ok: false, error: gate.reason, waitMs: gate.waitMs };
 
   // Doppelversand verhindern: Lead atomar „belegen“
@@ -240,7 +253,7 @@ export async function processOutreachQueue() {
 // ---------------------------------------------------------------------------
 // Kontakt-Extraktor: öffentliche Seite sicher abrufen
 // ---------------------------------------------------------------------------
-async function safeFetchHtml(raw: string, depth = 0): Promise<{ html: string; url: string }> {
+export async function safeFetchHtml(raw: string, depth = 0, timeoutMs = 8000): Promise<{ html: string; url: string }> {
   const chk = checkFetchUrl(raw);
   if (!chk.ok) throw new Error(chk.reason);
   const u = chk.url;
@@ -251,12 +264,12 @@ async function safeFetchHtml(raw: string, depth = 0): Promise<{ html: string; ur
   const res = await fetch(u, {
     redirect: "manual",
     headers: { "User-Agent": "Mozilla/5.0 (compatible; PokeSwipeRadar-ContactCheck/1.0; +https://pokeswipe-radar.de/creator)", Accept: "text/html,text/plain;q=0.9,*/*;q=0.5", "Accept-Language": "de,en;q=0.8" },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (res.status >= 300 && res.status < 400) {
     const loc = res.headers.get("location");
     if (!loc || depth >= 3) throw new Error("Zu viele Weiterleitungen.");
-    return safeFetchHtml(new URL(loc, u).toString(), depth + 1);
+    return safeFetchHtml(new URL(loc, u).toString(), depth + 1, timeoutMs);
   }
   if (!res.ok) throw new Error(`Seite antwortet mit ${res.status}.`);
   const type = res.headers.get("content-type") || "";
@@ -288,6 +301,7 @@ function leadView(l: Lead & { redemptions?: number | null; promo_active?: boolea
   return {
     id: l.id, name: l.name, category: l.category, categoryLabel: CATEGORY_LABEL[l.category] || l.category, platform: l.platform,
     platformLabel: PLATFORM_LABEL[l.platform] || l.platform, channelUrl: l.channelUrl, followers: l.followers, email: l.email, socials, bioLink,
+    emailSource: l.emailSource || "", emailVerifiedAt: l.emailVerifiedAt, emailSearchedAt: l.emailSearchedAt, emailSearchNote: l.emailSearchNote || "",
     tier: tierOf(l.followers), tierLabel: TIER_LABEL[tierOf(l.followers)], score: responseScore(l),
     promoId: l.promoId, promoCode: l.promoCode, promoActive: l.promo_active ?? null, signups: Number(l.redemptions) || 0,
     link: l.promoCode ? creatorLink(site(), l.promoCode) : "", creatorPage: creatorPage(site()), template: l.template, subject: cur.subject, body: cur.body, customBody: l.customBody,
@@ -305,6 +319,7 @@ async function loadLeads() {
   // rohe Zeilen → camelCase wie Drizzle
   return list.map((r: any) => leadView({
     id: r.id, name: r.name, category: r.category, platform: r.platform, channelUrl: r.channel_url, followers: r.followers, email: r.email,
+    emailSource: r.email_source ?? "", emailVerifiedAt: r.email_verified_at, emailSearchedAt: r.email_searched_at, emailSearchNote: r.email_search_note ?? "",
     socials: r.socials ?? [], promoId: r.promo_id, promoCode: r.promo_code, template: r.template, subject: r.subject, body: r.body, customBody: r.custom_body,
     status: r.status, placeholder: r.placeholder, source: r.source, notes: r.notes, scheduledAt: r.scheduled_at, sentAt: r.sent_at,
     followupSentAt: r.followup_sent_at, repliedAt: r.replied_at, lastError: r.last_error, optoutToken: r.optout_token, createdAt: r.created_at,
@@ -410,7 +425,7 @@ export function registerCreator(app: any, hlp: Hlp) {
     return c.json({
       seeded, leads,
       applications: apps.map((a) => ({ ...a, promoCode: promos.find((p) => p.id === a.promoId)?.code || "", platformLabel: PLATFORM_LABEL[a.platform] || a.platform })),
-      sending: { configured: mailConfigured(), cap: OUTREACH_DAILY_CAP, sentToday: st.sentToday, lastSentAt: st.lastSentAt, canSend: gate.ok, reason: gate.reason, minGapMin: OUTREACH_MIN_GAP_MS / 60_000, senderName: senderName() },
+      sending: { configured: mailConfigured(), cap: OUTREACH_DAILY_CAP, sentToday: st.sentToday, lastSentAt: st.lastSentAt, canSend: gate.ok, reason: gate.reason, minGapMin: OUTREACH_MIN_GAP_MS / 60_000, senderName: senderName(), bulkCap: OUTREACH_BULK_DAILY_CAP, bulkGapMs: BULK_SEND_GAP_MS },
       templates: TEMPLATE_IDS.map((id) => ({ id, label: TEMPLATES[id].label, subject: TEMPLATES[id].subject, body: TEMPLATES[id].body, dm: TEMPLATES[id].dm })),
       categories: CREATOR_CATEGORIES.map((id) => ({ id, label: CATEGORY_LABEL[id] })),
       platforms: CREATOR_PLATFORMS.map((id) => ({ id, label: PLATFORM_LABEL[id] })),
@@ -449,7 +464,16 @@ export function registerCreator(app: any, hlp: Hlp) {
     if (b.platform !== undefined && (CREATOR_PLATFORMS as readonly string[]).includes(b.platform)) u.platform = b.platform;
     if (b.channelUrl !== undefined) u.channelUrl = cleanUrl(b.channelUrl);
     if (b.followers !== undefined) u.followers = int(b.followers, 0, 1e9, 0);
-    if (b.email !== undefined) { const e = normEmail(b.email); if (e && !EMAIL_OK.test(e)) return c.json({ error: "Ungültige E-Mail." }, 400); u.email = e; }
+    if (b.email !== undefined) {
+      const e = normEmail(b.email);
+      if (e && !EMAIL_OK.test(e)) return c.json({ error: "Ungültige E-Mail." }, 400);
+      if (e !== l.email) {
+        u.email = e;
+        const mx = e ? await hasMx(e) : false;
+        u.emailSource = e ? (mx ? "Manuell eingetragen · MX geprüft" : "Manuell eingetragen · kein MX-Eintrag gefunden") : "";
+        u.emailVerifiedAt = mx ? new Date() : null;
+      }
+    }
     if (b.notes !== undefined) u.notes = str(b.notes, 1000);
     if (b.template !== undefined && (TEMPLATE_IDS as string[]).includes(b.template)) u.template = b.template;
     if (b.status !== undefined) {
@@ -489,7 +513,11 @@ export function registerCreator(app: any, hlp: Hlp) {
   // „Freigeben & senden“ – sofort (mit Tageslimit + Abstand)
   app.post("/api/admin/creators/:id/send", auth, adminOnly, async (c: any) => {
     const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
-    const r = await sendLead(id, (await body(c)).kind === "followup" ? "followup" : "initial");
+    const b = await body(c);
+    const bulk = b.bulk === true && b.kind !== "followup";
+    const r = await sendLead(id, b.kind === "followup" ? "followup" : "initial", { bulk });
+    // Massenversand: schlanke Antwort (die Liste lädt der Browser einmal am Ende neu)
+    if (bulk) return r.ok ? c.json({ ok: true, id }) : c.json({ error: r.error, skip: Boolean((r as any).skip), stop: (r as any).waitMs !== undefined }, 409);
     return r.ok ? c.json({ ok: true, lead: (await loadLeads()).find((x) => x.id === id) }) : c.json({ error: r.error }, 409);
   });
 
@@ -570,6 +598,41 @@ export function registerCreator(app: any, hlp: Hlp) {
     return c.json({ ok: true });
   });
 
+  // ---------------- Schnell-Import: „Name - email@domain.de“ oder reine E-Mail-Listen ----------------
+  app.post("/api/admin/creators/import", auth, adminOnly, async (c: any) => {
+    const b = await body(c);
+    const text = String(b.text ?? "").slice(0, 60_000);
+    const { entries, invalid, truncated } = parseCreatorImport(text, 200);
+    if (!entries.length) return c.json({ error: "Keine E-Mail-Adressen erkannt. Format: „Name - email@domain.de“ (eine pro Zeile) oder einfach eine Liste von Adressen." }, 400);
+    const category = (CREATOR_CATEGORIES as readonly string[]).includes(b.category) ? b.category : "packopening";
+    const platform = (CREATOR_PLATFORMS as readonly string[]).includes(b.platform) ? b.platform : "youtube";
+    const existing = await db.select({ id: creatorLeads.id, name: creatorLeads.name, email: creatorLeads.email }).from(creatorLeads);
+    const known = new Set(existing.map((l) => normEmail(l.email)).filter(Boolean));
+    const supp = new Set((await db.select({ e: creatorSuppressions.email }).from(creatorSuppressions)).map((r) => r.e));
+    const created: { id: number; name: string; email: string; promoCode: string }[] = [];
+    const skipped: { email: string; reason: string }[] = invalid.slice(0, 50).map((e) => ({ email: e, reason: "Keine gültige Adresse" }));
+    const by = c.get("user").email || "";
+    // MX-Prüfungen parallel (je Domain zwischengespeichert)
+    const mx = await Promise.all(entries.map((e) => hasMx(e.email)));
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (known.has(e.email)) { skipped.push({ email: e.email, reason: "Schon im Creator-Finder" }); continue; }
+      if (supp.has(e.email)) { skipped.push({ email: e.email, reason: "Abgemeldet (Sperrliste)" }); continue; }
+      if (!mx[i]) { skipped.push({ email: e.email, reason: "Domain ohne MX-Eintrag – nicht zustellbar" }); continue; }
+      // Gleicher Name ohne E-Mail vorhanden (z. B. fester Creator) → E-Mail dort ergänzen statt doppelt anlegen
+      const same = existing.find((l) => !l.email && l.name.trim().toLowerCase() === e.name.trim().toLowerCase());
+      if (same && !e.derived) {
+        const [u] = await db.update(creatorLeads).set({ email: e.email, emailSource: "Eigene Liste · MX geprüft", emailVerifiedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(creatorLeads.id, same.id), eq(creatorLeads.email, ""))).returning();
+        if (u) { known.add(e.email); same.email = e.email; created.push({ id: u.id, name: u.name, email: e.email, promoCode: u.promoCode }); continue; }
+      }
+      const lead = await createLead({ name: e.name, category, platform, email: e.email, source: "import", createdBy: by, emailSource: "Eigene Liste · MX geprüft", emailVerified: true });
+      known.add(e.email);
+      created.push({ id: lead.id, name: lead.name, email: e.email, promoCode: lead.promoCode });
+    }
+    return c.json({ created, skipped, truncated, leads: await loadLeads() }, created.length ? 201 : 200);
+  });
+
   // ---------------- Kontakt- & Impressums-Extraktor ----------------
   app.post("/api/admin/extract-creator-contact", auth, adminOnly, async (c: any) => {
     if (!(await rateLimit(`creator-extract:${c.get("user").id}`, 30, 60_000))) return c.json({ error: "Bitte kurz warten." }, 429);
@@ -613,8 +676,18 @@ export function registerCreator(app: any, hlp: Hlp) {
       if (l) {
         // Der eingegebene Bio-Link wird mitgespeichert, damit er beim nächsten Mal vorausgefüllt ist
         const mergedSocials = [...new Set([chk.url.toString(), ...(Array.isArray(l.socials) ? (l.socials as string[]) : []), ...socials])].slice(0, 16);
-        await db.update(creatorLeads).set({ email: l.email || emails[0] || "", socials: mergedSocials, updatedAt: new Date() }).where(eq(creatorLeads.id, leadId));
         updated = !l.email && Boolean(emails[0]);
+        const page = pages[pages.length - 1] || chk.url.toString();
+        let src = "";
+        if (updated) {
+          let host = "", path = "";
+          try { const pu = new URL(page); host = pu.hostname.replace(/^www\./, ""); path = pu.pathname; } catch {}
+          const mx = await hasMx(emails[0]);
+          src = `${isLinkHub(host) ? `Aus ${linkHubLabel(host)}` : /impressum|imprint/i.test(path) ? "Aus Impressum" : "Aus Website"} · ${host}${mx ? " · MX geprüft" : " · kein MX-Eintrag"}`;
+          await db.update(creatorLeads).set({ email: emails[0], emailSource: src, emailVerifiedAt: mx ? new Date() : null, socials: mergedSocials, updatedAt: new Date() }).where(eq(creatorLeads.id, leadId));
+        } else {
+          await db.update(creatorLeads).set({ socials: mergedSocials, updatedAt: new Date() }).where(eq(creatorLeads.id, leadId));
+        }
       }
     }
     return c.json({ emails, socials, pages, updated, hint: emails.length ? "" : "Keine öffentliche E-Mail gefunden – Impressum/Kontaktseite direkt eingeben oder DM nutzen." });
