@@ -41,6 +41,8 @@ import { syncAdminTools, openGenerator, initLazyAdminTools, initPhotoScanInputs 
 import { valuationApi, loadValuation } from "./valuation.js";
 import { initNativePlatform, nativeApi } from "./native.js";
 import { initPayments, routePayments, paymentsApi } from "./payments.js";
+import { initInvite, inviteApi } from "./invite.js";
+import { initBinder, binderApi } from "./binder.js";
 import { variantSelect, conditionSelect, variantsOf, variantBadge, VARIANT_LABEL, VARIANT_KEYS, CONDITION_LABEL } from "./variants.js";
 import {
   restoreSession, persistSessionCookies, ensureFreshToken, storedSession, cachedProfile, saveProfileCache, clearProfileCache,
@@ -1052,12 +1054,13 @@ function listingTile(l) {
   return `<article class="ps-tile ${l.boosted ? "ps-tile-boost" : ""}" data-listing="${Number(l.id)}">
     <button type="button" onclick="PS.openListing(${Number(l.id)})" class="ps-tile-art" aria-label="${esc(l.card_name)} ansehen">
       <img src="${esc(cdn(l.image || FALLBACK_IMG, 360))}" onerror="this.src='${FALLBACK_IMG}'" loading="lazy" alt="" class="${photo ? "object-cover" : "object-contain"}" />
-      <span class="ps-tile-badges">${cond ? `<span class="ps-badge ps-badge-cond">${esc(cond)}</span>` : ""}${l.boosted ? `<span class="ps-badge bg-yellow-400 text-slate-950">🚀 TOP</span>` : ""}</span>
+      <span class="ps-tile-badges">${cond ? `<span class="ps-badge ps-badge-cond">${esc(cond)}</span>` : ""}${l.boosted ? `<span class="ps-badge bg-yellow-400 text-slate-950">🚀 TOP</span>` : ""}${l.portfolio_item_id ? `<span class="ps-badge ps-badge-binder" title="Aus dem Binder des Sammlers freigegeben">💼 Binder</span>` : ""}</span>
       ${pb ? `<span class="ps-badge ps-tile-deal ${pb[1]}" title="Vergleich mit Cardmarket-Trend">${pb[0]}</span>` : ""}
     </button>
     <div class="ps-tile-body">
       <h4 class="ps-tile-title" title="${esc(l.card_name)}">${esc(l.card_name)}</h4>
       <p class="ps-tile-meta">${setCode ? `<span class="font-bold text-slate-300">${esc(setCode)}</span> · ` : ""}📍 ${esc(l.city || "–")}</p>
+      ${l.seller ? `<button type="button" onclick="PS.openUser(${jsArg(l.user_id)})" class="ps-tile-seller" title="Sammlerprofil ansehen">👤 <span class="truncate">${esc(l.seller)}</span>${l.seller_founder ? `<span class="ps-founder-chip" title="Verifizierter Gründer-Sammler">🏅</span>` : ""}</button>` : ""}
       <div class="flex items-baseline justify-between gap-1">
         <span class="ps-tile-price">${Number(l.price) > 0 ? eur(l.price) : "Tausch"}</span>
         ${l.market_price ? `<span class="text-[10px] text-slate-400" title="Cardmarket-Trend">CM ${eur(l.market_price)}</span>` : ""}
@@ -1068,8 +1071,16 @@ function listingTile(l) {
 }
 
 /** Detail-Ansicht eines Inserats mit ALLEN bisherigen Aktionen (Kaufen, Warenkorb, Angebot, Tausch, Melden, Boost, Verkauft, Löschen, CM, eBay). */
-function openListing(id) {
-  const l = state.listings.find((x) => Number(x.id) === Number(id));
+async function openListing(id) {
+  let l = state.listings.find((x) => Number(x.id) === Number(id));
+  if (!l) {
+    // Angebot außerhalb der geladenen Liste (z. B. aus dem Binder → fehlende Karte): gezielt nachladen
+    try {
+      const r = await api(`/api/listings?ids=${Number(id)}`);
+      l = (r.listings || []).find((x) => Number(x.id) === Number(id));
+      if (l) state.listings = [...state.listings, l];
+    } catch {}
+  }
   if (!l) return toast("Inserat", "Nicht mehr verfügbar.");
   modal("ps-listing", `<div class="space-y-3">
     <div class="flex justify-center"><img src="${esc(cdn(l.image || FALLBACK_IMG, 480))}" onerror="this.src='${FALLBACK_IMG}'" alt="${esc(l.card_name)}" class="max-h-72 rounded-xl ${String(l.image || "").startsWith("/api/images/") ? "object-cover" : "object-contain"}" /></div>
@@ -1096,7 +1107,7 @@ function listingCard(l) {
           <h4 class="font-black text-white text-sm truncate">${esc(l.card_name)}</h4>
           <p><span class="font-black text-emerald-400">${eur(l.price)}</span>${l.market_price ? ` <span class="text-slate-500">(Markt ${eur(l.market_price)})</span>` : ""} • <span class="text-slate-400">📍 ${esc(l.city)}</span></p>
           <p class="text-amber-300 truncate">Sucht: ${esc(l.want)}</p>
-          <button onclick="PS.openUser(${jsArg(l.user_id)})" class="text-slate-300 hover:text-white font-bold">${esc(l.seller)} ${l.verified ? `<span class="text-cyan-300">✔ Verifiziert</span>` : ""} ${REF_BADGE[l.seller_badge] ? `<span class="text-yellow-300" title="Empfehlungs-Badge">${REF_BADGE[l.seller_badge]}</span>` : ""} ${l.rating_count ? `<span class="text-amber-300">⭐ ${Number(l.rating) || 0} (${Number(l.rating_count) || 0})</span>` : `<span class="text-slate-500">• neu</span>`}</button>
+          <button onclick="PS.openUser(${jsArg(l.user_id)})" class="text-slate-300 hover:text-white font-bold">${esc(l.seller)} ${l.verified ? `<span class="text-cyan-300">✔ Verifiziert</span>` : ""} ${REF_BADGE[l.seller_badge] ? `<span class="text-yellow-300" title="Empfehlungs-Badge">${REF_BADGE[l.seller_badge]}</span>` : ""} ${l.seller_founder ? `<span class="ps-founder-chip" title="Verifizierter Gründer-Sammler">🏅 Gründer-Sammler</span>` : ""} ${l.rating_count ? `<span class="text-amber-300">⭐ ${Number(l.rating) || 0} (${Number(l.rating_count) || 0})</span>` : `<span class="text-slate-500">• neu</span>`}</button>
         </div>
       </div>
       <div class="flex flex-wrap gap-1.5 shrink-0 text-xs">
@@ -1518,6 +1529,8 @@ window.PS = {
   ...complianceApi,
   ...makeAdminApi,
   ...tradingApi,
+  ...inviteApi,
+  ...binderApi,
   enablePush: wrapEnablePush(featureApi.enablePush),
   openPost: (id) => { history.replaceState(null, "", `/?tab=community&post=${Number(id)}`); routeCommunity(); },
 };
@@ -1539,6 +1552,8 @@ async function boot() {
   initShell();
   initAppNav(); // 5 Hauptreiter: Start · Scanner · Marktplatz · Sammlung · Community (+ Unterreiter), Profil-Menü oben rechts
   initHome(); // Start-Dashboard: Scanner-Hero, Marktplatz-Highlights, Live-Chat, Binder
+  initInvite(); // Teilen & Freunde einladen: Fortschritt zum Gründer-Sammler, 1-Tap-Teilen, Hinweis nach Uploads
+  initBinder(); // Sammlung → Mein Binder: Set-Ordner & durchswipebare Binder-Ansicht mit Marktplatz-Abgleich
   initArena();
   initFlip();
   initCommunity();

@@ -17,7 +17,7 @@ const ago = (d) => {
   return new Date(d).toLocaleDateString("de-DE");
 };
 const levelChip = (a) => a?.level ? `<span title="Vertrauensstufe: ${esc(a.level.label)} (${Number(a.trust) || 0}/100)" class="text-[10px] text-slate-400">${esc(a.level.icon)}</span>` : "";
-const authorBtn = (a) => `<button onclick="PS.openAuthor(${jsArg(a.id)}, ${jsArg(a.slug)}, ${a.publicProfile ? "true" : "false"})" class="font-black text-yellow-400 hover:text-yellow-300">${esc(a.name)}</button>${a.verified ? ' <span class="text-cyan-300 text-[10px]" title="Pro Trader">✔</span>' : ""} ${levelChip(a)}`;
+const authorBtn = (a) => `<button onclick="PS.openAuthor(${jsArg(a.id)}, ${jsArg(a.slug)}, ${a.publicProfile ? "true" : "false"})" class="font-black text-yellow-400 hover:text-yellow-300">${esc(a.name)}</button>${a.verified ? ' <span class="text-cyan-300 text-[10px]" title="Pro Trader">✔</span>' : ""}${a.founder ? ' <span class="ps-founder-chip" title="Verifizierter Gründer-Sammler">🏅 Gründer</span>' : ""} ${levelChip(a)}`;
 const visibleCommunity = () => !$("view-community")?.classList.contains("hidden") && !document.hidden;
 // Live-Chat läuft auch, solange das Start-Dashboard (kompaktes Chat-Modul) sichtbar ist
 const visibleChat = () => !document.hidden && (!$("view-community")?.classList.contains("hidden") || !$("view-home")?.classList.contains("hidden"));

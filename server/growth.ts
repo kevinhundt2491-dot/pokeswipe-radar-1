@@ -177,7 +177,7 @@ export function pageShell(o: {
 <meta property="og:type" content="website"><meta property="og:site_name" content="PokeSwipe & Radar"><meta property="og:locale" content="${OG_LOCALE[lang]}">${o.alternates ? `<meta property="og:locale:alternate" content="${OG_LOCALE[lang === "en" ? "de" : "en"]}">` : ""}
 <meta property="og:title" content="${h(o.title)}"><meta property="og:description" content="${h(o.description)}"><meta property="og:url" content="${h(o.canonical)}">
 ${o.image ? `<meta property="og:image" content="${h(o.image)}"><meta name="twitter:image" content="${h(o.image)}">` : ""}
-<meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#0b0f19"><link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#0b0f19"><link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
 ${(Array.isArray(o.jsonLd) ? o.jsonLd : o.jsonLd ? [o.jsonLd] : []).map((j) => `<script type="application/ld+json">${JSON.stringify(j).replace(/</g, "\\u003c")}</script>`).join("")}
 <style>${PAGE_CSS}</style></head><body><div class="wrap">
 <div class="top"><a class="logo" href="${h(home)}">Poke<span>Swipe</span> &amp; Radar</a>${switchLink ? `<span class="btns" style="margin:0">${switchLink}${appBtn}</span>` : appBtn}</div>

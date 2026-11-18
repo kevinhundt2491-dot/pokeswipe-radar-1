@@ -1,5 +1,7 @@
 
 import { visionIdentify, catalogCandidates, visionScan, parseImageDataUrl } from "./scan-vision.ts";
+import { syncFounderQuiet, isFounder } from "./founder.ts";
+import { alertAllowance } from "./founder-logic.ts";
 import { rankCandidates, finishToVariant } from "./scan-vision-logic.ts";
 import { lookup } from "./scan-index.ts";
 import { and, desc, eq, sql, asc, inArray } from "drizzle-orm";
@@ -538,8 +540,9 @@ export function registerFeatures(app: any, h: {
     const productId = int(b.productId, 1, 2 ** 31 - 1, 0);
     const target = money(b.targetPrice);
     if (!productId || !target || Number(target) <= 0) return c.json({ error: "Bitte Produkt und Zielpreis angeben." }, 400);
-    if ((await activeAlertCount(user.id)) >= PLANS[plan].alerts) {
-      return c.json({ error: `Limit erreicht: ${PLANS[plan].alerts} Preisalarme im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
+    const alertLimit = alertAllowance(PLANS[plan].alerts, isFounder(c.get("profile")));
+    if ((await activeAlertCount(user.id)) >= alertLimit) {
+      return c.json({ error: `Limit erreicht: ${alertLimit} Preisalarme im Tarif ${PLANS[plan].label}.`, upgrade: true }, 402);
     }
     if (!(await findSealed(productId))) return c.json({ error: "Produkt nicht gefunden" }, 404);
     const [a] = await db.insert(sealedAlerts).values({ userId: user.id, productId, targetPrice: target, direction: b.direction === "above" ? "above" : "below" }).returning();
@@ -647,6 +650,8 @@ export function registerFeatures(app: any, h: {
     const [set] = await db.update(profiles).set({ referredBy: referrer.userId }).where(and(eq(profiles.userId, profile.userId), sql`${profiles.referredBy} IS NULL`)).returning({ id: profiles.userId });
     if (!set) return c.json({ ok: true, already: true });
     if (via) await attributeSignup(profile.userId, referrer.userId, via).catch(() => {});
+    // Gründer-Sammler: 1 erfolgreiche Anmeldung über den Einladungslink schaltet die Vorteile des Werbers frei
+    await syncFounderQuiet(referrer.userId);
     // Freischaltung sofort bei bestätigter E-Mail, sonst nach der ersten aktiven Aktion (Scan, Sammlung, Wunschliste)
     const q = profile.emailConfirmed ? await qualifyReferral(profile.userId, "email").catch(() => null) : null;
     if (!q) await notify(referrer.userId, "👋 Neuer Sammler über deinen Link", `${profile.displayName} hat sich registriert – Status: ausstehend (wartet auf erste Aktion). Danach bekommt ihr beide Pro-Tage.`, "/?tab=account&sub=invite");
@@ -654,6 +659,6 @@ export function registerFeatures(app: any, h: {
   });
 
   // Alarme insgesamt für die Tracker-Übersicht (Karten + Sealed)
-  app.get("/api/alerts/count", auth, async (c: any) => c.json({ count: await activeAlertCount(c.get("user").id), limit: PLANS[c.get("plan") as PlanId].alerts }));
+  app.get("/api/alerts/count", auth, async (c: any) => c.json({ count: await activeAlertCount(c.get("user").id), limit: alertAllowance(PLANS[c.get("plan") as PlanId].alerts, isFounder(c.get("profile"))) }));
 
 }

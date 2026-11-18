@@ -540,3 +540,101 @@ html[lang="de"] header.dex-header [data-ps-lang="de"], html[lang="en"] header.de
 }
 /* Zweite Ebene (Chips unter den Unterreitern) bewusst kleiner und ruhiger als die Unterreiter */
 [role="tablist"].ps-subchips [data-subbtn].ps-subchip { font-family: var(--font-body) !important; font-size: 0.7rem !important; font-weight: 800 !important; letter-spacing: 0 !important; padding: 0.32rem 0.75rem; box-shadow: none !important; }
+
+/* =========================================================================
+   Teilen & Freunde einladen – Gründer-Sammler (client/invite.js)
+   ========================================================================= */
+.ps-founder-chip { display: inline-flex; align-items: center; gap: 0.15rem; font-size: 0.6rem; font-weight: 900; line-height: 1; padding: 0.2rem 0.4rem; border-radius: 999px; background: linear-gradient(90deg, #facc15, #f59e0b); color: #1a1420; vertical-align: middle; white-space: nowrap; }
+.ps-invite { overflow: hidden; border-color: rgba(250, 204, 21, 0.55); background: radial-gradient(520px 220px at 100% 0%, rgba(250, 204, 21, 0.18), transparent 70%), radial-gradient(420px 200px at 0% 100%, rgba(34, 211, 238, 0.14), transparent 70%), var(--ps-surface); }
+.ps-invite-unlocked { border-color: rgba(52, 211, 153, 0.6); }
+.ps-invite-title { font-family: var(--font-display); font-size: clamp(1.02rem, 2.2vw, 1.3rem); line-height: 1.15; color: #fff7e6; }
+.ps-invite-radar { position: absolute; right: -40px; top: -40px; width: 160px; height: 160px; border-radius: 50%; pointer-events: none; opacity: 0.35;
+  background: repeating-radial-gradient(circle, rgba(250, 204, 21, 0.5) 0 1.5px, transparent 1.5px 22px), conic-gradient(from 0deg, rgba(250, 204, 21, 0.45), transparent 25%); animation: psRadarSpin 6s linear infinite; }
+@keyframes psRadarSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ps-invite-radar { animation: none; } }
+.ps-goal { background: rgba(12, 16, 34, 0.7); border: 1px solid rgba(243, 239, 228, 0.1); border-radius: 0.8rem; padding: 0.5rem 0.6rem; color: #e2e8f0; }
+.ps-goal-bar { height: 0.55rem; margin-top: 0.35rem; border-radius: 999px; background: rgba(243, 239, 228, 0.1); overflow: hidden; }
+.ps-goal-bar > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #34d399, #facc15); transition: width 0.5s ease; }
+.ps-goal-or { justify-self: center; font-size: 0.62rem; font-weight: 900; color: #facc15; background: rgba(250, 204, 21, 0.12); border: 1px solid rgba(250, 204, 21, 0.4); border-radius: 999px; padding: 0.2rem 0.5rem; }
+.ps-perk { display: flex; gap: 0.45rem; align-items: flex-start; background: rgba(12, 16, 34, 0.55); border: 1px dashed rgba(243, 239, 228, 0.14); border-radius: 0.7rem; padding: 0.4rem 0.5rem; }
+.ps-perk-on { border-style: solid; border-color: rgba(52, 211, 153, 0.5); background: rgba(16, 185, 129, 0.1); }
+.ps-share-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; min-height: 42px; padding: 0.5rem 0.7rem; border-radius: 0.8rem; font-size: 0.74rem; font-weight: 900; text-align: center; }
+.ps-share-main { background: linear-gradient(90deg, #facc15, #f59e0b); color: #1a1420; box-shadow: 0 4px 0 #b45309; }
+.ps-share-main:active { transform: translateY(2px); box-shadow: 0 2px 0 #b45309; }
+.ps-share-wa { background: #22c55e; color: #052e16; }
+.ps-share-tt { background: #0f172a; color: #fff; border: 1.5px solid #25f4ee; box-shadow: inset -3px 0 0 #fe2c55; }
+.ps-share-ig { background: linear-gradient(45deg, #f59e0b, #ec4899 55%, #8b5cf6); color: #fff; }
+.ps-invite-copy { min-height: 38px; padding: 0.4rem 0.7rem; border-radius: 0.7rem; font-size: 0.72rem; font-weight: 900; background: #334155; color: #fff; transition: background-color 0.2s; }
+.ps-invite-copy.ps-copied { background: #10b981; color: #052e16; }
+.ps-invite-nudge { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 55; width: min(560px, calc(100% - 1.5rem));
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.7rem; border-radius: 0.9rem; font-size: 0.72rem; color: #f8fafc;
+  background: rgba(19, 26, 51, 0.97); border: 1.5px solid rgba(250, 204, 21, 0.55); box-shadow: 0 14px 34px -12px rgba(0, 0, 0, 0.9); animation: psNudgeIn 0.3s ease; }
+@keyframes psNudgeIn { from { opacity: 0; transform: translate(-50%, 10px); } }
+.ps-nudge-cta { flex-shrink: 0; background: #facc15; color: #1a1420; font-weight: 900; padding: 0.35rem 0.6rem; border-radius: 0.6rem; }
+@media (min-width: 1024px) { .ps-invite-nudge { bottom: 1.25rem; } }
+
+/* Marktplatz: Verkäufer-Link & Binder-Herkunft an der Kachel */
+.ps-tile-seller { display: flex; align-items: center; gap: 0.25rem; min-width: 0; font-size: 0.65rem; font-weight: 800; color: #cbd5e1; text-align: left; }
+.ps-tile-seller:hover { color: #fff; }
+.ps-badge-binder { background: rgba(139, 92, 246, 0.9); color: #fff; }
+
+/* =========================================================================
+   Set-Ordner & Binder-Ansicht (client/binder.js)
+   ========================================================================= */
+.ps-folder { position: relative; display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; text-align: left; padding: 0.7rem 0.7rem 0.65rem 1.05rem; border-radius: 1rem;
+  background: linear-gradient(160deg, rgba(27, 36, 68, 0.95), rgba(12, 16, 34, 0.95)); border: 1.5px solid rgba(243, 239, 228, 0.12); box-shadow: var(--ps-shadow); transition: transform 0.15s ease, border-color 0.15s ease; }
+.ps-folder:hover { border-color: rgba(250, 204, 21, 0.55); transform: translateY(-2px); }
+.ps-folder:active { transform: scale(0.98); }
+.ps-folder-spine { position: absolute; left: 0; top: 0; bottom: 0; width: 0.45rem; border-radius: 1rem 0 0 1rem; background: repeating-linear-gradient(180deg, #d9363e 0 10px, #9e1f2a 10px 14px); }
+.ps-folder-logo { display: flex; align-items: center; justify-content: center; height: 3.2rem; font-size: 1.6rem; }
+.ps-folder-logo img { max-height: 100%; max-width: 100%; object-fit: contain; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.6)); }
+.ps-folder-name { font-size: 0.78rem; font-weight: 900; color: #fff; line-height: 1.15; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ps-folder-serie { font-size: 0.6rem; color: #94a3b8; font-weight: 700; margin-top: -0.25rem; }
+.ps-folder-bar { display: block; height: 0.45rem; border-radius: 999px; background: rgba(243, 239, 228, 0.1); overflow: hidden; }
+.ps-folder-bar > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5fbf6e, #facc15); }
+.ps-folder-foot { display: flex; justify-content: space-between; gap: 0.3rem; font-size: 0.66rem; font-weight: 800; color: #cbd5e1; }
+
+body.ps-binder-open { overflow: hidden; }
+.ps-binder-overlay { position: fixed; inset: 0; z-index: 58; background: rgba(4, 6, 14, 0.88); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 0.5rem; }
+.ps-binder-overlay.hidden { display: none; }
+.ps-binder { width: min(760px, 100%); max-height: calc(100dvh - 1rem); display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; border-radius: 1.4rem;
+  background: linear-gradient(180deg, #1b2444, #10162d); border: 2px solid rgba(250, 204, 21, 0.45); box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.95); }
+.ps-binder-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.ps-binder-close { min-width: 40px; min-height: 40px; border-radius: 0.8rem; background: rgba(243, 239, 228, 0.08); color: #fff; font-weight: 900; flex-shrink: 0; }
+.ps-binder-stage { position: relative; display: flex; align-items: center; justify-content: center; gap: 0.35rem; min-height: 0; flex: 1 1 auto; }
+.ps-binder-viewport { flex: 0 1 auto; width: min(100%, max(250px, calc((100dvh - 230px) / 1.42))); min-width: 0; max-height: calc(100dvh - 150px); overflow-x: hidden; overflow-y: auto; touch-action: pan-y; user-select: none; -webkit-user-select: none; border-radius: 1rem;
+  background: repeating-linear-gradient(90deg, rgba(243, 239, 228, 0.025) 0 2px, transparent 2px 6px), #0b1024; border: 1px solid rgba(243, 239, 228, 0.08); }
+.ps-binder-track { display: flex; will-change: transform; }
+.ps-bpage { flex: 0 0 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; padding: 0.55rem; align-content: start; }
+.ps-bpage-empty { min-height: 260px; }
+.ps-binder-arrow { display: none; flex-shrink: 0; width: 42px; height: 64px; border-radius: 0.9rem; font-size: 1.8rem; font-weight: 900; color: #1a1420; background: #facc15; box-shadow: 0 4px 0 #b45309; }
+.ps-binder-arrow:disabled { opacity: 0.25; box-shadow: none; }
+@media (min-width: 640px) { .ps-binder-arrow { display: block; } }
+.ps-binder-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0 0.25rem; }
+.ps-bdot { width: 7px; height: 7px; border-radius: 999px; background: rgba(243, 239, 228, 0.25); }
+.ps-bdot.on { background: #facc15; width: 16px; }
+
+.ps-bslot { position: relative; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; text-align: left; padding: 0.3rem; border-radius: 0.7rem;
+  background: rgba(19, 26, 51, 0.9); border: 1px solid rgba(243, 239, 228, 0.08); min-height: 0; }
+.ps-bslot-empty { aspect-ratio: 63 / 100; background: rgba(243, 239, 228, 0.03); border-style: dashed; }
+.ps-bslot-art { position: relative; display: block; aspect-ratio: 63 / 88; border-radius: 0.45rem; overflow: hidden; background: #070a14; }
+.ps-bslot-art img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.ps-bslot.owned { border-color: rgba(250, 204, 21, 0.45); box-shadow: 0 0 16px -6px rgba(250, 204, 21, 0.55); }
+.ps-bslot.owned .ps-bslot-art img { filter: saturate(1.1) drop-shadow(0 6px 12px rgba(0, 0, 0, 0.6)); }
+.ps-bslot.missing .ps-bslot-art img { opacity: 0.38; filter: grayscale(0.75) brightness(0.7); }
+.ps-bslot.missing.market { border-color: rgba(52, 211, 153, 0.65); }
+.ps-bslot.missing.market .ps-bslot-art img { opacity: 0.55; filter: grayscale(0.35) brightness(0.85); }
+.ps-bslot-missing { position: absolute; top: 0.25rem; right: 0.25rem; font-size: 0.5rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: #cbd5e1; background: rgba(0, 0, 0, 0.6); border-radius: 0.3rem; padding: 0.15rem 0.3rem; }
+.ps-bslot-cond { position: absolute; top: 0.25rem; left: 0.25rem; }
+.ps-bslot-qty { position: absolute; top: 0.25rem; right: 0.25rem; font-size: 0.6rem; font-weight: 900; background: #facc15; color: #1a1420; border-radius: 0.35rem; padding: 0.1rem 0.3rem; }
+.ps-bslot-badge { position: absolute; left: 0.2rem; right: 0.2rem; bottom: 0.25rem; text-align: center; font-size: 0.56rem; font-weight: 900; line-height: 1.1; padding: 0.25rem 0.2rem; border-radius: 0.4rem; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55); }
+.ps-bslot-sale { background: #facc15; color: #1a1420; }
+.ps-bslot-market { background: #10b981; color: #052e16; animation: psPulseBadge 2.4s ease-in-out infinite; }
+@keyframes psPulseBadge { 50% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.35), 0 3px 8px rgba(0, 0, 0, 0.55); } }
+@media (prefers-reduced-motion: reduce) { .ps-bslot-market { animation: none; } }
+.ps-bslot-info { display: flex; justify-content: space-between; gap: 0.2rem; font-size: 0.58rem; font-weight: 800; }
+.ps-bslot-num { color: #94a3b8; white-space: nowrap; }
+.ps-bslot-price { color: #34d399; white-space: nowrap; }
+.ps-bslot-name { font-size: 0.64rem; font-weight: 900; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-bslot.missing .ps-bslot-name { color: #94a3b8; }
+@media (min-width: 640px) { .ps-bslot-badge { font-size: 0.62rem; } .ps-bslot-name { font-size: 0.7rem; } .ps-bslot-info { font-size: 0.62rem; } }

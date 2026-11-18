@@ -6,11 +6,14 @@
   <meta name="theme-color" content="#0b0f19" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="PokeSwipe" />
+  <meta name="apple-mobile-web-app-title" content="PokeSwipe Radar" />
+  <meta name="application-name" content="PokeSwipe Radar" />
   <link rel="manifest" href="/manifest.json" />
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
   <meta name="mobile-web-app-capable" content="yes" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/icons/favicon-32.png" type="image/png" sizes="32x32" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="stylesheet" href="/fonts/fonts.css" />
   <!-- i18n: Sprache (DE/EN) vor dem ersten Bildaufbau setzen, siehe client/i18n.js -->
   <script src="/js/i18n-boot.js"></script>
@@ -256,6 +259,8 @@
           <button type="button" onclick="PS.communityTab('chat')" class="text-[11px] font-bold text-slate-400 hover:text-white text-left">Ganzen Chat öffnen ›</button>
         </div>
       </div>
+      <!-- 5. Teilen & Freunde einladen – Gründer-Sammler-Belohnung (befüllt von client/invite.js) -->
+      <div id="home-invite"></div>
       <span id="pushStatusLabel" class="hidden">Push-Radar</span>
     </section>
 
@@ -605,6 +610,15 @@
     <!-- REITER 5: PORTFOLIO, KARTEN-SCANNER & RECHNER                       -->
     <!-- =================================================================== -->
     <section id="view-portfolio" class="hidden space-y-5">
+      <!-- Mein Binder: Set-Ordner zum Durchswipen (befüllt von client/binder.js) -->
+      <div id="ps-binder-folders" class="ps-card p-4 space-y-3" aria-label="Meine Set-Ordner">
+        <div class="flex items-center justify-between gap-2">
+          <div class="min-w-0"><h2 class="text-base sm:text-lg font-black text-white">📒 Meine Set-Ordner</h2>
+            <p class="text-xs text-slate-300">Tippe einen Ordner an und blättere wie in einem echten Binder – fehlende Karten siehst du sofort, inklusive Marktplatz-Angeboten.</p></div>
+          <span data-folder-count class="ps-pill text-[11px] font-black text-slate-200 shrink-0"></span>
+        </div>
+        <div data-folders class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5"></div>
+      </div>
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div class="lg:col-span-7 poke-glass rounded-3xl p-4 sm:p-5 space-y-4">
           <div class="flex justify-between items-center">

@@ -9,6 +9,7 @@
 // Profil & Einstellungen (view-profile) öffnen sich über den Avatar oben rechts – nicht als eigener Reiter.
 // Jede Funktion hat genau einen festen Platz; Browser-/Android-Zurück wechselt zwischen den Bereichen (History-State).
 import { $, esc, state, api, btn } from "./core.js";
+import { founderInviteHtml } from "./invite.js";
 import { langSwitchHtml } from "./i18n.js";
 import { inviteProgressHtml, proStatusText } from "./referral.js";
 import { demandTileHtml } from "./demand.js";
@@ -255,6 +256,8 @@ export async function renderProfileHub() {
       row("🚫", "Blockierte Nutzer", "PS.openBlocks()", "", "text-slate-300"),
     ].join(""), { open: true }));
   }
+  // Gründer-Sammler: 5 Karten hochladen ODER 1 Sammler einladen → Badge, Gratis-Boosts, mehr Preis-Alarme (client/invite.js)
+  sections.push(card("🚀 Teilen &amp; Freunde einladen", founderInviteHtml({ variant: "profile" }), { open: true, id: "ps-founder-card" }));
   // Freunde einladen: Fortschritt, Pro-Ablauf, nächstes Bonus-Badge, Link kopieren & WhatsApp
   sections.push(card("🎁 Freunde einladen &amp; Pro-Tage sichern", inviteProgressHtml(), { open: true, id: "ps-invite-card" }));
   sections.push(card("👑 PokeSwipe Pro-Pass", `
