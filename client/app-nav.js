@@ -13,6 +13,7 @@ import { founderInviteHtml } from "./invite.js";
 import { langSwitchHtml } from "./i18n.js";
 import { inviteProgressHtml, proStatusText } from "./referral.js";
 import { demandTileHtml } from "./demand.js";
+import { listPickerHtml, renderListPicker } from "./list-picker.js";
 
 export const MAIN_TABS = ["home", "scan", "map", "portfolio", "community"];
 const PAGES = {
@@ -127,6 +128,7 @@ function mySalesHtml() {
     <div id="ps-batch-slot"></div>
     ${demandTileHtml()}
     <div class="flex items-center justify-between px-1"><h3 class="text-sm font-black text-white">Meine Inserate (${mine.length})</h3></div>
+    ${listPickerHtml()}
     <div class="space-y-2">${mine.length ? mine.map((l) => window.PS?.listingCard?.(l) || "").join("")
       : `<div class="poke-glass rounded-2xl p-5 text-center text-xs text-slate-400">Noch keine Inserate. Tippe oben auf „🔥 Gesucht aus deiner Sammlung“ oder scanne eine Karte und tippe auf „🏷️ Verkaufen“.</div>`}</div>
   </div>`;
@@ -155,6 +157,7 @@ function applyMarketMode() {
       section.querySelector("[data-page-top]")?.after(panel);
     }
     panel.innerHTML = mySalesHtml();
+    renderListPicker();
   } else panel?.remove();
   placeBatchBox(mode);
   renderSegments();

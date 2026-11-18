@@ -10,6 +10,7 @@ import {
   groupBinderBySet, buildBinderCards, paginate, clampPage, swipeDirection, binderSummary, setIdOfCard, BINDER_PAGE_SIZE,
   showcaseBinderFill, binderCardAt, SHOWCASE_GAPS,
 } from "../server/binder-logic.ts";
+import { folderValue, binderTotal, readCountDupes, quantityBadge, COUNT_DUPES_KEY } from "../server/duplicates-logic.ts";
 
 // Reel-Aufnahme (Live-Stage-iframe mit ?reel=1): gefüllter Demo-Ordner aus dem ECHTEN Set-Katalog, ohne Schreibzugriff.
 const IS_STAGE = (() => {
@@ -27,6 +28,35 @@ const imgTag = (src, w, attrs = "") => {
 };
 const view = { setId: "", data: null, cards: [], pages: [[]], page: 0, filter: "all", timer: 0, busy: false, demo: false };
 let foldersCache = { at: 0, key: "", folders: null };
+
+/** Umschalter „Doppelte im Gesamtwert mitzählen“ (Standard: An), wird im Gerät gemerkt. */
+const countDupes = () => { try { return readCountDupes(localStorage.getItem(COUNT_DUPES_KEY)); } catch { return true; } };
+function setCountDupes(on) {
+  try { localStorage.setItem(COUNT_DUPES_KEY, on ? "1" : "0"); } catch {}
+  syncDupesToggle();
+  // Werte live neu berechnen – ohne neue Serveranfrage
+  const box = $("ps-binder-folders");
+  if (box && foldersCache.folders) {
+    box.querySelectorAll("[data-set-folder]").forEach((el) => {
+      const f = foldersCache.folders.find((x) => x.setId === el.dataset.setFolder);
+      const v = el.querySelector("[data-folder-value]");
+      if (f && v) v.textContent = eur(folderValue(f, on));
+    });
+    renderTotal(foldersCache.folders);
+  }
+  if (view.setId && view.data) render();
+}
+function syncDupesToggle() {
+  const on = countDupes();
+  document.querySelectorAll("[data-count-dupes]").forEach((b) => { b.setAttribute("aria-checked", String(on)); b.classList.toggle("on", on); });
+}
+function renderTotal(folders) {
+  const el = $("ps-binder-folders")?.querySelector("[data-binder-total]");
+  if (el) el.textContent = eur(binderTotal(folders || [], countDupes()));
+}
+/** Kompakter An/Aus-Schalter (oben im Binder und in der Set-Ansicht). */
+const dupesToggleHtml = () => `<button type="button" role="switch" data-count-dupes aria-checked="${countDupes()}" onclick="PS.binderCountDupes()" class="ps-switch ${countDupes() ? "on" : ""}">
+    <span class="ps-switch-track" aria-hidden="true"><span class="ps-switch-knob"></span></span><span>Doppelte im Gesamtwert mitzählen</span></button>`;
 
 const guestItems = () => {
   try {
@@ -65,7 +95,7 @@ function folderHtml(f) {
     <span class="ps-folder-name">${esc(f.name)}</span>
     ${f.serieName ? `<span class="ps-folder-serie">${esc(f.serieName)}</span>` : ""}
     <span class="ps-folder-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${Number(f.total) || 0}" aria-valuenow="${Number(f.owned) || 0}" aria-label="Sammlungsfortschritt"><span style="width:${Number(f.pct) || 0}%"></span></span>
-    <span class="ps-folder-foot"><span data-folder-progress>${esc(f.progressLabel)}</span><strong class="text-emerald-300" data-folder-value>${eur(f.value)}</strong></span>
+    <span class="ps-folder-foot"><span data-folder-progress>${esc(f.progressLabel)}</span><strong class="text-emerald-300" data-folder-value>${eur(folderValue(f, countDupes()))}</strong></span>
   </button>`;
 }
 
@@ -82,6 +112,10 @@ export async function renderFolders(force = false) {
   }
   const count = box.querySelector("[data-folder-count]");
   if (count) count.textContent = folders.length ? `${folders.length} Set${folders.length === 1 ? "" : "s"}` : "";
+  const tools = box.querySelector("[data-folder-tools]");
+  if (tools) tools.classList.toggle("hidden", !folders.length);
+  syncDupesToggle();
+  renderTotal(folders);
   grid.innerHTML = folders.length
     ? folders.map(folderHtml).join("")
     : `<div class="col-span-full ps-empty text-xs text-slate-300 text-center py-5 space-y-2">
@@ -120,7 +154,7 @@ function slotHtml(c, idx) {
       aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? " – in deiner Sammlung" : " – fehlt"}${c.market ? ` – ${c.market.label}` : ""}`)}">
     <span class="ps-bslot-art">${imgTag(c.image, 260, `alt="" loading="lazy" draggable="false"`)}
       ${c.owned && c.condition ? `<span class="ps-badge ps-badge-cond ps-bslot-cond">${esc(c.condition)}</span>` : ""}
-      ${c.owned && c.quantity > 1 ? `<span class="ps-bslot-qty">×${Number(c.quantity)}</span>` : ""}
+      ${c.owned && c.quantity > 1 ? `<span class="ps-bslot-qty" data-qty="${Number(c.quantity)}" aria-label="${Number(c.quantity)} Exemplare">${quantityBadge(c.quantity)}</span>` : ""}
       ${!c.owned ? `<span class="ps-bslot-missing" aria-hidden="true">fehlt</span>` : ""}
       ${badge}</span>
     <span class="ps-bslot-info"><span class="ps-bslot-num">${esc(c.number || c.localId)}</span><span class="ps-bslot-price">${esc(c.priceLabel)}</span></span>
@@ -137,20 +171,22 @@ function pageHtml(page, p) {
 
 function headerHtml() {
   const s = view.data?.set || {};
-  const sum = binderSummary(view.cards, s.total);
+  const sum = binderSummary(view.cards, s.total, countDupes());
   const chip = (k, label) => `<button type="button" class="ps-chip" aria-pressed="${view.filter === k}" onclick="PS.binderFilter('${k}')">${label}</button>`;
   return `<div class="ps-binder-head">
       <div class="flex items-center gap-3 min-w-0">
         ${s.logo ? `<img src="${esc(cdn(s.logo, 200))}" alt="" class="h-9 max-w-[90px] object-contain shrink-0" onerror="this.remove()" />` : `<span class="text-2xl" aria-hidden="true">📒</span>`}
         <div class="min-w-0"><h2 id="ps-binder-title" class="text-sm sm:text-base font-black text-white truncate">${esc(s.name || view.setId)}</h2>
-          <p class="text-[11px] text-slate-300"><span data-binder-progress>${esc(sum.progressLabel)}</span> · Wert <strong class="text-emerald-300">${eur(sum.value)}</strong>${sum.onMarket ? ` · <span class="text-amber-300" data-binder-onmarket>${sum.onMarket} fehlende auf dem Marktplatz</span>` : ""}</p></div>
+          <p class="text-[11px] text-slate-300"><span data-binder-progress>${esc(sum.progressLabel)}</span> · Wert <strong class="text-emerald-300" data-binder-value>${eur(sum.value)}</strong>${sum.onMarket ? ` · <span class="text-amber-300" data-binder-onmarket>${sum.onMarket} fehlende auf dem Marktplatz</span>` : ""}</p></div>
       </div>
       <button type="button" onclick="PS.closeSetBinder()" class="ps-binder-close" aria-label="Binder schließen">✕</button>
     </div>
     <div class="ps-folder-bar mx-1" aria-hidden="true"><span style="width:${sum.pct}%"></span></div>
     <div class="flex gap-1.5 overflow-x-auto no-scrollbar py-1" role="group" aria-label="Karten filtern">
       ${chip("all", "Alle")}${chip("missing", `Fehlend (${sum.missing})`)}${chip("market", `🛒 Auf Marktplatz (${sum.onMarket})`)}${chip("owned", `Meine (${sum.owned})`)}
-    </div>`;
+    </div>
+    ${sum.duplicates ? `<div class="flex items-center justify-between gap-2 px-1">${dupesToggleHtml()}
+      ${state.user ? `<button type="button" onclick="PS.listAllDupes()" data-binder-list-dupes class="text-[10px] font-black px-2.5 py-1 rounded-lg bg-slate-800 text-amber-200 shrink-0">🏷️ Alle Doppelten inserieren</button>` : ""}</div>` : ""}`;
 }
 
 function render() {
@@ -413,6 +449,7 @@ export const binderApi = {
   ...(IS_STAGE ? { binderDemoPrepare, binderDemoOpen, binderDemoReveal } : {}),
   openSetBinder, closeSetBinder, binderCardTap, binderWish, binderSell, renderFolders,
   binderNext: () => go(1), binderPrev: () => go(-1),
+  binderCountDupes: (on) => setCountDupes(typeof on === "boolean" ? on : !countDupes()),
   binderGoto: (i) => { view.page = clampPage(i, view.pages.length); updatePage(true); },
   binderFilter: (k) => { view.filter = ["all", "missing", "market", "owned"].includes(k) ? k : "all"; view.page = 0; rebuild(); render(); },
 };

@@ -115,4 +115,15 @@ export default [
   ["Willkommen {name}! Du bleibst auf diesem Gerät angemeldet.", "Welcome {name}! You stay signed in on this device."],
   ["Gast-Sammlung übernommen", "Guest collection transferred"],
   ["{imported} Karten sind jetzt sicher in deinem Konto gespeichert – auf allen Geräten.", "{imported} cards are now safely stored in your account – on all devices."],
+  // Doppelte Karten & schnelles Inserieren
+  ["Doppelte im Gesamtwert mitzählen", "Count duplicates in total value"],
+  ["Alle Doppelten inserieren", "List all duplicates"],
+  ["Alle Doppelten inserieren ({n})", "List all duplicates ({n})"],
+  ["Nur Doppelte", "Duplicates only"],
+  ["Nach Set", "By set"],
+  ["Als Inserat einstellen", "List for sale"],
+  ["Wird automatisch in den Set-Ordner einsortiert", "Automatically filed into its set folder"],
+  ["Im Set-Ordner einsortiert", "Filed into its set folder"],
+  ["Keine Karte passt zur Suche.", "No card matches your search."],
+  ["Keine doppelten Karten in deiner Sammlung.", "No duplicate cards in your collection."],
 ];

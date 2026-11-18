@@ -53,6 +53,8 @@ export type SetMeta = { id: string; name: string; logo?: string; symbol?: string
 export type SetFolder = {
   setId: string; name: string; logo: string; symbol: string; preview: string; serieName: string; releaseDate: string | null;
   owned: number; total: number; pct: number; value: number; quantity: number; progressLabel: string;
+  /** Wert, wenn jede Karte nur 1× zählt (Umschalter „Doppelte im Gesamtwert mitzählen“ = Aus). */
+  uniqueValue: number;
 };
 
 /**
@@ -61,14 +63,18 @@ export type SetFolder = {
  */
 export function groupBinderBySet(items: BinderItem[], sets: Map<string, SetMeta> | Record<string, SetMeta>): SetFolder[] {
   const meta = sets instanceof Map ? sets : new Map(Object.entries(sets || {}));
-  const bySet = new Map<string, { ids: Set<string>; value: number; qty: number; preview: string; fallbackName: string }>();
+  const bySet = new Map<string, { ids: Set<string>; value: number; qty: number; preview: string; fallbackName: string; perCard: Map<string, { value: number; qty: number }> }>();
   for (const it of items || []) {
     const setId = setIdOfCard(it?.cardId);
     if (!setId) continue;
-    const g = bySet.get(setId) ?? { ids: new Set<string>(), value: 0, qty: 0, preview: "", fallbackName: "" };
+    const g = bySet.get(setId) ?? { ids: new Set<string>(), value: 0, qty: 0, preview: "", fallbackName: "", perCard: new Map() };
     g.ids.add(String(it.cardId));
     g.value += Number(it.value) || 0;
     g.qty += Math.max(1, Number(it.quantity) || 1);
+    const pc = g.perCard.get(String(it.cardId)) ?? { value: 0, qty: 0 };
+    pc.value += Number(it.value) || 0;
+    pc.qty += Math.max(1, Number(it.quantity) || 1);
+    g.perCard.set(String(it.cardId), pc);
     if (!g.preview && it.image) g.preview = String(it.image);
     if (!g.fallbackName && it.setName) g.fallbackName = String(it.setName);
     bySet.set(setId, g);
@@ -84,6 +90,8 @@ export function groupBinderBySet(items: BinderItem[], sets: Map<string, SetMeta>
       owned, total, pct: total ? Math.min(100, Math.round((owned / total) * 100)) : 0,
       value: Math.round(g.value * 100) / 100, quantity: g.qty,
       progressLabel: `${owned} / ${total || "?"} Karten`,
+      // Jede Karte 1× (Durchschnittswert je Exemplar)
+      uniqueValue: Math.round([...g.perCard.values()].reduce((s, p) => s + p.value / Math.max(1, p.qty), 0) * 100) / 100,
     });
   }
   // Neueste Sets zuerst, sonst nach Wert
@@ -210,13 +218,15 @@ export function swipeDirection(dx: number, dy: number, threshold = 40): -1 | 0 |
 }
 
 /** Zusammenfassung eines Set-Ordners aus den Binder-Karten (für die Kopfzeile der Binder-Ansicht). */
-export function binderSummary(cardsList: BinderCard[], total?: number) {
+export function binderSummary(cardsList: BinderCard[], total?: number, countDuplicates = true) {
   const owned = cardsList.filter((c) => c.owned).length;
   const all = Math.max(owned, Number(total) || cardsList.length);
   const onMarket = cardsList.filter((c) => !c.owned && c.market).length;
   const forSale = cardsList.filter((c) => c.myListing).length;
-  const value = Math.round(cardsList.reduce((s, c) => s + (c.owned ? c.ownedValue : 0), 0) * 100) / 100;
-  return { owned, total: all, value, missing: Math.max(0, all - owned), onMarket, forSale, pct: all ? Math.min(100, Math.round((owned / all) * 100)) : 0, progressLabel: `${owned} / ${all} Karten` };
+  // Umschalter „Doppelte im Gesamtwert mitzählen“: Aus → jede Karte nur 1× (Durchschnittswert je Exemplar)
+  const value = Math.round(cardsList.reduce((s, c) => s + (c.owned ? (countDuplicates ? c.ownedValue : c.ownedValue / Math.max(1, c.quantity)) : 0), 0) * 100) / 100;
+  const copies = cardsList.reduce((s, c) => s + (c.owned ? Math.max(1, c.quantity) : 0), 0);
+  return { owned, copies, duplicates: Math.max(0, copies - owned), total: all, value, missing: Math.max(0, all - owned), onMarket, forSale, pct: all ? Math.min(100, Math.round((owned / all) * 100)) : 0, progressLabel: `${owned} / ${all} Karten` };
 }
 
 /**
