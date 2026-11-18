@@ -286,7 +286,8 @@ function bindGestures(root) {
   const end = (e) => {
     if (!active || e.pointerId !== pid) return;
     active = false;
-    const dir = swipeDirection(e.clientX - sx, e.clientY - sy, Math.min(60, vp.clientWidth * 0.12 || 40));
+    // Abgebrochene Geste (senkrechtes Scrollen übernimmt der Browser) blättert nie um
+    const dir = e.type === "pointercancel" && !dragging ? 0 : swipeDirection(e.clientX - sx, e.clientY - sy, Math.min(60, vp.clientWidth * 0.12 || 40));
     if (dragging) {
       // Nach einem Wisch keinen Karten-Tipp auslösen
       const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); };

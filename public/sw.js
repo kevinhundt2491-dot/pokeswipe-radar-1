@@ -1,6 +1,6 @@
 // PokeSwipe & Radar – Service Worker: echte Web-Push-Nachrichten (auch bei geschlossener App)
 // und Offline-Modus (App, Sammlung und Bilder bleiben auf Messen & Börsen ohne Netz verfügbar).
-const VERSION = "v11"; // v11: neues App-Icon (Radar + Sammelkarte), Set-Binder & Einladen. // v10: i18n-boot.js (DE/EN). // Phase 6: ausgelagerte Skripte (/js/*), Code-Splitting (/assets/chunks/*), strikte CSP
+const VERSION = "v12"; // v12: Anmelde-/Sitzungs-Aufrufe nie aus dem Cache, Offline-Kopien nur ohne Netz und nur erfolgreiche Antworten. // v11: neues App-Icon (Radar + Sammelkarte), Set-Binder & Einladen. // v10: i18n-boot.js (DE/EN). // Phase 6: ausgelagerte Skripte (/js/*), Code-Splitting (/assets/chunks/*), strikte CSP
 const STATIC = `ps-static-${VERSION}`;
 const API = "ps-api";
 const IMG = "ps-img";
@@ -10,6 +10,8 @@ const SHELL = ["/", "/js/i18n-boot.js", "/js/csp-handlers.js", "/js/legacy-app.j
 // Phase 4: zusätzlich Offline-Katalog (Sets, Swipe-Stapel), Community-Feed, Bestellungen und öffentliche Profile
 const OFFLINE_API = /^\/api\/(me|portfolio|wishlist|alerts|calendar|badges|listings|sets\/tracked|sealed|scan\/index|scan\/text-index|catalog\/(meta|sets)|swipe\/(sets|deck)|community\/(feed|me)|orders|market\/meta|me\/public-profile|u\/[^/?]+|radar|flip\/community-deals|booster\/ev)(\?|$)/;
 const CDN_HOSTS = ["www.gstatic.com"];
+// Anmeldung & Sitzung laufen IMMER direkt übers Netz (nie Cache, nie Service-Worker-Logik): Identity, /api/session, Abmelden
+const NEVER_CACHE = /^\/(\.netlify\/identity|api\/session)(\/|\?|$)/;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(STATIC).then((c) => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));
@@ -22,11 +24,14 @@ self.addEventListener("activate", (event) => event.waitUntil((async () => {
 async function networkFirst(req, cacheName, fallbackUrl) {
   const cache = await caches.open(cacheName);
   try {
-    const res = await fetch(req);
+    // Online: immer die frische Antwort (cache: "no-store" umgeht auch den HTTP-Cache des Browsers bei API-Daten)
+    const res = await fetch(req, cacheName === API ? { cache: "no-store" } : undefined);
     const html = (res.headers.get("content-type") || "").includes("text/html");
+    // Nur erfolgreiche Antworten ablegen – ein 401/503 überschreibt nie die letzte gute Offline-Kopie
     if (res.ok && (!fallbackUrl || html)) cache.put(fallbackUrl || req, res.clone()).catch(() => {});
     return res;
   } catch (e) {
+    // Nur wenn das Netz wirklich weg ist: zuletzt gesehene Version (Offline-Modus auf Messen & Börsen)
     const hit = await cache.match(fallbackUrl || req);
     if (hit) return hit;
     throw e;
@@ -62,6 +67,7 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
+  if (url.origin === self.location.origin && NEVER_CACHE.test(url.pathname)) return;
   if (url.origin === self.location.origin) {
     // Nur die App selbst (/, /index.html) als Offline-Startseite – Server-Seiten wie /karte, /u, /p, /shop, /pokemon
     // dürfen nicht als Startseite zwischengespeichert werden

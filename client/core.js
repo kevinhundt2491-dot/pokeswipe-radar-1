@@ -1,4 +1,5 @@
 // Gemeinsame Helfer für alle Client-Module
+import { classifyUnauthorized, withUrlParams } from "./session-logic.js";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (window.sanitizeHTML ? window.sanitizeHTML(s) : String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`));
 /** Wert als sicheres JS-String-Argument in einem onclick="…"-Attribut (JSON + HTML-Escaping inkl. &). */
@@ -98,21 +99,32 @@ async function api(path, { method = "GET", body, _retry = false } = {}) {
   const res = await fetch(path, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
   let data = {};
   try { data = await res.json(); } catch {}
-  // 401 trotz gespeicherter Sitzung: einmal mit frisch erneuertem Token wiederholen, statt den Nutzer abzumelden
-  if (res.status === 401 && token && !_retry) {
+  let status = res.status;
+  // 401 trotz gespeicherter Sitzung: Token erneuern und einmal wiederholen, statt den Nutzer abzumelden.
+  // Scheitert die Erneuerung nur am Netz/Server (Funkloch, Kaltstart), bleibt man angemeldet: Fehler wie 503 behandeln.
+  if (status === 401 && token) {
     let renewed = false;
-    try { renewed = await hooks.freshToken({ force: true }); } catch {}
-    if (renewed && bearer() && bearer() !== token) return api(path, { method, body, _retry: true });
+    if (!_retry) { try { renewed = await hooks.freshToken({ force: true }); } catch {} }
+    const verdict = classifyUnauthorized({
+      hadToken: true, retried: _retry, refreshOutcome: renewed ? "ok" : hooks.refreshOutcome(), sessionStillStored: Boolean(bearer()),
+    });
+    if (verdict === "retry" && bearer()) return api(path, { method, body, _retry: true });
+    if (verdict === "transient") {
+      status = 503;
+      data = { ...data, error: "Verbindung kurz unterbrochen – du bleibst angemeldet. Bitte gleich erneut versuchen.", retry: true };
+    }
   }
   if (!res.ok) {
-    const err = new Error(data.error || `Fehler ${res.status}`);
-    err.status = res.status; err.upgrade = data.upgrade; err.data = data;
+    const err = new Error(data.error || `Fehler ${status}`);
+    err.status = status; err.upgrade = data.upgrade; err.data = data;
+    // Vorübergehend (Netz, Kaltstart, Identity kurz weg) – niemals ein Grund für eine Abmeldung
+    err.transient = status === 503 || status === 502 || status === 504 || Boolean(data.retry);
     throw err;
   }
   return data;
 }
 
-const hooks = { openAccount: () => {}, openPro: () => {}, freshToken: async () => false };
+const hooks = { openAccount: () => {}, openPro: () => {}, freshToken: async () => false, refreshOutcome: () => "none" };
 
 function handleError(e) {
   if (e.status === 401) { hooks.openAccount(); return; }
@@ -129,6 +141,50 @@ const requireLogin = () => {
 // ---------------------------------------------------------------------------
 // Modals
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Adresse (Tab/Unterbereich) ohne Neuladen aktualisieren – der gewählte Bereich bleibt beim Neuladen stehen
+// ---------------------------------------------------------------------------
+function syncUrl(params, { push = false, state: st } = {}) {
+  try {
+    const next = withUrlParams(location.href, params);
+    if (!next || next === location.pathname + location.search + location.hash) return;
+    history[push ? "pushState" : "replaceState"](st !== undefined ? st : history.state, "", next);
+  } catch {}
+}
+
+// Fenster, deren Zustand in der Adresse steht (?tab=admin, ?tab=admin&section=creators) – öffnen/schließen spiegelt die URL
+const URL_MODALS = {
+  "ps-admin": { open: { tab: "admin" }, close: () => ({ tab: "profile", section: null }) },
+  "ps-creators": { open: { tab: "admin", section: "creators" }, close: () => ({ section: null, tab: $("ps-admin") && !$("ps-admin").classList.contains("hidden") ? "admin" : "profile" }) },
+};
+
+// Letzte Nutzer-Aktion: Neu-Zeichnen direkt nach einem Tipp/Klick ist gewollt (z. B. nächster Schritt) → dann nichts festhalten
+let lastInteract = 0;
+try {
+  for (const ev of ["pointerdown", "keydown"]) document.addEventListener(ev, () => { lastInteract = Date.now(); }, { capture: true, passive: true });
+} catch {}
+
+/** Bildlauf & Eingabe eines bereits offenen Fensters merken (Hintergrund-Aktualisierung darf nichts springen lassen). */
+function captureModalView(el) {
+  const scrollers = [el, ...el.querySelectorAll(".overflow-y-auto, .overflow-auto, [data-keep-scroll]")];
+  const scroll = scrollers.map((n) => n.scrollTop);
+  const a = document.activeElement;
+  const focus = a && el.contains(a) && a.id && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)
+    ? { id: a.id, value: a.value, start: a.selectionStart, end: a.selectionEnd } : null;
+  return { scroll, focus };
+}
+function restoreModalView(el, view) {
+  const scrollers = [el, ...el.querySelectorAll(".overflow-y-auto, .overflow-auto, [data-keep-scroll]")];
+  scrollers.forEach((n, i) => { if (view.scroll[i]) n.scrollTop = view.scroll[i]; });
+  if (view.focus) {
+    const f = document.getElementById(view.focus.id);
+    if (f && el.contains(f)) {
+      if (f.value !== view.focus.value && typeof view.focus.value === "string") f.value = view.focus.value;
+      try { f.focus({ preventScroll: true }); if (view.focus.start != null) f.setSelectionRange(view.focus.start, view.focus.end); } catch {}
+    }
+  }
+}
+
 function modal(id, html, { wide = false, onClose } = {}) {
   let el = $(id);
   if (!el) {
@@ -138,17 +194,26 @@ function modal(id, html, { wide = false, onClose } = {}) {
     el.addEventListener("click", (e) => { if (e.target === el) closeModalEl(id); });
     document.body.appendChild(el);
   }
+  // Schon offen (z. B. Live-Aktualisierung der Online-Liste)? Bildlauf und gerade getippte Eingabe beibehalten
+  const wasOpen = !el.classList.contains("hidden") && el.childElementCount > 0;
+  const background = Date.now() - lastInteract > 1500;
+  const view = wasOpen ? captureModalView(el) : null;
+  if (view && !background) { view.scroll = []; view.focus = null; } // gewollter Wechsel direkt nach Tipp/Klick: normal neu zeichnen
   el._onClose = onClose;
   el.innerHTML = `<div class="poke-glass ${wide ? "max-w-3xl" : "max-w-md"} w-full rounded-3xl p-5 sm:p-6 space-y-4 border-2 border-yellow-400/60 my-6 relative">
     <button data-close class="absolute top-3 right-4 text-slate-400 hover:text-white font-bold text-lg" aria-label="Schließen">✕</button>${html}</div>`;
   el.querySelector("[data-close]").onclick = () => closeModalEl(id);
   el.classList.remove("hidden");
+  if (view) restoreModalView(el, view);
+  if (!wasOpen && URL_MODALS[id]) syncUrl(URL_MODALS[id].open);
   return el;
 }
 function closeModalEl(id) {
   const el = $(id);
   if (!el) return;
+  const wasOpen = !el.classList.contains("hidden");
   el.classList.add("hidden");
+  if (wasOpen && URL_MODALS[id]) syncUrl(URL_MODALS[id].close());
   if (el._onClose) el._onClose();
 }
 
@@ -185,5 +250,5 @@ function areaChart(points, w = 640, h = 160) {
 
 export {
   $, esc, jsArg, safeUrl, safeImg, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, bearer, api, handleError, requireLogin,
-  modal, closeModalEl, input, btn, sparkline, areaChart, hooks,
+  modal, closeModalEl, input, btn, sparkline, areaChart, hooks, syncUrl,
 };

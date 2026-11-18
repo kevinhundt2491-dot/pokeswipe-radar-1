@@ -3,7 +3,7 @@
 import { captureGrowthParams, showPromoBanner, redeemPromo, referralApi, withRef } from "./referral.js";
 import {
   $, esc, jsArg, safeUrl, eur, pct, toast, ebay, cm, FALLBACK_IMG, cdn, state, api, handleError, requireLogin,
-  modal, closeModalEl, input, btn, sparkline, areaChart,
+  modal, closeModalEl, input, btn, sparkline, areaChart, syncUrl,
 } from "./core.js";
 import { localePath } from "./i18n.js";
 import { haptic, takePhoto, isNative } from "./native.js";
@@ -887,6 +887,8 @@ export function showSub(view, key, { silent = false } = {}) {
     b.setAttribute("aria-selected", on ? "true" : "false");
   });
   localStorage.setItem(`ps_sub_${view}`, key);
+  // Unterbereich in der Adresse (?tab=…&sub=…) – nur für den gerade sichtbaren Reiter, ohne Neuladen
+  if (state.urlSync && !section.classList.contains("hidden")) syncUrl({ tab: view, sub: key, section: null });
   try { window.dispatchEvent(new CustomEvent("ps:sub", { detail: { view, key } })); } catch {}
   if (view === "map" && key === "radar") {
     setTimeout(() => { try { if (typeof mapInstance !== "undefined" && mapInstance) mapInstance.invalidateSize(); else window.initOrUpdateMap?.(); } catch {} }, 80);
