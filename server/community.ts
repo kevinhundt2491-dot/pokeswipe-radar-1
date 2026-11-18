@@ -4,12 +4,13 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
   db, profiles, communityPosts, communityComments, communityLikes, chatMessages, userBlocks, follows, moderationLog, reports,
-  communityDeals, radarPins,
+  communityDeals, radarPins, directMessages, portfolioItems, cards,
 } from "../db/index.ts";
 import { verifyIdentityToken, isAdmin, type AuthUser } from "./auth.ts";
 import { moderateText, trustScore, trustLevel, writeLimits, AUTO_HIDE_REPORTS, profileSlug, type TrustLevel } from "./community-logic.ts";
 import { CARD_ID_RE, getCard, notify } from "./prices.ts";
 import { str, int, rows, rateLimit, clientIp } from "./util.ts";
+import { normalizeCategory, normalizeIntent, cardPinMeta, radarMatch, type ViewerBinder, type CardPin } from "./social-logic.ts";
 
 type Hlp = {
   auth: any; adminOnly: any; body: (c: any) => Promise<Record<string, any>>;
@@ -76,7 +77,7 @@ export async function isBlockedBetween(a: string, b: string) {
 const notIn = (col: any, ids: string[]) => (ids.length ? sql`AND ${col} NOT IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})` : sql``);
 
 /** Gemeinsame Schreib-Prüfung: bestätigte E-Mail, nicht stummgeschaltet, Limits je Vertrauensstufe, Wort-/Link-Filter. */
-export async function guardWrite(c: any, kind: "chat" | "post" | "comment" | "deal" | "radar", text: string) {
+export async function guardWrite(c: any, kind: "chat" | "post" | "comment" | "deal" | "radar" | "dm", text: string) {
   const user: AuthUser = c.get("user");
   const profile = c.get("profile");
   if (!user.confirmed) return { error: "Bitte bestätige zuerst deine E-Mail-Adresse (Link in deinem Postfach), dann kannst du in der Community schreiben.", status: 403 };
@@ -91,7 +92,8 @@ export async function guardWrite(c: any, kind: "chat" | "post" | "comment" | "de
   if (kind === "radar") {
     if (!(await rateLimit(`cw:radar-h:${user.id}`, lim.perHour, 3600_000))) return { error: `Stündliches Limit erreicht (${lim.perHour} Änderungen am Radar-Pin).`, status: 429 };
   } else {
-    const table = kind === "chat" ? sql`chat_messages` : kind === "post" ? sql`community_posts` : kind === "deal" ? sql`community_deals` : sql`community_comments`;
+    const table = kind === "chat" ? sql`chat_messages` : kind === "post" ? sql`community_posts` : kind === "deal" ? sql`community_deals`
+      : kind === "dm" ? sql`direct_messages` : sql`community_comments`;
     const [cnt] = rows(await db.execute(sql`
       SELECT count(*) FILTER (WHERE created_at > now() - interval '1 minute')::int AS m, count(*)::int AS h
       FROM ${table} WHERE user_id = ${user.id} AND created_at > now() - interval '1 hour'`));
@@ -119,9 +121,9 @@ const authorOf = (r: any, trust: Map<string, TrustInfo>) => {
 // ---------------------------------------------------------------------------
 // Meldungen: automatisches Ausblenden ab mehreren Meldungen, Moderations-Aktionen
 // ---------------------------------------------------------------------------
-export const COMMUNITY_TARGETS = ["post", "comment", "chat", "deal", "radar"] as const;
+export const COMMUNITY_TARGETS = ["post", "comment", "chat", "deal", "radar", "dm"] as const;
 const contentTable = (type: string) => (type === "post" ? communityPosts : type === "comment" ? communityComments : type === "chat" ? chatMessages
-  : type === "deal" ? communityDeals : type === "radar" ? radarPins : null);
+  : type === "deal" ? communityDeals : type === "radar" ? radarPins : type === "dm" ? directMessages : null);
 
 async function contentAuthor(type: string, id: number | string): Promise<string | null> {
   const t: any = contentTable(type);
@@ -180,7 +182,7 @@ export async function afterCommunityReport(targetType: string, targetId: string)
 }
 
 // Phase 6: Begründung nach Art. 17 DSA (Entscheidung, Grund, Rechtsbehelfe) – kurz genug für Mitteilung & Push
-const TARGET_LABEL: Record<string, string> = { post: "Pull-Wall-Beitrag", comment: "Kommentar", chat: "Chat-Nachricht", deal: "Community-Deal", radar: "Radar-Pin", user: "Konto" };
+const TARGET_LABEL: Record<string, string> = { post: "Beitrag am Schwarzen Brett", comment: "Kommentar", chat: "Chat-Nachricht", deal: "Community-Deal", radar: "Radar-Pin", dm: "Private Nachricht", user: "Konto" };
 export function statementOfReasons(o: { targetType: string; decision: string; reason: string; automated?: boolean }) {
   const ground = o.reason ? o.reason.slice(0, 85) : "Verstoß gegen die Community-Regeln";
   return `${TARGET_LABEL[o.targetType] || "Inhalt"}: ${o.decision}. Begründung: ${ground} (§ 8 AGB, ${o.automated ? "automatisch nach Meldungen" : "Prüfung durch das Team"}). Widerspruch: binnen 6 Monaten kostenlos per E-Mail an die Adresse im Impressum – ein Mensch prüft erneut (Art. 20 DSA). Außergerichtliche Streitbeilegung möglich (Art. 21 DSA, § 8b AGB).`;
@@ -227,7 +229,7 @@ export async function applyModeration(o: {
     case "ban":
       await db.update(profiles).set({ banned: true }).where(eq(profiles.userId, userId));
       // Inhalte ausblenden (beim Entsperren wiederherstellbar) und Inserate entfernen
-      for (const t of ["community_posts", "community_comments", "chat_messages", "community_deals", "radar_pins"]) {
+      for (const t of ["community_posts", "community_comments", "chat_messages", "community_deals", "radar_pins", "direct_messages"]) {
         await db.execute(sql`UPDATE ${sql.raw(t)} SET status = 'hidden', flag_reason = 'ban' WHERE user_id = ${userId} AND status = 'visible'`);
       }
       await db.execute(sql`UPDATE listings SET status = 'removed' WHERE user_id = ${userId} AND status = 'active'`);
@@ -236,7 +238,7 @@ export async function applyModeration(o: {
       break;
     case "unban":
       await db.update(profiles).set({ banned: false }).where(eq(profiles.userId, userId));
-      for (const t of ["community_posts", "community_comments", "chat_messages", "community_deals", "radar_pins"]) {
+      for (const t of ["community_posts", "community_comments", "chat_messages", "community_deals", "radar_pins", "direct_messages"]) {
         await db.execute(sql`UPDATE ${sql.raw(t)} SET status = 'visible', flag_reason = NULL WHERE user_id = ${userId} AND status = 'hidden' AND flag_reason = 'ban'`);
       }
       await log("unban");
@@ -251,19 +253,21 @@ export async function applyModeration(o: {
 // ---------------------------------------------------------------------------
 // Feed-Abfragen
 // ---------------------------------------------------------------------------
-export async function loadPosts(o: { viewerId?: string | null; isAdmin?: boolean; before?: number; authorId?: string; following?: boolean; postId?: number; limit?: number }) {
+export async function loadPosts(o: { viewerId?: string | null; isAdmin?: boolean; before?: number; authorId?: string; following?: boolean; postId?: number; limit?: number; category?: string }) {
   const blocked = await blockedIds(o.viewerId);
   const limit = Math.min(40, Math.max(1, o.limit ?? 20));
   const posts = rows(await db.execute(sql`
     SELECT po.id, po.user_id, po.caption, po.image, po.card_id, po.status, po.flag_reason, po.like_count, po.comment_count, po.created_at,
+      po.category, po.card_intent, po.card_meta, coalesce(ca.trend, ca.avg)::float AS card_price, ca.set_id AS card_set_id, ca.set_name AS card_set_name, ca.local_id AS card_local_id,
       pr.display_name, pr.public_profile, ((pr.plan = 'pro' AND pr.plan_until > now()) OR (pr.bonus_plan = 'pro' AND pr.bonus_until > now())) AS verified, (pr.founder_at IS NOT NULL) AS founder,
       ${o.viewerId ? sql`EXISTS (SELECT 1 FROM community_likes l WHERE l.post_id = po.id AND l.user_id = ${o.viewerId})` : sql`false`} AS liked
-    FROM community_posts po JOIN profiles pr ON pr.user_id = po.user_id
+    FROM community_posts po JOIN profiles pr ON pr.user_id = po.user_id LEFT JOIN cards ca ON ca.id = po.card_id
     WHERE NOT pr.banned
       AND (po.status = 'visible' ${o.viewerId ? sql`OR (po.status = 'hidden' AND po.user_id = ${o.viewerId})` : sql``})
       ${o.before ? sql`AND po.id < ${o.before}` : sql``}
       ${o.postId ? sql`AND po.id = ${o.postId}` : sql``}
       ${o.authorId ? sql`AND po.user_id = ${o.authorId}` : sql``}
+      ${o.category ? sql`AND po.category = ${o.category}` : sql``}
       ${o.following && o.viewerId ? sql`AND (po.user_id = ${o.viewerId} OR po.user_id IN (SELECT followee_id FROM follows WHERE follower_id = ${o.viewerId}))` : sql``}
       ${notIn(sql`po.user_id`, blocked)}
     ORDER BY po.id DESC LIMIT ${limit}`));
@@ -280,8 +284,10 @@ export async function loadPosts(o: { viewerId?: string | null; isAdmin?: boolean
         ${notIn(sql`cm.user_id`, blocked)}
     ) x WHERE rn <= 30 ORDER BY id`));
   const trust = await trustFor([...posts.map((p: any) => String(p.user_id)), ...comments.map((c: any) => String(c.user_id))]);
+  const binder = await viewerBinder(o.viewerId, posts.filter((p: any) => p.card_intent && p.card_id).map((p: any) => ({ cardId: String(p.card_id), setId: p.card_set_id ? String(p.card_set_id) : null })));
   return posts.map((p: any) => ({
     id: Number(p.id), caption: p.caption, image: p.image, cardId: p.card_id, createdAt: p.created_at,
+    category: normalizeCategory(p.category), card: pinOut(p, binder, o.viewerId === String(p.user_id)),
     status: p.status, pending: p.status === "hidden", likes: Number(p.like_count) || 0, commentCount: Number(p.comment_count) || 0,
     liked: Boolean(p.liked), mine: o.viewerId === String(p.user_id), author: authorOf(p, trust),
     comments: comments.filter((c: any) => Number(c.post_id) === Number(p.id)).map((c: any) => ({
@@ -289,6 +295,72 @@ export async function loadPosts(o: { viewerId?: string | null; isAdmin?: boolean
       mine: o.viewerId === String(c.user_id), author: authorOf(c, trust),
     })),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// ⚡ Live-Binder-Match & Karten-Pin
+// ---------------------------------------------------------------------------
+/** Binder-Daten des Betrachters, beschränkt auf die Karten/Sets der geladenen Beiträge (3 kleine Abfragen). */
+export async function viewerBinder(viewerId: string | null | undefined, pins: { cardId: string; setId: string | null }[]): Promise<ViewerBinder | null> {
+  if (!viewerId || !pins.length) return null;
+  const ids = [...new Set(pins.map((p) => p.cardId))].slice(0, 80);
+  const setIds = [...new Set(pins.map((p) => p.setId).filter(Boolean) as string[])].slice(0, 40);
+  const idList = sql.join(ids.map((i) => sql`${i}`), sql`, `);
+  const qty = rows(await db.execute(sql`SELECT card_id, sum(quantity)::int AS n FROM portfolio_items WHERE user_id = ${viewerId} AND card_id IN (${idList}) GROUP BY card_id`));
+  const wish = rows(await db.execute(sql`SELECT card_id FROM wishlist_items WHERE user_id = ${viewerId} AND card_id IN (${idList})`));
+  const sets = setIds.length ? rows(await db.execute(sql`
+    SELECT DISTINCT c.set_id FROM portfolio_items i JOIN cards c ON c.id = i.card_id WHERE i.user_id = ${viewerId} AND c.set_id IN (${sql.join(setIds.map((i) => sql`${i}`), sql`, `)})
+    UNION SELECT set_id FROM tracked_sets WHERE user_id = ${viewerId} AND set_id IN (${sql.join(setIds.map((i) => sql`${i}`), sql`, `)})`)) : [];
+  return {
+    qty: new Map(qty.map((r: any) => [String(r.card_id), Number(r.n) || 0])),
+    wishlist: new Set(wish.map((r: any) => String(r.card_id))),
+    sets: new Set(sets.map((r: any) => String(r.set_id))),
+  };
+}
+
+/** Karten-Kachel für Brett & Chat: Bild, Set-Nummer, Cardmarket-Live-Preis (aus dem Katalog) und Match-Badge. */
+function pinOut(r: any, binder: ViewerBinder | null, own: boolean) {
+  const intent = normalizeIntent(r.card_intent);
+  if (!intent) return null;
+  const m = (r.card_meta || {}) as Partial<CardPin>;
+  const cardId = r.card_id ? String(r.card_id) : m.cardId || null;
+  const setId = r.card_set_id ? String(r.card_set_id) : m.setId || null;
+  return {
+    intent, cardId, name: m.name || "Karte", image: m.image || r.image || "", setName: r.card_set_name || m.setName || "",
+    localId: r.card_local_id || m.localId || "", setId, portfolioItemId: m.portfolioItemId ?? null,
+    variant: m.variant || "normal", condition: m.condition || "NM",
+    price: r.card_price != null && Number(r.card_price) > 0 ? Number(r.card_price) : null,
+    match: radarMatch({ intent, cardId, setId }, binder, own),
+  };
+}
+
+/**
+ * Karten-Anhang prüfen: „Ich biete“ nur mit einer Karte aus der eigenen Sammlung (portfolio_items),
+ * „Ich suche“ mit einer Katalog-Karte (die im Set-Binder noch fehlt) oder ebenfalls einer eigenen Karte.
+ */
+export async function resolveCardPin(userId: string, b: Record<string, any>): Promise<{ intent: "offer" | "seek"; cardId: string | null; meta: CardPin } | null | { error: string }> {
+  const intent = normalizeIntent(b.cardIntent);
+  if (!intent) return null;
+  const pid = int(b.binderItemId, 0, 2 ** 31 - 1, 0);
+  if (pid) {
+    const [i] = await db.select({ item: portfolioItems, card: cards }).from(portfolioItems).leftJoin(cards, eq(cards.id, portfolioItems.cardId))
+      .where(and(eq(portfolioItems.id, pid), eq(portfolioItems.userId, userId))).limit(1);
+    if (!i) return { error: "Diese Karte ist nicht in deinem Binder." };
+    return {
+      intent, cardId: i.item.cardId,
+      meta: cardPinMeta({
+        cardId: i.item.cardId, name: i.item.name, image: i.item.image || i.card?.image || "", setName: i.card?.setName || "", setId: i.card?.setId || null,
+        localId: i.card?.localId || "", portfolioItemId: intent === "offer" ? i.item.id : null, variant: i.item.variant, condition: i.item.condition,
+      }),
+    };
+  }
+  if (intent === "offer") return { error: "Zum Anbieten bitte eine Karte aus deinem Binder wählen." };
+  const cid = str(b.pinCardId, 60);
+  if (!cid || !CARD_ID_RE.test(cid)) return { error: "Bitte eine Karte auswählen." };
+  const card = await getCard(cid);
+  if (!card) return { error: "Karte nicht gefunden." };
+  const [row] = await db.select({ setId: cards.setId, localId: cards.localId, setName: cards.setName }).from(cards).where(eq(cards.id, card.id)).limit(1);
+  return { intent, cardId: card.id, meta: cardPinMeta({ cardId: card.id, name: card.name, image: card.image, setName: row?.setName || "", setId: row?.setId || null, localId: row?.localId || "" }) };
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +377,7 @@ export function registerCommunity(app: any, hlp: Hlp) {
     const posts = await loadPosts({
       viewerId: u?.id, before: int(c.req.query("before"), 0, 2 ** 31 - 1, 0) || undefined,
       following: c.req.query("scope") === "following", limit: 20,
+      category: ["pull", "trade", "talk"].includes(String(c.req.query("cat"))) ? String(c.req.query("cat")) : undefined,
     });
     return c.json({ posts, nextBefore: posts.length === 20 ? posts[posts.length - 1].id : null });
   });
@@ -322,21 +395,29 @@ export function registerCommunity(app: any, hlp: Hlp) {
     const b = await body(c);
     const caption = str(b.caption, 300);
     let image = "", cardId: string | null = null;
+    // ⚡ Karte aus meinem Binder anhängen („Ich biete zum Tausch“ / „Ich suche für mein Set“)
+    const pin = await resolveCardPin(user.id, b);
+    if (pin && "error" in pin) return c.json({ error: pin.error }, 400);
+    const category = normalizeCategory(b.category, pin ? "trade" : "pull");
+    if (pin) { cardId = pin.cardId; image = pin.meta.image; }
     if (typeof b.image === "string" && b.image.startsWith("data:")) {
       image = await hlp.storeDataUrlImage(b.image, user.id);
       if (!image) return c.json({ error: "Das Foto konnte nicht verarbeitet werden (JPEG/PNG/WebP, max. 600 KB)." }, 400);
+    } else if (pin) {
+      // Bild kommt aus dem Karten-Pin
     } else if (b.cardId && CARD_ID_RE.test(String(b.cardId))) {
       const card = await getCard(String(b.cardId));
       if (card) { cardId = card.id; image = card.image; }
     } else if (b.image) {
       image = hlp.safeImage(b.image);
     }
-    if (!caption && !image) return c.json({ error: "Bitte ein Foto oder eine Beschreibung angeben." }, 400);
+    if (!caption && !image && !pin) return c.json({ error: "Bitte ein Foto oder eine Beschreibung angeben." }, 400);
     const g = await guardWrite(c, "post", caption);
     if ("error" in g) return c.json({ error: g.error }, g.status);
     const review = g.verdict.action === "review";
     const [post] = await db.insert(communityPosts).values({
-      userId: user.id, caption: caption || "Neuer Pull! 🔥", image, cardId,
+      userId: user.id, caption: caption || (pin ? (pin.intent === "offer" ? `🔄 Biete zum Tausch: ${pin.meta.name}` : `🔎 Suche für mein Set: ${pin.meta.name}`) : "Neuer Pull! 🔥"),
+      image, cardId, category, cardIntent: pin?.intent ?? null, cardMeta: pin?.meta ?? null,
       status: review ? "hidden" : "visible", flagReason: review ? g.verdict.reason : null,
     }).returning();
     if (review) await db.insert(moderationLog).values({ action: "auto_hide", targetType: "post", targetId: String(post.id), userId: user.id, reason: g.verdict.reason });
@@ -372,6 +453,13 @@ export function registerCommunity(app: any, hlp: Hlp) {
     if (!added) await db.delete(communityLikes).where(and(eq(communityLikes.postId, id), eq(communityLikes.userId, user.id)));
     const [r] = await db.update(communityPosts).set({ likeCount: sql`(SELECT count(*)::int FROM community_likes WHERE post_id = ${id})` })
       .where(eq(communityPosts.id, id)).returning({ likes: communityPosts.likeCount });
+    // ❤️ Mitteilung (Glocke + Push) an den Autor – höchstens eine pro Beitrag und 30 Minuten
+    if (added && post.userId !== user.id) {
+      const link = `/?tab=community&post=${id}`;
+      const [recent] = rows(await db.execute(sql`SELECT 1 AS x FROM notifications WHERE user_id = ${post.userId} AND link = ${link}
+        AND title LIKE '❤️%' AND created_at > now() - interval '30 minutes' LIMIT 1`));
+      if (!recent) await notify(post.userId, `❤️ ${c.get("profile").displayName} gefällt dein Beitrag`, `Dein Beitrag hat jetzt ${Number(r?.likes) || 1} Likes.`, link);
+    }
     return c.json({ liked: Boolean(added), likes: Number(r?.likes) || 0 });
   });
 
@@ -395,7 +483,7 @@ export function registerCommunity(app: any, hlp: Hlp) {
         // höchstens eine Kommentar-Mitteilung pro Beitrag und 10 Minuten
         const [recent] = rows(await db.execute(sql`SELECT 1 AS x FROM notifications WHERE user_id = ${post.userId} AND link = ${`/?tab=community&post=${id}`}
           AND title LIKE '💬%' AND created_at > now() - interval '10 minutes' LIMIT 1`));
-        if (!recent) await notify(post.userId, `💬 ${c.get("profile").displayName} hat deinen Pull kommentiert`, text.slice(0, 120), `/?tab=community&post=${id}`);
+        if (!recent) await notify(post.userId, `💬 ${c.get("profile").displayName} hat deinen Beitrag kommentiert`, text.slice(0, 120), `/?tab=community&post=${id}`);
       }
     }
     return c.json({ id: cm.id, pending: review, notice: review ? `Dein Kommentar wird kurz geprüft (${g.verdict.reason}).` : "" }, 201);
@@ -420,8 +508,9 @@ export function registerCommunity(app: any, hlp: Hlp) {
     const blocked = await blockedIds(u?.id);
     const list = rows(await db.execute(sql`
       SELECT * FROM (
-        SELECT m.id, m.user_id, m.body, m.status, m.created_at, p.display_name, p.public_profile, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified, (p.founder_at IS NOT NULL) AS founder, (p.creator_at IS NOT NULL) AS creator
-        FROM chat_messages m JOIN profiles p ON p.user_id = m.user_id
+        SELECT m.id, m.user_id, m.body, m.status, m.created_at, m.card_id, m.card_intent, m.card_meta,
+          coalesce(ca.trend, ca.avg)::float AS card_price, ca.set_id AS card_set_id, ca.set_name AS card_set_name, ca.local_id AS card_local_id, p.display_name, p.public_profile, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified, (p.founder_at IS NOT NULL) AS founder, (p.creator_at IS NOT NULL) AS creator
+        FROM chat_messages m JOIN profiles p ON p.user_id = m.user_id LEFT JOIN cards ca ON ca.id = m.card_id
         WHERE m.room = 'global' AND NOT p.banned AND m.id > ${after}
           AND (m.status = 'visible' ${u ? sql`OR (m.status = 'hidden' AND m.user_id = ${u.id})` : sql``})
           AND m.created_at > now() - interval '30 days'
@@ -432,19 +521,26 @@ export function registerCommunity(app: any, hlp: Hlp) {
     // IDs gelöschter Nachrichten seit dem letzten Abruf, damit Clients sie entfernen
     const removed = after ? rows(await db.execute(sql`SELECT id FROM chat_messages WHERE room = 'global' AND status <> 'visible' AND id > ${Math.max(0, after - 200)} ORDER BY id DESC LIMIT 50`)).map((r: any) => Number(r.id)) : [];
     return c.json({
-      messages: list.map((m: any) => ({ id: Number(m.id), body: m.body, createdAt: m.created_at, pending: m.status === "hidden", mine: u?.id === String(m.user_id), author: authorOf(m, trust) })),
+      messages: list.map((m: any) => ({ id: Number(m.id), body: m.body, createdAt: m.created_at, pending: m.status === "hidden", mine: u?.id === String(m.user_id), author: authorOf(m, trust),
+        card: pinOut(m, null, u?.id === String(m.user_id)) })),
       removed,
     });
   });
 
   app.post("/api/community/chat", auth, async (c: any) => {
     const user: AuthUser = c.get("user");
-    const text = str((await body(c)).body, 500);
+    const b = await body(c);
+    const pin = await resolveCardPin(user.id, b);
+    if (pin && "error" in pin) return c.json({ error: pin.error }, 400);
+    const text = str(b.body, 500) || (pin ? (pin.intent === "offer" ? `🔄 Biete zum Tausch: ${pin.meta.name}` : `🔎 Suche für mein Set: ${pin.meta.name}`) : "");
     if (!text) return c.json({ error: "Leere Nachricht" }, 400);
     const g = await guardWrite(c, "chat", text);
     if ("error" in g) return c.json({ error: g.error }, g.status);
     const review = g.verdict.action === "review";
-    const [m] = await db.insert(chatMessages).values({ userId: user.id, body: text, status: review ? "hidden" : "visible", flagReason: review ? g.verdict.reason : null }).returning();
+    const [m] = await db.insert(chatMessages).values({
+      userId: user.id, body: text, status: review ? "hidden" : "visible", flagReason: review ? g.verdict.reason : null,
+      cardId: pin?.cardId ?? null, cardIntent: pin?.intent ?? null, cardMeta: pin?.meta ?? null,
+    }).returning();
     if (review) await db.insert(moderationLog).values({ action: "auto_hide", targetType: "chat", targetId: String(m.id), userId: user.id, reason: g.verdict.reason });
     return c.json({ id: m.id, pending: review, notice: review ? `Deine Nachricht wird kurz geprüft (${g.verdict.reason}).` : "" }, 201);
   });

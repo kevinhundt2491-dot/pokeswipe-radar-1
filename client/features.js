@@ -66,9 +66,10 @@ async function enablePush() {
     if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
     await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON() } });
     if ($("pushStatusLabel")) $("pushStatusLabel").textContent = "Push Aktiv";
-    toast("🔔 Push aktiv", "Preisalarme & Tausch-Nachrichten kommen jetzt auch bei geschlossener App.");
+    toast("🔔 Push aktiv", "Restock-Alarme, Binder-Treffer, Tausch-Angebote, Treffen, Freundschaftsanfragen, Chats & Likes kommen jetzt auch bei geschlossener App.");
     api("/api/push/test", { method: "POST", body: {} }).catch(() => {});
     renderPushBox();
+    window.PS?.refreshPushViews?.();
   } catch (e) {
     if (e.status) handleError(e);
     else toast("Push nicht möglich", "Bitte Seite neu laden und erneut versuchen.");
@@ -83,6 +84,7 @@ async function disablePush() {
   }
   toast("🔕 Push deaktiviert", "Auf diesem Gerät kommen keine Push-Nachrichten mehr.");
   renderPushBox();
+  window.PS?.refreshPushViews?.();
 }
 
 /** Bestehendes Abo nach dem Login dem Konto zuordnen (z. B. nach Kontowechsel). */
@@ -99,13 +101,27 @@ export async function beforeLogout() {
   try { await caches.delete("ps-api"); } catch {}
 }
 
+/** „🧪 Test senden“: echte Push-Nachricht über den Server – zeigt sofort, ob Handy/PC sie empfangen. */
+async function testPush() {
+  if (!requireLogin()) return;
+  const st = await pushState();
+  if (st !== "on") return enablePush();
+  try {
+    // Abo zur Sicherheit erneut beim Konto hinterlegen (z. B. nach Kontowechsel oder abgelaufenem Abo)
+    const sub = await currentSubscription();
+    if (sub) await api("/api/push/subscribe", { method: "POST", body: { subscription: sub.toJSON() } });
+    const r = await api("/api/push/test", { method: "POST", body: {} });
+    toast("🧪 Test-Push gesendet", r.devices ? `An ${r.devices} Gerät${r.devices > 1 ? "e" : ""} – die Mitteilung sollte in wenigen Sekunden erscheinen.` : "Kein Gerät registriert – bitte Push erneut aktivieren.");
+  } catch (e) { handleError(e); }
+}
+
 async function renderPushBox() {
   const box = $("ps-push-box");
   if (!box) return;
   const st = await pushState();
   const text = {
-    on: ["✅ Push ist auf diesem Gerät aktiv", btn("Deaktivieren", "PS.disablePush()", "bg-slate-800 text-slate-300")],
-    off: ["Preisalarme & Tausch-Nachrichten auch bei geschlossener App", btn("🔔 Push aktivieren", "PS.enablePush()")],
+    on: ["✅ Push ist auf diesem Gerät aktiv", `<span class="flex gap-1.5">${btn("🧪 Test senden", "PS.testPush()", "bg-yellow-400 text-slate-950")}${btn("Deaktivieren", "PS.disablePush()", "bg-slate-800 text-slate-300")}</span>`],
+    off: ["Restocks, Binder-Treffer, Tausch, Freunde, Chats & Likes auch bei geschlossener App", btn("🔔 Push aktivieren", "PS.enablePush()")],
     blocked: ["🔕 Mitteilungen sind im Browser blockiert – bitte in den Website-Einstellungen erlauben.", ""],
     "ios-install": ["📲 Auf dem iPhone: erst „Zum Home-Bildschirm“ hinzufügen", btn("Anleitung", "PS.enablePush()")],
     unsupported: ["Dieser Browser unterstützt keine Push-Nachrichten.", ""],
@@ -977,7 +993,7 @@ function tidyLayout() {
 // Start
 // ===========================================================================
 export const featureApi = {
-  enablePush, disablePush, openScanner, openPhotoScanner, scanFile: (file) => handleScan(file), scanPick, scanSell, scanAskAi, openSet, trackSet, untrackSet,
+  enablePush, disablePush, testPush, pushState, openScanner, openPhotoScanner, scanFile: (file) => handleScan(file), scanPick, scanSell, scanAskAi, openSet, trackSet, untrackSet,
   ...lazyLiveScanApi,
   ...collectorApi,
   sealedKind: (k) => { sealedKind = k; renderSealed(); },

@@ -29,6 +29,7 @@ import { initShell, shellApi, routeShell, langFlag } from "./shell.js";
 import { initAppNav, appNavApi, marketMode, renderProfileHub, enableTabUrlSync } from "./app-nav.js";
 import { initFlip, flipApi, syncFlip } from "./flip.js";
 import { initCommunity, communityApi, syncCommunity, routeCommunity, communityAdminHtml } from "./community.js";
+import { initSocial, socialApi, syncSocial, routeSocial } from "./social.js";
 import { profileApi, routeProfile, userSocialHtml } from "./profile.js";
 import { marketApi, routeMarket, listingFormExtras, listingFormValues, listingBuyHtml, listingMetaHtml, renderPsttgBanner } from "./market.js";
 import { cartApi, routeCart, injectCartButton, refreshCartBadge } from "./cart.js";
@@ -1448,6 +1449,22 @@ async function pollNotifications(initial = false) {
   } catch (e) { if (e.status === 401) { state.user = null; renderHeader(); } }
 }
 
+// Push-Status direkt in der Glocke: aktiv / aus / blockiert + „Aktivieren“ bzw. „Test senden“
+function pushStatusLine() { return `<span class="text-slate-400">🔔 Push-Status wird geprüft …</span>`; }
+async function refreshPushLine() {
+  const box = $("ps-notif-push");
+  if (!box) return;
+  const st = await (window.PS?.pushState?.() || Promise.resolve("unsupported")).catch(() => "unsupported");
+  const map = {
+    on: ["✅ Push-Benachrichtigungen sind auf diesem Gerät aktiv", btn("🧪 Test senden", "PS.testPush()", "bg-slate-800 text-white !py-1.5")],
+    off: ["🔕 Push ist auf diesem Gerät aus – Restocks, Tausch, Chats & Likes verpasst du bei geschlossener App", btn("🔔 Aktivieren", "PS.enablePush()", "bg-yellow-400 text-slate-950 !py-1.5")],
+    blocked: ["⛔ Mitteilungen sind im Browser blockiert – bitte in den Website-Einstellungen erlauben", ""],
+    "ios-install": ["📲 iPhone: erst „Zum Home-Bildschirm“ hinzufügen, dann Push aktivieren", btn("Anleitung", "PS.enablePush()", "bg-yellow-400 text-slate-950 !py-1.5")],
+    unsupported: ["Dieser Browser unterstützt keine Push-Nachrichten – In-App-Glocke bleibt aktiv", ""],
+  }[st] || ["", ""];
+  box.innerHTML = `<div class="flex items-center justify-between gap-2"><span class="text-slate-200 font-bold">${map[0]}</span>${map[1]}</div>`;
+}
+
 async function openNotifications() {
   if (!requireLogin()) return;
   closeModalEl("ps-account");
@@ -1455,14 +1472,22 @@ async function openNotifications() {
   const list = state.notifications;
   modal("ps-notifs", `
     <h3 class="text-base font-black text-white">🔔 Mitteilungen</h3>
+    <div id="ps-notif-push" class="bg-slate-950 border border-yellow-400/40 rounded-2xl p-2.5 text-xs">${pushStatusLine()}</div>
+    <div class="grid grid-cols-3 gap-1.5 text-[11px]">
+      <button type="button" onclick="PS.closeAll(); PS.showSub('flip', 'drops')" class="bg-slate-900 border border-slate-800 hover:border-yellow-400 rounded-xl px-2 py-2 font-black text-white">🚨 Restock-Radar</button>
+      <button type="button" onclick="PS.closeAll(); PS.openFriends()" class="bg-slate-900 border border-slate-800 hover:border-yellow-400 rounded-xl px-2 py-2 font-black text-white">👥 Freunde & Chats</button>
+      <button type="button" onclick="PS.closeAll(); PS.openTradeHub()" class="bg-emerald-500/10 border border-emerald-400/50 hover:border-yellow-400 rounded-xl px-2 py-2 font-black text-emerald-200">🔄 Tauschen</button>
+    </div>
     <div class="space-y-1.5 max-h-[60vh] overflow-y-auto text-xs">
       ${list.length ? list.map((n) => {
         const nl = String(n.link || "");
-        const sub = /^\/\?tab=(\w+)&sub=(\w+)$/.exec(nl);
+        const sub = /^\/\?tab=(\w+)&sub=(\w+)(?:&|$)/.exec(nl);
+        const dm = /^\/\?tab=community&dm=([\w%-]{4,120})$/.exec(nl);
         const post = /^\/\?tab=community&post=(\d+)$/.exec(nl);
         const lst = /^\/\?tab=map&listing=(\d+)$/.exec(nl);
         const link = lst ? `PS.closeAll(); PS.goMarket(); PS.openListing(${Number(lst[1])})` : nl.startsWith("/?tab=trades") ? `PS.openTrades()` : nl.startsWith("/?tab=map&sell=wanted") ? `PS.closeAll(); PS.openDemand()` : nl.startsWith("/?tab=map") ? `PS.goMarket()`
           : nl.startsWith("/?orders=1") ? `PS.closeAll(); PS.openOrders()` : post ? `PS.closeAll(); PS.openPost(${Number(post[1])})`
+          : dm ? `PS.closeAll(); PS.openDm(${jsArg((() => { try { return decodeURIComponent(dm[1]); } catch { return dm[1]; } })())})` : nl === "/?tab=community&friends=1" ? `PS.closeAll(); PS.openFriends()`
           : nl.startsWith("/?tab=community") ? `PS.closeAll(); switchTab('community')`
           : sub ? `PS.closeAll(); PS.showSub('${sub[1]}', '${sub[2]}')` : "";
         const ext = safeUrl(nl).startsWith("https://") ? nl : "";
@@ -1472,7 +1497,8 @@ async function openNotifications() {
           ${link ? `<button onclick="${link}" class="text-yellow-300 font-bold">Öffnen →</button>` : ext ? `<a href="${esc(ext)}" target="_blank" rel="noopener" class="text-yellow-300 font-bold">Ansehen ↗</a>` : ""}</div></div>`;
       }).join("") : `<p class="text-slate-500 text-center py-4">Noch keine Mitteilungen. Lege einen Preisalarm an oder starte einen Tausch!</p>`}
     </div>
-    ${btn("🔔 Browser-Push & Töne einstellen", "closeModal('push-modal'); openModal('push-modal')", "w-full bg-slate-800 text-white")}`);
+    ${btn("🔔 Push-Benachrichtigungen aktivieren / testen & Filter", "PS.closeAll(); closeModal('push-modal'); openModal('push-modal')", "w-full bg-slate-800 text-white")}`);
+  refreshPushLine();
   if (state.unread) { api("/api/notifications/read", { method: "POST", body: {} }).then(() => { state.unread = 0; renderHeader(); }).catch(() => {}); }
 }
 
@@ -1562,6 +1588,7 @@ function refreshAll() {
   loadPortfolio(); loadAlerts(); loadListings(); pollNotifications(true);
   syncFlip();
   syncCommunity();
+  syncSocial();
 }
 
 // ---------------------------------------------------------------------------
@@ -1595,6 +1622,8 @@ window.PS = {
   ...appNavApi,
   ...flipApi,
   ...communityApi,
+  ...socialApi,
+  refreshPushViews: () => { refreshPushLine(); try { if (!$("view-profile")?.classList.contains("hidden")) renderProfileHub(); } catch {} },
   ...profileApi,
   ...marketApi,
   ...cartApi,
@@ -1638,6 +1667,7 @@ async function boot() {
   initArena();
   initFlip();
   initCommunity();
+  initSocial(); // Sammler-Freunde, 1:1-Chat, Direkt-Tausch, Treffen-Planer & Karten-Pin
   initDealsRadar();
   initPwa();
   initPayments(); // nach initPwa: ersetzt in der iOS-App den Stripe-Checkout durch In-App-Kauf
@@ -1715,6 +1745,7 @@ async function boot() {
   routeShell();
   routePayments();
   routeCommunity();
+  routeSocial();
   routeProfile();
   routeMarket();
   routeDemand();

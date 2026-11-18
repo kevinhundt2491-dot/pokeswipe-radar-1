@@ -31,7 +31,7 @@ async function openProfile(slug) {
       ${p.badges.length ? `<div class="flex flex-wrap gap-1.5">${p.badges.map((b) => `<span title="${esc(b.description)}" class="bg-slate-800 rounded-full px-2.5 py-0.5 text-[11px] font-bold text-slate-100">${esc(b.icon)} ${esc(b.label)}</span>`).join("")}</div>` : ""}
       <div class="flex flex-wrap gap-2">
         ${p.isMe ? btn("⚙️ Profil bearbeiten", "PS.openProfileSettings()", "bg-slate-800 text-white")
-          : `<span id="ps-pf-follow">${followBtn(p.id, p.isFollowing)}</span>${state.user ? btn("🚫 Blockieren", `PS.blockUser(${jsArg(p.id)}, ${jsArg(p.name)})`, "bg-slate-800 text-slate-300") + btn("⚠️ Melden", `PS.report('user', ${jsArg(p.id)})`, "bg-slate-800 text-slate-300") : ""}`}
+          : `<span id="ps-pf-follow">${followBtn(p.id, p.isFollowing)}</span>${state.user ? `${window.PS?.friendButton?.(p.id, p.name, "lg") || ""}${btn("🔄 Tauschen", `PS.openDmTrade(${jsArg(p.id)}, ${jsArg(p.name)})`, "bg-emerald-500 text-slate-950")}` : ""}${state.user ? btn("🚫 Blockieren", `PS.blockUser(${jsArg(p.id)}, ${jsArg(p.name)})`, "bg-slate-800 text-slate-300") + btn("⚠️ Melden", `PS.report('user', ${jsArg(p.id)})`, "bg-slate-800 text-slate-300") : ""}`}
         ${p.publicProfile ? btn("📤 Profil teilen", `PS.shareProfile(${jsArg(url)}, ${jsArg(p.name)})`, "bg-emerald-500 text-slate-950") : ""}
       </div>
       ${p.showcase.length ? `<h4 class="text-sm font-black text-white">🏆 Showcase</h4>${cardGrid(p.showcase, (x) => (x.quantity > 1 ? `<span class="text-slate-400">${Number(x.quantity)}×</span>` : ""))}` : `<p class="text-xs text-slate-500">Noch keine Karten in der Sammlung.</p>`}
@@ -127,6 +127,7 @@ export function userSocialHtml(u) {
   const me = state.user?.id === u.id;
   return `<div class="flex flex-wrap gap-2">
     ${!me ? `<span id="ps-us-follow">${followBtn(u.id, false)}</span>` : ""}
+    ${!me && state.user ? `${window.PS?.friendButton?.(u.id, u.displayName, "lg") || ""}${btn("🔄 Tauschen", `PS.openDmTrade(${jsArg(u.id)}, ${jsArg(u.displayName)})`, "bg-emerald-500 text-slate-950")}` : ""}
     ${u.publicProfile ? btn("🌐 Sammlung ansehen", `PS.openProfile(${jsArg(u.slug)})`, "bg-slate-800 text-white") : ""}
     ${!me && state.user ? btn("🚫 Blockieren", `PS.blockUser(${jsArg(u.id)}, ${jsArg(u.displayName)})`, "bg-slate-800 text-slate-300") : ""}
   </div>${u.sellerVerified ? `<p class="text-[11px] text-cyan-300">🔒 Verifizierter Verkäufer – Käufe mit Käuferschutz möglich</p>` : ""}`;

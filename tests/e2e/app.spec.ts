@@ -37,11 +37,11 @@ test("Tabs wechseln die Ansicht", async ({ page, baseURL }) => {
   await page.locator("#ps-profile-btn").click({ force: true });
   await expect(page.locator("#view-profile")).toBeVisible();
   await expect(page.locator("#ps-profile-hub")).toContainText("Rechtliches");
-  // Marktplatz: Unterreiter PokeSwipe-Radar | Alle Karten & Suche | Inserieren | Käufe & Verkäufe
+  // Marktplatz: Unterreiter PokeSwipe-Radar | Tauschen | Alle Karten & Suche | Inserieren | Käufe & Verkäufe
   await tab("map").click({ force: true });
   const market = page.locator('#view-map [data-segment="market"]');
   await expect(market).toBeVisible();
-  await expect(market.locator("[data-seg]")).toHaveText([/PokeSwipe-Radar/, /Alle Karten/, /Inserieren/, /Käufe & Verkäufe/]);
+  await expect(market.locator("[data-seg]")).toHaveText([/PokeSwipe-Radar/, /Tauschen/, /Alle Karten/, /Inserieren/, /Käufe & Verkäufe/]);
   await market.locator('[data-seg="swipe"]').click({ force: true });
   await expect(page.locator("#view-swipe")).toBeVisible();
   await expect(page.locator('#view-swipe [data-seg="swipe"]')).toHaveAttribute("aria-selected", "true");
@@ -51,10 +51,10 @@ test("Tabs wechseln die Ansicht", async ({ page, baseURL }) => {
   await expect(coll.locator("[data-seg]")).toHaveText([/Set-Album/, /Wunschliste/, /Preis-Radar/]);
   await coll.locator('[data-seg="radar"]').click({ force: true });
   await expect(page.locator("#view-flip")).toBeVisible();
-  // Community: Live-Chat | Feed
+  // Community: Live-Chat | Schwarzes Brett
   await tab("community").click({ force: true });
   const com = page.locator('#view-community [data-segment="community"]');
-  await expect(com.locator("[data-seg]")).toHaveText([/Live-Chat/, /Feed/]);
+  await expect(com.locator("[data-seg]")).toHaveText([/Live-Chat/, /Schwarzes Brett/]);
   await expect(page.locator("#chat-messages")).toBeVisible();
   await com.locator('[data-seg="wall"]').click({ force: true });
   await expect(page.locator("#pullwall-feed")).toBeAttached();

@@ -134,6 +134,23 @@ Die deutsche Sammler- & Trading-Plattform für Pokémon TCG:
   „Sammlung sichtbar“ (`profiles.binder_visible`, Standard an) im Profil und Set-Binder (`server/presence.ts`, `client/presence.js`).
   **Wichtig:** die erweiterten Regeln aus `firebase/database.rules.json` in der Firebase-Konsole veröffentlichen
 
+- **Schwarzes Brett / Sammler-Forum** – die Community-Beiträge mit Filter-Tabs „📌 Alle Beiträge“, „🔄 Tausch-Gesuche & Angebote“,
+  „🔥 Pulls & Sammler-Flex“, „💬 Fragen & Talk“ und Sprung in den „💬 Live-Chat (Echtzeit)“ (`community_posts.category`). „❤️ Gefällt mir“
+  mit Live-Zähler und eigenem Status, aufklappbare Kommentare („💬 Kommentieren“, bei offener Diskussion alle 8 s aktualisiert).
+  Mitteilung + Push an den Autor bei Likes (max. 1 je Beitrag/30 Min.) und Kommentaren
+- **⚡ Live-Binder-Match & Karten-Pin** – „🃏 Karte aus meinem Binder anhängen“ am Brett und im Live-Chat: *Ich biete zum Tausch*
+  (Karte aus `portfolio_items`) oder *Ich suche für mein Set* (Wunschliste/Katalog). Kachel mit Bild, Set-Nummer und Cardmarket-Live-Preis
+  (`cards.trend`). Hat der Betrachter die gesuchte Karte ≥ 2× bzw. fehlt ihm die angebotene Karte in einem Set, das er sammelt (oder steht sie
+  auf seiner Wunschliste), erscheint „⚡ PokeSwipe-Match!“ mit „🔄 Jetzt 1:1 Tausch starten“ (Logik in `server/social-logic.ts`)
+- **Sammler-Freunde, 1:1-Chat, Direkt-Tausch & Treffen-Planer** – Freundschaftsanfragen aus Live-Chat, Brett, Binder-Vorschau und Profilen
+  (`friendships`), Anfragen oben im Community-Bereich und in der Glocke, Freunde mit Online-Status aus dem Live-Online-Radar. Privater Chat
+  (`direct_messages`) mit „🔄 Direkten Tausch vorschlagen“ (Ich biete dir … ↔ Ich möchte dafür …, Cardmarket-Richtwerte, Annehmen /
+  Anpassen / Abschließen über den bestehenden strukturierten Tausch) und „📍 Treffen vereinbaren“ (Cardshow, Flohmarkt, lokaler Treffpunkt
+  mit Datum & Uhrzeit, „✅ Treffen zusagen“ / „🕒 Andere Zeit vorschlagen“). Routen in `server/social.ts`, Oberfläche `client/social.js`.
+  „🔄 Tauschen“ ist eigener Unterreiter im Marktplatz und Schnellzugriff in Community, Profil und Glocke
+- **Push-Test** – in der Glocke, im Profil („🔔 Push-Benachrichtigungen aktivieren / testen“) und in der Push-Zentrale: Status je Gerät
+  und „🧪 Test senden“ (`/api/push/test` meldet die Zahl registrierter Geräte)
+
 ## Echte Karten & Preise
 
 Swipe-Arena, Flip-Radar, „Rip or Keep“ und Scanner nutzen einen festen Katalog echter Chase-Karten

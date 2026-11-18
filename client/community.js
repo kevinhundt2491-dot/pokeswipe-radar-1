@@ -3,12 +3,17 @@
 // eigene API mit Login-Pflicht (Netlify Identity), serverseitigen Limits, Wort-/Link-Filter und Moderation.
 import { withRef } from "./referral.js";
 import { onlineDot } from "./presence.js";
-import { $, esc, jsArg, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
+import { friendButton, takePin, clearPin } from "./social.js";
+import { $, esc, jsArg, eur, toast, cdn, state, api, handleError, requireLogin, modal, closeModalEl, btn, FALLBACK_IMG } from "./core.js";
 
+const BOARD_CATS = ["all", "trade", "pull", "talk"];
 const cm = {
   posts: [], scope: localStorage.getItem("ps_feed_scope") === "following" ? "following" : "all", nextBefore: null, loading: false,
   chat: [], lastChatId: 0, chatTimer: null, feedTimer: null, me: null, pendingImg: "", focusPost: null, newestSeen: 0,
+  // Schwarzes Brett: Filter (Alle | Tausch | Pulls & Flex | Talk) und aufgeklappte Kommentar-Bereiche
+  cat: BOARD_CATS.includes(localStorage.getItem("ps_board_cat")) ? localStorage.getItem("ps_board_cat") : "all", openComments: new Set(),
 };
+const CAT_CHIP = { trade: ["🔄 Tausch", "bg-emerald-500/20 text-emerald-200"], pull: ["🔥 Pull & Flex", "bg-orange-500/20 text-orange-200"], talk: ["💬 Talk", "bg-sky-500/20 text-sky-200"] };
 
 const ago = (d) => {
   const s = Math.max(1, Math.round((Date.now() - new Date(d).getTime()) / 1000));
@@ -46,6 +51,37 @@ function mountUi() {
     note.className = "text-[10px] text-slate-500";
     chat.parentElement.appendChild(note);
   }
+  // Schwarzes Brett: Kategorie + „🃏 Karte aus meinem Binder anhängen“ im bestehenden Beitrags-Formular
+  const caption = $("wall-caption");
+  const row = caption?.parentElement;
+  if (row && !$("ps-post-extra")) {
+    const extra = document.createElement("div");
+    extra.id = "ps-post-extra";
+    extra.className = "space-y-2";
+    extra.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+        <select id="ps-post-cat" aria-label="Kategorie" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-bold">
+          <option value="pull">🔥 Pulls & Sammler-Flex</option><option value="trade">🔄 Tausch-Gesuch / Angebot</option><option value="talk">💬 Frage & Talk</option></select>
+        <button type="button" onclick="PS.openCardPicker('post', 'offer')" class="bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/50 text-emerald-200 font-black rounded-xl px-3 py-2">🃏 Karte anbieten</button>
+        <button type="button" onclick="PS.openCardPicker('post', 'seek')" class="bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/50 text-cyan-200 font-black rounded-xl px-3 py-2">🔎 Karte suchen</button>
+      </div><div id="ps-post-pin" class="hidden"></div>`;
+    row.before(extra);
+    const head = row.parentElement?.querySelector("h2");
+    if (head && /Pull/.test(head.textContent || "")) head.textContent = "📌 Beitrag ans Schwarze Brett heften – Pull, Tausch oder Frage";
+    if (caption) caption.placeholder = "Was hast du gezogen, was suchst oder tauschst du? …";
+  }
+  // Live-Chat: Karte anhängen (🃏) neben „Senden“
+  const chatIn = $("chat-input");
+  if (chatIn && !$("ps-chat-pin")) {
+    const b = document.createElement("button");
+    b.type = "button"; b.title = "🃏 Karte aus meinem Binder anhängen"; b.setAttribute("aria-label", "Karte aus meinem Binder anhängen");
+    b.className = "bg-slate-800 hover:bg-slate-700 text-white font-black text-xs px-3 py-2 rounded-xl shrink-0";
+    b.textContent = "🃏";
+    b.setAttribute("onclick", "PS.openCardPicker('chat', 'offer')");
+    chatIn.after(b);
+    const pin = document.createElement("div");
+    pin.id = "ps-chat-pin"; pin.className = "hidden";
+    chatIn.parentElement.before(pin);
+  }
   renderBar();
 }
 
@@ -58,9 +94,14 @@ function renderBar() {
   else if (cm.me?.mutedUntil && new Date(cm.me.mutedUntil) > new Date()) notice = `<div class="bg-rose-500/10 border border-rose-500/40 rounded-2xl p-3 text-xs text-rose-200">🔇 Du bist bis ${new Date(cm.me.mutedUntil).toLocaleString("de-DE")} stummgeschaltet.</div>`;
   const lvl = cm.me ? `<span class="text-[11px] text-slate-400" title="Steigt mit bestätigter E-Mail, Kontoalter, abgeschlossenen Tauschen und guten Bewertungen">${esc(cm.me.level.icon)} Deine Stufe: <strong class="text-white">${esc(cm.me.level.label)}</strong> (${Number(cm.me.trust) || 0}/100)${cm.me.links ? "" : " • Links ab Stufe „Bekannt“"}</span>` : "";
   const tab = (k, label) => `<button onclick="PS.feedScope('${k}')" class="flex-1 py-1.5 rounded-lg ${cm.scope === k ? "bg-yellow-400 text-slate-950" : "text-slate-300"}">${label}</button>`;
+  // Schwarzes Brett: schnelle Filter-Tabs (Tausch prominent) + Sprung in den Live-Chat
+  const cat = (k, label, on = `PS.boardCategory('${k}')`) => `<button type="button" onclick="${on}" data-board-cat="${k}" aria-pressed="${cm.cat === k}" class="shrink-0 px-3 py-2 rounded-xl border font-black ${cm.cat === k ? (k === "trade" ? "bg-emerald-500 text-slate-950 border-emerald-400" : "bg-yellow-400 text-slate-950 border-yellow-400") : k === "trade" ? "bg-emerald-500/10 text-emerald-200 border-emerald-400/50" : "bg-slate-900 text-slate-300 border-slate-700"}">${label}</button>`;
   bar.innerHTML = `${notice}
+    <div class="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1 text-xs" role="toolbar" aria-label="Schwarzes Brett filtern">
+      ${cat("all", "📌 Alle Beiträge")}${cat("trade", "🔄 Tausch-Gesuche & Angebote")}${cat("pull", "🔥 Pulls & Sammler-Flex")}${cat("talk", "💬 Fragen & Talk")}${cat("chat", "💬 Live-Chat (Echtzeit)", "PS.communityTab('chat')")}
+    </div>
     <div class="flex flex-wrap items-center justify-between gap-2">
-      <div class="flex bg-slate-900 border border-slate-700 rounded-xl p-1 gap-1 text-xs font-black w-full sm:w-auto">${tab("all", "🌍 Alle Pulls")}${tab("following", "⭐ Gefolgt")}</div>
+      <div class="flex bg-slate-900 border border-slate-700 rounded-xl p-1 gap-1 text-xs font-black w-full sm:w-auto">${tab("all", "🌍 Alle Sammler")}${tab("following", "⭐ Gefolgt")}</div>
       ${lvl}
     </div>`;
   const note = $("ps-chat-note");
@@ -83,6 +124,7 @@ async function loadFeed({ more = false, quiet = false } = {}) {
   cm.loading = true;
   try {
     const q = new URLSearchParams({ scope: cm.scope });
+    if (cm.cat !== "all") q.set("cat", cm.cat);
     if (more && cm.nextBefore) q.set("before", String(cm.nextBefore));
     const r = await api(`/api/community/feed?${q}`);
     if (more) cm.posts = cm.posts.concat(r.posts.filter((p) => !cm.posts.some((x) => x.id === p.id)));
@@ -90,7 +132,7 @@ async function loadFeed({ more = false, quiet = false } = {}) {
       const newest = r.posts[0];
       if (quiet && newest && cm.newestSeen && newest.id > cm.newestSeen && !newest.mine) {
         const cfg = (() => { try { return JSON.parse(localStorage.getItem("pokeswipe_push_cfg") || "{}"); } catch { return {}; } })();
-        if (cfg.wall !== false) toast("📸 Neuer Pull-Wall Hit!", `${newest.author.name}: ${String(newest.caption || "").slice(0, 100)}`);
+        if (cfg.wall !== false) toast(newest.category === "trade" ? "🔄 Neues Tausch-Gesuch am Brett" : "📌 Neuer Beitrag am Schwarzen Brett", `${newest.author.name}: ${String(newest.caption || "").slice(0, 100)}`);
       }
       cm.posts = r.posts;
       if (newest) cm.newestSeen = Math.max(cm.newestSeen, newest.id);
@@ -98,46 +140,82 @@ async function loadFeed({ more = false, quiet = false } = {}) {
     cm.nextBefore = r.nextBefore;
     renderFeed();
   } catch (e) {
-    if (!quiet) { const box = $("pullwall-feed"); if (box) box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-rose-300">Pull-Wall gerade nicht erreichbar. Bitte später erneut versuchen.</div>`; }
+    if (!quiet) { const box = $("pullwall-feed"); if (box) box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-rose-300">Schwarzes Brett gerade nicht erreichbar. Bitte später erneut versuchen.</div>`; }
   } finally { cm.loading = false; }
 }
 
+/**
+ * ⚡ Live-Binder-Match & Karten-Pin: edle Karten-Kachel mit Bild, Set-Nummer, Cardmarket-Live-Preis und – wenn der Betrachter
+ * die gesuchte Karte doppelt hat bzw. die angebotene Karte für sein Set sucht – dem Badge „⚡ PokeSwipe-Match!“.
+ */
+export function cardPinHtml(card, author, ref, mine = false) {
+  if (!card) return "";
+  const offer = card.intent === "offer";
+  const m = card.match;
+  const tradeBtn = !mine && author ? `<button type="button" onclick="PS.startPinTrade(${jsArg(ref)})" class="${m ? "bg-yellow-400 hover:bg-yellow-300 text-slate-950" : "bg-emerald-500 hover:bg-emerald-400 text-slate-950"} font-black text-[11px] px-3 py-1.5 rounded-lg">🔄 ${m ? "Jetzt 1:1 Tausch starten" : "Tauschen"}</button>` : "";
+  return `<div class="rounded-2xl p-2.5 flex gap-3 items-stretch ${m ? "bg-yellow-400/10 border-2 border-yellow-400 shadow-[0_0_24px_rgba(250,204,21,0.35)]" : `bg-slate-950 border ${offer ? "border-emerald-400/40" : "border-cyan-400/40"}`}">
+    <button type="button" onclick="${card.cardId ? `PS.openCard(${jsArg(card.cardId)})` : ""}" class="shrink-0 w-20 sm:w-24" aria-label="Karte ansehen">
+      <img src="${esc(card.image ? cdn(card.image, 240) : FALLBACK_IMG)}" onerror="this.src='${FALLBACK_IMG}'" alt="${esc(card.name)}" loading="lazy" class="w-full aspect-[63/88] object-contain rounded-lg bg-slate-900" /></button>
+    <div class="min-w-0 flex-1 flex flex-col gap-1">
+      <span class="self-start text-[10px] font-black px-2 py-0.5 rounded-full ${offer ? "bg-emerald-500/20 text-emerald-200" : "bg-cyan-500/20 text-cyan-200"}">${offer ? "🔄 Biete zum Tausch" : "🔎 Sucht für sein Set"}</span>
+      <p class="text-sm font-black text-white leading-tight" data-i18n-skip>${esc(card.name)}</p>
+      <p class="text-[11px] text-slate-400">${esc(card.setName || "")}${card.localId ? ` · Nr. ${esc(card.localId)}` : ""}${card.condition && offer ? ` · ${esc(card.condition)}` : ""}</p>
+      <p class="text-[11px]">${card.price ? `<span class="text-emerald-300 font-black">${eur(card.price)}</span> <span class="text-slate-500">Cardmarket-Trend (live)</span>` : '<span class="text-slate-500">Cardmarket-Preis –</span>'}</p>
+      ${m ? `<p class="text-[11px] font-black text-yellow-300 animate-pulse">⚡ PokeSwipe-Match! ${esc(m.label)}</p>` : ""}
+      <div class="mt-auto flex flex-wrap gap-1.5">${tradeBtn}</div>
+    </div>
+  </div>`;
+}
+
 function postHtml(p) {
-  const img = p.image ? cdn(p.image, 720) : "";
+  const img = p.image && (!p.card || p.image !== p.card.image) ? cdn(p.image, 720) : "";
   const canModerate = p.mine || state.me?.isAdmin;
-  return `<article id="ps-post-${p.id}" class="poke-glass rounded-2xl p-4 space-y-3 ${cm.focusPost === p.id ? "ring-2 ring-yellow-400" : ""}">
+  const open = cm.openComments.has(p.id) || cm.focusPost === p.id;
+  const chip = CAT_CHIP[p.category] || CAT_CHIP.pull;
+  return `<article id="ps-post-${p.id}" class="poke-glass rounded-2xl p-4 space-y-3 ${cm.focusPost === p.id ? "ring-2 ring-yellow-400" : p.card?.match ? "ring-2 ring-yellow-400/70" : ""}">
     <div class="flex justify-between items-center text-xs gap-2">
-      <div class="min-w-0 truncate">${authorBtn(p.author)}</div>
-      <span class="text-slate-500 shrink-0">${ago(p.createdAt)}</span>
+      <div class="min-w-0 truncate">${authorBtn(p.author)} ${!p.mine && state.user ? friendButton(p.author.id, p.author.name) : ""}</div>
+      <span class="shrink-0 flex items-center gap-1.5"><span class="text-[10px] font-black px-2 py-0.5 rounded-full ${chip[1]}">${chip[0]}</span><span class="text-slate-500">${ago(p.createdAt)}</span></span>
     </div>
     ${p.pending ? `<p class="text-[11px] bg-amber-500/15 text-amber-200 rounded-lg px-2 py-1">⏳ Wird geprüft – nur für dich sichtbar.</p>` : ""}
     ${p.caption ? `<p class="text-xs sm:text-sm text-white whitespace-pre-line break-words" data-i18n-skip>${esc(p.caption)}</p>` : ""}
+    ${cardPinHtml(p.card, p.author, `post:${p.id}`, p.mine)}
     ${img ? `<div class="bg-slate-950 rounded-xl p-2 flex justify-center"><img src="${esc(img)}" onerror="this.src='${FALLBACK_IMG}'" alt="Pull von ${esc(p.author.name)}" loading="lazy" class="max-h-80 rounded-lg object-contain" /></div>` : ""}
     <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800 text-xs">
-      <button onclick="PS.likePost(${p.id})" class="${p.liked ? "bg-rose-500 text-white" : "bg-rose-500/20 text-rose-300"} hover:bg-rose-500/40 font-bold px-3 py-1 rounded-lg" aria-pressed="${p.liked}">❤️ ${p.likes}</button>
-      <span class="text-slate-400 px-1">💬 ${p.commentCount}</span>
+      <button onclick="PS.likePost(${p.id})" class="${p.liked ? "bg-rose-500 text-white" : "bg-rose-500/20 text-rose-300"} hover:bg-rose-500/40 font-bold px-3 py-1 rounded-lg" aria-pressed="${p.liked}" title="${p.liked ? "Dir gefällt das" : "Gefällt mir"}">❤️ ${p.liked ? "Gefällt dir" : "Gefällt mir"} · ${p.likes}</button>
+      <button onclick="PS.toggleComments(${p.id})" class="${open ? "bg-sky-500 text-slate-950" : "bg-sky-500/20 text-sky-200"} font-bold px-3 py-1 rounded-lg" aria-expanded="${open}">💬 Kommentieren · ${p.commentCount}</button>
+      ${!p.mine && state.user && p.category === "trade" && !p.card ? `<button onclick="PS.openDm(${jsArg(p.author.id)})" class="bg-emerald-500/20 text-emerald-200 font-bold px-2.5 py-1 rounded-lg">🔄 Tauschen</button>` : ""}
       <button onclick="PS.sharePost(${p.id})" class="bg-slate-800 text-slate-200 font-bold px-2.5 py-1 rounded-lg ml-auto">📤 Teilen</button>
       ${!p.mine && state.user ? `<button onclick="PS.report('post', '${p.id}')" class="bg-slate-800 text-slate-400 font-bold px-2 py-1 rounded-lg" title="Melden">⚠️</button>
         <button onclick="PS.blockUser(${jsArg(p.author.id)}, ${jsArg(p.author.name)})" class="bg-slate-800 text-slate-400 font-bold px-2 py-1 rounded-lg" title="Blockieren">🚫</button>` : ""}
       ${canModerate ? `<button onclick="PS.deletePost(${p.id})" class="bg-slate-800 text-rose-300 font-bold px-2 py-1 rounded-lg" title="Löschen">🗑️</button>` : ""}
     </div>
+    ${open ? `<div class="space-y-2">
     ${p.comments.length ? `<div class="space-y-1 bg-slate-950 p-2.5 rounded-xl text-xs max-h-60 overflow-y-auto">${p.comments.map((c) => `
       <div class="flex gap-1.5 items-start group"><div class="flex-1 min-w-0 break-words">${authorBtn(c.author)}<span class="text-slate-200 ml-1" data-i18n-skip>${esc(c.body)}</span>${c.pending ? ' <span class="text-amber-300 text-[10px]">⏳ wird geprüft</span>' : ""}</div>
       ${c.mine || p.mine || state.me?.isAdmin ? `<button onclick="PS.deleteComment(${c.id})" class="text-slate-600 hover:text-rose-400" title="Löschen">✕</button>` : state.user ? `<button onclick="PS.report('comment', '${c.id}')" class="text-slate-600 hover:text-amber-300" title="Melden">⚠</button>` : ""}</div>`).join("")}</div>` : ""}
     ${state.user ? `<div class="flex gap-2">
       <input id="wall-cmt-${p.id}" type="text" maxlength="300" placeholder="Kommentar schreiben …" onkeydown="if(event.key==='Enter')PS.commentPost(${p.id})" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white" />
-      <button onclick="PS.commentPost(${p.id})" class="bg-slate-800 hover:bg-slate-700 text-yellow-400 font-bold text-xs px-3 py-1.5 rounded-xl">Senden</button></div>` : ""}
+      <button onclick="PS.commentPost(${p.id})" class="bg-slate-800 hover:bg-slate-700 text-yellow-400 font-bold text-xs px-3 py-1.5 rounded-xl">Senden</button></div>` : `<p class="text-[11px] text-slate-500">Zum Kommentieren bitte <button onclick="PS.openAccount()" class="underline text-yellow-300">anmelden</button>.</p>`}
+    </div>` : ""}
   </article>`;
 }
 
 function renderFeed() {
   const box = $("pullwall-feed");
   if (!box) return;
+  // Gerade getippte Kommentare & Fokus über das Live-Neuzeichnen retten
+  const typing = [...box.querySelectorAll("input[id^='wall-cmt-']")].filter((i) => i.value).map((i) => [i.id, i.value]);
+  const focusId = document.activeElement?.id?.startsWith("wall-cmt-") ? document.activeElement.id : "";
+  const caret = focusId ? document.activeElement.selectionStart : null;
   if (!cm.posts.length) {
-    box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">${cm.scope === "following" ? "Noch keine Pulls von Sammlern, denen du folgst. Tippe bei einem Beitrag auf den Namen und folge ihm!" : "Noch keine Pulls gepostet – teile jetzt deinen ersten Hit!"}</div>`;
+    box.innerHTML = `<div class="poke-glass rounded-2xl p-6 text-center text-xs text-slate-400">${cm.scope === "following" ? "Noch keine Beiträge von Sammlern, denen du folgst. Tippe bei einem Beitrag auf den Namen und folge ihm!"
+      : cm.cat === "trade" ? "Noch keine Tausch-Gesuche am Brett – hefte jetzt eine Karte aus deinem Binder an („🃏 Karte anbieten“ oder „🔎 Karte suchen“)!" : "Noch keine Beiträge am Schwarzen Brett – teile jetzt deinen ersten Hit!"}</div>`;
   } else box.innerHTML = cm.posts.map(postHtml).join("");
+  for (const [id, v] of typing) { const el = $(id); if (el) el.value = v; }
+  if (focusId) { const el = $(focusId); if (el) { el.focus({ preventScroll: true }); try { el.setSelectionRange(caret, caret); } catch {} } }
   const more = $("ps-cm-more");
-  if (more) more.innerHTML = cm.nextBefore ? `<button onclick="PS.feedMore()" class="w-full mt-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs py-2.5 rounded-xl">Ältere Pulls laden</button>` : "";
+  if (more) more.innerHTML = cm.nextBefore ? `<button onclick="PS.feedMore()" class="w-full mt-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs py-2.5 rounded-xl">Ältere Beiträge laden</button>` : "";
   if (cm.focusPost) {
     const el = $(`ps-post-${cm.focusPost}`);
     if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); setTimeout(() => { cm.focusPost = null; }, 4000); }
@@ -185,16 +263,20 @@ async function publishPost() {
     const r = window.resolveCard(num);
     if (r?.img && /^https:\/\//.test(r.img)) image = r.img;
   }
-  if (!caption && !image) return toast("📸 Pull-Wall", "Bitte Foto, Kartennummer oder Beschreibung eingeben.");
+  const pin = takePin("post");
+  const category = $("ps-post-cat")?.value || (pin.cardIntent ? "trade" : "pull");
+  if (!caption && !image && !pin.cardIntent) return toast("📌 Schwarzes Brett", "Bitte Text, Foto, Kartennummer oder eine Karte aus deinem Binder angeben.");
   const btnEl = document.querySelector("[onclick='publishWallPost()']");
   if (btnEl) btnEl.disabled = true;
   try {
-    const r = await api("/api/community/posts", { method: "POST", body: { caption, image } });
+    const r = await api("/api/community/posts", { method: "POST", body: { caption, image, category, ...pin } });
     cm.pendingImg = "";
+    clearPin("post");
     ["wall-caption", "wall-cardnum", "wall-file"].forEach((id) => { if ($(id)) $(id).value = ""; });
     $("wall-preview")?.classList.add("hidden");
-    toast(r.pending ? "⏳ Wird geprüft" : "🚀 Gepostet!", r.notice || "Dein Pull ist jetzt in der Community.");
+    toast(r.pending ? "⏳ Wird geprüft" : "🚀 Gepostet!", r.notice || (pin.cardIntent ? "Dein Karten-Pin hängt jetzt am Schwarzen Brett – passende Sammler sehen ein ⚡ PokeSwipe-Match." : "Dein Beitrag hängt jetzt am Schwarzen Brett."));
     if (cm.scope !== "all") cm.scope = "all";
+    if (cm.cat !== "all" && cm.cat !== category) { cm.cat = "all"; localStorage.setItem("ps_board_cat", "all"); renderBar(); }
     await loadFeed();
     if (!r.pending) setTimeout(() => sharePost(r.id, true), 400);
   } catch (e) { handleError(e); }
@@ -217,6 +299,7 @@ async function commentPost(id) {
   if (!text) return;
   try {
     const r = await api(`/api/community/posts/${id}/comments`, { method: "POST", body: { body: text } });
+    cm.openComments.add(id);
     if (inp) inp.value = "";
     if (r.notice) toast("⏳ Wird geprüft", r.notice);
     await loadFeed({ quiet: true });
@@ -303,8 +386,8 @@ function renderChat() {
   if (!cm.chat.length) { box.innerHTML = `<p class="text-slate-500 text-center py-6">Noch keine Chat-Nachrichten. Schreibe die erste!</p>`; return; }
   box.innerHTML = cm.chat.map((m) => `
     <div class="bg-slate-900 border ${m.mine ? "border-yellow-400/30" : "border-slate-800"} rounded-xl px-3 py-2 flex gap-2 items-start">
-      <div class="flex-1 min-w-0 break-words">${chatAuthor(m.author)}<span class="text-slate-200 ml-1" data-i18n-skip>${esc(m.body)}</span>
-        ${m.pending ? '<span class="text-amber-300 text-[10px] ml-1">⏳ wird geprüft</span>' : ""}<span class="block text-[9px] text-slate-600">${ago(m.createdAt)}</span></div>
+      <div class="flex-1 min-w-0 break-words">${chatAuthor(m.author)}${!m.mine && state.user ? ` ${friendButton(m.author.id, m.author.name)}` : ""}<span class="text-slate-200 ml-1" data-i18n-skip>${esc(m.body)}</span>
+        ${m.pending ? '<span class="text-amber-300 text-[10px] ml-1">⏳ wird geprüft</span>' : ""}${m.card ? `<div class="mt-1.5">${cardPinHtml(m.card, m.author, `chat:${m.id}`, m.mine)}</div>` : ""}<span class="block text-[9px] text-slate-600">${ago(m.createdAt)}</span></div>
       ${m.mine || state.me?.isAdmin ? `<button onclick="PS.deleteChat(${m.id})" class="text-slate-600 hover:text-rose-400 text-[11px]" title="Löschen">✕</button>`
         : state.user ? `<button onclick="PS.report('chat', '${m.id}')" class="text-slate-600 hover:text-amber-300 text-[11px]" title="Melden">⚠</button>` : ""}
     </div>`).join("");
@@ -316,9 +399,11 @@ async function sendChat(inputId = "chat-input") {
   if (!state.user) { window.PS?.renderLogin?.("Kurz anmelden und mitschreiben – dein Name bleibt gespeichert.", "login"); return; }
   const inp = $(typeof inputId === "string" ? inputId : "chat-input");
   const text = (inp?.value || "").trim();
-  if (!text) return;
+  const pin = inputId === "home-chat-input" ? {} : takePin("chat");
+  if (!text && !pin.cardIntent) return;
   try {
-    const r = await api("/api/community/chat", { method: "POST", body: { body: text } });
+    const r = await api("/api/community/chat", { method: "POST", body: { body: text, ...pin } });
+    if (pin.cardIntent) clearPin("chat");
     if (inp) inp.value = "";
     if (r.notice) toast("⏳ Wird geprüft", r.notice);
     await pollChat();
@@ -387,12 +472,58 @@ async function moderate(targetType, targetId, action, reportId = 0, days = 0, di
 }
 
 // ---------------------------------------------------------------------------
+// Schwarzes Brett: Filter, Schnell-Beitrag, ⚡ Match-Tausch
+// ---------------------------------------------------------------------------
+function boardCategory(k) {
+  cm.cat = BOARD_CATS.includes(k) ? k : "all";
+  try { localStorage.setItem("ps_board_cat", cm.cat); } catch {}
+  try { window.PS?.communityTab?.("wall"); } catch {}
+  cm.nextBefore = null;
+  renderBar(); loadFeed();
+}
+
+/** Formular des Schwarzen Bretts öffnen und Kategorie vorwählen (z. B. „Tausch-Gesuch ans Brett heften“). */
+function boardCompose(category = "trade") {
+  try { window.PS?.communityTab?.("wall"); } catch {}
+  setTimeout(() => {
+    const sel = $("ps-post-cat");
+    if (sel) sel.value = ["pull", "trade", "talk"].includes(category) ? category : "trade";
+    $("wall-caption")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    $("wall-caption")?.focus();
+  }, 120);
+}
+
+/**
+ * „🔄 Jetzt 1:1 Tausch starten“ an einem Karten-Pin:
+ *  • Autor bietet an → Tauschvorschlag mit genau dieser Karte als „Ich möchte dafür …“
+ *  • Autor sucht → eigene (doppelte) Karte als „Ich biete dir …“ vorausgewählt
+ */
+async function startPinTrade(ref) {
+  if (!requireLogin()) return;
+  const [kind, idStr] = String(ref).split(":");
+  const id = Number(idStr);
+  const src = kind === "chat" ? cm.chat.find((m) => m.id === id) : cm.posts.find((p) => p.id === id);
+  const card = src?.card;
+  if (!src || !card) return;
+  const author = src.author;
+  if (card.intent === "offer") {
+    const want = card.portfolioItemId ? [{ portfolioItemId: card.portfolioItemId, name: card.name, image: card.image, condition: card.condition, market: card.price }] : [];
+    return window.PS?.openDmTrade?.(author.id, author.name, 0, { want });
+  }
+  if (!state.portfolio?.items) await window.PS?.loadPortfolio?.();
+  const mine = (state.portfolio?.items || []).filter((i) => card.cardId && i.cardId === card.cardId).sort((a, b) => Number(b.quantity) - Number(a.quantity))[0];
+  return window.PS?.openDmTrade?.(author.id, author.name, 0, { give: mine ? [mine.id] : [] });
+}
+
+// ---------------------------------------------------------------------------
 // Öffentliche API & Start
 // ---------------------------------------------------------------------------
 export const communityApi = {
   feedScope: (s) => { cm.scope = s === "following" ? "following" : "all"; localStorage.setItem("ps_feed_scope", cm.scope); if (cm.scope === "following" && !state.user) { requireLogin(); cm.scope = "all"; } renderBar(); loadFeed(); },
   feedMore: () => loadFeed({ more: true }),
   likePost, commentPost, deletePost, deleteComment, sharePost, blockUser, unblockUser, openBlocks, deleteChat,
+  boardCategory, boardCompose, startPinTrade,
+  toggleComments: (id) => { if (cm.openComments.has(id)) cm.openComments.delete(id); else cm.openComments.add(id); renderFeed(); if (cm.openComments.has(id)) setTimeout(() => $(`wall-cmt-${id}`)?.focus(), 50); },
   openModeration, moderate,
   chatMessages: () => cm.chat.slice(),
   homeChatSend: () => sendChat("home-chat-input"),
@@ -435,6 +566,8 @@ export function initCommunity() {
   window.addEventListener("ps:online", () => { if (cm.chatRendered) renderChat(); });
   clearInterval(cm.chatTimer); clearInterval(cm.feedTimer);
   cm.chatTimer = setInterval(() => { if (visibleChat()) pollChat(); }, 4000);
-  cm.feedTimer = setInterval(() => { if (visibleCommunity()) loadFeed({ quiet: true }); }, 45_000);
+  // Beiträge alle 45 s; solange Kommentare aufgeklappt sind, alle 8 s (Diskussion in Echtzeit)
+  let tick = 0;
+  cm.feedTimer = setInterval(() => { tick++; if (visibleCommunity() && (cm.openComments.size ? true : tick % 6 === 0)) loadFeed({ quiet: true }); }, 7_500);
   document.addEventListener("visibilitychange", () => { if (visibleCommunity()) { pollChat(); loadFeed({ quiet: true }); } else if (visibleChat()) pollChat(); });
 }

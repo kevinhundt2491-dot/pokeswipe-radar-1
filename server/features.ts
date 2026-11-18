@@ -308,8 +308,11 @@ export function registerFeatures(app: any, h: {
 
   app.post("/api/push/test", auth, async (c: any) => {
     if (!(await rateLimit(`pushtest:${c.get("user").id}`, 3, 600_000))) return c.json({ error: "Bitte kurz warten." }, 429);
-    await sendPush(c.get("user").id, { title: "⚡ PokeSwipe Push funktioniert!", body: "Du bekommst Preisalarme und Tausch-Nachrichten jetzt auch bei geschlossener App.", url: "/" });
-    return c.json({ ok: true });
+    const userId = c.get("user").id;
+    await sendPush(userId, { title: "⚡ PokeSwipe Push funktioniert!", body: "Du bekommst Restock-Alarme, Binder-Treffer, Tausch-Nachrichten, Freundschaftsanfragen und Likes jetzt auch bei geschlossener App.", url: "/" });
+    // Nach dem Versand: wie viele Geräte sind noch registriert (abgelaufene Abos entfernt sendPush selbst)?
+    const [n] = await db.select({ n: sql<number>`count(*)::int` }).from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
+    return c.json({ ok: true, devices: Number(n?.n) || 0 });
   });
 
   // ---------------------------- Kamera-Scan (KI) ---------------------------

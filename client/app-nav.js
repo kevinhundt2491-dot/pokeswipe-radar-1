@@ -3,9 +3,9 @@
 // 5 Hauptreiter – unten als Tab-Bar auf dem Handy, oben als schlanke Header-Navigation am Desktop:
 //   1. Start        (view-home)      – Dashboard: Live-Scanner, Marktplatz-Highlights, Live-Chat, Binder
 //   2. Scanner      (view-scan)      – Live-Scan | Foto-Scan & Suche | Fake-Check
-//   3. Marktplatz   (view-map, view-swipe)        – [PokeSwipe-Radar] | [Alle Karten & Suche] | [Inserieren / Doppelte] | [Käufe & Verkäufe]
+//   3. Marktplatz   (view-map, view-swipe)        – [PokeSwipe-Radar] | [🔄 Tauschen] | [Alle Karten & Suche] | [Inserieren / Doppelte] | [Käufe & Verkäufe]
 //   4. Album        (view-portfolio, view-flip)   – [Set-Album] | [Wunschliste] | [Preis-Radar]
-//   5. Community    (view-community) – [Live-Chat] | [Feed] + Schnellzugriff Tausch-Chat, Online-Radar, Reel-Generator (Admin)
+//   5. Community    (view-community) – [Live-Chat] | [Schwarzes Brett] + Schnellzugriff Tausch-Chat, Online-Radar, Freunde & Tauschen, Reel-Generator (Admin)
 // Profil & Einstellungen (view-profile) öffnen sich über den Avatar oben rechts – nicht als eigener Reiter.
 // Jede Funktion hat genau einen festen Platz; Browser-/Android-Zurück wechselt zwischen den Bereichen (History-State).
 import { $, esc, state, api, btn, syncUrl } from "./core.js";
@@ -24,7 +24,7 @@ const PAGES = {
   swipe: { title: "Marktplatz", sub: "Swipe-Tausch: rechts merken, links weiter", icon: "🛒", nav: "map", group: "market" },
   portfolio: { title: "Album / Binder", sub: "Set-Album zum Durchblättern, Wunschliste und Preis-Radar", icon: "📒", nav: "portfolio", group: "collection" },
   flip: { title: "Album / Binder", sub: "Preis-Radar: Restocks, Flip-Deals und Preisalarme", icon: "📒", nav: "portfolio", group: "collection" },
-  community: { title: "Community", sub: "Live-Chat, Tausch-Chat, Feed und Online-Radar der Sammler", icon: "💬", nav: "community", group: "community" },
+  community: { title: "Community", sub: "Live-Chat, Schwarzes Brett, Freunde, Tausch & Online-Radar der Sammler", icon: "💬", nav: "community", group: "community" },
   profile: { title: "Profil & Einstellungen", sub: "Konto, Pro-Pass, Verkäuferkonto & Rechtliches", icon: "⚙️", nav: "profile", back: true },
 };
 const MARKET_MODE_KEY = "ps_market_mode";
@@ -54,9 +54,9 @@ function segmentHtml(id, items, active) {
 }
 
 const SEGMENTS = {
-  market: [["swipe", "💚 PokeSwipe-Radar", "PS.marketTab('swipe')"], ["all", "🃏 Alle Karten & Suche", "PS.marketTab('all')"], ["sell", "🏷️ Inserieren", "PS.marketTab('sell')"], ["mine", "📦 Käufe & Verkäufe", "PS.marketTab('mine')"]],
+  market: [["swipe", "💚 PokeSwipe-Radar", "PS.marketTab('swipe')"], ["trade", "🔄 Tauschen", "PS.marketTab('trade')"], ["all", "🃏 Alle Karten & Suche", "PS.marketTab('all')"], ["sell", "🏷️ Inserieren", "PS.marketTab('sell')"], ["mine", "📦 Käufe & Verkäufe", "PS.marketTab('mine')"]],
   collection: [["binder", "📒 Set-Album", "PS.collectionTab('binder')"], ["wishlist", "⭐ Wunschliste", "PS.collectionTab('wishlist')"], ["radar", "📡 Preis-Radar", "PS.collectionTab('radar')"]],
-  community: [["chat", "💬 Live-Chat", "PS.communityTab('chat')"], ["wall", "📸 Feed", "PS.communityTab('wall')"]],
+  community: [["chat", "💬 Live-Chat", "PS.communityTab('chat')"], ["wall", "📌 Schwarzes Brett", "PS.communityTab('wall')"]],
 };
 
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -64,7 +64,7 @@ export const communityPanel = () => (lsGet(COMMUNITY_KEY) === "wall" ? "wall" : 
 
 function activeSegment(tab) {
   if (tab === "swipe") return "swipe";
-  if (tab === "map") { const m = marketMode(); return m === "mine" || m === "sell" ? m : "all"; }
+  if (tab === "map") { const m = marketMode(); return m === "mine" || m === "sell" || m === "trade" ? m : "all"; }
   if (tab === "flip") return "radar";
   if (tab === "portfolio") return lsGet("ps_sub_portfolio") === "wishlist" ? "wishlist" : "binder";
   if (tab === "community") return communityPanel();
@@ -199,6 +199,16 @@ function applyMarketMode() {
     panel.innerHTML = mode === "sell" ? sellHtml() : mySalesHtml();
     if (mode === "sell") renderListPicker();
   } else panel?.remove();
+  // „🔄 Tauschen“: Tausch-Zentrale über dem Karten-Raster (Filter „Tausch“ ist automatisch aktiv)
+  let strip = $("ps-trade-strip");
+  if (mode === "trade") {
+    if (!strip) {
+      strip = document.createElement("div");
+      strip.id = "ps-trade-strip";
+      section.querySelector("[data-page-top]")?.after(strip);
+    }
+    strip.innerHTML = tradeStripHtml();
+  } else strip?.remove();
   placeBatchBox(mode);
   renderSegments();
   window.PS?.renderMarketList?.();
@@ -215,10 +225,27 @@ function setMarketMode(mode) {
   if (!panelMode) window.PS?.showSub?.("map", "market", { silent: true });
 }
 
-/** Unterreiter im Marktplatz: PokeSwipe-Radar | Alle Karten & Suche | Inserieren | Käufe & Verkäufe */
+/** Unterreiter im Marktplatz: PokeSwipe-Radar | Tauschen | Alle Karten & Suche | Inserieren | Käufe & Verkäufe */
 function marketTab(key) {
   if (key === "swipe") { window.switchTab?.("swipe"); renderSegments(); return; }
-  setMarketMode(key === "mine" || key === "sell" ? key : "buy");
+  setMarketMode(key === "mine" || key === "sell" || key === "trade" ? key : "buy");
+}
+
+/** Tausch-Zentrale im Marktplatz: alle Wege zum Kartentausch auf einen Blick. */
+function tradeStripHtml() {
+  const open = Number(state.me?.usage?.open_trades || 0);
+  const tile = (icon, label, sub, on, cls = "text-white") => `<button type="button" onclick="${on}" class="text-left bg-slate-950 border border-slate-800 hover:border-yellow-400 rounded-2xl px-3 py-2.5 min-h-[56px]">
+    <span class="block text-xs font-black ${cls}">${icon} ${label}</span><span class="block text-[10px] text-slate-400 truncate">${sub}</span></button>`;
+  return `<div class="ps-card p-3 space-y-2 border border-emerald-400/40">
+    <p class="text-sm font-black text-emerald-200">🔄 Tauschen – Karte gegen Karte, fair nach Cardmarket-Wert</p>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      ${tile("📌", "Tausch-Gesuche", "Schwarzes Brett der Sammler", "PS.boardCategory('trade')", "text-emerald-200")}
+      ${tile("🤝", "Meine Tausche", state.user ? `${open} offen · Tausch-Chat` : "Anmelden & tauschen", state.user ? "PS.openTrades()" : "PS.openAccount()")}
+      ${tile("👥", "Freunde & 1:1-Tausch", "Chat, Tausch & Treffen", "PS.openFriends()")}
+      ${tile("💚", "Swipe-Tausch", "Rechts wischen = Interesse", "PS.marketTab('swipe')")}
+    </div>
+    <p class="text-[10px] text-slate-400">Unten: alle Inserate mit Tausch-Angebot. Bei jedem Inserat „🤝 Anfragen“ tippen oder eine eigene Karte ans Brett heften.</p>
+  </div>`;
 }
 
 /** Unterreiter im Album: Set-Album | Wunschliste | Preis-Radar */
@@ -289,12 +316,16 @@ export async function renderProfileHub() {
         <div class="grid grid-cols-2 gap-2">${btn("Anmelden", "PS.renderLogin('', 'login')", "bg-yellow-400 text-slate-950")}${btn("Registrieren", "PS.renderLogin('', 'signup')", "bg-emerald-500 text-slate-950")}</div>
       </div>`;
   const dac7 = user ? dac7Line(await loadDac7Status()) : "";
+  const pst = await (window.PS?.pushState?.() || Promise.resolve("")).catch(() => "");
+  const pushLine = { on: "✅ Aktiv auf diesem Gerät – tippen zum Testen", off: "🔕 Aus – Restocks, Tausch, Freunde, Chats & Likes per Push", blocked: "⛔ Im Browser blockiert", "ios-install": "📲 iPhone: erst zum Home-Bildschirm hinzufügen", unsupported: "Browser ohne Push – Glocke bleibt aktiv" }[pst] || "Restocks, Tausch-Nachrichten, Freunde, Likes & Filter";
   const sections = [];
   if (user) {
     sections.push(card("👤 Konto", [
       row("⚙️", "Konto & Einstellungen", "PS.openAccount()", "Sammlername, Avatar, Stadt, Tarif, Datenschutz"),
       row("🔔", "Mitteilungen", "PS.openNotifications()", state.unread ? `${Number(state.unread)} ungelesen` : "Alles gelesen"),
       row("🌐", m?.publicProfile ? "Mein öffentliches Profil" : "Profil öffentlich machen", m?.publicProfile ? `PS.openProfile(${esc(JSON.stringify(String(m?.profileSlug || "")))})` : "PS.openProfileSettings()", "", "text-yellow-300"),
+      row("👥", "Freunde & Nachrichten", "PS.openFriends()", "Freundschaftsanfragen, 1:1-Chat, Tausch & Treffen"),
+      row("🔄", "Tauschen", "PS.openTradeHub()", "Tausch-Gesuche, Matches, Swipe-Tausch & Meine Tausche", "text-emerald-200"),
       row("🔥", "Meine Matches", "PS.openMatches()"),
       row("⭐", "Gefolgt & Follower", "PS.openFollowing()"),
       row("🟢", "Gerade online & Sammlung teilen", "PS.openOnlineList()", m?.binderVisible === false ? "Deine Sammlung ist privat" : "Deine Tausch-Karten sind für Sammler sichtbar"),
@@ -324,7 +355,8 @@ export async function renderProfileHub() {
         <button type="button" data-mode-btn="simple" onclick="PS.setUiMode('simple')" class="px-2.5 py-1.5 rounded-lg text-slate-300">🌱 Einsteiger</button>
         <button type="button" data-mode-btn="pro" onclick="PS.setUiMode('pro')" class="px-2.5 py-1.5 rounded-lg text-slate-300">📊 Profi</button>
       </div></div>
-    ${row("🔔", "Push-Radar & Alarme", "openModal('push-modal')", "Preisalarme, Restocks, Tausch-Nachrichten, Filter")}
+    ${row("🔔", "Push-Benachrichtigungen aktivieren / testen", "openModal('push-modal')", esc(pushLine))}
+    ${row("🚨", "Restock-Radar & Restock-Alarme", "PS.showSub('flip', 'drops')", "Displays, ETBs, Booster-Bundles & Shop-Restocks beobachten")}
     ${row("📲", "Als App installieren", "PS.installApp()")}
     ${row("❔", "Quickstart & Einführung", "PS.openQuickstart()", "", "text-slate-300")}`));
   if (m?.isAdmin) {

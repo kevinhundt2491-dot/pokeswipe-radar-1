@@ -62,6 +62,7 @@ import { registerAlerts } from "./alerts.ts";
 import { registerCreator } from "./creator.ts";
 import { registerCreatorVideo } from "./creator-video.ts";
 import { registerPresence } from "./presence.ts";
+import { registerSocial } from "./social.ts";
 import { registerSession } from "./session.ts";
 
 type Profile = typeof profiles.$inferSelect;
@@ -1219,6 +1220,7 @@ registerAlerts(app, { auth, adminOnly, body }); // Phase 8: Browser-Fehlerberich
 registerCreatorVideo(app, { auth, adminOnly, body }); // Showcase-Video für /creator#video (Set-Binder + 1-Klick-Inserieren)
 registerCreator(app, { auth, adminOnly, body }); // Creator-Programm: /creator-Bewerbung, Creator-Finder & Resend-Outreach (Admin)
 registerPresence(app, { auth, body });
+registerSocial(app, { auth, body }); // Sammler-Freunde, privater 1:1-Chat, Direkt-Tausch im Chat & Treffen-Planer
 registerSession(app, { body }); // Dauer-Anmeldung: HttpOnly-Sitzungs-Cookie (180 Tage, gleitend), Wiederherstellung & Abmelden // Live-Online-Radar: verifizierte Präsenz, Binder-Vorschau, Sichtbarkeits-Schalter
 registerSellerImport(app, { auth, adminOnly, body });
 registerNative(app, { auth, body });
