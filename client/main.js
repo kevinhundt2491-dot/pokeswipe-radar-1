@@ -52,6 +52,7 @@ import {
 import { oauthStrategy, externalBrowserUrl, IN_APP_LABEL, initialOf, displayNameFor, cleanDisplayName } from "./session-logic.js";
 import { filterListings, MARKET_CHIP_KEYS, setCodeOf, conditionShort } from "./market-filter-logic.js";
 import { initHome, homeApi, renderHome } from "./home.js";
+import { initPresence, presenceApi } from "./presence.js";
 
 // ---------------------------------------------------------------------------
 // Konto (Netlify Identity)
@@ -1431,6 +1432,10 @@ async function openAdmin() {
         ${tile("Abgeschlossene Tausche", Number(stats.completed_trades) || 0)}
       </div>
       <div class="flex flex-wrap gap-2">${btn("🧾 DAC7-Meldung & BZSt-Export", "PS.openDac7Admin()", "bg-slate-800 text-white")}${btn("🧩 Set-Vollständigkeit", "PS.openSetCompleteness()", "bg-slate-800 text-white")}${btn("⚙️ Jobs & Fehler", "PS.openOps()", "bg-slate-800 text-white")}${btn("🎬 Make.com & Auto-Reels", "PS.openMakeAdmin()", "bg-slate-800 text-white")}</div>
+      <button type="button" onclick="PS.openCreatorAdmin()" class="w-full text-left bg-gradient-to-r from-fuchsia-600/30 to-yellow-500/20 border border-fuchsia-400/50 rounded-2xl p-3 hover:border-yellow-400">
+        <p class="text-sm font-black text-white">🎯 Creator-Finder & Outreach</p>
+        <p class="text-[11px] text-slate-300">Starter-Liste DACH, Kontakt-Extraktor, automatische Promo-Codes, 4 Vorlagen, Resend-Warteschlange (max. 15/Tag), Bewerbungen, Viral-Hook-Generator</p>
+      </button>
       <h4 class="text-sm font-black text-white">Offene Meldungen (${reports.length})</h4>
       <div class="space-y-1.5 max-h-80 overflow-y-auto text-xs">
         ${reports.length ? reports.map((r) => `<div class="bg-slate-900 rounded-xl p-2.5 border border-slate-800">
@@ -1533,6 +1538,8 @@ window.PS = {
   ...inviteApi,
   ...binderApi,
   ...listPickerApi,
+  ...presenceApi,
+  openCreatorAdmin: () => import("./creator-admin.js").then((m) => m.openCreatorAdmin()).catch(handleError),
   enablePush: wrapEnablePush(featureApi.enablePush),
   openPost: (id) => { history.replaceState(null, "", `/?tab=community&post=${Number(id)}`); routeCommunity(); },
 };
@@ -1556,6 +1563,7 @@ async function boot() {
   initHome(); // Start-Dashboard: Scanner-Hero, Marktplatz-Highlights, Live-Chat, Binder
   initInvite(); // Teilen & Freunde einladen: Fortschritt zum Gründer-Sammler, 1-Tap-Teilen, Hinweis nach Uploads
   initListPicker(); // Meine Inserate: „Alle Doppelten inserieren“ + Kartenauswahl mit Suche & Filter
+  initPresence(); // Live-Online-Radar: „Gerade online“ (Mitglied vs. Gast), Binder-Vorschau, Direkt-Tausch
   initBinder(); // Sammlung → Mein Binder: Set-Ordner & durchswipebare Binder-Ansicht mit Marktplatz-Abgleich
   initArena();
   initFlip();
@@ -1608,7 +1616,8 @@ async function boot() {
   await confirmCheckoutFromUrl();
   const tab = new URLSearchParams(location.search).get("tab");
   if (tab === "trades") openTrades();
-  else if (tab === "admin") { switchTabSafe("profile"); if (state.me?.isAdmin) openAdmin(); }
+  else if (tab === "admin") { switchTabSafe("profile"); if (state.me?.isAdmin) { openAdmin(); if (new URLSearchParams(location.search).get("section") === "creators") window.PS.openCreatorAdmin(); } }
+  else if (tab === "creator") { location.replace("/creator"); return; }
   else if (["home", "swipe", "scan", "flip", "community", "map", "portfolio", "profile"].includes(tab)) switchTabSafe(tab);
   routeFeatures();
   routeCart();

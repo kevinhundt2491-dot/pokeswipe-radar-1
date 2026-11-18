@@ -17,7 +17,9 @@
       },
       "presence": {
         ".read": true,
-        ".indexOn": ["ts"],
+        ".indexOn": [
+          "ts"
+        ],
         "$uid": {
           ".write": "auth != null && auth.uid === $uid",
           ".validate": "!newData.exists() || (newData.hasChildren(['online', 'ts']) && newData.child('ts').val() <= now + 60000 && newData.child('ts').val() >= now - 60000)",
@@ -26,6 +28,15 @@
           },
           "ts": {
             ".validate": "newData.isNumber()"
+          },
+          "g": {
+            ".validate": "newData.isNumber() && newData.val() >= 1000 && newData.val() <= 9999"
+          },
+          "a": {
+            ".validate": "newData.isString() && newData.val().length <= 24"
+          },
+          "n": {
+            ".validate": "newData.isString() && newData.val().length >= 16 && newData.val().length <= 40"
           },
           "$other": {
             ".validate": false

@@ -1323,8 +1323,20 @@
 
         // 2. Echte Online-Präsenz (mit Herzschlag, damit verwaiste Einträge nicht mitgezählt werden)
         //    Regel: presence/<uid> darf nur die angemeldete Firebase-UID selbst schreiben (auth.uid === $uid)
+        //    Live-Online-Radar (client/presence.js): zusätzlich Gast-Nummer (g), Bereich (a) und – nur für angemeldete
+        //    Sammler – eine vom Server ausgegebene Nonce (n). Name/Badges kommen nie aus Firebase, sondern vom Server.
         const myPresence = fbUid ? db.ref("pokeswipe_radar/presence/" + fbUid) : null;
-        const beat = () => { if (myPresence) myPresence.set({ online: true, ts: firebase.database.ServerValue.TIMESTAMP }).catch(() => {}); };
+        let richPresence = true; // false, falls die veröffentlichten Firebase-Regeln die Zusatzfelder (noch) nicht erlauben
+        const beat = () => {
+          if (!myPresence) return;
+          const base = { online: true, ts: firebase.database.ServerValue.TIMESTAMP };
+          let extra = {};
+          try { extra = (richPresence && window.psPresenceExtra && window.psPresenceExtra()) || {}; } catch (e) {}
+          myPresence.set({ ...base, ...extra }).catch(() => {
+            if (Object.keys(extra).length) { richPresence = false; myPresence.set(base).catch(() => {}); }
+          });
+        };
+        window.psFb = { uid: fbUid, beat };
         const armDisconnect = () => { if (myPresence) myPresence.onDisconnect().remove().catch(() => {}); };
         // Kontolöschung: eigenen Präsenz-Eintrag entfernen und die anonyme Firebase-Kennung verwerfen
         window.psFirebaseForget = async () => {
@@ -1336,7 +1348,9 @@
         };
         beat();
         armDisconnect();
-        setInterval(() => { if (document.visibilityState === "visible") beat(); }, 4 * 60 * 1000);
+        // Herzschlag alle 45 Sekunden (geschlossene Tabs verschwinden sofort über onDisconnect, hängende nach ~2 Minuten)
+        setInterval(beat, 45 * 1000);
+        try { window.dispatchEvent(new CustomEvent("ps:fb-ready", { detail: { uid: fbUid } })); } catch (e) {}
         listen(db.ref(".info/connected"), "value", (snap) => {
           const dot = document.getElementById("liveVisitorCount");
           if (dot) dot.title = snap.val() ? "Live verbunden" : "Verbindung unterbrochen – verbinde neu …";
@@ -1344,9 +1358,10 @@
         });
         listen(db.ref("pokeswipe_radar/presence"), "value", snap => {
           const all = snap.val() || {};
-          const cutoff = Date.now() - 10 * 60 * 1000;
+          const cutoff = Date.now() - 150 * 1000;
           const count = Object.values(all).filter((p) => p && Number(p.ts) > cutoff).length;
           document.getElementById("liveVisitorCount").textContent = Math.max(1, count);
+          try { window.dispatchEvent(new CustomEvent("ps:presence", { detail: { all, me: fbUid } })); } catch (e) {}
         });
 
         // 3. + 4. Live-Chat und Pull-Wall laufen seit Phase 4 über die eigene API mit Login-Pflicht,
