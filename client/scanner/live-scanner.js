@@ -41,8 +41,15 @@ const MIN_INTERVAL_MS = 90;
 const STABLE_FRAMES = 3;
 /** „Ruhig gehalten“ – großzügiger als früher (2,5 %): leichtes Zittern der Hand reicht nicht mehr zum Abbruch */
 const STABLE_MOTION = 0.045;
-/** Text-Erkennung (Name + Nummer) im Live-Bild: Abstand zwischen zwei Lesungen */
-const OCR_INTERVAL_MS = 280;
+/**
+ * Text-Erkennung (Name + Nummer) im Live-Bild: Abstand zwischen zwei Lesungen. Seit die Lesestreifen entzerrt und eng
+ * zugeschnitten sind, dauert eine Lesung nur noch einen Bruchteil – die nächste darf deshalb fast sofort starten.
+ */
+const OCR_INTERVAL_MS = 140;
+/** Kamera-Zoom (wo das Gerät ihn kann): Karte wird etwas weiter weg gehalten – dort stellen Handykameras scharf */
+const CAMERA_ZOOM = 1.4;
+/** Ein Bild ist beim Worker in Arbeit – länger als das gilt es als verloren und das nächste wird geschickt */
+const FRAME_STALE_MS = 1200;
 /**
  * Zwei gleiche Text-Lesungen innerhalb dieser Zeit = sicherer Treffer („Lock-on“). Früher 1,2 s – auf Handys dauert eine
  * Lesung aber oft 0,8–1,5 s, die zweite Lesung kam dann zu spät und der Treffer rastete nie ein.
@@ -295,6 +302,12 @@ async function tuneTrack(track) {
   }
   // Ohne Fähigkeits-Abfrage (ältere Browser): trotzdem versuchen
   if (!caps.focusMode) { try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {} }
+  // Leichter Zoom: Handykameras stellen unter ~10–15 cm nicht scharf – genau dort hielt man die Karte, um den Rahmen zu
+  // füllen. Mit Zoom füllt die Karte den Rahmen schon aus größerem Abstand, Nummer und Name sind dann scharf.
+  const z = caps.zoom;
+  if (z && Number(z.max) >= CAMERA_ZOOM && Number(z.min ?? 1) <= 1) {
+    try { await track.applyConstraints({ advanced: [{ zoom: CAMERA_ZOOM }] }); } catch {}
+  }
   return caps;
 }
 
@@ -357,7 +370,7 @@ async function start() {
   $("ps-ls-idle")?.classList.add("hidden");
   sc.running = true; sc.frames = 0; sc.msSum = 0; sc.streak = 0; sc.streakKey = null;
   sc.stable = 0; sc.focusMax = 0; sc.gone = 0; sc.prevCorners = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0;
-  sc.textLock = null; sc.lastStill = null; sc.ocrBusy = false; sc.lastOcrAt = 0; sc.searchSince = 0; sc.prevRead = null;
+  sc.textLock = null; sc.lastStill = null; sc.ocrBusy = false; sc.frameAt = 0; sc.tightMiss = 0; sc.lastOcrAt = 0; sc.searchSince = 0; sc.prevRead = null;
   if (!sc.ready && !sc.loadingIndex) loadIndex();
   warmupOcr();
   layout();
@@ -450,7 +463,11 @@ function tick() {
   const video = $("ps-ls-video");
   const now = performance.now();
   const interval = sc.ocrBusy && ocrKind() === "tesseract" ? MIN_INTERVAL_OCR_MS : MIN_INTERVAL_MS;
-  if (sc.ready && !sc.capturing && video.readyState >= 2 && now - sc.lastSent >= interval) {
+  // Gegendruck: erst das nächste Bild schicken, wenn das vorige ausgewertet ist. Früher stauten sich auf langsamen
+  // Handys Bilder in der Worker-Warteschlange – ausgewertet wurde dann ein veraltetes Bild, und die Text-Anfragen
+  // standen hinten an.
+  const inFlight = sc.frameAt && now - sc.frameAt < FRAME_STALE_MS;
+  if (sc.ready && !sc.capturing && !inFlight && video.readyState >= 2 && now - sc.lastSent >= interval) {
     const g = sc.geometry && sc.geometry.vw === video.videoWidth ? sc.geometry : layout();
     if (g) {
       g.vw = video.videoWidth;
@@ -458,7 +475,7 @@ function tick() {
       if (sc.canvas.width !== g.W || sc.canvas.height !== g.H) { sc.canvas.width = g.W; sc.canvas.height = g.H; }
       sc.ctx.drawImage(video, g.sx0, g.sy0, g.sw, g.sh, 0, 0, g.W, g.H);
       const img = sc.ctx.getImageData(0, 0, g.W, g.H);
-      sc.lastSent = now;
+      sc.lastSent = now; sc.frameAt = now;
       sc.worker.postMessage({ type: "frame", w: g.W, h: g.H, data: img.data.buffer, guide: g.guide, ocr: sc.ocrMode !== "none" }, [img.data.buffer]);
     }
   }
@@ -528,8 +545,9 @@ function onWorker(m) {
     if (sc.running) setUi("search", sc.indexCount ? "📇 Karte in den Rahmen halten" : "Noch keine Karten im Index – Auslöser nutzt die KI.");
     return;
   }
+  if (m.type === "result" && !m.reqId) sc.frameAt = 0;
   if (m.type !== "result" || !sc.running) return;
-  if (m.error) return;
+  if (m.error || m.skipped) return;
   if (m.found && !sc.searchSince && !sc.current) sc.searchSince = Date.now() - (m.ms || 0);
   sc.frames++; sc.msSum += m.ms || 0;
   const perf = $("ps-ls-perf");
@@ -596,8 +614,13 @@ function rectOfQuad(q) {
  */
 function liveCardRect(g) {
   if (sc.prevCorners && Date.now() - sc.cornersAt < 700) {
-    // Kanten frisch erkannt → schmale Lese-Streifen genau über Name und Nummer (schneller)
-    return { ...rectOfQuad(sc.prevCorners.map(([x, y]) => [g.sx0 + x / g.k, g.sy0 + y / g.k])), tight: true };
+    // Kanten frisch erkannt → entzerrte, enge Lese-Streifen genau über Name und Nummer (schneller und genauer).
+    // Blieben zwei solche Lesungen ohne Treffer (z. B. Kanten der Schutzhülle statt der Karte erkannt), liest jede
+    // dritte Lesung den großzügigen Bereich um die Karte.
+    const quad = sc.prevCorners.map(([x, y]) => [g.sx0 + x / g.k, g.sy0 + y / g.k]);
+    const r = rectOfQuad(quad);
+    if (sc.tightMiss >= 2 && sc.tightMiss % 3 === 2) return { x: r.x - r.w * 0.04, y: r.y - r.h * 0.03, w: r.w * 1.08, h: r.h * 1.06 };
+    return { ...r, quad };
   }
   const gd = g.guide;
   const x0 = g.sx0 + gd.x0 / g.k, y0 = g.sy0 + gd.y0 / g.k, w = (gd.x1 - gd.x0) / g.k, h = (gd.y1 - gd.y0) / g.k;
@@ -633,10 +656,11 @@ async function liveOcr(video) {
   if (!g) return;
   sc.ocrBusy = true; sc.lastOcrAt = now;
   try {
-    const r = await readCardText(video, liveCardRect(g));
+    const rect = liveCardRect(g);
+    const r = await readCardText(video, rect);
     if (!r || !sc.running) return;
     sc.ocrRuns++; sc.ocrMsSum += r.ms; sc.lastText = r.text;
-    if (!r.text.trim()) return;
+    if (!r.text.trim()) { if (rect.quad || sc.tightMiss) sc.tightMiss = (sc.tightMiss || 0) + 1; return; }
     if (!sc.searchSince) sc.searchSince = Date.now() - r.ms;
     let d = await workerText(r.text);
     // Nicht sicher: mit der vorigen Lesung zusammenlegen – oft ist der Name in der einen, die Nummer in der anderen scharf
@@ -646,6 +670,7 @@ async function liveOcr(video) {
       const merged = await workerText(`${prev.text}\n${r.text}`);
       if (merged?.accepted && (merged.strength === "strong" || !d?.accepted)) d = merged;
     }
+    if (rect.quad || sc.tightMiss) sc.tightMiss = d?.accepted ? 0 : (sc.tightMiss || 0) + 1;
     onText(d);
   } catch { /* nächste Lesung */ } finally { sc.ocrBusy = false; }
 }
@@ -680,8 +705,18 @@ async function recognizePhoto(dataUrl, { ocrWaitMs = 9000 } = {}) {
   const strongHash = Boolean(m.accepted && (m.byNumber || m.score <= SCORE_STRONG) && !m.glareHigh);
   let d = null;
   if (!strongHash && sc.textCount) {
-    const rt = await readTextTimed(cv, rectOfQuad(corners), ocrWaitMs);
-    if (rt?.text?.trim()) { sc.lastText = rt.text; d = await workerText(rt.text, true); }
+    // Kanten gefunden: erst die entzerrten, engen Streifen (schnell, genau); bleibt das ohne Treffer, zusätzlich der
+    // großzügige Bereich um die Karte
+    const rects = m.found ? [{ ...rectOfQuad(corners), quad: corners }, rectOfQuad(corners)] : [rectOfQuad(corners)];
+    const until = performance.now() + ocrWaitMs;
+    for (const rect of rects) {
+      const rt = await readTextTimed(cv, rect, Math.max(800, until - performance.now()));
+      if (!rt?.text?.trim()) continue;
+      sc.lastText = rt.text;
+      const r = await workerText(rt.text, true);
+      if (r?.accepted || !d) d = r;
+      if (d?.strength === "strong") break;
+    }
   }
   let accepted = false, keys = [], via = "";
   if (strongHash) { accepted = true; keys = orderGroup(m.group || []).map((g) => g.key); via = m.byNumber ? "hash+number" : "hash"; }
@@ -810,8 +845,15 @@ async function capture({ auto = false } = {}) {
     }
     // Ohne KI: Name + Sammlernummer aus dem scharfen Einzelbild lesen
     if (sc.textCount) {
-      const rt = await readTextTimed(cv, rectOfQuad(m.found ? m.corners : guideQuad), auto ? 1500 : 4000);
-      const d = rt?.text?.trim() ? await workerText(rt.text, true) : null;
+      // Kanten gefunden: entzerrte, enge Streifen (schnell und genau), sonst der großzügige Bereich um den Rahmen
+      const rect = m.found ? { ...rectOfQuad(m.corners), quad: m.corners } : rectOfQuad(guideQuad);
+      let rt = await readTextTimed(cv, rect, auto ? 1500 : 4000);
+      let d = rt?.text?.trim() ? await workerText(rt.text, true) : null;
+      if (!d?.accepted && rect.quad && !auto) {
+        rt = await readTextTimed(cv, rectOfQuad(m.corners), 3000);
+        const d2 = rt?.text?.trim() ? await workerText(rt.text, true) : null;
+        if (d2?.accepted || !d) d = d2;
+      }
       if (d?.accepted && d.keys?.length) { hitFromText(d, photo); return; }
       if (d?.candidates?.length) m.textCands = d.candidates;
     }
