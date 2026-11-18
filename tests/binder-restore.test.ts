@@ -30,11 +30,11 @@ test("Scanner: Treffer wird sofort gespeichert (presentHit → autoFileCurrent +
   assert.match(s, /pq\.filedKey = infos\[0\]\.key;/);
 });
 
-test("Binder: fehlende Karten grau, Lücke mit Angebot → Preis + „Jetzt im Marktplatz ansehen / kaufen“, sonst Suchauftrag/Marktplatz", () => {
+test("Binder: fehlende Karten grau, Lücke mit Angebot → Preis + „Zum Angebot im Marktplatz“, sonst Suchauftrag/Marktplatz", () => {
   const css = src("public/theme.css");
   assert.match(css, /\.ps-bslot\.missing \.ps-bslot-art img \{[^}]*grayscale\(1\)/);
   const b = src("client/binder.js");
-  assert.match(b, /Jetzt im Marktplatz ansehen \/ kaufen/);
+  assert.match(b, /Zum Angebot im Marktplatz/);
   assert.match(b, /Suchauftrag aktivieren/);
   assert.match(b, /Zum Marktplatz gehen/);
   assert.match(b, /data-binder-pct/);

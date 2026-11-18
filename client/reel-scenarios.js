@@ -717,7 +717,7 @@ export const CHOREO = {
         try { s.win.PS?.closeSetBinder?.(); } catch {}
         const demo = s.win.PS?.listPickerDemoStart?.({ ms: AB.listMs });
         if (demo) s.fact("dupes", String(demo.copies));
-        try { s.win.PS?.marketTab?.("mine"); } catch {}
+        try { s.win.PS?.marketTab?.("sell"); } catch {}
         await s.idle({ quietMs: 120, timeoutMs: 600 });
         const picker = s.$("#ps-list-picker");
         if (picker) { const r = picker.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 120)); }

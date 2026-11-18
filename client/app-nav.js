@@ -3,9 +3,9 @@
 // 5 Hauptreiter – unten als Tab-Bar auf dem Handy, oben als schlanke Header-Navigation am Desktop:
 //   1. Start        (view-home)      – Dashboard: Live-Scanner, Marktplatz-Highlights, Live-Chat, Binder
 //   2. Scanner      (view-scan)      – Live-Scan | Foto-Scan & Suche | Fake-Check
-//   3. Marktplatz   (view-map, view-swipe)        – [Alle Karten] | [Swipe-Tausch] | [Meine Inserate]
-//   4. Sammlung     (view-portfolio, view-flip)   – [Mein Binder] | [Wunschliste] | [Preis-Radar]
-//   5. Community    (view-community) – [Live-Chat] | [Pull-Wall]
+//   3. Marktplatz   (view-map, view-swipe)        – [PokeSwipe-Radar] | [Alle Karten & Suche] | [Inserieren / Doppelte] | [Käufe & Verkäufe]
+//   4. Album        (view-portfolio, view-flip)   – [Set-Album] | [Wunschliste] | [Preis-Radar]
+//   5. Community    (view-community) – [Live-Chat] | [Feed] + Schnellzugriff Tausch-Chat, Online-Radar, Reel-Generator (Admin)
 // Profil & Einstellungen (view-profile) öffnen sich über den Avatar oben rechts – nicht als eigener Reiter.
 // Jede Funktion hat genau einen festen Platz; Browser-/Android-Zurück wechselt zwischen den Bereichen (History-State).
 import { $, esc, state, api, btn, syncUrl } from "./core.js";
@@ -22,9 +22,9 @@ const PAGES = {
   scan: { title: "Scanner", sub: "Karte scannen, Preis sehen und direkt inserieren", icon: "📷", nav: "scan" },
   map: { title: "Marktplatz", sub: "Kaufen mit Käuferschutz, tauschen, verkaufen", icon: "🛒", nav: "map", group: "market" },
   swipe: { title: "Marktplatz", sub: "Swipe-Tausch: rechts merken, links weiter", icon: "🛒", nav: "map", group: "market" },
-  portfolio: { title: "Sammlung", sub: "Binder, Wunschliste und Preis-Radar", icon: "💼", nav: "portfolio", group: "collection" },
-  flip: { title: "Sammlung", sub: "Preis-Radar: Restocks, Flip-Deals und Preisalarme", icon: "💼", nav: "portfolio", group: "collection" },
-  community: { title: "Community", sub: "Live-Chat und Pull-Wall der Sammler", icon: "💬", nav: "community", group: "community" },
+  portfolio: { title: "Album / Binder", sub: "Set-Album zum Durchblättern, Wunschliste und Preis-Radar", icon: "📒", nav: "portfolio", group: "collection" },
+  flip: { title: "Album / Binder", sub: "Preis-Radar: Restocks, Flip-Deals und Preisalarme", icon: "📒", nav: "portfolio", group: "collection" },
+  community: { title: "Community", sub: "Live-Chat, Tausch-Chat, Feed und Online-Radar der Sammler", icon: "💬", nav: "community", group: "community" },
   profile: { title: "Profil & Einstellungen", sub: "Konto, Pro-Pass, Verkäuferkonto & Rechtliches", icon: "⚙️", nav: "profile", back: true },
 };
 const MARKET_MODE_KEY = "ps_market_mode";
@@ -54,9 +54,9 @@ function segmentHtml(id, items, active) {
 }
 
 const SEGMENTS = {
-  market: [["all", "🃏 Alle Karten", "PS.marketTab('all')"], ["swipe", "💚 Swipe-Tausch", "PS.marketTab('swipe')"], ["mine", "📦 Meine Inserate", "PS.marketTab('mine')"]],
-  collection: [["binder", "💼 Mein Binder", "PS.collectionTab('binder')"], ["wishlist", "⭐ Wunschliste", "PS.collectionTab('wishlist')"], ["radar", "📡 Preis-Radar", "PS.collectionTab('radar')"]],
-  community: [["chat", "💬 Live-Chat", "PS.communityTab('chat')"], ["wall", "📸 Pull-Wall", "PS.communityTab('wall')"]],
+  market: [["swipe", "💚 PokeSwipe-Radar", "PS.marketTab('swipe')"], ["all", "🃏 Alle Karten & Suche", "PS.marketTab('all')"], ["sell", "🏷️ Inserieren", "PS.marketTab('sell')"], ["mine", "📦 Käufe & Verkäufe", "PS.marketTab('mine')"]],
+  collection: [["binder", "📒 Set-Album", "PS.collectionTab('binder')"], ["wishlist", "⭐ Wunschliste", "PS.collectionTab('wishlist')"], ["radar", "📡 Preis-Radar", "PS.collectionTab('radar')"]],
+  community: [["chat", "💬 Live-Chat", "PS.communityTab('chat')"], ["wall", "📸 Feed", "PS.communityTab('wall')"]],
 };
 
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -64,7 +64,7 @@ export const communityPanel = () => (lsGet(COMMUNITY_KEY) === "wall" ? "wall" : 
 
 function activeSegment(tab) {
   if (tab === "swipe") return "swipe";
-  if (tab === "map") return marketMode() === "mine" ? "mine" : "all";
+  if (tab === "map") { const m = marketMode(); return m === "mine" || m === "sell" ? m : "all"; }
   if (tab === "flip") return "radar";
   if (tab === "portfolio") return lsGet("ps_sub_portfolio") === "wishlist" ? "wishlist" : "binder";
   if (tab === "community") return communityPanel();
@@ -91,10 +91,26 @@ function injectHeads() {
     wrap.className = "space-y-3";
     wrap.dataset.pageTop = tab;
     const group = PAGES[tab].group;
-    wrap.innerHTML = `${pageHeadHtml(tab)}${group ? segmentHtml(group, SEGMENTS[group], activeSegment(tab)) : ""}`;
+    wrap.innerHTML = `${pageHeadHtml(tab)}${group ? segmentHtml(group, SEGMENTS[group], activeSegment(tab)) : ""}${tab === "community" ? `<div id="ps-community-quick"></div>` : ""}`;
     section.prepend(wrap);
   }
   renderSegments();
+  renderCommunityQuick();
+}
+
+/** Community-Schnellzugriff: Tausch-Chat (1:1 mit Käufern/Verkäufern), Live-Online-Radar und – für Admins – Reel-Generator. */
+export function renderCommunityQuick() {
+  const box = $("ps-community-quick");
+  if (!box) return;
+  const open = Number(state.me?.usage?.open_trades || 0);
+  const admin = Boolean(state.me?.isAdmin);
+  const tile = (icon, label, sub, on, extra = "") => `<button type="button" onclick="${on}" class="text-left bg-slate-950 border border-slate-800 hover:border-yellow-400 rounded-2xl px-3 py-2.5 min-h-[56px] ${extra}">
+    <span class="block text-xs font-black text-white">${icon} ${label}</span><span class="block text-[10px] text-slate-400 truncate">${sub}</span></button>`;
+  box.innerHTML = `<div class="grid grid-cols-2 ${admin ? "sm:grid-cols-3" : ""} gap-2">
+    ${tile("🤝", "Tausch-Chat", state.user ? (open ? `${open} offene Tausche & Nachrichten` : "1:1-Chat mit Käufern & Verkäufern") : "Anmelden & privat schreiben", state.user ? "PS.openTrades()" : "PS.openAccount()")}
+    ${tile("🟢", "Live-Online-Radar", "Wer gerade online ist", "PS.openOnlineList()")}
+    ${admin ? tile("🎬", "Reel-Generator", "Auto-Reels & Pro-Videos", "PS.openGenerator()", "col-span-2 sm:col-span-1") : ""}
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,13 +118,38 @@ function injectHeads() {
 // ---------------------------------------------------------------------------
 export function marketMode() {
   const m = state.marketMode || localStorage.getItem(MARKET_MODE_KEY);
-  return m === "buy" || m === "trade" || m === "mine" ? m : "buy";
+  return m === "buy" || m === "trade" || m === "mine" || m === "sell" ? m : "buy";
+}
+
+/** Unterreiter „Inserieren“: Karte scannen & inserieren, Doppelte aus dem Album (einzeln oder alle), Stapel-Inserat. */
+function sellHtml() {
+  if (!state.user && !pickerDemoOn()) {
+    return `<div class="poke-glass rounded-3xl p-5 text-center space-y-3">
+      <p class="text-sm font-black text-white">🏷️ Karte inserieren / Doppelte verkaufen</p>
+      <p class="text-xs text-slate-300">Melde dich an, um Karten aus deinem Album – einzeln oder alle Doppelten auf einmal – zum Cardmarket-Preis zu inserieren.</p>
+      ${btn("Anmelden", "PS.openAccount()", "w-full bg-yellow-400 text-slate-950")}
+      ${btn("📷 Karte scannen", "PS.openScanner()", "w-full bg-slate-800 text-white")}
+    </div>`;
+  }
+  const m = state.me || {};
+  const tile = (icon, label, sub, on, cls = "text-white") => `<button type="button" onclick="${on}" class="text-left bg-slate-950 border border-slate-800 hover:border-yellow-400 rounded-2xl p-3 min-h-[64px]">
+    <span class="block text-sm font-black ${cls}">${icon} ${label}</span><span class="block text-[11px] text-slate-400">${sub}</span></button>`;
+  return `<div class="space-y-3">
+    <div class="grid grid-cols-2 gap-2">
+      ${tile("📷", "Scannen & inserieren", "Karte erkennen, Preis sehen, 1 Tap", "PS.openScanner()", "text-emerald-200")}
+      ${tile("📒", "Aus dem Album", "Set-Ordner öffnen & „Inserieren“", "PS.collectionTab('binder')")}
+    </div>
+    ${m.sellerReady ? "" : `<button type="button" onclick="PS.openSeller()" class="w-full text-left bg-cyan-500/10 border border-cyan-400/40 rounded-2xl px-3 py-2.5 text-xs text-cyan-100"><strong class="text-white">🔒 Sofort-Kauf mit Käuferschutz freischalten</strong> – Verkäuferkonto in 2 Minuten einrichten (Stripe) ›</button>`}
+    ${demandTileHtml()}
+    ${listPickerHtml()}
+    <div id="ps-batch-slot"></div>
+  </div>`;
 }
 
 function mySalesHtml() {
   if (!state.user && !pickerDemoOn()) {
     return `<div class="poke-glass rounded-3xl p-5 text-center space-y-3">
-      <p class="text-sm font-black text-white">📦 Meine Verkäufe & Bestellungen</p>
+      <p class="text-sm font-black text-white">📦 Meine Käufe & Verkäufe</p>
       <p class="text-xs text-slate-300">Melde dich an, um Käufe, Verkäufe, Tausche und deine Inserate an einem Ort zu verwalten.</p>
       ${btn("Anmelden", "PS.openAccount()", "w-full bg-yellow-400 text-slate-950")}
     </div>`;
@@ -124,26 +165,22 @@ function mySalesHtml() {
       ${tile("🤝", "Meine Tausche", `${Number(m.usage?.open_trades || 0)} offen`, "PS.openTrades()")}
       ${tile("🛍️", "Warenkorb", "Mehrere Karten, eine Zahlung", "PS.openCart()")}
       ${tile("🏪", "Händler-Bereich", "Bestands-Import, DHL-Zugang", "PS.openSellerHub()", "text-amber-200")}
-      ${tile("📷", "Karte verkaufen", "Scannen & in 1 Tap inserieren", "PS.openScanner()", "text-emerald-200")}
+      ${tile("🏷️", "Karte verkaufen", "Inserieren & Doppelte verkaufen", "PS.marketTab('sell')", "text-emerald-200")}
     </div>
-    ${m.sellerReady ? "" : `<button type="button" onclick="PS.openSeller()" class="w-full text-left bg-cyan-500/10 border border-cyan-400/40 rounded-2xl px-3 py-2.5 text-xs text-cyan-100"><strong class="text-white">🔒 Sofort-Kauf mit Käuferschutz freischalten</strong> – Verkäuferkonto in 2 Minuten einrichten (Stripe) ›</button>`}
-    <div id="ps-batch-slot"></div>
-    ${demandTileHtml()}
     <div class="flex items-center justify-between px-1"><h3 class="text-sm font-black text-white">Meine Inserate (${mine.length})</h3></div>
-    ${listPickerHtml()}
     <div class="space-y-2">${mine.length ? mine.map((l) => window.PS?.listingCard?.(l) || "").join("")
-      : `<div class="poke-glass rounded-2xl p-5 text-center text-xs text-slate-400">Noch keine Inserate. Tippe oben auf „🔥 Gesucht aus deiner Sammlung“ oder scanne eine Karte und tippe auf „🏷️ Verkaufen“.</div>`}</div>
+      : `<div class="poke-glass rounded-2xl p-5 text-center text-xs text-slate-400">Noch keine Inserate. Tippe auf „🏷️ Inserieren“, um Doppelte aus deinem Album zu verkaufen, oder scanne eine Karte und tippe auf „🏷️ Verkaufen“.</div>`}</div>
   </div>`;
 }
 
-/** Stapel-Inserat („Mehrere Karten auf einmal inserieren“) gehört zu „Meine Inserate“ – Knoten wird dorthin verschoben. */
+/** Stapel-Inserat („Mehrere Karten auf einmal inserieren“) gehört zum Unterreiter „Inserieren“ – Knoten wird dorthin verschoben. */
 function placeBatchBox(mode) {
   const box = $("ps-batch-details");
   if (!box) return;
   const slot = $("ps-batch-slot");
   const home = $("ps-batch-home");
-  if (mode === "mine" && slot && box.parentElement !== slot) { slot.appendChild(box); box.open = true; }
-  else if (mode !== "mine" && home && box.previousElementSibling !== home) home.after(box);
+  if (mode === "sell" && slot && box.parentElement !== slot) slot.appendChild(box);
+  else if (mode !== "sell" && home && box.previousElementSibling !== home) home.after(box);
 }
 
 function applyMarketMode() {
@@ -152,14 +189,15 @@ function applyMarketMode() {
   const mode = marketMode();
   section.dataset.marketMode = mode;
   let panel = $("ps-my-sales");
-  if (mode === "mine") {
+  if (mode === "mine" || mode === "sell") {
     if (!panel) {
       panel = document.createElement("div");
       panel.id = "ps-my-sales";
       section.querySelector("[data-page-top]")?.after(panel);
     }
-    panel.innerHTML = mySalesHtml();
-    renderListPicker();
+    panel.dataset.panel = mode;
+    panel.innerHTML = mode === "sell" ? sellHtml() : mySalesHtml();
+    if (mode === "sell") renderListPicker();
   } else panel?.remove();
   placeBatchBox(mode);
   renderSegments();
@@ -167,22 +205,23 @@ function applyMarketMode() {
 }
 
 function setMarketMode(mode) {
-  if (!["buy", "trade", "mine"].includes(mode)) return;
+  if (!["buy", "trade", "mine", "sell"].includes(mode)) return;
   if ($("view-map")?.classList.contains("hidden")) window.switchTab?.("map");
   state.marketMode = mode;
-  // „Meine Inserate“ wird nicht dauerhaft gemerkt: Der Marktplatz öffnet immer mit dem Karten-Raster
-  if (mode !== "mine") { try { localStorage.setItem(MARKET_MODE_KEY, mode); } catch {} }
+  // „Inserieren“ / „Käufe & Verkäufe“ werden nicht dauerhaft gemerkt: Der Marktplatz öffnet immer mit dem Karten-Raster
+  const panelMode = mode === "mine" || mode === "sell";
+  if (!panelMode) { try { localStorage.setItem(MARKET_MODE_KEY, mode); } catch {} }
   applyMarketMode();
-  if (mode !== "mine") window.PS?.showSub?.("map", "market", { silent: true });
+  if (!panelMode) window.PS?.showSub?.("map", "market", { silent: true });
 }
 
-/** Unterreiter im Marktplatz: Alle Karten | Swipe-Tausch | Meine Inserate */
+/** Unterreiter im Marktplatz: PokeSwipe-Radar | Alle Karten & Suche | Inserieren | Käufe & Verkäufe */
 function marketTab(key) {
   if (key === "swipe") { window.switchTab?.("swipe"); renderSegments(); return; }
-  setMarketMode(key === "mine" ? "mine" : "buy");
+  setMarketMode(key === "mine" || key === "sell" ? key : "buy");
 }
 
-/** Unterreiter in der Sammlung: Mein Binder | Wunschliste | Preis-Radar */
+/** Unterreiter im Album: Set-Album | Wunschliste | Preis-Radar */
 function collectionTab(key) {
   if (key === "radar") { window.switchTab?.("flip"); renderSegments(); return; }
   if ($("view-portfolio")?.classList.contains("hidden")) window.switchTab?.("portfolio");
@@ -190,7 +229,7 @@ function collectionTab(key) {
   renderSegments();
 }
 
-/** Unterreiter in der Community: Live-Chat | Pull-Wall */
+/** Unterreiter in der Community: Live-Chat | Feed (Pull-Wall) */
 function communityTab(key) {
   const k = key === "wall" ? "wall" : "chat";
   try { localStorage.setItem(COMMUNITY_KEY, k); } catch {}
@@ -276,7 +315,7 @@ export async function renderProfileHub() {
       ${row("💳", m?.sellerReady ? "Verkäuferkonto ✓ (Stripe Connect)" : "Verkäuferkonto einrichten", "PS.openSeller()", m?.sellerReady ? "Auszahlungen aktiv" : "Identitätsprüfung über Stripe – danach Sofort-Kauf mit Treuhand", "text-cyan-200")}
       ${row("🧾", "Steuerdaten (DAC7 / PStTG)", "PS.openTaxInfo()", esc(dac7))}
       ${row("🏪", m?.shop?.enabled ? "Mein Händler-Shop" : "Händler-Shop (Pro)", "PS.openShopSettings()")}
-      ${row("📦", "Käufe, Verkäufe & Inserate", "PS.marketTab('mine')", "Liegt im Marktplatz unter „Meine Inserate“")}`));
+      ${row("📦", "Käufe, Verkäufe & Inserate", "PS.marketTab('mine')", "Liegt im Marktplatz unter „Käufe & Verkäufe“")}`));
   }
   sections.push(card("⚙️ App & Einstellungen", `
     <div class="flex items-center justify-between gap-2 bg-slate-950 border border-slate-800 rounded-2xl px-3 py-2.5"><span class="font-black text-white">🌐 Sprache / Language</span>${langSwitchHtml()}</div>
@@ -333,8 +372,9 @@ function onTab(tab) {
   const avatar = $("ps-profile-btn");
   if (avatar) { if (tab === "profile") avatar.setAttribute("aria-current", "page"); else avatar.removeAttribute("aria-current"); }
   if (tab === "profile") renderProfileHub();
+  if (tab === "community") renderCommunityQuick();
   // Marktplatz öffnet aus anderen Bereichen immer mit dem Karten-Raster („Alle Karten“)
-  if (tab === "map" && prev !== "map" && prev !== "swipe" && state.marketMode === "mine") state.marketMode = "buy";
+  if (tab === "map" && prev !== "map" && prev !== "swipe" && (state.marketMode === "mine" || state.marketMode === "sell")) state.marketMode = "buy";
   if (tab === "map") applyMarketMode();
   renderSegments();
   // Aktiven Reiter in der Adresse halten (?tab=…) – beim Neuladen oder App-Wechsel bleibt er exakt stehen.
@@ -375,7 +415,7 @@ export function initAppNav() {
   window.addEventListener("ps:sub", () => renderSegments());
   document.body.dataset.tab = "home";
   onTab("home");
-  window.addEventListener("ps:plan", () => { if (current === "profile") renderProfileHub(); });
+  window.addEventListener("ps:plan", () => { if (current === "profile") renderProfileHub(); renderCommunityQuick(); });
 }
 
 export const appNavApi = {
@@ -385,4 +425,5 @@ export const appNavApi = {
   collectionTab,
   communityTab,
   renderProfileHub,
+  renderCommunityQuick,
 };

@@ -170,7 +170,7 @@
         <button type="button" onclick="switchTab('home')" id="tab-home" class="tab-btn is-active" aria-current="page"><span>Start</span></button>
         <button type="button" onclick="switchTab('scan')" id="tab-scan" class="tab-btn"><span>Scanner</span></button>
         <button type="button" onclick="switchTab('map')" id="tab-map" class="tab-btn"><span>Marktplatz</span></button>
-        <button type="button" onclick="switchTab('portfolio')" id="tab-portfolio" class="tab-btn"><span>Sammlung</span></button>
+        <button type="button" onclick="switchTab('portfolio')" id="tab-portfolio" class="tab-btn"><span>Album</span></button>
         <button type="button" onclick="switchTab('community')" id="tab-community" class="tab-btn"><span>Community</span></button>
       </nav>
 
@@ -220,11 +220,13 @@
           <div class="flex flex-wrap gap-2">
             <button type="button" onclick="PS.openScanner()" class="ps-btn-primary flex-1 sm:flex-none">📷 Karte scannen</button>
             <label class="ps-btn-ghost cursor-pointer">🖼️ Foto hochladen<input data-photo-scan="portfolio" type="file" accept="image/*" class="hidden" /></label>
+            <button type="button" onclick="PS.collectionTab('binder')" class="ps-btn-ghost">📒 Album öffnen</button>
+            <button type="button" onclick="PS.marketTab('all')" class="ps-btn-ghost">🛒 Marktplatz</button>
           </div>
         </div>
         <!-- 4. Eigener Binder / Sammlung -->
         <button type="button" id="home-binder" onclick="PS.collectionTab('binder')" class="ps-card lg:col-span-5 p-4 text-left flex flex-col justify-between gap-2">
-          <span class="flex items-center justify-between gap-2"><span class="ps-kicker text-purple-300">💼 Mein Binder</span><span class="text-xs text-slate-400">Öffnen ›</span></span>
+          <span class="flex items-center justify-between gap-2"><span class="ps-kicker text-purple-300">📒 Mein Album</span><span class="text-xs text-slate-400">Öffnen ›</span></span>
           <span class="grid grid-cols-3 gap-2 text-center">
             <span class="ps-stat"><span class="ps-stat-label">Wert</span><span id="statPortfolioVal" class="ps-stat-num text-emerald-300">0,00 €</span></span>
             <span class="ps-stat"><span class="ps-stat-label">Karten</span><span id="home-binder-count" class="ps-stat-num">0</span></span>
@@ -722,7 +724,7 @@
       <button type="button" onclick="switchTab('home')" id="mob-home" class="mob-nav is-active" aria-current="page"><span class="text-[10px]">Start</span></button>
       <button type="button" onclick="switchTab('scan')" id="mob-scan" class="mob-nav"><span class="text-[10px]">Scanner</span></button>
       <button type="button" onclick="switchTab('map')" id="mob-map" class="mob-nav"><span class="text-[10px]">Marktplatz</span></button>
-      <button type="button" onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav"><span class="text-[10px]">Sammlung</span></button>
+      <button type="button" onclick="switchTab('portfolio')" id="mob-portfolio" class="mob-nav"><span class="text-[10px]">Album</span></button>
       <button type="button" onclick="switchTab('community')" id="mob-community" class="mob-nav"><span class="text-[10px]">Community</span></button>
     </div>
   </nav>

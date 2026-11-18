@@ -2,7 +2,7 @@
 // (nur in der Live-Stage ?reel=1 im iframe aktiv, ohne Schreibzugriff):
 //   1. Live-Scanner: Karte in Schutzhülle → „📒 Im Set-Ordner einsortiert“ → „🏷️ Als Inserat einstellen“ → Bestätigung
 //   2. Sammlung → Mein Binder: „2x“ auf der gescannten Karte, Umschalter „Doppelte im Gesamtwert mitzählen“ ändert den Wert
-//   3. Marktplatz → Meine Inserate: „Alle Doppelten inserieren (12)“ → In-App-Bestätigung → alle Doppelten inseriert
+//   3. Marktplatz → Inserieren: „Alle Doppelten inserieren (12)“ → In-App-Bestätigung → alle Doppelten inseriert
 //   4. Zurück im Ordner: graue Lücke „Auf Marktplatz: 4,50 €“, eigenes Inserat „Im Verkauf: 12,90 €“
 import { test, expect, type Frame } from "@playwright/test";
 import { mockApi, appReady, collectErrors } from "./helpers.ts";
@@ -73,10 +73,10 @@ test("Master-Stage: Scan → automatisch im Set-Ordner → Als Inserat einstelle
   await view.locator("[data-count-dupes]").click();
   await expect(value).toHaveText(before!);
 
-  // 3) Meine Inserate: Alle Doppelten inserieren (12) mit In-App-Bestätigung, ohne echte Inserate
+  // 3) Inserieren: Alle Doppelten inserieren (12) mit In-App-Bestätigung, ohne echte Inserate
   await PS("closeSetBinder");
   expect(await f.evaluate(() => (window as any).PS.listPickerDemoStart({ ms: 300 }))).toMatchObject({ copies: 12 });
-  await PS("marketTab", "mine");
+  await PS("marketTab", "sell");
   const picker = f.locator("#ps-list-picker");
   await expect(picker).toBeVisible();
   const bulk = picker.locator("[data-list-dupes]");

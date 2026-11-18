@@ -1,7 +1,7 @@
 // E2E: Scan-Workflow & doppelte Karten
 //   • Scan → Karte wird sofort automatisch im Set-Ordner gespeichert, Ergebnis schließt sich selbst (außer „Inserieren“), Server zählt Duplikate hoch
 //   • Set-Ordner: Mengen-Badge „3x“ und Umschalter „Doppelte im Gesamtwert mitzählen“ (live, gemerkt)
-//   • Marktplatz → Meine Inserate: „Alle Doppelten inserieren“ (1 Exemplar bleibt, keine doppelten Inserate) + Suche & Filter-Chips
+//   • Marktplatz → Inserieren: „Alle Doppelten inserieren“ (1 Exemplar bleibt, keine doppelten Inserate) + Suche & Filter-Chips
 import { test, expect, type Page } from "@playwright/test";
 import { mockApi, fakeLogin, appReady, collectErrors, ME } from "./helpers.ts";
 
@@ -138,7 +138,7 @@ test("Set-Ordner: Doppelte als „3x“-Badge in einem Slot; Umschalter „Doppe
 });
 
 // ---------------------------------------------------------------------------
-// 3. + 4. Meine Inserate: „Alle Doppelten inserieren“, Suche & Filter
+// 3. + 4. Inserieren: „Alle Doppelten inserieren“, Suche & Filter
 // ---------------------------------------------------------------------------
 const items = [
   { id: 1, cardId: "sv03.5-199", name: "Glurak-ex", image: "", setName: "151", quantity: 3, unitValue: 120, value: 360, condition: "NM", variant: "normal", lang: "de" },
@@ -165,14 +165,14 @@ async function mineSetup(page: Page, baseURL: string) {
   return { posted };
 }
 
-test("Meine Inserate: „Alle Doppelten inserieren“ fragt nach, inseriert nur Überzählige mit Zustand & Preis – zweiter Klick legt nichts doppelt an", async ({ page, baseURL }) => {
+test("Inserieren: „Alle Doppelten inserieren“ fragt nach, inseriert nur Überzählige mit Zustand & Preis – zweiter Klick legt nichts doppelt an", async ({ page, baseURL }) => {
   const errors = collectErrors(page);
   const { posted } = await mineSetup(page, baseURL!);
   const dialogs: string[] = [];
   page.on("dialog", (d) => { dialogs.push(d.message()); d.accept(); });
   await page.goto("/");
   await appReady(page);
-  await page.evaluate(() => (window as any).PS.marketTab("mine"));
+  await page.evaluate(() => (window as any).PS.marketTab("sell"));
   const picker = page.locator("#ps-list-picker");
   const btn = picker.getByRole("button", { name: /Alle Doppelten inserieren/ });
   await expect(btn).toHaveText("🏷️ Alle Doppelten inserieren (3)");
@@ -197,12 +197,12 @@ test("Meine Inserate: „Alle Doppelten inserieren“ fragt nach, inseriert nur 
   expect(errors()).toEqual([]);
 });
 
-test("Meine Inserate: Kartenauswahl mit Suchleiste (Name, Nummer, Set) und Chips „Alle“ | „Nur Doppelte“ | „Nach Set“", async ({ page, baseURL }) => {
+test("Inserieren: Kartenauswahl mit Suchleiste (Name, Nummer, Set) und Chips „Alle“ | „Nur Doppelte“ | „Nach Set“", async ({ page, baseURL }) => {
   const errors = collectErrors(page);
   await mineSetup(page, baseURL!);
   await page.goto("/");
   await appReady(page);
-  await page.evaluate(() => (window as any).PS.marketTab("mine"));
+  await page.evaluate(() => (window as any).PS.marketTab("sell"));
   const picker = page.locator("#ps-list-picker");
   const tiles = picker.locator("[data-pick-card]");
   await expect(tiles).toHaveCount(4);

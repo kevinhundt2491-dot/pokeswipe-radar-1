@@ -115,6 +115,7 @@ function renderHeader() {
   if (badge) badge.classList.toggle("hidden", !state.me || state.me.plan === "free");
   const bell = $("ps-bell-count");
   if (bell) { bell.textContent = state.unread > 9 ? "9+" : String(state.unread); bell.classList.toggle("hidden", !state.unread); }
+  $("ps-admin-btn")?.classList.toggle("hidden", !state.me?.isAdmin);
   const tc = $("ps-trade-count");
   const open = state.me?.usage?.open_trades || 0;
   if (tc) { tc.textContent = String(open); tc.classList.toggle("hidden", !open); }
@@ -1491,6 +1492,9 @@ function injectHeader() {
     };
     // „Meine Tausche“ liegt im Marktplatz unter „Meine Inserate“ (kein doppelter Kopf-Knopf mehr); Mitteilungen bleiben als Glocke
     mk("ps-bell", "🔔", "ps-bell-count", "Mitteilungen", () => openNotifications());
+    // Admin-Zentrale (?tab=admin) – nur für Admins sichtbar (renderHeader schaltet den Knopf ein/aus)
+    mk("ps-admin-btn", "🛡️", "ps-admin-count", "Admin-Zentrale", () => openAdmin());
+    $("ps-admin-btn")?.classList.toggle("hidden", !state.me?.isAdmin);
   }
 }
 

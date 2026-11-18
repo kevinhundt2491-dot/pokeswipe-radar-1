@@ -220,7 +220,8 @@ function slotHtml(c, idx) {
       ${c.owned && c.condition ? `<span class="ps-badge ps-badge-cond ps-bslot-cond">${esc(c.condition)}</span>` : ""}
       ${c.owned && c.quantity > 1 ? `<span class="ps-bslot-qty" data-qty="${Number(c.quantity)}" aria-label="${Number(c.quantity)} Exemplare">${quantityBadge(c.quantity)}</span>` : ""}
       ${!c.owned ? `<span class="ps-bslot-missing" aria-hidden="true">fehlt</span>` : ""}
-      ${badge}</span>
+      ${badge}
+      ${c.owned && !c.myListing && c.portfolioItemId && state.user && !view.demo ? `<span role="button" tabindex="0" class="ps-bslot-sell" data-binder-sell="${Number(c.portfolioItemId)}" onclick="event.stopPropagation(); PS.binderSell(${Number(c.portfolioItemId)})" onkeydown="if(event.key==='Enter'){event.stopPropagation(); event.preventDefault(); PS.binderSell(${Number(c.portfolioItemId)})}" aria-label="${esc(`${c.name} inserieren`)}">🏷️ Inserieren</span>` : ""}</span>
     <span class="ps-bslot-info"><span class="ps-bslot-num">${esc(c.number || c.localId)}</span><span class="ps-bslot-price">${esc(c.priceLabel)}</span></span>
     <span class="ps-bslot-name">${esc(c.name)}</span>
   </button>`;
@@ -439,7 +440,7 @@ async function binderCardTap(cardId) {
         <p class="text-white"><strong class="text-base">${m.trade ? "Tausch möglich" : eur(m.price)}</strong>${m.condition ? ` · ${esc(m.condition)}` : ""}${m.seller ? ` · von ${esc(m.seller)}` : ""}</p>
         ${m.offers > 1 ? `<p class="text-[11px] text-slate-300">${Number(m.offers)} Angebote – das günstigste wird angezeigt.</p>` : ""}
       </div>
-      <button type="button" onclick="PS.binderOpenOffer(${Number(m.listingId)})" data-binder-buy class="w-full bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">🛒 Jetzt im Marktplatz ansehen / kaufen</button>
+      <button type="button" onclick="PS.binderOpenOffer(${Number(m.listingId)})" data-binder-buy class="w-full bg-emerald-500 text-slate-950 font-black py-2.5 rounded-xl text-xs">🛒 Zum Angebot im Marktplatz</button>
       <button type="button" onclick="PS.binderWish(${esc(JSON.stringify(c.cardId))})" data-binder-wish class="w-full bg-slate-800 text-yellow-200 font-bold py-2 rounded-xl text-xs">⭐ Auf Wunschliste – bei günstigeren Angeboten melden</button>
     </div>`);
     return;
