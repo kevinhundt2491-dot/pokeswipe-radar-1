@@ -10,6 +10,8 @@
 // zugeschnitten (schnell, genau); sonst haben sie bewusst Luft: die Karte muss nicht exakt im Rahmen liegen.
 // An Tesseract gehen die Zuschnitte als rohe Graustufen-PGM (kein PNG-Kodieren/-Dekodieren je Lesung).
 
+import { localContrast } from "../../server/scan-logic.ts";
+
 const OCR_BASE = "/assets/ocr";
 const NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄÖÜäöüßéÉèêàâç-'’ ";
 const NUMBER_CHARS = "0123456789/ ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -130,6 +132,20 @@ export function enhanceGray(d, n) {
   return gray;
 }
 
+/**
+ * Lokaler Kontrast-Boost für die Nummern-/KP-Zonen (Sleeves, Toploader, ungleichmäßige Spiegelung): je zur Hälfte global
+ * gestreckter und kachelweise (CLAHE-artig) gestreckter Wert – Ziffern unter milchiger Folie treten hervor, ohne dass
+ * Rauschen in ruhigen Flächen aufgeblasen wird.
+ */
+export function boostZone(z, mix = 0.5) {
+  if (!z || z.w < 32 || z.h < 8) return z;
+  const g = { w: z.w, h: z.h, d: Float32Array.from(z.gray) };
+  const l = localContrast(g, Math.max(2, Math.min(6, Math.round(z.w / z.h))), 1).d;
+  const gray = new Uint8Array(z.gray.length);
+  for (let i = 0; i < gray.length; i++) gray[i] = Math.max(0, Math.min(255, Math.round(z.gray[i] * (1 - mix) + l[i] * mix)));
+  return { w: z.w, h: z.h, gray };
+}
+
 /** Zuschnitte untereinander auf eine weiße Fläche setzen. */
 function stack(parts, gap = 14) {
   const w = Math.max(...parts.map((p) => p.w));
@@ -197,10 +213,12 @@ function warpZone(src, q, u0, v0, u1, v1, pw) {
 export function ocrCanvases(src, rect, { width = 900 } = {}) {
   if (Array.isArray(rect?.quad) && rect.quad.length === 4) {
     const q = rect.quad;
+    // Region-of-Interest: oben links Name, oben rechts KP/HP, unten links/rechts Kartennummer + Set-Kürzel
     const name = warpZone(src, q, 0.08, 0.01, 0.74, 0.105, 600);
+    const hp = warpZone(src, q, 0.6, 0.015, 0.97, 0.1, 280);
     const left = warpZone(src, q, -0.02, 0.912, 0.5, 0.988, 560);
     const right = warpZone(src, q, 0.52, 0.912, 1.03, 0.988, 560);
-    if (name && left && right) return { name, number: stack([left, right]) };
+    if (name && left && right) return { name, number: stack([boostZone(left), boostZone(right), ...(hp ? [boostZone(hp)] : [])]) };
   }
   const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
   const clamp = (r) => {
@@ -221,8 +239,9 @@ export function ocrCanvases(src, rect, { width = 900 } = {}) {
   return {
     name: zone({ x: x - w * 0.03, y: nz.y, w: w * 0.8, h: nz.h }, nameW),
     number: stack([
-      zone({ x: x - w * 0.04, y: bz.y, w: w * 0.56, h: bz.h }, pw), // unten links (Karmesin & Purpur, Schwert & Schild)
-      zone({ x: x + w * 0.48, y: bz.y, w: w * 0.56, h: bz.h }, pw), // unten rechts (ältere Karten)
+      boostZone(zone({ x: x - w * 0.04, y: bz.y, w: w * 0.56, h: bz.h }, pw)), // unten links (Karmesin & Purpur, Schwert & Schild)
+      boostZone(zone({ x: x + w * 0.48, y: bz.y, w: w * 0.56, h: bz.h }, pw)), // unten rechts (ältere Karten)
+      boostZone(zone({ x: x + w * 0.58, y: nz.y, w: w * 0.45, h: nz.h }, Math.round(pw * 0.4))), // oben rechts: KP/HP
     ]),
   };
 }

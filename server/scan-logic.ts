@@ -744,3 +744,138 @@ export function quadMotion(a: Pt[] | null | undefined, b: Pt[] | null | undefine
 }
 /** Bewegung unter diesem Anteil der Kartenbreite gilt als „ruhig gehalten“. */
 export const STABLE_MOTION = 0.025;
+
+// ---------------------------------------------------------------------------
+// High-Speed-Upgrade: Sleeve-/Toploader-Kompensation (Spiegelungen beim Matching geringer gewichten)
+// ---------------------------------------------------------------------------
+/** Anteil gespiegelter Pixel, ab dem eine dHash-Zelle als „von Glanz verdeckt“ gilt */
+export const GLARE_CELL = 0.22;
+/** Mehr als so viele maskierte dHash-Bits → Maske verwerfen (Artwork größtenteils verdeckt, ehrlich ungenau bleiben) */
+export const GLARE_MASK_MAX = 40;
+
+/**
+ * Glanz-Maske des Artwork-dHash (64 Bit, gleiche Bit-Reihenfolge wie dHash): Das Artwork wird in dasselbe 9×8-Raster
+ * zerlegt, das der dHash vergleicht. Ein Bit vergleicht Zelle x mit x+1 einer Zeile – liegt in einer der beiden Zellen
+ * ein deutlicher Lichtreflex (Penny-Sleeve, Binder-Folie, Toploader), ist das Bit unzuverlässig und wird markiert.
+ * Muss auf dem Bild VOR der Glanz-Unterdrückung berechnet werden.
+ */
+export function glareMask(card: Gray, threshold = 245): [number, number] {
+  const art = crop(card, ART_BOX);
+  const cols = 9, rowsN = 8;
+  const hot = new Float32Array(cols * rowsN), all = new Float32Array(cols * rowsN);
+  for (let y = 0; y < art.h; y++) {
+    const cy = Math.min(rowsN - 1, Math.floor((y * rowsN) / art.h));
+    for (let x = 0; x < art.w; x++) {
+      const cx = Math.min(cols - 1, Math.floor((x * cols) / art.w));
+      all[cy * cols + cx]++;
+      if (art.d[y * art.w + x] >= threshold) hot[cy * cols + cx]++;
+    }
+  }
+  const bad = (i: number) => all[i] > 0 && hot[i] / all[i] >= GLARE_CELL;
+  const bits: boolean[] = [];
+  for (let y = 0; y < rowsN; y++) for (let x = 0; x < 8; x++) bits.push(bad(y * cols + x) || bad(y * cols + x + 1));
+  return bitsToWords(bits);
+}
+
+/** Anzahl markierter Bits einer Glanz-Maske. */
+export const maskBits = (m: [number, number] | null | undefined) => (m ? popcount32(m[0]) + popcount32(m[1]) : 0);
+
+/**
+ * Abstände wie `distances`, aber mit Glanz-Maske: verdeckte dHash-Bits zählen nicht und der Rest wird auf 64 Bit
+ * hochgerechnet – Spiegelungen kippen so keine Bits mehr in Richtung einer falschen Karte. Ohne (oder mit zu großer)
+ * Maske identisch mit `distances`.
+ */
+export function maskedDistances(probe: Uint32Array, index: Uint32Array, i: number, mask: [number, number] | null): [number, number, number] {
+  const d = distances(probe, index, i);
+  const n = maskBits(mask);
+  if (!mask || !n || n > GLARE_MASK_MAX) return d;
+  const o = i * WORDS;
+  const keep0 = ~mask[0], keep1 = ~mask[1];
+  const art = popcount32((probe[2] ^ index[o + 2]) & keep0) + popcount32((probe[3] ^ index[o + 3]) & keep1);
+  d[1] = Math.round((art * 64) / (64 - n));
+  return d;
+}
+
+/** Wie `topMatches`, mit optionaler Glanz-Maske für den Artwork-dHash. */
+export function topMatchesMasked(probe: Uint32Array, index: Uint32Array, count: number, k = 12, mask: [number, number] | null = null) {
+  if (!mask || !maskBits(mask) || maskBits(mask) > GLARE_MASK_MAX) return topMatches(probe, index, count, k);
+  const best: { i: number; score: number; art: number }[] = [];
+  let worst = Infinity;
+  for (let i = 0; i < count; i++) {
+    const d = maskedDistances(probe, index, i, mask);
+    const score = combinedScore(d);
+    if (best.length < k || score < worst) {
+      best.push({ i, score, art: d[0] });
+      best.sort((a, b) => a.score - b.score);
+      if (best.length > k) best.pop();
+      worst = best[best.length - 1].score;
+    }
+  }
+  return best;
+}
+
+/**
+ * Highlight-Kompression + adaptive Gamma (für Lese-Streifen): Werte oberhalb des Knies (90. Perzentil, 180…235)
+ * werden weich gestaucht – weiße Glanzspitzen der Hülle überstrahlen die Ziffern nicht mehr –, danach hebt/senkt eine
+ * Gamma-Kurve die mittlere Helligkeit Richtung 50 % (dunkle Räume, milchige Hüllen).
+ */
+export function toneMap(g: Gray, { kneePct = 0.9, strength = 0.35 } = {}): Gray {
+  const n = g.d.length;
+  if (!n) return g;
+  const hist = new Uint32Array(256);
+  let sum = 0;
+  for (let i = 0; i < n; i++) { const v = Math.max(0, Math.min(255, g.d[i] | 0)); hist[v]++; sum += v; }
+  let acc = 0, knee = 255;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * kneePct) { knee = v; break; } }
+  // Knie unterhalb des Glanzbereichs halten – auch wenn mehr als 10 % der Fläche spiegeln
+  knee = Math.max(180, Math.min(235, knee));
+  const mean = Math.max(8, Math.min(247, sum / n)) / 255;
+  const gamma = Math.max(0.6, Math.min(1.6, Math.log(0.5) / Math.log(mean)));
+  const d = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let v = g.d[i];
+    if (v > knee) v = knee + (v - knee) * strength;
+    d[i] = 255 * Math.pow(Math.max(0, Math.min(255, v)) / 255, gamma);
+  }
+  return { w: g.w, h: g.h, d };
+}
+
+/**
+ * Lokaler Kontrast-Boost (CLAHE-artig, ohne Histogramm je Pixel): das Bild wird in tx × ty Kacheln geteilt, je Kachel
+ * das 3.–97.-Perzentil bestimmt und zwischen den Kachelmitten bilinear interpoliert gestreckt. Gleicht ungleichmäßige
+ * Spiegelungen und milchige/verkratzte Hüllen aus – die Kanten von Kartennummer, Set-Symbol und Rahmen treten hervor.
+ * minRange begrenzt die Verstärkung in fast einfarbigen Kacheln (kein Rauschen aufblasen).
+ */
+export function localContrast(g: Gray, tx = 4, ty = 2, minRange = 28): Gray {
+  const { w, h, d } = g;
+  if (w < tx * 4 || h < ty * 4) return g;
+  const lo = new Float32Array(tx * ty), hi = new Float32Array(tx * ty);
+  for (let j = 0; j < ty; j++) for (let i = 0; i < tx; i++) {
+    const x0 = Math.floor((i * w) / tx), x1 = Math.floor(((i + 1) * w) / tx), y0 = Math.floor((j * h) / ty), y1 = Math.floor(((j + 1) * h) / ty);
+    const hist = new Uint32Array(256);
+    let n = 0;
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { hist[Math.max(0, Math.min(255, d[y * w + x] | 0))]++; n++; }
+    let acc = 0, a = 0, b = 255;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * 0.03) { a = v; break; } }
+    acc = 0;
+    for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= n * 0.03) { b = v; break; } }
+    if (b - a < minRange) { const m = (a + b) / 2; a = Math.max(0, m - minRange / 2); b = Math.min(255, m + minRange / 2); }
+    lo[j * tx + i] = a; hi[j * tx + i] = b;
+  }
+  const out = new Float32Array(d.length);
+  for (let y = 0; y < h; y++) {
+    const fy = Math.max(0, Math.min(ty - 1, (y + 0.5) / (h / ty) - 0.5));
+    const j0 = Math.floor(fy), j1 = Math.min(ty - 1, j0 + 1), wy = fy - j0;
+    for (let x = 0; x < w; x++) {
+      const fx = Math.max(0, Math.min(tx - 1, (x + 0.5) / (w / tx) - 0.5));
+      const i0 = Math.floor(fx), i1 = Math.min(tx - 1, i0 + 1), wx = fx - i0;
+      const mix = (t: Float32Array) => (t[j0 * tx + i0] * (1 - wx) + t[j0 * tx + i1] * wx) * (1 - wy) + (t[j1 * tx + i0] * (1 - wx) + t[j1 * tx + i1] * wx) * wy;
+      const a = mix(lo), b = mix(hi);
+      out[y * w + x] = Math.max(0, Math.min(255, ((d[y * w + x] - a) * 255) / Math.max(1, b - a)));
+    }
+  }
+  return { w, h, d: out };
+}
+
+/** Lese-Streifen der Kartennummer/des Set-Kürzels: Glanz stauchen → lokal Kontrast → global strecken → nachschärfen. */
+export const prepareStrip = (g: Gray) => sharpen(normalizeContrast(localContrast(toneMap(g))));

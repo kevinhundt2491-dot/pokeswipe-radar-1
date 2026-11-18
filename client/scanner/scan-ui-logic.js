@@ -196,3 +196,43 @@ export function hashDecision(m, streak = 1) {
   if (!m.glareHigh && Number(m.margin) >= MARGIN_MIN * 2) return "hit";
   return streak >= 2 ? "hit" : "wait";
 }
+
+/**
+ * Multi-Frame-Voting (2-aus-3-Konsens): Die letzten drei Live-Bilder mit sicherem Bild-Treffer werden gemerkt. Bestätigen
+ * mindestens zwei davon innerhalb des Zeitfensters (~250 ms, auf langsamen Handys bis ~2,5 Bildzeiten) dieselbe Karte,
+ * wird sie sofort gelockt. Ein einzelnes Bild beim Hinlegen/Wegziehen der Karte löst so nie aus.
+ */
+export const VOTE_WINDOW_MS = 250;
+export const VOTE_WINDOW_MAX_MS = 700;
+export function voteWindow(avgFrameMs = 0) {
+  return Math.round(Math.max(VOTE_WINDOW_MS, Math.min(VOTE_WINDOW_MAX_MS, 2.5 * (Number(avgFrameMs) || 0))));
+}
+export function createFrameVoter({ need = 2, of = 3 } = {}) {
+  let votes = [];
+  return {
+    /** Ergebnis eines Bildes eintragen (keys = Sprachvarianten der erkannten Karte, leer = kein sicherer Treffer). */
+    push(keys, now = Date.now(), windowMs = VOTE_WINDOW_MS) {
+      votes.push({ keys: [].concat(keys || []), at: now });
+      if (votes.length > of) votes = votes.slice(-of);
+      const fresh = votes.filter((v) => now - v.at <= windowMs && v.keys.length);
+      const last = fresh[fresh.length - 1];
+      if (!last) return { locked: false, count: 0 };
+      const count = fresh.filter((v) => v.keys.some((k) => last.keys.includes(k))).length;
+      return { locked: count >= need, count, keys: last.keys };
+    },
+    reset() { votes = []; },
+    get size() { return votes.length; },
+  };
+}
+
+/**
+ * Lock-Entscheidung des Live-Scanners: Bild-Fingerabdruck UND gelesene Kartennummer stimmen in einem Bild überein
+ * (zwei unabhängige Signale, Hybrid-Matching) → sofort. Sonst entscheidet der 2-aus-3-Konsens; ein knapper Treffer ohne
+ * Konsens wartet („ruhig halten“).
+ */
+export function lockDecision(m, vote) {
+  if (!m?.accepted) return "none";
+  if (m.byNumber && Number(m.score) <= SCORE_STRONG) return "hit";
+  if (vote?.locked) return "hit";
+  return "wait";
+}

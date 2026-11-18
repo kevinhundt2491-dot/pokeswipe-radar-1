@@ -239,22 +239,22 @@ export async function buildIndex(lang: Lang) {
 
 /**
  * Text-Index einer Sprache für die Erkennung ohne KI (Name + Sammlernummer, alle Katalogkarten – auch ohne
- * Fingerabdruck). Zeilen „key⇥name⇥localId⇥total⇥setCode“; der Worker sucht darin unscharf nach dem gelesenen Namen
+ * Fingerabdruck). Zeilen „key⇥name⇥localId⇥total⇥setCode⇥hp“ (hp = KP, 0 = unbekannt); der Worker sucht darin unscharf nach dem gelesenen Namen
  * und exakt nach der Nummer („199/165“, „TG12“, „SVP 085“).
  */
 export async function buildTextIndexPayload(lang: Lang) {
   const list = lang === "de"
     ? rows(await db.execute(sql`
         SELECT 'card:' || c.id AS key, c.name, COALESCE(c.local_id, '') AS local_id, COALESCE(s.card_count_official, 0) AS total,
-          COALESCE(NULLIF(s.abbreviation, ''), c.set_id, '') AS code
+          COALESCE(NULLIF(s.abbreviation, ''), c.set_id, '') AS code, COALESCE(c.hp, 0) AS hp
         FROM cards c LEFT JOIN card_sets s ON s.id = c.set_id ORDER BY c.id`))
     : rows(await db.execute(sql`
         SELECT 'print:' || p.id AS key, p.name, p.local_id, COALESCE(ps.card_count_official, 0) AS total,
-          COALESCE(NULLIF(p.set_code, ''), p.set_id, '') AS code
+          COALESCE(NULLIF(p.set_code, ''), p.set_id, '') AS code, 0 AS hp
         FROM card_prints p LEFT JOIN print_sets ps ON ps.lang = p.lang AND ps.id = p.set_id
         WHERE p.lang = ${lang} ORDER BY p.id`));
   const clean = (v: unknown) => String(v ?? "").replace(/[\t\n\r]+/g, " ").trim();
-  const t = list.map((r: any) => [clean(r.key), clean(r.name), clean(r.local_id), Number(r.total) || 0, clean(r.code)].join("\t")).join("\n");
+  const t = list.map((r: any) => [clean(r.key), clean(r.name), clean(r.local_id), Number(r.total) || 0, clean(r.code), Number(r.hp) || 0].join("\t")).join("\n");
   return { lang, count: list.length, t, builtAt: new Date().toISOString() };
 }
 
