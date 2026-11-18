@@ -26,6 +26,7 @@ const mb = {
   page: 0,
   focus: -1,     // Index der Einzelkarten-Ansicht
   index: null,   // eigener Set-Binder (Karten-IDs & gesammelte Sets)
+  scope: "",     // Händler-Ordner (Live-Swipe-Modul) – Wechsel setzt auf Seite 1
 };
 const wide = () => (typeof matchMedia === "function" ? matchMedia("(min-width: 640px)").matches : true);
 const size = () => pocketsPerPage(wide());
@@ -67,11 +68,11 @@ function ensureDom() {
   return { bar, root, grid };
 }
 
-function barHtml(all) {
+function barHtml(all, force = false) {
   const sets = setOptions(all);
   if (mb.set && !sets.some((s) => s.id === mb.set)) mb.set = "";
   const seg = (k, label) => `<button type="button" class="ps-chip" aria-pressed="${mb.view === k}" onclick="PS.marketView('${k}')">${label}</button>`;
-  return `<span class="flex gap-1.5" role="group" aria-label="Ansicht">${seg("binder", "📒 Binder")}${seg("list", "☰ Liste")}</span>
+  return `${force ? `<span class="text-[11px] font-black text-slate-300">📒 Ordnerseiten</span>` : `<span class="flex gap-1.5" role="group" aria-label="Ansicht">${seg("binder", "📒 Binder")}${seg("list", "☰ Liste")}</span>`}
     ${sets.length > 1 ? `<label class="flex items-center gap-1 text-[11px] text-slate-400 min-w-0"><span class="shrink-0">Set</span>
       <select onchange="PS.marketSet(this.value)" class="ps-mb-select" aria-label="Nach Set filtern">
         <option value="">Alle Sets</option>${sets.slice(0, 60).map((s) => `<option value="${esc(s.id)}" ${s.id === mb.set ? "selected" : ""}>${esc(s.label)} (${Number(s.n)})</option>`).join("")}
@@ -171,16 +172,20 @@ function bindSwipe(vp, onDir, onCancel, track) {
  * @param {any[]} list   gefilterte Angebote
  * @param {any[]} all    alle geladenen Angebote (für die Set-Auswahl)
  */
-export function renderMarketBinder(list, all) {
+export function renderMarketBinder(list, all, opts = {}) {
   const d = ensureDom();
   if (!d) return;
-  d.bar.innerHTML = barHtml(all || list);
+  // Händler-Ordner (client/market-swipe.js): immer als Binder, neuer Ordner beginnt auf Seite 1
+  const force = Boolean(opts.forceBinder);
+  const scope = String(opts.scope || "");
+  if (scope !== mb.scope) { mb.scope = scope; mb.page = 0; }
+  d.bar.innerHTML = barHtml(all || list, force);
   const filtered = filterBySet(list, mb.set);
   const before = mb.list.map((l) => l.id).join(",");
   mb.list = filtered;
   mb.index = binderIndex(ownedItems());
   if (mb.list.map((l) => l.id).join(",") !== before) mb.page = clampIndex(mb.page, pagesOf(mb.list, size()).length);
-  const showBinder = mb.view === "binder" && list.length > 0;
+  const showBinder = (force || mb.view === "binder") && list.length > 0;
   d.root.classList.toggle("hidden", !showBinder);
   // Klassische Rasteransicht bleibt im DOM (Leer-/Filter-Hinweise, bestehende Abläufe) – im Binder-Modus nur ausgeblendet
   d.grid.classList.toggle("hidden", showBinder);

@@ -56,6 +56,7 @@ import { filterListings, MARKET_CHIP_KEYS, setCodeOf, conditionShort } from "./m
 import { initHome, homeApi, renderHome } from "./home.js";
 import { initHomeBinder, homeBinderApi } from "./home-binder.js";
 import { initMarketBinder, marketBinderApi, renderMarketBinder } from "./market-binder.js";
+import { initMarketSwipe, marketSwipeApi, renderMarketSwipe, browseMode, scopeForBinder } from "./market-swipe.js";
 import { initPresence, presenceApi } from "./presence.js";
 
 // ---------------------------------------------------------------------------
@@ -1093,7 +1094,9 @@ function renderMarket() {
   // außer der Nutzer wählt selbst einen Filter-Chip). Früherer „Tausch-Hub“ (?mode=trade) = Chip „Tausch“.
   const mode = marketMode();
   const chip = mode === "trade" && marketChip === "all" ? "trade" : marketChip;
-  const list = filterListings(state.listings, { q: f, chip, buyFirst: true });
+  // Live-Swipe & Händler-Ordner: Suche gehört zur „🔍 Direktsuche“ (client/market-swipe.js), Chips gelten überall
+  const browse = browseMode();
+  const list = filterListings(state.listings, { q: browse === "search" ? f : "", chip, buyFirst: true });
   if ($("marketTotalBadge")) $("marketTotalBadge").textContent = state.listings.length;
   if ($("statMarketCount")) $("statMarketCount").textContent = state.listings.length;
   syncMarketChips();
@@ -1101,13 +1104,17 @@ function renderMarket() {
   if (!list.length) {
     box.innerHTML = `<div class="col-span-full">${chip !== "all" && state.listings.length
       ? `<div class="ps-card p-6 text-center text-xs text-slate-300 space-y-2"><p>Keine Treffer für diesen Filter – insgesamt warten ${state.listings.length} Angebote.</p><button type="button" onclick="PS.marketFilter('all')" class="bg-yellow-400 text-slate-950 font-black px-3 py-1.5 rounded-xl">Alle anzeigen</button></div>`
-      : emptyMarketHtml(Boolean(f))}</div>`;
+      : emptyMarketHtml(Boolean(f) && browse === "search")}</div>`;
+    renderMarketSwipe(list);
     renderMarketBinder(list, state.listings);
     return;
   }
   box.innerHTML = list.map(listingTile).join("");
+  // Live-Swipe (Standard) | Händler-Ordner | Direktsuche – Switch-Leiste über der Swipe-Karte, siehe client/market-swipe.js
+  renderMarketSwipe(list);
   // Virtueller Marktplatz-Binder (Ordnerseiten 3×3 / 2×2) – Umschalter „📒 Binder | ☰ Liste“, siehe client/market-binder.js
-  renderMarketBinder(list, state.listings);
+  const scoped = scopeForBinder(list);
+  renderMarketBinder(scoped.list, browse === "folder" ? scoped.list : state.listings, { forceBinder: browse === "folder", scope: scoped.scope });
 }
 
 /** Einheitliche Karten-Kachel im Marktplatz-Raster: Artwork, Name, Set-Kürzel, Zustand, Preis vs. Cardmarket, 1-Tap-Aktion. */
@@ -1640,6 +1647,7 @@ window.PS = {
   ...inviteApi,
   ...binderApi,
   ...marketBinderApi,
+  ...marketSwipeApi,
   ...listPickerApi,
   ...presenceApi,
   openCreatorAdmin: () => import("./creator-admin.js").then((m) => m.openCreatorAdmin()).catch(handleError),
@@ -1670,6 +1678,7 @@ async function boot() {
   initInvite(); // Teilen & Freunde einladen: Fortschritt zum Gründer-Sammler, 1-Tap-Teilen, Hinweis nach Uploads
   initListPicker(); // Meine Inserate: „Alle Doppelten inserieren“ + Kartenauswahl mit Suche & Filter
   initPresence(); // Live-Online-Radar: „Gerade online“ (Mitglied vs. Gast), Binder-Vorschau, Direkt-Tausch
+  initMarketSwipe(); // Marktplatz öffnet im Live-Swipe (alle Händler- & Sammler-Ordner gemischt, gewichtet nach Verkäufer-Rang)
   initMarketBinder(); // Marktplatz: Angebote seitenweise im virtuellen Binder durchblättern + Einzelkarten-Swipe
   initHomeBinder(); // Startseite: interaktive Set-Binder-Vorschau (eigene Sets oder Beispiel-Set) direkt unter der Gründer-Box
   initBinder(); // Sammlung → Mein Binder: Set-Ordner & durchswipebare Binder-Ansicht mit Marktplatz-Abgleich

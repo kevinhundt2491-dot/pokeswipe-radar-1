@@ -614,6 +614,7 @@ app.get("/api/listings", async (c) => {
       p.display_name AS seller, p.public_profile AS seller_public,
       (SELECT b.badge FROM user_badges b WHERE b.user_id = l.user_id AND b.badge IN ('ref-vip', 'ref-community') ORDER BY (b.badge = 'ref-vip') DESC LIMIT 1) AS seller_badge,
       (p.founder_at IS NOT NULL) AS seller_founder,
+      (COALESCE(p.shop_slug, '') <> '') AS seller_shop,
       ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified,
       (CASE WHEN l.variant = 'reverse_holo' THEN COALESCE(c.reverse_trend, c.reverse_avg, c.trend, c.avg) ELSE COALESCE(c.trend, c.avg) END)::float AS market_price,
       (SELECT round(avg(r.stars)::numeric, 1)::float FROM reviews r WHERE r.reviewee_id = l.user_id) AS rating,

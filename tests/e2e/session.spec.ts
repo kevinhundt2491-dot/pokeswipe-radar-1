@@ -90,6 +90,7 @@ test("Marktplatz: Karten-Raster ist sofort sichtbar, Kachel zeigt Set-Kürzel, Z
   await page.addInitScript(() => localStorage.setItem("ps_market_view", "list")); // klassische Listenansicht
   await page.goto("/?tab=map");
   await appReady(page);
+  await page.locator('#ps-msw-switch [data-browse="search"]').click(); // 🔍 Direktsuche zeigt das klassische Raster
   const grid = page.locator("#market-list");
   await expect(grid.locator(".ps-tile")).toHaveCount(2);
   const tile = grid.locator('[data-listing="7"]');
@@ -115,6 +116,7 @@ test("Marktplatz-Binder: Angebote in Ordnerseiten, Tasche zeigt Zustand & Preis/
   });
   await page.goto("/?tab=map");
   await appReady(page);
+  await page.locator('#ps-msw-switch [data-browse="search"]').click();
   const binder = page.locator("#ps-market-binder");
   await expect(binder).toBeVisible();
   await expect(page.locator("#market-list")).toBeHidden();
@@ -135,6 +137,34 @@ test("Marktplatz-Binder: Angebote in Ordnerseiten, Tasche zeigt Zustand & Preis/
   // Umschalter zur klassischen Listenansicht
   await page.getByRole("button", { name: "☰ Liste" }).click();
   await expect(page.locator("#market-list .ps-tile")).toHaveCount(11);
+});
+
+test("Marktplatz öffnet im Live-Swipe: Karte mit Rang-Badge & „Jetzt kaufen“, Switch zu Händler-Ordnern und Direktsuche", async ({ page }) => {
+  await mockApi(page, {
+    "GET /api/listings": () => ({ listings: [
+      { id: 7, card_id: "sv03.5-199", card_name: "Glurak ex", price: 150, want: "Verkauf", city: "Köln", condition: "nm", user_id: "x", seller: "@Ash", buy_now: false, verified: true, seller_shop: true },
+      { id: 8, card_id: "sv08-238", card_name: "Pikachu ex", price: 40, want: "Tausch gegen Mew", city: "Berlin", condition: "ex", user_id: "y", seller: "@Brock", buy_now: false },
+    ] }),
+  });
+  await page.goto("/?tab=map");
+  await appReady(page);
+  const card = page.locator("#ps-msw .ps-msw-card");
+  await expect(card).toBeVisible();
+  await expect(page.locator("#market-list")).toBeHidden();
+  await expect(card.locator(".ps-msw-buy")).toContainText("Jetzt kaufen");
+  await expect(card).toContainText("Weiter swipen");
+  await expect(card).toContainText("Tauschen");
+  await expect(card.locator(".ps-msw-rank").first()).toBeVisible();
+  const first = await card.getAttribute("data-msw-card");
+  await card.getByRole("button", { name: /Weiter swipen/ }).click();
+  await expect(page.locator("#ps-msw .ps-msw-card")).not.toHaveAttribute("data-msw-card", String(first));
+  await page.locator('#ps-msw-switch [data-browse="folder"]').click();
+  await expect(page.locator("#ps-msw-folder")).toContainText("Ordner 1 von 2");
+  await expect(page.locator("#ps-msw-folder")).toContainText("@Ash"); // Händler zuerst
+  await page.getByRole("button", { name: "Nächster Ordner" }).click();
+  await expect(page.locator("#ps-msw-folder")).toContainText("@Brock");
+  await page.locator('#ps-msw-switch [data-browse="search"]').click();
+  await expect(page.locator("#market-search")).toBeVisible();
 });
 
 test("In-App-Browser (TikTok): Hinweis zum Öffnen im Standard-Browser, E-Mail-Login und Gast bleiben möglich", async ({ browser }) => {

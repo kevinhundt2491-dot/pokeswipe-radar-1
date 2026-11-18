@@ -407,6 +407,8 @@ function onTab(tab) {
   if (tab === "community") renderCommunityQuick();
   // Marktplatz öffnet aus anderen Bereichen immer mit dem Karten-Raster („Alle Karten“)
   if (tab === "map" && prev !== "map" && prev !== "swipe" && (state.marketMode === "mine" || state.marketMode === "sell")) state.marketMode = "buy";
+  // Reiter „Marktplatz“ landet beim Öffnen direkt im Live-Swipe (client/market-swipe.js)
+  if (tab === "map" && prev !== "map") { try { window.dispatchEvent(new CustomEvent("ps:market-enter")); } catch {} }
   if (tab === "map") applyMarketMode();
   renderSegments();
   // Aktiven Reiter in der Adresse halten (?tab=…) – beim Neuladen oder App-Wechsel bleibt er exakt stehen.
