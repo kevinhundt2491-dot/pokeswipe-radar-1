@@ -4,9 +4,11 @@
 //  • Zero-Setup: keine Set-Auswahl, kein Set-Lock, kein Zielrahmen – jede Karte wird gegen den kompletten Katalog
 //    abgeglichen und automatisch in ihren Set-Ordner im Set-Binder einsortiert („✅ Einsortiert in: [Set-Name]“).
 //  • Stapel / Einzelkarte (Ruckzuck-Serienscan, Standard bei jedem Start): Karte irgendwo ins Bild halten → Treffer, sobald
-//    2 direkt aufeinanderfolgende, ruhige Bilder (~120 ms) dieselbe Karte mit ≥ 68 % (inkl. Farb-Abgleich) und ≥ 6 % Vorsprung
-//    bestätigen → Vibration + Pling. Danach 0,8 s Verschnaufpause; die Karte (cardId) bleibt gesperrt, bis sie wirklich aus
-//    dem Bild gezogen oder ausgetauscht wurde (≥ 18 % Bildveränderung). Weitere gleiche Exemplare: großer „+1“-Knopf im Dock.
+//    ein ruhiges Bild eine Karte mit ≥ 58 % Übereinstimmung und ≥ 4 % Vorsprung zeigt (kalibriert auf echte Handykamera-Werte,
+//    keine Farb-Sperre – Farbe höchstens +3-%-Tie-Breaker) → Vibration + Pling. Diese Karte (cardId) bleibt 1,2 s bzw. bis
+//    zum Wegziehen gesperrt; die nächste Karte löst sofort ohne Wartezeit aus. Weitere gleiche Exemplare: „+1“ im Dock.
+//  • 100 % freies Kamerafenster: im Kamerabild liegen keine Buttons, Pillen, Rahmen oder Etiketten mehr – Status- & Tool-
+//    Leiste, Karten- & Aktionsbereich und Session-Drawer sitzen unter der Kamera.
 //  • Jeder Treffer landet ohne Klick automatisch (+1) im passenden Set-Ordner („✅ Automatisch im Ordner: [Set-Name] (1×)“);
 //    „Rückgängig“ nimmt den Scan UND den Ordner-Eintrag wieder zurück. Direkt darunter: „🏷️ 1-Klick Inserieren (CM-Preis)“
 //    und „⚡ Schnell-Inserieren (Deal unter CM)“ – ohne Formular sofort live auf dem Marktplatz.
@@ -62,11 +64,11 @@ const MODE_ALIAS = { turbo: "stack", sweep: "binder", auto: "stack" };
 
 const SWEEP_CSS = `
 #ps-sw .ps-sw-scroll{scrollbar-width:none}#ps-sw .ps-sw-scroll::-webkit-scrollbar{display:none}
-#ps-sw-flash{position:absolute;inset:0;pointer-events:none;background:rgba(255,255,255,0);transition:background .22s}
-#ps-sw-flash.on{background:rgba(255,255,255,.16);transition:none}
+#ps-sw .ps-sw-cam{height:min(calc(100dvh - 420px),560px);min-height:280px}
 #ps-sw-dock .ps-sw-pop{animation:psSwPop .32s cubic-bezier(.2,.9,.3,1.3)}
 @keyframes psSwPop{0%{transform:translateY(10px) scale(.96);opacity:.2}100%{transform:none;opacity:1}}
-#ps-sw.ps-sw-full{position:fixed;inset:0;z-index:70;max-width:none;height:100dvh!important;border-radius:0;border:0}
+#ps-sw.ps-sw-full{position:fixed;inset:0;z-index:70;max-width:none;height:100dvh;padding:.5rem;gap:.5rem;background:#020617;overflow-y:auto}
+#ps-sw.ps-sw-full .ps-sw-cam{flex:1 1 auto;height:auto;min-height:40dvh;border-radius:1.25rem}
 .ps-sw-mode[aria-pressed="true"]{background:linear-gradient(90deg,#22d3ee,#34d399);color:#020617}
 .ps-sw-plus{min-width:3.5rem;min-height:3rem;touch-action:manipulation}
 .ps-sw-plus:active{transform:scale(.94)}
@@ -153,38 +155,48 @@ export function createSweep(deps) {
   const layout = () => GRID_LAYOUTS[sw.prefs.grid] || GRID_LAYOUTS["3x3"];
   const modeIntro = () => `${MODES[sw.prefs.mode].hint} Kein Rahmen, kein Warten – alles läuft auf deinem Gerät.`;
 
+  /**
+   * Aufbau: oben das 100 % freie Kamerafenster (nur das pure Live-Bild – keine Buttons, Pillen, Rahmen, Etiketten oder
+   * Popups darüber). Alle Anzeigen und Bedienelemente liegen UNTER der Kamera: Status- & Tool-Leiste, Modus-Umschalter,
+   * Karten- & Aktionsbereich (Dock) und die Session-Liste (Drawer).
+   */
   function html() {
-    return `<div id="ps-sw" class="relative w-full mx-auto max-w-xl rounded-3xl overflow-hidden bg-black border border-cyan-400/40 select-none touch-manipulation" style="height:min(calc(100dvh - 200px),820px);min-height:470px" data-mode="${esc(sw.prefs.mode)}">
+    return `<div id="ps-sw" class="relative w-full mx-auto max-w-xl flex flex-col gap-2 select-none touch-manipulation" data-mode="${esc(sw.prefs.mode)}">
       <style>${SWEEP_CSS}</style>
-      <video id="ps-sw-video" class="absolute inset-0 w-full h-full object-cover hidden" playsinline muted autoplay></video>
-      <canvas id="ps-sw-overlay" class="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true"></canvas>
-      <div id="ps-sw-flash"></div>
-      <div class="absolute inset-x-0 top-0 p-2 space-y-1.5 bg-gradient-to-b from-slate-950/90 via-slate-950/55 to-transparent pb-5">
+      <div id="ps-sw-cam" class="ps-sw-cam relative w-full rounded-3xl overflow-hidden bg-black border border-cyan-400/40">
+        <video id="ps-sw-video" class="absolute inset-0 w-full h-full object-cover hidden" playsinline muted autoplay></video>
+        <div id="ps-sw-idle" class="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center bg-slate-950/85">
+          <p class="text-4xl" aria-hidden="true">${MODES[sw.prefs.mode].icon}</p>
+          <p class="text-base font-black text-white">${esc(MODES[sw.prefs.mode].label)}</p>
+          <p class="text-xs text-slate-300 max-w-xs">${esc(modeIntro())}</p>
+          <button type="button" onclick="PS.sweep('start')" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">📷 Kamera starten</button>
+          <p class="text-[10px] text-slate-500 max-w-xs">Erkennung komplett auf deinem Gerät. Es werden keine Kamerabilder hochgeladen.</p>
+        </div>
+      </div>
+      <div id="ps-sw-bar" class="ps-sw-below shrink-0 bg-slate-950 border border-white/10 rounded-2xl p-1.5 space-y-1.5">
         <div class="flex items-center gap-1.5">
-          <span id="ps-sw-sum" class="min-w-0 flex-1 truncate text-[11px] sm:text-xs font-black bg-slate-900/85 border border-white/10 text-white px-2.5 py-1.5 rounded-xl" title="Live-Summe dieser Scan-Session (Cardmarket-Trend)">0 Karten gescannt • Gesamtwert: 0,00 €</span>
+          <div class="min-w-0 flex-1">
+            <p id="ps-sw-sum" class="truncate text-[11px] sm:text-xs font-black text-white leading-tight" title="Live-Summe dieser Scan-Session (Cardmarket-Trend)">0 gescannt • Gesamtwert: 0,00 €</p>
+            <p id="ps-sw-status" role="status" class="truncate text-[10px] font-black text-cyan-200 leading-tight" title="Live-Diagnose des Scanners"></p>
+          </div>
+          <label class="${iconBtn} cursor-pointer" title="Foto hochladen" aria-label="Foto aufnehmen oder hochladen">🖼️<input data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
+          <button id="ps-sw-list" type="button" onclick="PS.sweep('drawer')" class="shrink-0 h-9 bg-slate-800 text-white text-[11px] font-black px-2.5 rounded-full" aria-label="Scan-Session öffnen" aria-expanded="false">☰ 0</button>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <div id="ps-sw-modes" class="min-w-0 flex-1 grid grid-cols-2 gap-1 bg-slate-900 border border-white/10 rounded-xl p-0.5" role="group" aria-label="Scan-Modus"></div>
           <button id="ps-sw-torch" type="button" onclick="PS.sweep('torch')" class="${iconBtn}" aria-label="Taschenlampe" aria-pressed="false">🔦</button>
           <button id="ps-sw-mute" type="button" onclick="PS.sweep('mute')" class="${iconBtn}" aria-label="Ton aus" aria-pressed="false" title="Scanner-Ping & Vibration stummschalten">🔊</button>
           <button id="ps-sw-full" type="button" onclick="PS.sweep('full')" class="${iconBtn}" aria-label="Vollbild" aria-pressed="false">⛶</button>
           <button id="ps-sw-stop" type="button" onclick="PS.sweep('stop')" class="${iconBtn} hidden" aria-label="Kamera beenden">✕</button>
-          <label class="${iconBtn} cursor-pointer" title="Foto hochladen" aria-label="Foto aufnehmen oder hochladen">🖼️<input data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
         </div>
-        <div id="ps-sw-modes" class="grid grid-cols-2 gap-1 bg-slate-900/80 border border-white/10 rounded-xl p-0.5" role="group" aria-label="Scan-Modus"></div>
-        <div class="flex items-center gap-1.5">
-          <span id="ps-sw-status" role="status" class="min-w-0 max-w-full truncate text-[10px] font-black text-cyan-100 bg-slate-900/80 border border-cyan-400/30 px-2 py-1 rounded-full" title="Live-Diagnose des Scanners"></span><span class="flex-1"></span>
+        <div id="ps-sw-binderbar" class="flex items-center gap-1.5 empty:hidden">
           <span id="ps-sw-view" class="shrink-0 hidden text-[11px] font-black bg-emerald-400 text-slate-950 px-2 py-1 rounded-lg" title="Erkannte Fächer dieser Ordnerseite"></span>
-          <button id="ps-sw-grid" type="button" onclick="PS.sweep('grid')" class="shrink-0 hidden text-[11px] font-black bg-slate-900/85 border border-white/10 text-white px-2 py-1 rounded-lg" aria-label="Ordner-Raster umschalten (3 × 3 oder 2 × 2)">3×3</button>
+          <button id="ps-sw-grid" type="button" onclick="PS.sweep('grid')" class="shrink-0 hidden text-[11px] font-black bg-slate-900 border border-white/10 text-white px-2 py-1 rounded-lg" aria-label="Ordner-Raster umschalten (3 × 3 oder 2 × 2)">3×3</button>
           <button id="ps-sw-next" type="button" onclick="PS.sweep('nextPage')" class="shrink-0 hidden text-[11px] font-black bg-cyan-400 text-slate-950 px-2.5 py-1 rounded-lg" title="Alle Fach-Sperren leeren und die nächste Seite scannen">📖 Nächste Seite</button>
         </div>
       </div>
-      <div id="ps-sw-idle" class="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 pt-32 text-center bg-slate-950/85">
-        <p class="text-4xl" aria-hidden="true">${MODES[sw.prefs.mode].icon}</p>
-        <p class="text-base font-black text-white">${esc(MODES[sw.prefs.mode].label)}</p>
-        <p class="text-xs text-slate-300 max-w-xs">${esc(modeIntro())}</p>
-        <button type="button" onclick="PS.sweep('start')" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">📷 Kamera starten</button>
-        <p class="text-[10px] text-slate-500 max-w-xs">Erkennung komplett auf deinem Gerät. Es werden keine Kamerabilder hochgeladen.</p>
-      </div>
-      <div id="ps-sw-dock" class="absolute inset-x-2 bottom-2" aria-live="polite"></div>
-      <div id="ps-sw-drawer" class="absolute inset-x-0 bottom-0 hidden max-h-[80%] flex flex-col bg-slate-950/95 backdrop-blur border-t border-cyan-400/40 rounded-t-3xl"></div>
+      <div id="ps-sw-dock" class="ps-sw-below shrink-0" aria-live="polite"></div>
+      <div id="ps-sw-drawer" class="ps-sw-below hidden max-h-[60vh] flex flex-col bg-slate-950 border border-cyan-400/40 rounded-3xl overflow-hidden"></div>
     </div>`;
   }
 
@@ -214,11 +226,13 @@ export function createSweep(deps) {
   /** Preis einer Karte nur über ihren Index-Schlüssel (Preisschild, Gesamtwert im Bild) */
   const priceOfKey = (key) => { const i = sw.info.get(key); return i ? conditionPrice(i, sw.prefs.finish, "NM") || Number(i.price) || 0 : 0; };
 
-  /** Live-Summenzähler oben: „X Karten gescannt • Gesamtwert: XX,XX €“ */
+  /** Live-Summenzähler in der Leiste unter der Kamera: „X gescannt • Gesamtwert: XX,XX €“ + Session-Drawer-Knopf */
   function renderTop() {
     const t = sessionTotals(sw.items, priceOf);
     const el = $("ps-sw-sum");
-    if (el) el.textContent = `${t.count.toLocaleString("de-DE")} ${t.count === 1 ? "Karte" : "Karten"} gescannt • Gesamtwert: ${eur(t.value)}`;
+    if (el) el.textContent = `${t.count.toLocaleString("de-DE")} gescannt • Gesamtwert: ${eur(t.value)}`;
+    const lb = $("ps-sw-list");
+    if (lb) { lb.textContent = `☰ ${sw.items.length}`; lb.setAttribute("aria-expanded", String(sw.drawer)); }
   }
 
   /** Ordner-Leiste: erkannte Fächer, Raster-Umschalter, „Nächste Seite“ */
@@ -237,26 +251,22 @@ export function createSweep(deps) {
     if (el) el.textContent = text;
   }
 
-  /** Live-Diagnose-Pille oben: „⚡ Bereit (19.840 Karten) • Top-Match: 69 %“ – zeigt bei jedem Bild, wie die Kamera reagiert */
+  /**
+   * Kompakte Live-Anzeige UNTER der Kamera: „Bereit • Match: 64 % • 12 FPS“ – zeigt bei jedem Bild, wie die Kamera
+   * reagiert (keine Farb-Meldungen mehr: die Farbe sperrt keine Treffer).
+   */
   function statusLine() {
     const ix = deps.index();
     if (!ix.ready) return ix.loading ? "⏳ Lade Karten-Index (einmalig, danach offline auf dem Gerät) …" : "";
     if (sw.filedMsg && Date.now() - sw.filedMsg.at < FILED_MSG_MS) return sw.filedMsg.text;
-    const parts = [`⚡ Bereit (${Number(ix.count || 0).toLocaleString("de-DE")} Karten)`];
-    if (sw.running) parts.push(`Top-Match: ${Math.round((sw.top || 0) * 100)} %`);
-    // Live-Diagnose der Präzisions-Prüfungen (Stapel): Pause, Farb-Abgleich, Unschärfe
-    const gi = sw.gateInfo;
-    if (sw.running && !isBinder() && gi) {
-      if (gi.paused) parts.push("⏸️ 0,8 s Pause – Karte wegziehen");
-      else if (gi.colorReject) parts.push("🎨 Farbe passt nicht – suche weiter");
-      else if (gi.colorPending) parts.push("🎨 Farbprüfung …");
-      else if (gi.blurry) parts.push("〰️ Verwackelt – kurz ruhig halten");
-    }
-    if (sw.running && sw.frameTimes.length > 4) {
+    if (!sw.running) return `⚡ Bereit (${Number(ix.count || 0).toLocaleString("de-DE")} Karten)`;
+    const parts = ["⚡ Bereit", `Match: ${Math.round((sw.top || 0) * 100)} %`];
+    if (sw.frameTimes.length > 4) {
       const span = sw.frameTimes[sw.frameTimes.length - 1] - sw.frameTimes[0];
       const fps = span > 0 ? Math.round(((sw.frameTimes.length - 1) * 1000) / span) : 0;
-      parts.push(`${fps} FPS · ${Math.round(sw.procMs)} ms`);
+      parts.push(`${fps} FPS`);
     }
+    if (!isBinder() && sw.gateInfo?.blurry) parts.push("〰️ ruhig halten");
     if (sw.running && isBinder() && Date.now() - sw.flipAt < 1200) parts.push("📖 Neue Seite");
     if (sw.running && isBinder() && sw.grid && !sw.grid.fitted) parts.push("Raster über die Ordnerseite halten");
     return parts.join(" • ");
@@ -273,7 +283,7 @@ export function createSweep(deps) {
     return [i.setCode || i.setName, i.number].filter(Boolean).join(" · ");
   };
 
-  // ------------------------------------------------------------------ Session-Dock (schwebt unten, Kamera läuft weiter)
+  // ------------------------------------------------------------------ Session-Dock (Karten- & Aktionsbereich unter der Kamera)
   const segBtn = (on) => `text-[10px] font-black px-2 py-1.5 rounded-lg ${on ? "bg-yellow-400 text-slate-950" : "text-slate-300"}`;
   /** Schnell-Umschalter Variante + Sprache: gelten für die zuletzt gescannte Karte UND als Vorgabe für die nächsten Scans */
   function dockToggles(it) {
@@ -286,10 +296,9 @@ export function createSweep(deps) {
     const dock = $("ps-sw-dock");
     if (!dock) return;
     if (sw.drawer) { dock.innerHTML = ""; return; }
-    const listBtn = `<button type="button" onclick="PS.sweep('drawer')" class="shrink-0 bg-slate-800 text-white text-[11px] font-black px-2.5 py-2 rounded-xl" aria-label="Scan-Session öffnen">☰ ${sw.items.length}</button>`;
     const it = sw.items.find((i) => i.uid === sw.lastUid) || sw.items[0] || null;
     if (!it) {
-      dock.innerHTML = `<div class="bg-slate-950/80 backdrop-blur rounded-2xl p-2 border border-white/10 space-y-1.5">
+      dock.innerHTML = `<div class="bg-slate-950 rounded-2xl p-2 border border-white/10 space-y-1.5">
         <p class="text-[11px] text-slate-300 truncate px-1">${sw.running ? esc(MODES[sw.prefs.mode].hint) : "Kamera starten und über deine Karten ziehen."}</p>
         <div class="ps-sw-scroll flex items-center gap-1.5 overflow-x-auto">${dockToggles(null)}</div></div>`;
       return;
@@ -299,7 +308,7 @@ export function createSweep(deps) {
     const lines = tagLines({ price, filed: Boolean(it.filed), saving: sw.saving.has(it.uid), ownedBefore: Boolean(it.ownedBefore), qty: it.qty, setName: it.setName || i?.setName || "", ownedQty: it.binderQty || 0 });
     const open = sw.prefs.dock;
     const filedCls = it.filed ? "bg-emerald-500 text-slate-950" : sw.saving.has(it.uid) ? "bg-emerald-500/25 text-emerald-100 animate-pulse" : "bg-slate-800 text-slate-200";
-    dock.innerHTML = `<div data-sw-last="${esc(it.uid)}" class="${pop ? "ps-sw-pop " : ""}bg-slate-950/85 backdrop-blur rounded-2xl p-2 border border-emerald-400/50 shadow-2xl space-y-1.5">
+    dock.innerHTML = `<div data-sw-last="${esc(it.uid)}" class="${pop ? "ps-sw-pop " : ""}bg-slate-950 rounded-2xl p-2 border border-emerald-400/50 shadow-2xl space-y-1.5">
       <div class="flex items-center gap-2">
         <img src="${esc(cdn(i?.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" class="${open ? "w-10 h-14" : "w-7 h-10"} object-contain rounded bg-slate-900 shrink-0" />
         <div class="min-w-0 flex-1">
@@ -308,8 +317,7 @@ export function createSweep(deps) {
         </div>
         <button type="button" onclick="PS.sweep('plus')" class="ps-sw-plus shrink-0 bg-gradient-to-br from-emerald-400 to-cyan-400 text-slate-950 text-xl font-black px-3 rounded-2xl shadow-lg" aria-label="Noch ein weiteres Exemplar dieser Karte hinzufügen (+1)" title="Weiteres gleiches Exemplar hinzufügen">+1</button>
         <button type="button" onclick="PS.sweep('undo')" class="shrink-0 bg-slate-800 text-white text-[10px] font-black w-12 h-12 rounded-xl leading-tight" aria-label="Rückgängig: letzten Scan und den automatischen Ordner-Eintrag zurücknehmen" title="Rückgängig (entfernt auch den Ordner-Eintrag)">↶<br>Rückg.</button>
-        <div class="flex flex-col gap-1 shrink-0">${listBtn}
-          <button type="button" onclick="PS.sweep('dock')" class="bg-slate-800 text-white text-[11px] font-black px-2.5 py-1 rounded-xl" aria-expanded="${open}" aria-label="${open ? "Dock einklappen" : "Dock ausklappen"}">${open ? "⌄" : "⌃"}</button></div>
+        <button type="button" onclick="PS.sweep('dock')" class="shrink-0 bg-slate-800 text-white text-[11px] font-black w-8 h-12 rounded-xl" aria-expanded="${open}" aria-label="${open ? "Dock einklappen" : "Dock ausklappen"}">${open ? "⌄" : "⌃"}</button>
       </div>
       <p data-sw-filed class="text-[12px] font-black ${filedCls} rounded-xl px-2.5 py-1.5 truncate" role="status">${esc(lines.status)}</p>
       ${sellButtons(it)}
@@ -497,7 +505,7 @@ export function createSweep(deps) {
 
   /** Sichtbarer Videoausschnitt (object-fit: cover) → genau dieser Bereich wird analysiert. */
   function geometry(video) {
-    const stage = $("ps-sw");
+    const stage = $("ps-sw-cam");
     const ew = stage?.clientWidth || 1, eh = stage?.clientHeight || 1, vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return null;
     const s = Math.max(ew / vw, eh / vh);
@@ -604,8 +612,7 @@ export function createSweep(deps) {
     sw.top = Number(m.top) || dets.reduce((x, d) => Math.max(x, Number(d.match) || 0), 0);
     const g = sw.gate.push({ dets, found: m.found, motion: m.motion, center: m.center, changed: m.changed, thumb: m.thumb }, Date.now(), interval);
     const { hits } = g;
-    const top = dets[0];
-    sw.gateInfo = { paused: g.paused, blurry: g.blurry && dets.length > 0, colorReject: Boolean(top?.colorReject), colorPending: Boolean(top?.colorPending) };
+    sw.gateInfo = { paused: g.paused, blurry: g.blurry && dets.length > 0 };
     const t = Date.now();
     // Preisschilder der schon erkannten Karten an die aktuelle Lage anheften
     for (const d of dets) {

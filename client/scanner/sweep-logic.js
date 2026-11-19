@@ -5,8 +5,8 @@
 //  • layoutFromRgba   – räumlicher Farb-/Layout-Vektor (4 × 6 Zellen, weißabgleich-normiert) einer entzerrten Karte
 //  • matchPercent     – Übereinstimmung 0…1 aus Bild-Fingerabdruck (pHash/dHash) und Farb-Layout
 //  • topMatchesIn     – Hamming-Suche im ganzen Index oder nur in den Zeilen eines Sets („Set-Lock“), mit Früh-Abbruch
-//  • createSweepGate  – 2-Frame-Stabilitätsprüfung (ruhige, scharfe Bilder), 0,8-s-Verschnaufpause nach jedem Treffer und
-//                       Karten-Sperre (cardId) bis die Karte wirklich weggezogen/ausgetauscht wurde (≥ 18 % Bildveränderung)
+//  • createSweepGate  – Sofort-Auslösung im ersten ruhigen Bild (≥ 58 %, ≥ 4 % Vorsprung) und Karten-Sperre (cardId):
+//                       1,2 s bzw. bis die Karte weggezogen/ausgetauscht wurde (≥ 18 % Bildveränderung)
 //  • motionStats      – Frame-Delta: ganzes Bild, Bildzentrum, geänderter Flächenanteil (Seitenwechsel im Ordner)
 //  • confidencePercent – kalibrierte Konfidenz 0…100 % aus Übereinstimmung, Abstand zum nächsten Motiv und Nummern-ROI
 //  • Preisschild-/Zähler-Helfer – Etikett-Texte, Tages-Scan-Zähler, Gesamtwert der Karten im Bild
@@ -21,25 +21,25 @@ export const SWEEP = {
   /** Höchstens ~30 Bilder/s an den Worker */
   MIN_FRAME_MS: 33,
   /**
-   * Präzisions-Schwellen (Stapel / Einzelkarte): ein Treffer braucht ≥ 68 % Übereinstimmung (inkl. Farb-Abgleich) UND
-   * ≥ 6 % Vorsprung vor dem zweitbesten Motiv (MARGIN_PCT, siehe quickOk). Lieber ein Bild länger scharfstellen als eine
-   * falsche Karte anzeigen. DIRECT_MATCH (66 %): Schwelle je Fach im Ordner-Modus.
+   * Schwellen (Stapel / Einzelkarte), kalibriert auf echte Handykamera-Werte (60–70 % bei realen Karten): ein Treffer
+   * braucht ≥ 58 % Übereinstimmung UND ≥ 4 % Vorsprung vor dem zweitbesten Motiv (MARGIN_PCT, siehe quickOk) – dann
+   * löst schon das erste Bild aus. Keine Farb-Sperre. DIRECT_MATCH (66 %): Schwelle je Fach im Ordner-Modus.
    */
-  MIN_MATCH: 0.68,
+  MIN_MATCH: 0.58,
   DIRECT_MATCH: 0.66,
-  /** Abstand zum zweitbesten Motiv als Anteil der Ähnlichkeit (margin / HASH_SCALE) – 6 % Vorsprung */
-  MARGIN_PCT: 0.06,
-  /** Ohne Farb-Referenz (Katalogbild nicht ladbar): so viel strenger muss der reine Bild-Fingerabdruck passen */
-  NO_COLOR_EXTRA: 0.05,
+  /** Abstand zum zweitbesten Motiv als Anteil der Ähnlichkeit (margin / HASH_SCALE) – 4 % Vorsprung */
+  MARGIN_PCT: 0.04,
+  /** Keine Farb-Sperre mehr: ohne Farb-Referenz gilt dieselbe Schwelle */
+  NO_COLOR_EXTRA: 0,
   /** Ab dieser Übereinstimmung gilt eine Karte als „im Bild gesehen“ (hält die Sperre, Etikett folgt der Karte) */
   TRACK_MATCH: 0.55,
-  /** 2-Frame-Stabilitätsprüfung: 2 direkt aufeinanderfolgende, ruhige Bilder müssen dieselbe Karte bestätigen */
-  CONSENSUS_FRAMES: 2,
+  /** Sofort-Auslösung: schon das erste ruhige Bild mit ≥ 58 % und ≥ 4 % Vorsprung zählt */
+  CONSENSUS_FRAMES: 1,
   /** Zeitfenster zwischen den beiden Bildern (~120 ms; langsame Geräte: bis 2,2 Bildzeiten, höchstens CONSENSUS_MAX_MS) */
   CONSENSUS_MS: 120,
   CONSENSUS_MAX_MS: 200,
-  /** Verschnaufpause: nach jedem Treffer 0,8 s lang kein weiterer Scan (Karte/Kamera entspannt wegziehen) */
-  HIT_PAUSE_MS: 800,
+  /** Keine globale Pause mehr: die nächste (andere) Karte löst sofort aus – Doppel-Scans verhindert die Karten-Sperre */
+  HIT_PAUSE_MS: 0,
   /** Verwackelt: Bewegungsdifferenz im Bildzentrum bzw. im ganzen Bild ab hier = Bewegungsunschärfe → Bild zählt nicht */
   BLUR_CENTER: 0.1,
   BLUR_MOTION: 0.14,
@@ -53,9 +53,9 @@ export const SWEEP = {
    * Normales Handzittern bleibt unter 18 % und hebt die Sperre nie auf.
    */
   LOCK_DRIFT: 0.18,
-  /** Rückfall für kleine Karten: so lange nicht mehr gesehen UND mindestens LOCK_IDLE_DRIFT Bildveränderung → frei */
+  /** 1,2-Sekunden-Sperre pro Karte: 1,2 s nicht mehr gesehen → dieselbe cardId darf wieder zählen */
   LOCK_IDLE_MS: 1200,
-  LOCK_IDLE_DRIFT: 0.06,
+  LOCK_IDLE_DRIFT: 0,
   /** Helligkeitsdifferenz (0…255) je Zelle des Anker-Bilds, ab der eine Zelle als „deutlich geändert“ gilt */
   ANCHOR_DELTA: 26,
   /** „Dieselbe Stelle“ für die Aufdeck-Erkennung (Mittelpunkt-Abstand, relativ zum Bild) */
@@ -385,15 +385,13 @@ export function confidencePercent(d) {
 }
 
 /**
- * Treffer-Prüfung (Stapel / Einzelkarte) je Bild: ≥ MIN_MATCH (68 %, inkl. Farb-Abgleich) UND Abstand zum zweitbesten Motiv
- * ≥ MARGIN_PCT (6 %). margin = Hash-Abstand (Punkte) zum nächsten anderen Motiv; fehlt er → klar.
- * Pflicht-Farbabgleich: Kandidaten mit falscher Grundfarbe (colorReject) oder noch fehlender Farb-Referenz (colorPending)
- * werden nie freigegeben. Ohne ladbare Farb-Referenz (color = "none") muss der Bild-Fingerabdruck NO_COLOR_EXTRA strenger passen.
+ * Treffer-Prüfung (Stapel / Einzelkarte) je Bild: ≥ MIN_MATCH (58 %) UND Abstand zum zweitbesten Motiv ≥ MARGIN_PCT (4 %).
+ * margin = Hash-Abstand (Punkte) zum nächsten anderen Motiv; fehlt er → klar. Keine Farb-Sperre (Farbe ist im Engine-Wert
+ * höchstens ein +3-%-Tie-Breaker).
  * Bewusst KEIN Treffer allein über die Höhe der Übereinstimmung: Ein leeres Bild (Tisch, Hand, Hintergrund) erreicht
  * gelegentlich hohe Werte – aber nie mit klarem Abstand. Der Abstand trennt eine echte Karte vom Bildrauschen.
  */
 export function quickOk(d, cfg = SWEEP) {
-  if (d?.colorReject || d?.colorPending) return false;
   const match = Number(d?.match) || 0;
   const margin = Number.isFinite(d?.margin) ? d.margin : 99;
   const min = cfg.MIN_MATCH + (d?.color === "none" ? cfg.NO_COLOR_EXTRA || 0 : 0);
@@ -401,7 +399,7 @@ export function quickOk(d, cfg = SWEEP) {
 }
 
 /** Strikte Prüfung für den Binder- & Tisch-Sweep: 99–100 % Konfidenz, keine widersprüchliche Nummer. */
-export const strictOk = (d) => confidencePercent(d) >= SWEEP.STRICT_CONF && d?.numOk !== false && !d?.colorReject && !d?.colorPending;
+export const strictOk = (d) => confidencePercent(d) >= SWEEP.STRICT_CONF && d?.numOk !== false;
 
 /** Mittelpunkt eines Vierecks ([[x,y] × 4], relativ 0…1 oder Pixel) – null ohne Viereck. */
 export function quadCenter(quad) {
@@ -481,7 +479,7 @@ export function createSweepGate(opts = {}) {
       // Verwackeltes Bild (Bewegungsunschärfe beim Wegziehen/Heranführen) zählt nie für einen Treffer
       const blurry = hasPrev && (center >= cfg.BLUR_CENTER || motion >= cfg.BLUR_MOTION);
       // Sperren den Karten im Bild zuordnen (jede Erkennung höchstens einer Sperre) und fortschreiben
-      const visible = dets.filter((d) => Array.isArray(d.keys) && d.keys.length && Number(d.match) >= cfg.TRACK_MATCH && !d.colorReject);
+      const visible = dets.filter((d) => Array.isArray(d.keys) && d.keys.length && Number(d.match) >= cfg.TRACK_MATCH);
       const taken = new Set();
       locks = locks.filter((l) => {
         let hit = null, hitD = Infinity;

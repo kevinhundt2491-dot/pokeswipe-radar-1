@@ -95,7 +95,7 @@ test("ABNAHME Stapel: keine 5-fach-Auslösung – Handzittern/Flackern hält die
   assert.ok(!/COOLDOWN_MS/.test(src("client/scanner/sweep-logic.js")), "Pause heißt HIT_PAUSE_MS (feste 0,8 s), kein Karten-Cooldown");
 });
 
-test("Pflicht-Farbabgleich: rote Feuer-Karte ≠ grüne Pflanzen-/blaue Wasser-Karte; gleiche Karte bei anderem Licht passt", () => {
+test("Farbsignatur bleibt messbar (Feuer ≠ Pflanze ≠ Wasser), sperrt im Live-Scanner aber nie – nur +3-%-Tie-Breaker", () => {
   /** Karte mit Typ-Farbe (Rahmen/Hintergrund) und etwas Artwork-Struktur */
   const typed = (rgb: [number, number, number], seed = 3, light = 1, tint: [number, number, number] = [1, 1, 1]) => {
     const w = NORM_W, h = NORM_H, d = new Uint8ClampedArray(w * h * 4), art = cardRgba(seed);
@@ -124,12 +124,13 @@ test("Pflicht-Farbabgleich: rote Feuer-Karte ≠ grüne Pflanzen-/blaue Wasser-K
   const gray = typed([150, 150, 152]);
   assert.equal(paletteCheck(gray, fire)!.reject, false);
   assert.equal(paletteCheck(fire, null), null);
-  // Farbe fließt in die Übereinstimmung ein; Engine prüft jeden Top-Kandidaten und lässt bei falscher Farbe den nächsten nachrücken
   assert.ok(fuseMatch(16, { color: 1 }) > fuseMatch(16, { color: 0.2 }));
+  // Live-Engine: keine harte Farb-Sperre mehr (warmes Licht/Sleeves) – Farbe nur als winziger Bonus (max. +3 %, nie Abzug)
   const eng = src("client/scanner/sweep-engine.js");
   assert.match(eng, /paletteCheck\(pal, rs\.ref\.pal\)/);
-  assert.match(eng, /if \(!cc\?\.reject\) break;/);
-  assert.match(eng, /colorPending/);
+  assert.match(eng, /const COLOR_TIE = 0\.03;/);
+  assert.match(eng, /Math\.max\(0, Math\.min\(COLOR_TIE, /);
+  assert.ok(!/colorReject: true|colorPending,|COLOR_RERANK/.test(eng), "kein Farb-Ausschluss, kein Warten auf die Farbprüfung");
 });
 
 test("Slot-Sperre: jedes Fach zählt genau einmal; Umblättern (> 65 % Bildänderung) und „Nächste Seite“ leeren die Sperren; gleiche Seite wird nicht doppelt gezählt", () => {
@@ -256,7 +257,7 @@ test("Stufe 2: HSV-Farbmatrix + Kantengradient des Artworks trennen Karten; fehl
   assert.ok(fuseMatch(16, { layout: 0.95, hsv: same.hsv, edge: same.edge }) >= SWEEP.DIRECT_MATCH);
   assert.ok(fuseMatch(16, { layout: 0.95, hsv: same.hsv, edge: same.edge }) - fuseMatch(16, { layout: 0.5, hsv: other.hsv, edge: other.edge }) > 0.1, "falsche Farben/Kanten liegen klar darunter");
   // Live-Engine: Vektoren sind nur Bonus – die Übereinstimmung ist nie schlechter als der reine Hash-Wert
-  assert.match(src("client/scanner/sweep-engine.js"), /Math\.max\(hs, fuseMatch\(d\.score, \{ layout: ls, hsv: as\?\.hsv, edge: as\?\.edge, color: cc\?\.sim \}\)\)/);
+  assert.match(src("client/scanner/sweep-engine.js"), /Math\.max\(hs, fuseMatch\(d\.score, \{ layout: ls, hsv: as\?\.hsv, edge: as\?\.edge \}\)\)/);
 });
 
 test("Typ-/Rahmenfarben-Klassen (12) bleiben als Katalog-Metadaten erhalten; die Live-Engine filtert damit nicht mehr", () => {
@@ -326,7 +327,7 @@ test("ABNAHME Ordner: Worker-Engine erkennt alle 9 Fächer einer Seite (auch mit
   assert.ok(maxSlots >= 3, "mehrere Fächer je Bild");
 });
 
-test("Stapel-Engine: Treffer nach 2 ruhigen Bildern, ruhige Karte nicht doppelt, Wegziehen → Duplikat zählt; Multi-Crop findet Karten ohne Kontur", async () => {
+test("Stapel-Engine: Sofort-Treffer im 1. ruhigen Bild, ruhige Karte nicht doppelt, Wegziehen → Duplikat zählt; Multi-Crop findet Karten ohne Kontur", async () => {
   const { engine, last } = testEngine();
   const W = 480, H = 760;
   /** Karte bei (x0, y0) mit Breite cw; edge = false → kein Kontrast zum Hintergrund (Hand/Hülle/heller Tisch) */
@@ -354,25 +355,25 @@ test("Stapel-Engine: Treffer nach 2 ruhigen Bildern, ruhige Karte nicht doppelt,
   let m = await frame(scene(5));
   assert.equal(m.dets[0].lead, "card:t-5");
   assert.ok(m.dets[0].match >= SWEEP.MIN_MATCH + SWEEP.NO_COLOR_EXTRA, `Übereinstimmung ${m.dets[0].match}`);
-  assert.equal(m.dets[0].color, "none", "Test ohne OffscreenCanvas: keine Farb-Referenz → strengerer Rückfall");
+  assert.equal(m.dets[0].color, null, "Test ohne OffscreenCanvas: keine Farb-Referenz – kein Warten, keine Sperre");
+  assert.equal(m.dets[0].colorReject, undefined);
+  assert.equal(m.dets[0].colorPending, undefined);
   assert.ok(Number.isFinite(m.dets[0].sharp) && m.dets[0].sharp > 0, "Schärfe je Karte");
   assert.ok(m.thumb && m.thumb.w === 16, "Anker-Miniatur für die Karten-Sperre");
-  assert.equal(hits, 0, "1. Bild: Bestätigung durch das 2. Bild abwarten");
+  assert.equal(hits, 1, "Treffer schon im 1. ruhigen Bild");
   m = await frame(scene(5));
-  assert.equal(hits, 1, "Treffer im 2. ruhigen Bild (< 0,25 s)");
+  assert.equal(hits, 1, "2. Bild: gesperrt");
   assert.ok(typeof m.top === "number" && m.top >= m.dets[0].match - 1e-9, "Top-Match für die Live-Diagnose");
   assert.equal(m.gridSeen, undefined, "keine Modus-Automatik");
   for (let i = 0; i < 6; i++) await frame(scene(5));
   assert.equal(hits, 1, "ruhig liegende Karte zählt nicht doppelt");
-  // Karte weg (leerer Tisch) → Sperre frei; nach der Pause dieselbe Karte wieder → zählt erneut (2 ruhige Bilder)
-  t += SWEEP.HIT_PAUSE_MS;
+  // Karte weg (leerer Tisch) → Sperre frei; dieselbe Karte wieder → zählt sofort erneut
   m = await frame(scene(null));
   assert.ok(m.center >= SWEEP.CENTER_MOVE, `Zentrum ${m.center}`);
   assert.equal(gate.locks.length, 0, "weggezogen → frei");
   await frame(scene(5)); await frame(scene(5)); await frame(scene(5));
   assert.equal(hits, 2, "Duplikat vom Stapel");
-  // Nächste (andere) Karte direkt darübergelegt → nach Pause + 2 ruhigen Bildern
-  t += SWEEP.HIT_PAUSE_MS;
+  // Nächste (andere) Karte direkt darübergelegt → ohne Wartezeit
   await frame(scene(8)); await frame(scene(8)); await frame(scene(8));
   assert.equal(hits, 3, "nächste Karte vom Stapel");
   // Multi-Crop: Karte füllt das Bild fast (sehr nah, keine Kontur) bzw. liegt weiter weg und leicht neben der Mitte
@@ -400,7 +401,7 @@ test("Oberfläche: Modi, Raster-Overlay, Slot-Haken, Dock (+1, Variante, DE/EN/J
     /Stapel \/ Einzelkarte/, /Ruckzuck-Sweep/, /Ordner-Seite/, /9er-Binder-Scan/, /PS\.sweep\('mode'/,
     /PS\.sweep\('nextPage'\)/, /📖 Nächste Seite/, /PS\.sweep\('grid'\)/, /function drawBinder/, /"#10b981"/,
     /PS\.sweep\('plus'\)/, />\+1</, /PS\.sweep\('undo'\)/, /PS\.sweep\('dockFinish'/, /PS\.sweep\('dockLang'/, /LANG_SHORT = \{ de: "DE", en: "EN", ja: "JP" \}/,
-    /Karten"\} gescannt • Gesamtwert: /, /📒 In Set-Binder einsortieren/, /🏷️ Direkt auf Marktplatz inserieren/, /Nur Doppelte inserieren/,
+    /\} gescannt • Gesamtwert: /, /📒 In Set-Binder einsortieren/, /🏷️ Direkt auf Marktplatz inserieren/, /Nur Doppelte inserieren/,
     /facingMode: \{ ideal: "environment" \}, width: \{ ideal: 1920 \}, height: \{ ideal: 1080 \}, frameRate: \{ ideal: 30 \}/,
     /width: \{ ideal: 1280 \}, height: \{ ideal: 720 \}/, /focusMode: "continuous"/, /exposureMode: "continuous"/,
     /LED blendet auf der Folie/, /data-ls-upload="1"/, /mode: "binder", grid: sw\.prefs\.grid, skip:/, /HD\.BINDER_FRAME_W/, /sweep-fp-progress/,
