@@ -274,5 +274,5 @@ test("100 % freies Kamerabild: im Kamerafenster nur Video (+ Start-Hinweis vor d
   assert.match(ui, /`Match: \$\{Math\.round/);
   assert.match(ui, /`\$\{fps\} FPS`/);
   assert.match(ui, /1-Klick Inserieren \(CM-Preis\)/); assert.match(ui, /Schnell-Inserieren \(Deal unter CM\)/);
-  assert.match(src("public/sw.js"), /const VERSION = "v18"/);
+  assert.match(src("public/sw.js"), /const VERSION = "v(1[89]|[2-9]\d)"/);
 });

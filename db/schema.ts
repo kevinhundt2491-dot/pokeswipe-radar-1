@@ -350,10 +350,17 @@ export const listings = pgTable("listings", {
   source: text().notNull().default("manual"), // manual | csv
   importId: integer("import_id"),
   printId: text("print_id"),
+  // Pokémon-Artikel (Displays, ETBs, Ordner, Plüsch, Lots …) neben Einzelkarten – bestehende Inserate bleiben „card“
+  listingType: text("listing_type").notNull().default("card"), // card | item
+  itemCategory: text("item_category").notNull().default(""), // booster | etb | zubehoer | pluesch | lots | sonstiges
+  itemCondition: text("item_condition").notNull().default(""), // sealed | like_new | used
+  description: text().notNull().default(""),
+  extraImages: jsonb("extra_images").notNull().default([]), // weitere Fotos (Pfade /api/images/…)
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index("listings_status").on(t.status, t.createdAt), index("listings_user").on(t.userId),
+  index("listings_type").on(t.listingType, t.status),
   uniqueIndex("listings_user_sku").on(t.userId, t.externalSku),
   index("listings_card_buy").on(t.cardId, t.status, t.buyNow),
 ]);
