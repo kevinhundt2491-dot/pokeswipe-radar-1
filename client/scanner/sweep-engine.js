@@ -5,8 +5,8 @@
 //   • Stapel / Einzelkarte (frame), ~480 px breit, bis zu 30 Bilder/s:
 //   Graustufen 320 px → Sobel → rahmenlose Karten-Suche (Seitenverhältnis 63:88) bzw. Verfolgen der zuletzt gefundenen
 //   Karten → Kanten verfeinern → perspektivisch begradigen → pHash/dHash von Karte + Artwork-Fenster → Hamming-Suche
-//   (ganzer Index) → Pflicht-Farbabgleich (dominante Kartenfarbe Kamera ↔ Katalogbild, Farb-Referenz im IndexedDB-Cache):
-//   falsche Grundfarbe → Kandidat sofort verworfen, nächstbester Kandidat rückt nach → Übereinstimmung + Abstand
+//   (ganzer Index) → Übereinstimmung + Abstand (Farbe nur als winziger Tie-Breaker, max. +3 %, nie als Ausschluss –
+//   warmes Zimmerlicht/Sleeves verfälschen Kamerafarben zu stark)
 //   → Sammlernummer im Nummern-Fenster (ROI) gegenlesen, wenn der Streifen groß genug ist.
 // Multi-Card-Fix: NEUE Karten im Bild werden IMMER zuerst ausgewertet (vor den schon verfolgten), verfolgte Karten reihum –
 // so kann eine schon erkannte Karte, die im Bild liegen bleibt, nie das Zeitbudget für Karte #2, #3, #4 … verbrauchen.
@@ -33,10 +33,10 @@ const PROFILE = {
 /** Schlüssel-Präfix der Mehrfach-Fingerabdrücke im IndexedDB-Store „layout“ (Farb-Layout + HSV-Matrix + Kantengradient + Farbsignatur) */
 const FP_PREFIX = "v3:";
 const FP_LEN = LAYOUT_LEN + ART_LEN + PAL_LEN;
-/** So lange wartet ein Kandidat höchstens auf seine Farb-Referenz – danach gilt der strengere Rückfall ohne Farbe */
+/** Nach so langer Ladezeit gilt eine Farb-Referenz als „nicht ladbar“ (rein informativ, kein Warten auf Treffer) */
 const REF_WAIT_MS = 2500;
-/** Bis zu so viele verschiedene Motive werden der Reihe nach geprüft, wenn der Farbabgleich den besten verwirft */
-const COLOR_RERANK = 3;
+/** Farbe ist nur noch ein winziger Tie-Breaker: höchstens +3 % Bonus, nie Abzug, nie Ausschluss */
+const COLOR_TIE = 0.03;
 const unpackFp = (u) => ({ layout: u.subarray(0, LAYOUT_LEN), art: u.subarray(LAYOUT_LEN, LAYOUT_LEN + ART_LEN), pal: u.subarray(LAYOUT_LEN + ART_LEN) });
 /**
  * Multi-Crop (Stapel / Einzelkarte): je Bild drei überlappende, mittige Ausschnitte im Kartenformat (88 %, 72 %, 55 % der
@@ -197,9 +197,8 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
    * Eine Kandidaten-Lage auswerten:
    *   begradigen → Folien-Reflexe (Luminanz > 238, kaum Sättigung) maskieren & herausrechnen → Helligkeit/Kontrast normalisieren
    *   → 64-Bit pHash + 64-Bit dHash des inneren Artworks (+ Karten-pHash) per XOR-Popcount gegen den KOMPLETTEN Katalog
-   *   → PFLICHT-FARBABGLEICH: dominante Kartenfarbe / HSV-Farbverteilung (Artwork + Rahmen) gegen das Katalogbild des
-   *     Kandidaten. Falsche Grundfarbe → Kandidat sofort verworfen, das nächstbeste Motiv rückt nach (bis COLOR_RERANK).
-   *     Fehlt die Farb-Referenz noch, wird sie geladen und der Kandidat wartet (colorPending) – kein Treffer ohne Farbprüfung.
+   *   → Farbe (HSV-Verteilung Kamera ↔ Katalogbild) nur als Tie-Breaker: bis +3 % Bonus, nie Abzug, nie Ausschluss,
+   *     kein Warten auf die Farb-Referenz.
    *   → Übereinstimmung (inkl. Farb-Übereinstimmung) + Abstand zum zweitbesten Motiv (Schwelle: Stapel-Gate, siehe quickOk).
    */
   function evaluate(rgba, w, h, quad, idx, rows, withNumber) {
@@ -215,34 +214,26 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
     const pal = paletteVector(card);
     let layoutProbe = null, artProbe = null;
     const groupKeys = (d) => { const seen = new Set(); return d.group.map((i) => idx.keys[i]).filter((k) => (seen.has(k) ? false : seen.add(k))); };
-    // Kandidaten der Reihe nach: verwirft der Farbabgleich das beste Motiv, rückt das nächste nach
-    let d = null, keys = null, rs = null, cc = null, rejected = 0, rejectedKey = "";
-    for (let t = 0; t < COLOR_RERANK && matches.length; t++) {
-      d = decide(matches, idx.words, meta, null);
-      keys = groupKeys(d);
-      rs = refState(keys);
-      cc = rs?.ref ? paletteCheck(pal, rs.ref.pal) : null;
-      if (!cc?.reject) break;
-      rejected++; rejectedKey ||= keys[0];
-      const drop = new Set(d.group);
-      matches = matches.filter((m) => !drop.has(m.i));
-      if (!matches.length) { d = null; break; }
-    }
+    // Kein Farb-Ausschluss mehr: warmes Zimmerlicht und glänzende Sleeves verfälschen die Kamerafarben zu stark.
+    // Der beste Bild-Fingerabdruck entscheidet; die Farbe ist höchstens ein winziger Tie-Breaker (COLOR_TIE, max. +3 %).
+    const d = decide(matches, idx.words, meta, null);
     if (!d) return null;
+    const keys = groupKeys(d);
+    const rs = refState(keys);
+    const cc = rs?.ref ? paletteCheck(pal, rs.ref.pal) : null;
     const lead = idx.keys[d.best];
     const ref = rs?.ref || null;
     const hs = hashSimilarity(d.score);
     if (ref) { layoutProbe = layoutFromRgba(rgba, w, h, quad); artProbe = artVector(card, norm); }
     const ls = ref ? layoutSimilarity(layoutProbe, ref.layout) : null;
     const as = ref ? artSimilarity(artProbe, ref.art) : null;
-    // Übereinstimmung inkl. Farbe: Zusatz-Vektoren heben eine sichere Karte an; eine schwache Farb-Übereinstimmung zieht ab
-    let match = Math.max(hs, fuseMatch(d.score, { layout: ls, hsv: as?.hsv, edge: as?.edge, color: cc?.sim }));
-    if (cc && cc.sim < 0.55) match -= (0.55 - cc.sim) * 0.5;
-    match = Math.max(0, match);
-    const colorPending = rs === "pending";
-    // Farb-Referenzen der aussichtsreichen Kandidaten sofort nachladen (Pflicht für die Freigabe)
+    // Zusatz-Vektoren (Layout/Artwork) heben eine sichere Karte nur an – sie ziehen nie ab
+    let match = Math.max(hs, fuseMatch(d.score, { layout: ls, hsv: as?.hsv, edge: as?.edge }));
+    // Farb-Tie-Breaker: gut passende Farbe gibt bis zu +3 %, schlecht passende Farbe zieht NIE ab und verwirft nie
+    if (cc && Number.isFinite(cc.sim)) match += Math.max(0, Math.min(COLOR_TIE, (cc.sim - 0.6) * 0.15));
+    match = Math.max(0, Math.min(1, match));
+    // Referenzen der aussichtsreichen Kandidaten im Hintergrund nachladen (nur für den Tie-Breaker, kein Warten)
     if (!ref && hs > 0.5) askLayouts([lead, ...keys.slice(1, 2), ...matches.slice(1, 3).map((m) => idx.keys[m.i])]);
-    else if (cc?.reject === false && hs > 0.5) askLayouts(matches.slice(1, 3).map((m) => idx.keys[m.i]));
     // Nummern-ROI nur für aussichtsreiche Kandidaten (spart Zeit bei klaren Nicht-Treffern)
     let numOk = null;
     if (withNumber && match >= SWEEP.MIN_MATCH - 0.06) { try { numOk = verifyNumber(rgba, w, h, quad, idx, d.best); } catch { numOk = null; } }
@@ -251,8 +242,8 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
       quad, keys, lead, match: r3(match), hash: r3(hs),
       layout: ls === null ? null : r3(ls), hsv: as ? r3(as.hsv) : null, edge: as ? r3(as.edge) : null,
       // Farbabgleich: Übereinstimmung 0…1, "none" = keine Referenz ladbar (strengerer Rückfall), verworfene Motive
-      color: cc ? r3(cc.sim) : colorPending ? null : "none", hueDist: cc?.hueDist ?? null, colorPending, colorRejected: rejected,
-      ...(cc?.reject ? { colorReject: true } : {}), ...(rejectedKey ? { rejectedKey } : {}),
+      // Farbe nur noch informativ (Tie-Breaker): nie colorReject / colorPending
+      color: cc ? r3(cc.sim) : null, hueDist: cc?.hueDist ?? null,
       sharp: cardSharpness(norm),
       score: d.score, margin: d.margin, glare: glare > GLARE_HIGH, glareRatio: r3(glare), numOk,
       label: labelOf(keys[0]) || "",
@@ -359,10 +350,8 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
           let best = null, bestQuad = s.quad;
           for (const q of [q1, q0]) {
             const r = evaluate(reg.rgba, reg.w, reg.h, q, idx, rows, false);
-            // Farblich verworfene Kandidaten verlieren immer gegen eine farblich passende Lage
-            const rank = (x) => (x.colorReject ? x.match - 1 : x.match);
-            if (r && (!best || rank(r) > rank(best))) { best = r; bestQuad = q.map(reg.unmap); }
-            if (best && !best.colorReject && best.match >= SWEEP.MIN_MATCH) break;
+            if (r && (!best || r.match > best.match)) { best = r; bestQuad = q.map(reg.unmap); }
+            if (best && best.match >= SWEEP.MIN_MATCH) break;
           }
           if (best) {
             glareSum += best.glareRatio || 0; glareN++;
@@ -440,7 +429,7 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
         if (dets.length >= pr.minEval && performance.now() - t0 > pr.budgetMs) break;
         const r = evaluate(rgba, w, h, c.quad.map(([x, y]) => [x * k, y * k]), idx, rows, false);
         evaluated.add(c);
-        if (r) { dets.push({ ...r, small: c.quad }); if (!r.colorReject) best = Math.max(best, r.match); }
+        if (r) { dets.push({ ...r, small: c.quad }); best = Math.max(best, r.match); }
       }
       // 2) Multi-Crop – auch wenn eine Kontur gefunden wurde (sie kann ein Teil der Hülle/des Tischs sein)
       let cropBest = null;
@@ -450,8 +439,8 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
         const det = detectCard(small, cr.box, grad);
         for (const q of det.found ? [det.corners, cr.quad] : [cr.quad]) {
           const r = evaluate(rgba, w, h, q.map(([x, y]) => [x * k, y * k]), idx, rows, false);
-          if (r && !r.colorReject && (!cropBest || r.match > cropBest.match)) cropBest = { ...r, small: q, crop: true };
-          if (r && !r.colorReject) best = Math.max(best, r.match);
+          if (r && (!cropBest || r.match > cropBest.match)) cropBest = { ...r, small: q, crop: true };
+          if (r) best = Math.max(best, r.match);
           if (cropBest && cropBest.match >= SWEEP.MIN_MATCH) break;
           if (performance.now() - t0 > pr.budgetMs) break;
         }
@@ -471,11 +460,11 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
       dets.push({ ...c.track.last, quad: q, small: c.quad, carried: true });
     }
     // Verfolgung nur für sichere Kanten (keine reinen Ausschnitte)
-    st.tracks = dets.filter((d) => !d.crop).map((d) => ({ quad: d.small, at: d.carried ? d.at || now : now, last: d.match >= SWEEP.TRACK_MATCH && !d.colorReject && !d.colorPending ? { ...d, small: undefined, carried: undefined, at: now } : null }))
+    st.tracks = dets.filter((d) => !d.crop).map((d) => ({ quad: d.small, at: d.carried ? d.at || now : now, last: d.match >= SWEEP.TRACK_MATCH ? { ...d, small: undefined, carried: undefined, at: now } : null }))
       .concat(cands.filter((c) => !dets.some((d) => d.small === c.quad)).map((c) => ({ quad: c.quad, at: now, last: null })))
       .slice(0, pr.maxRects);
     dets.sort((a, b) => b.match - a.match);
-    const found = cands.length > 0 || dets.some((d) => d.match >= SWEEP.TRACK_MATCH && !d.colorReject);
+    const found = cands.length > 0 || dets.some((d) => d.match >= SWEEP.TRACK_MATCH);
     return {
       type: "sweep-result", seq: msg.seq, w, h, ms: Math.round((performance.now() - t0) * 10) / 10, msDetect: Math.round((tDetect - t0) * 10) / 10,
       motion: Math.round(motion * 1000) / 1000, center: Math.round(mo.center * 1000) / 1000, changed: Math.round(mo.changed * 1000) / 1000,
