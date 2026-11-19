@@ -55,7 +55,7 @@ function segmentHtml(id, items, active) {
 
 const SEGMENTS = {
   market: [["swipe", "💚 PokeSwipe-Radar", "PS.marketTab('swipe')"], ["trade", "🔄 Tauschen", "PS.marketTab('trade')"], ["all", "🃏 Alle Karten & Suche", "PS.marketTab('all')"], ["sell", "🏷️ Inserieren", "PS.marketTab('sell')"], ["mine", "📦 Käufe & Verkäufe", "PS.marketTab('mine')"]],
-  collection: [["binder", "📒 Set-Album", "PS.collectionTab('binder')"], ["wishlist", "⭐ Wunschliste", "PS.collectionTab('wishlist')"], ["radar", "📡 Preis-Radar", "PS.collectionTab('radar')"]],
+  collection: [["binder", "📒 Set-Album", "PS.collectionTab('binder')"], ["gaps", "🎯 Lücken-Radar", "PS.collectionTab('gaps')"], ["wishlist", "⭐ Wunschliste", "PS.collectionTab('wishlist')"], ["radar", "📡 Preis-Radar", "PS.collectionTab('radar')"]],
   community: [["chat", "💬 Live-Chat", "PS.communityTab('chat')"], ["wall", "📌 Schwarzes Brett", "PS.communityTab('wall')"]],
 };
 
@@ -66,7 +66,7 @@ function activeSegment(tab) {
   if (tab === "swipe") return "swipe";
   if (tab === "map") { const m = marketMode(); return m === "mine" || m === "sell" || m === "trade" ? m : "all"; }
   if (tab === "flip") return "radar";
-  if (tab === "portfolio") return lsGet("ps_sub_portfolio") === "wishlist" ? "wishlist" : "binder";
+  if (tab === "portfolio") { const sub = lsGet("ps_sub_portfolio"); return sub === "wishlist" ? "wishlist" : sub === "gaps" ? "gaps" : "binder"; }
   if (tab === "community") return communityPanel();
   return "";
 }
@@ -248,11 +248,11 @@ function tradeStripHtml() {
   </div>`;
 }
 
-/** Unterreiter im Album: Set-Album | Wunschliste | Preis-Radar */
+/** Unterreiter im Album: Set-Album | 🎯 Lücken-Radar | Wunschliste | Preis-Radar */
 function collectionTab(key) {
   if (key === "radar") { window.switchTab?.("flip"); renderSegments(); return; }
   if ($("view-portfolio")?.classList.contains("hidden")) window.switchTab?.("portfolio");
-  window.PS?.showSub?.("portfolio", key === "wishlist" ? "wishlist" : "overview", { silent: true });
+  window.PS?.showSub?.("portfolio", key === "wishlist" ? "wishlist" : key === "gaps" ? "gaps" : "overview", { silent: true });
   renderSegments();
 }
 

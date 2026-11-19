@@ -5,7 +5,10 @@
 //  • layoutFromRgba   – räumlicher Farb-/Layout-Vektor (4 × 6 Zellen, weißabgleich-normiert) einer entzerrten Karte
 //  • matchPercent     – Übereinstimmung 0…1 aus Bild-Fingerabdruck (pHash/dHash) und Farb-Layout
 //  • topMatchesIn     – Hamming-Suche im ganzen Index oder nur in den Zeilen eines Sets („Set-Lock“), mit Früh-Abbruch
-//  • createSweepGate  – 2-Frame-Konsens, 2,5-s-Sperre je Karte, Bewegungs-Reset
+//  • createSweepGate  – Frame-Konsens, 2,5-s-Duplikat-Schutz nur für DIESELBE Karte (ID + Position), 0 ms für jede neue Karte,
+//                       strikter Binder-/Tisch-Sweep (≥ 99 % Konfidenz, Nummern-Verifikation), Bewegungs-Reset
+//  • confidencePercent – kalibrierte Konfidenz 0…100 % aus Übereinstimmung, Abstand zum nächsten Motiv und Nummern-ROI
+//  • Preisschild-/Zähler-Helfer – Etikett-Texte, Tages-Scan-Zähler, Gesamtwert der Karten im Bild
 //  • Session-Helfer   – Scan-Liste mit Anzahl, Variante, Rückgängig, Gesamtwert, Doppelte
 import { popcount32, WORDS, GLARE_MASK_MAX, maskBits, homography, project } from "../../server/scan-logic.ts";
 
@@ -25,8 +28,23 @@ export const SWEEP = {
   /** Zeitfenster zwischen den beiden Bildern (langsame Geräte: bis 2,2 Bildzeiten, höchstens CONSENSUS_MAX_MS) */
   CONSENSUS_MS: 150,
   CONSENSUS_MAX_MS: 400,
-  /** Gerade gescannte Karte bleibt so lange gesperrt (verlängert sich, solange sie ruhig im Bild bleibt) */
+  /**
+   * Duplikat-Schutz NUR für dieselbe Karte (gleiche ID + ähnliche Position): 2,5 s, verlängert sich, solange sie ruhig
+   * im Bild liegt. Jede andere Karte wird ohne Wartezeit erkannt (NEW_CARD_MS = 0).
+   */
   COOLDOWN_MS: 2500,
+  NEW_CARD_MS: 0,
+  /** Sweep-Modus: dieselbe Karte an einer deutlich anderen Stelle (Mittelpunkt-Abstand, relativ) = zweites Exemplar */
+  SAME_POS: 0.28,
+  /** Binder- & Tisch-Sweep (mehrere Karten gleichzeitig): strikte Schwellen – nur 99–100 % Konfidenz zählt */
+  STRICT_CONF: 99,
+  STRICT_MATCH: 0.93,
+  STRICT_MARGIN: 10,
+  STRICT_FRAMES: 3,
+  /** Höchstens so viele Karten gleichzeitig im Bild verfolgen (Ordnerseite = 9) */
+  MAX_CARDS: 9,
+  /** Preisschild: ab diesem Cardmarket-Preis gilt eine Karte als „Hit“ */
+  HIT_EUR: 10,
   /** Deutliche Bildveränderung zwischen zwei Bildern (mittlere Helligkeitsdifferenz der Miniatur, 0…1) */
   MOTION_RESET: 0.16,
   /** So viele Bilder ohne Karte → Karte gilt als weggezogen, Sperre aufgehoben */
@@ -296,22 +314,63 @@ export function orderByLang(keys, lang = "de") {
 }
 
 // ---------------------------------------------------------------------------
+// Konfidenz (kalibriert, 0…100 %)
+// ---------------------------------------------------------------------------
+/**
+ * Kalibrierte Konfidenz einer Erkennung:
+ *   • Basis = Übereinstimmung (Bild-Fingerabdruck + Farb-Layout) in Prozent
+ *   • klarer Abstand zum nächsten anderen Motiv (margin ≥ STRICT_MARGIN) bei ≥ STRICT_MATCH → mindestens 99 %
+ *   • Sammlernummer im Nummern-Fenster (ROI) gelesen und passend (numOk = true) → 100 %; gelesen und falsch → höchstens 60 %
+ *   • zu geringer Abstand (margin < MARGIN_MIN) → höchstens 85 %
+ */
+export function confidencePercent(d) {
+  const match = Number(d?.match) || 0, margin = Number.isFinite(d?.margin) ? d.margin : 99;
+  let pct = Math.round(match * 100);
+  if (match >= SWEEP.STRICT_MATCH && margin >= SWEEP.STRICT_MARGIN) pct = Math.max(pct, 99);
+  if (match >= 0.97 && margin >= SWEEP.STRICT_MARGIN) pct = 100;
+  if (d?.numOk === true) pct = match >= SWEEP.MIN_MATCH ? 100 : Math.max(pct, 99);
+  if (d?.numOk === false) pct = Math.min(pct, 60);
+  if (margin < SWEEP.MARGIN_MIN) pct = Math.min(pct, 85);
+  return Math.max(0, Math.min(100, pct));
+}
+
+/** Strikte Prüfung für den Binder- & Tisch-Sweep: 99–100 % Konfidenz, keine widersprüchliche Nummer. */
+export const strictOk = (d) => confidencePercent(d) >= SWEEP.STRICT_CONF && d?.numOk !== false;
+
+/** Mittelpunkt eines Vierecks ([[x,y] × 4], relativ 0…1 oder Pixel) – null ohne Viereck. */
+export function quadCenter(quad) {
+  if (!Array.isArray(quad) || quad.length < 3) return null;
+  let x = 0, y = 0, n = 0;
+  for (const p of quad) { if (Array.isArray(p) && p.length >= 2) { x += Number(p[0]) || 0; y += Number(p[1]) || 0; n++; } }
+  return n ? [x / n, y / n] : null;
+}
+
+// ---------------------------------------------------------------------------
 // Frame-Konsens & Doppel-Scan-Schutz
 // ---------------------------------------------------------------------------
 const overlap = (a, b) => a.some((k) => b.includes(k));
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 /**
  * Entscheidet je Live-Bild, ob eine erkannte Karte als Scan zählt.
- * push({ dets: [{ keys, match }], found, motion }, now, avgFrameMs) → { hits: [keys[]], locked: [keys[]] }
- *  • Treffer erst, wenn ZWEI aufeinanderfolgende Bilder (innerhalb CONSENSUS_MS) dieselbe Karte mit ≥ MIN_MATCH zeigen
- *  • gerade gescannte Karte ist COOLDOWN_MS gesperrt; die Sperre verlängert sich, solange die Karte ruhig im Bild liegt
+ * push({ dets: [{ keys, match, margin?, numOk?, quad?, carried? }], found, motion }, now, avgFrameMs) → { hits: [keys[]], locked: [keys[]], view: dets[] }
+ *  • Treffer, wenn CONSENSUS_FRAMES aufeinanderfolgende Bilder (je innerhalb windowMs) dieselbe Karte mit ≥ MIN_MATCH zeigen
+ *    (Binder- & Tisch-Sweep: STRICT_FRAMES Bilder mit ≥ 99 % Konfidenz, strictOk)
+ *  • Duplikat-Schutz NUR für dieselbe Karte: COOLDOWN_MS (verlängert sich, solange sie ruhig im Bild liegt). Im Sweep-Modus
+ *    zählt dieselbe Karte an deutlich anderer Position (≥ SAME_POS) als zweites Exemplar.
+ *  • Jede ANDERE Karte wird sofort (NEW_CARD_MS = 0) gezählt – es gibt keine globale Wartezeit nach einem Treffer.
  *  • deutliche Bildveränderung (motion ≥ MOTION_RESET) oder GONE_RESET_FRAMES Bilder ohne Karte → alle Sperren weg
+ *  • carried = vom Worker nur weitergetragene Erkennung (nicht neu ausgewertet) → hält Sperre/Etikett, zählt nicht für den Konsens
  */
 export function createSweepGate(opts = {}) {
-  const cfg = { ...SWEEP, ...opts };
-  let prev = []; // qualifizierte Karten des vorigen Bildes: [{ keys, at }]
-  let locks = []; // [{ keys, until }]
+  let cfg = { mode: "turbo", ...SWEEP, ...opts };
+  let prev = []; // qualifizierte Karten der letzten Bilder: [{ keys, at, n, center }]
+  let locks = []; // [{ keys, center, until }]
   let gone = 0;
+  let lastHitAt = 0;
+  const strict = () => cfg.mode === "sweep";
+  const samePlace = (a, b) => !strict() || !a || !b || dist(a, b) < cfg.SAME_POS;
+  const qualifies = (d) => Array.isArray(d.keys) && d.keys.length && Number(d.match) >= (strict() ? cfg.STRICT_MATCH : cfg.MIN_MATCH) && (!strict() || strictOk(d));
   return {
     push(frame, now = Date.now(), avgFrameMs = 0) {
       const dets = Array.isArray(frame?.dets) ? frame.dets : [];
@@ -320,31 +379,110 @@ export function createSweepGate(opts = {}) {
       if ((Number.isFinite(motion) && motion >= cfg.MOTION_RESET && motion < 1) || gone >= cfg.GONE_RESET_FRAMES) locks = [];
       locks = locks.filter((l) => l.until > now);
       const windowMs = Math.max(cfg.CONSENSUS_MS, Math.min(cfg.CONSENSUS_MAX_MS, 2.2 * (Number(avgFrameMs) || 0)));
-      const qual = dets.filter((d) => Array.isArray(d.keys) && d.keys.length && Number(d.match) >= cfg.MIN_MATCH);
-      const hits = [], locked = [];
+      const need = strict() ? cfg.STRICT_FRAMES : cfg.CONSENSUS_FRAMES;
+      const qual = dets.filter(qualifies);
+      const hits = [], locked = [], next = [];
       const still = !(Number.isFinite(motion) && motion >= cfg.MOTION_RESET * 0.5 && motion < 1);
       for (const d of qual) {
-        const lock = locks.find((l) => overlap(l.keys, d.keys));
+        const c = quadCenter(d.quad);
+        const lock = locks.find((l) => overlap(l.keys, d.keys) && samePlace(l.center, c));
         if (lock) {
-          // Karte liegt (ruhig) weiter im Bild → Sperre verlängern
+          // Dieselbe Karte liegt (ruhig) weiter im Bild → Duplikat-Schutz verlängern
           if (still) lock.until = now + cfg.COOLDOWN_MS;
+          if (c) lock.center = c;
           locked.push(d.keys);
           continue;
         }
-        const agree = prev.some((p) => overlap(p.keys, d.keys) && now - p.at <= windowMs);
-        if (!agree) continue;
-        hits.push(d.keys);
-        locks.push({ keys: [...d.keys], until: now + cfg.COOLDOWN_MS });
+        if (d.carried) continue;
+        // Eine neue Karte wartet nie auf einen vorigen Treffer (NEW_CARD_MS = 0) – nur der eigene Konsens zählt
+        if (cfg.NEW_CARD_MS > 0 && now - lastHitAt < cfg.NEW_CARD_MS) continue;
+        const p = prev.find((x) => overlap(x.keys, d.keys) && now - x.at <= windowMs && samePlace(x.center, c));
+        const n = p ? p.n + 1 : 1;
+        if (n >= need) {
+          hits.push(d.keys);
+          lastHitAt = now;
+          locks.push({ keys: [...d.keys], center: c, until: now + cfg.COOLDOWN_MS });
+        } else next.push({ keys: d.keys, at: now, n, center: c });
       }
-      // Nur Karten, die nicht gerade ausgelöst haben, zählen als „vorheriges Bild“ für den nächsten Konsens
-      prev = qual.filter((d) => !hits.includes(d.keys)).map((d) => ({ keys: d.keys, at: now }));
-      return { hits, locked };
+      prev = next;
+      return { hits, locked, view: qual };
     },
     /** Sperre aufheben (z. B. nach „Rückgängig“: dieselbe Karte darf sofort neu erkannt werden) */
     unlock(keys) { locks = keys ? locks.filter((l) => !overlap(l.keys, keys)) : []; },
-    reset() { prev = []; locks = []; gone = 0; },
+    reset() { prev = []; locks = []; gone = 0; lastHitAt = 0; },
+    /** „turbo“ (Einzelkarten, 2-Frame-Konsens) oder „sweep“ (mehrere Karten, strikt) */
+    setMode(mode) { cfg = { ...cfg, mode: mode === "sweep" ? "sweep" : "turbo" }; prev = []; },
+    get mode() { return cfg.mode; },
     get locks() { return locks.map((l) => ({ ...l })); },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Preisschild-Etikett, Tages-Zähler, Gesamtwert im Bild
+// ---------------------------------------------------------------------------
+const euroFmt = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
+export const euro = (n) => euroFmt.format(Number(n) || 0);
+
+/** Set-Kürzel + Sammlernummer fürs Etikett („DRI 045/182“, Rückfall: Set-ID aus dem Schlüssel). */
+export function tagCode(info, key = "") {
+  const code = String(info?.setCode || "").trim() || setIdOfKey(key).toUpperCase();
+  let num = String(info?.number || "").trim();
+  const m = /^(\d+)\s*\/\s*(\d+)$/.exec(num);
+  if (m) num = `${m[1].padStart(Math.max(3, m[2].length), "0")}/${m[2].padStart(3, "0")}`;
+  return [code, num].filter(Boolean).join(" ");
+}
+
+/**
+ * Status-Zeilen des Live-Preisschilds.
+ *  status: „✅ Im Binder gespeichert“ (sonst „📒 Speichere …“ / „📒 Im Binder“ bei bereits vorhandener Karte ohne Speichern)
+ *  flag:   „🔥 Hit > 10 €“ (ab HIT_EUR) · „⚡ Fehlt dir noch!“ (Lücke im Binder geschlossen) · „×2“ (Doppelte)
+ */
+export function tagLines({ price = 0, filed = false, saving = false, ownedBefore = false, qty = 1, hitEur = SWEEP.HIT_EUR } = {}) {
+  const status = filed ? "✅ Im Binder gespeichert" : saving ? "📒 Speichere im Binder …" : "📒 In der Scan-Liste";
+  const p = Number(price) || 0;
+  const flag = p >= hitEur ? `🔥 Hit > ${hitEur} €` : !ownedBefore && qty <= 1 ? "⚡ Fehlt dir noch!" : qty > 1 ? `×${qty} · Doppelte` : "";
+  return { status, flag, hot: p >= hitEur };
+}
+
+/** Tages-Schlüssel (lokale Zeit) „2026-11-19“. */
+export function dayKey(now = Date.now()) {
+  const d = new Date(now);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Tages-Scan-Zähler fortschreiben (neuer Tag → startet bei 0). prev: { day, count, value } | null */
+export function bumpDaily(prev, { count = 1, value = 0 } = {}, now = Date.now()) {
+  const day = dayKey(now);
+  const base = prev && prev.day === day ? prev : { day, count: 0, value: 0 };
+  return { day, count: Math.max(0, (Number(base.count) || 0) + count), value: Math.round(((Number(base.value) || 0) + (Number(value) || 0)) * 100) / 100 };
+}
+
+/** „Heute gescannt: 24 Karten · Gesamtwert: 87,40 €“ */
+export function dailyLabel(d, now = Date.now()) {
+  const cur = d && d.day === dayKey(now) ? d : { count: 0, value: 0 };
+  const n = Number(cur.count) || 0;
+  return `Heute gescannt: ${n.toLocaleString("de-DE")} ${n === 1 ? "Karte" : "Karten"} · Gesamtwert: ${euro(cur.value)}`;
+}
+
+/**
+ * Gesamtwert aller gerade im Bild erkannten Karten (Sweep-Modus): je Erkennung ≥ minMatch einmal, Preis über priceOf(key).
+ * Liefert { count, value, priced }.
+ */
+export function viewTotal(dets, priceOf, minMatch = SWEEP.MIN_MATCH) {
+  const seen = new Set();
+  let count = 0, value = 0, priced = 0;
+  for (const d of Array.isArray(dets) ? dets : []) {
+    if (!Array.isArray(d.keys) || !d.keys.length || Number(d.match) < minMatch) continue;
+    const c = quadCenter(d.quad);
+    const id = `${d.keys[0]}@${c ? `${Math.round(c[0] * 4)},${Math.round(c[1] * 4)}` : count}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    count++;
+    const p = Number(priceOf(d.keys[0])) || 0;
+    if (p > 0) { value += p; priced++; }
+  }
+  return { count, value: Math.round(value * 100) / 100, priced };
 }
 
 // ---------------------------------------------------------------------------

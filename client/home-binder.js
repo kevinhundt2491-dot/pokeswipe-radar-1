@@ -3,7 +3,7 @@
 //   • neue Besucher ohne Karten sehen ein Beispiel-Set (so sieht ein halb gefüllter Ordner aus, nichts wird gespeichert)
 //   • „📒 Kompletten Set-Binder öffnen“ springt in die große Binder-Ansicht (client/binder.js)
 import { $, esc, cdn, state, api, FALLBACK_IMG } from "./core.js";
-import { buildBinderCards, binderSummary, paginate, clampPage, swipeDirection, setIdOfCard, showcaseBinderFill, BINDER_PAGE_SIZE } from "../server/binder-logic.ts";
+import { buildBinderCards, binderSummary, paginate, clampPage, swipeDirection, setIdOfCard, showcaseBinderFill, BINDER_PAGE_SIZE, pocketLabel } from "../server/binder-logic.ts";
 import { homeFolders } from "./binder.js";
 
 /** Beispiel-Set für neue Besucher (Karmesin & Purpur 151). */
@@ -22,11 +22,13 @@ function guestOwned(setId) {
 }
 
 function slotHtml(c) {
-  const badge = !c.owned && c.market ? `<span class="ps-bslot-badge ps-bslot-market">${esc(c.market.label)}</span>` : "";
+  // Leere Tasche: Set-Nummer eingeprägt + Marktplatz-Preisschild-Etikett (🛒 Ab … / ⚡ Deal … / 🔔 Radar aktiv) – keine grauen Platzhalter, kein Lücken-Text
+  const tag = pocketLabel(c);
+  const label = tag ? `<span class="ps-pocket-tag ps-pocket-tag-${tag.kind}">${esc(tag.text)}</span>` : "";
   return `<button type="button" class="ps-bslot ${c.owned ? "owned" : c.market ? "missing market" : "missing"}" onclick="PS.homeBinderTap(${esc(JSON.stringify(c.cardId))})"
-      aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? " – im Binder" : " – fehlt"}`)}">
+      aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? " – im Binder" : ` – noch gesucht${tag ? `, ${tag.text}` : ""}`}`)}">
     <span class="ps-bslot-art"><img src="${esc(cdn(c.image || FALLBACK_IMG, 200))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" draggable="false" />
-      ${!c.owned ? `<span class="ps-bslot-missing" aria-hidden="true">fehlt</span>` : ""}${badge}</span>
+      ${!c.owned ? `<span class="ps-bslot-emboss" aria-hidden="true">${esc(c.number || c.localId)}</span>` : ""}${label}</span>
     <span class="ps-bslot-info"><span class="ps-bslot-num">${esc(c.number || c.localId)}</span><span class="ps-bslot-price">${esc(c.priceLabel)}</span></span>
   </button>`;
 }
@@ -55,8 +57,8 @@ function shellHtml() {
     </div>
     <div class="space-y-2 text-xs text-slate-300">
       <p>${hb.example
-        ? "So sieht dein digitaler Sammelordner aus: Jede gescannte Karte landet automatisch an ihrer exakten Position. Fehlende Karten bleiben grau – und leuchten grün, sobald jemand sie auf dem Marktplatz anbietet."
-        : `Deine Karten stecken an ihrer exakten Position im Ordner. ${sum.missing ? `<strong class="text-white">${Number(sum.missing)} fehlen noch</strong>${sum.onMarket ? ` – <strong class="text-emerald-300">${Number(sum.onMarket)} davon gibt es gerade auf dem Marktplatz</strong>` : ""}.` : "<strong class=\"text-emerald-300\">Set komplett! 🏆</strong>"}`}</p>
+        ? "So sieht dein digitaler Sammelordner aus: Jede gescannte Karte landet automatisch an ihrer exakten Position. Noch gesuchte Karten stecken als dunkle Folientaschen mit Preisschild im Ordner – es leuchtet grün, sobald jemand sie auf dem Marktplatz anbietet."
+        : `Deine Karten stecken an ihrer exakten Position im Ordner. ${sum.missing ? `<strong class="text-white">${Number(sum.missing)} noch gesucht</strong>${sum.onMarket ? ` – <strong class="text-emerald-300">${Number(sum.onMarket)} davon gibt es gerade auf dem Marktplatz</strong>` : ""}.` : "<strong class=\"text-emerald-300\">Set komplett! 🏆</strong>"}`}</p>
       <div class="flex flex-wrap gap-2">
         <button type="button" onclick="PS.homeBinderOpen()" class="ps-btn-primary">📒 Kompletten Set-Binder öffnen</button>
         ${hb.example ? `<button type="button" onclick="PS.openScanner()" class="ps-btn-ghost">📷 Erste Karte scannen</button>` : `<button type="button" onclick="PS.collectionTab('binder')" class="ps-btn-ghost">Alle Ordner ›</button>`}

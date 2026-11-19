@@ -2,13 +2,14 @@
 //   • Set-Ordner: Logo/Vorschaubild, Set-Name, Fortschrittsbalken („38 / 165 Karten“) und Gesamtwert der eigenen Karten
 //   • Binder-Ansicht: durchblätterbare Ordnerseiten im 3×3-Raster (Swipe-Geste auf dem Handy, Pfeile/Tastatur am Desktop)
 //   • jede Karte mit echtem Bild, Sammlernummer, Name und Cardmarket-Preis; eigene Karten vollfarbig (Zustand, „Im Verkauf“-Badge),
-//     fehlende Karten abgedunkelt – mit Live-Abgleich zum Marktplatz („Auf Marktplatz: 12,50 €“ / „Tausch möglich“)
-//   • fehlende Karte ohne Angebot → „Auf Wunschliste setzen / Preis-Radar aktivieren“
+//     noch gesuchte Karten als tiefdunkle Sammler-Folientaschen (Obsidian-Glas-Look, Set-Nummer eingeprägt, Blueprint-Vorschau)
+//     mit Marktplatz-Preisschild-Etikett („🛒 Ab 6,50 €“ / „⚡ Deal 5,50 €“ / „🔔 Radar aktiv“) – keine grauen Platzhalter, kein Lücken-Text
+//   • Lücke ohne Angebot → 1 Tipp: Schnellsuche / Preisalarm; alle Lücken eines Sets im eigenen Bereich „🎯 Lücken-Radar“ (client/gap-radar.js)
 // Reine Logik (Gruppierung, Seiten, Swipe, Badges) teilt sich der Browser mit dem Server: server/binder-logic.ts
 import { $, esc, eur, cdn, state, api, toast, handleError, requireLogin, modal, closeModalEl, FALLBACK_IMG } from "./core.js";
 import {
   groupBinderBySet, buildBinderCards, paginate, clampPage, swipeDirection, binderSummary, setIdOfCard, BINDER_PAGE_SIZE,
-  showcaseBinderFill, binderCardAt, SHOWCASE_GAPS, autobinderBinderFill, AUTOBINDER_DEMO,
+  showcaseBinderFill, binderCardAt, SHOWCASE_GAPS, autobinderBinderFill, AUTOBINDER_DEMO, pocketLabel,
 } from "../server/binder-logic.ts";
 import { folderValue, binderTotal, readCountDupes, quantityBadge, COUNT_DUPES_KEY } from "../server/duplicates-logic.ts";
 
@@ -162,7 +163,7 @@ export async function renderHomeFolders(force = false) {
         <span class="flex justify-between text-[10px] text-slate-300"><span>${esc(f.progressLabel)}</span><strong class="text-emerald-300">${Number(f.pct) || 0} %</strong></span>
       </button>`;
     }).join("")
-    : `<p class="text-[11px] text-slate-400 py-2">Scanne deine erste Karte – sie wird automatisch in den passenden Set-Ordner an ihre exakte Position einsortiert. Fehlende Karten siehst du grau.</p>
+    : `<p class="text-[11px] text-slate-400 py-2">Scanne deine erste Karte – sie wird automatisch in den passenden Set-Ordner an ihre exakte Position einsortiert. Noch gesuchte Karten erkennst du an den dunklen Folientaschen mit Preisschild.</p>
        <button type="button" onclick="PS.openScanner()" class="shrink-0 self-center bg-emerald-500 text-slate-950 font-black px-3 py-1.5 rounded-xl text-xs">📷 Scannen</button>`;
 }
 
@@ -213,16 +214,21 @@ function rebuild() {
 }
 
 function slotHtml(c, idx) {
-  const badge = c.owned
-    ? (c.myListing ? `<span class="ps-bslot-badge ps-bslot-sale" data-my-listing="${Number(c.myListing.id)}">${esc(c.myListing.label)}</span>` : "")
-    : c.market ? `<span class="ps-bslot-badge ps-bslot-market" data-market-listing="${Number(c.market.listingId)}">${esc(c.market.label)}</span>` : "";
+  const badge = c.owned && c.myListing ? `<span class="ps-bslot-badge ps-bslot-sale" data-my-listing="${Number(c.myListing.id)}">${esc(c.myListing.label)}</span>` : "";
+  // Leere Tasche: Marktplatz-Preisschild-Etikett – 1 Tipp öffnet direkt das Angebot bzw. Schnellsuche/Preisalarm
+  const tag = c.owned ? null : pocketLabel(c);
+  const id = esc(JSON.stringify(c.cardId));
+  const tagHtml = tag ? `<span role="button" tabindex="0" class="ps-pocket-tag ps-pocket-tag-${tag.kind}" data-pocket-tag="${tag.kind}"${tag.listingId ? ` data-market-listing="${Number(tag.listingId)}"` : ""}
+        onclick="event.stopPropagation(); PS.binderPocketTap(${id})" onkeydown="if(event.key==='Enter'){event.stopPropagation(); event.preventDefault(); PS.binderPocketTap(${id})}"
+        aria-label="${esc(`${c.name}: ${tag.text}`)}">${esc(tag.text)}</span>` : "";
   const state_ = c.owned ? "owned" : c.market ? "missing market" : "missing";
-  return `<button type="button" class="ps-bslot ${state_}" data-binder-card="${esc(c.cardId)}" data-idx="${idx}" onclick="PS.binderCardTap(${esc(JSON.stringify(c.cardId))})"
-      aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? " – in deiner Sammlung" : " – fehlt"}${c.market ? ` – ${c.market.label}` : ""}`)}">
+  return `<button type="button" class="ps-bslot ${state_}" data-binder-card="${esc(c.cardId)}" data-idx="${idx}" onclick="PS.binderCardTap(${id})"
+      aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? " – in deiner Sammlung" : " – noch gesucht"}${tag ? ` – ${tag.text}` : ""}`)}">
     <span class="ps-bslot-art">${imgTag(c.image, 260, `alt="" loading="lazy" draggable="false"`)}
       ${c.owned && c.condition ? `<span class="ps-badge ps-badge-cond ps-bslot-cond">${esc(c.condition)}</span>` : ""}
       ${c.owned && c.quantity > 1 ? `<span class="ps-bslot-qty" data-qty="${Number(c.quantity)}" aria-label="${Number(c.quantity)} Exemplare">${quantityBadge(c.quantity)}</span>` : ""}
-      ${!c.owned ? `<span class="ps-bslot-missing" aria-hidden="true">fehlt</span>` : ""}
+      ${!c.owned ? `<span class="ps-bslot-emboss" aria-hidden="true">${esc(c.number || c.localId)}</span>` : ""}
+      ${tagHtml}
       ${badge}
       ${c.owned && !c.myListing && c.portfolioItemId && state.user && !view.demo ? `<span role="button" tabindex="0" class="ps-bslot-sell" data-binder-sell="${Number(c.portfolioItemId)}" onclick="event.stopPropagation(); PS.binderSell(${Number(c.portfolioItemId)})" onkeydown="if(event.key==='Enter'){event.stopPropagation(); event.preventDefault(); PS.binderSell(${Number(c.portfolioItemId)})}" aria-label="${esc(`${c.name} inserieren`)}">🏷️ Inserieren</span>` : ""}</span>
     <span class="ps-bslot-info"><span class="ps-bslot-num">${esc(c.number || c.localId)}</span><span class="ps-bslot-price">${esc(c.priceLabel)}</span></span>
@@ -245,14 +251,15 @@ function headerHtml() {
       <div class="flex items-center gap-3 min-w-0">
         ${s.logo ? `<img src="${esc(cdn(s.logo, 200))}" alt="" class="h-9 max-w-[90px] object-contain shrink-0" onerror="this.remove()" />` : `<span class="text-2xl" aria-hidden="true">📒</span>`}
         <div class="min-w-0"><h2 id="ps-binder-title" class="text-sm sm:text-base font-black text-white truncate">${esc(s.name || view.setId)}</h2>
-          <p class="text-[11px] text-slate-300"><span data-binder-progress>${esc(sum.progressLabel)}</span> · Wert <strong class="text-emerald-300" data-binder-value>${eur(sum.value)}</strong>${sum.onMarket ? ` · <span class="text-amber-300" data-binder-onmarket>${sum.onMarket} fehlende auf dem Marktplatz</span>` : ""}</p></div>
+          <p class="text-[11px] text-slate-300"><span data-binder-progress>${esc(sum.progressLabel)}</span> · Wert <strong class="text-emerald-300" data-binder-value>${eur(sum.value)}</strong>${sum.onMarket ? ` · <span class="text-amber-300" data-binder-onmarket>${sum.onMarket} gesuchte auf dem Marktplatz</span>` : ""}</p></div>
       </div>
       <button type="button" onclick="PS.closeSetBinder()" class="ps-binder-close" aria-label="Binder schließen">✕</button>
     </div>
     <div class="flex items-center gap-2 mx-1"><div class="ps-folder-bar flex-1" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Number(sum.pct) || 0}" aria-label="Set-Fortschritt"><span style="width:${sum.pct}%"></span></div>
       <strong class="text-[11px] font-black text-emerald-300 shrink-0" data-binder-pct>${Number(sum.pct) || 0} %</strong></div>
     <div class="flex gap-1.5 overflow-x-auto no-scrollbar py-1" role="group" aria-label="Karten filtern">
-      ${chip("all", "Alle")}${chip("missing", `Fehlend (${sum.missing})`)}${chip("market", `🛒 Auf Marktplatz (${sum.onMarket})`)}${chip("owned", `Meine (${sum.owned})`)}
+      ${chip("all", "Alle")}${chip("market", `🛒 Auf Marktplatz (${sum.onMarket})`)}${chip("owned", `Meine (${sum.owned})`)}
+      <button type="button" class="ps-chip" data-binder-gaps onclick="PS.openGapRadar(${esc(JSON.stringify(view.setId))})" title="Alle noch gesuchten Karten dieses Sets im eigenen Bereich">🎯 Lücken-Radar (${sum.missing})</button>
     </div>
     ${sum.duplicates ? `<div class="flex items-center justify-between gap-2 px-1">${dupesToggleHtml()}
       ${state.user ? `<button type="button" onclick="PS.listAllDupes()" data-binder-list-dupes class="text-[10px] font-black px-2.5 py-1 rounded-lg bg-slate-800 text-amber-200 shrink-0">🏷️ Alle Doppelten inserieren</button>` : ""}</div>` : ""}`;
@@ -266,7 +273,7 @@ function render() {
   const track = root.querySelector("[data-binder-track]");
   const noHits = pages.length === 1 && !pages[0].length;
   track.innerHTML = noHits
-    ? `<div class="ps-bpage ps-bpage-empty"><p class="text-xs text-slate-300 text-center col-span-3 self-center">${view.filter === "market" ? "Gerade bietet niemand eine deiner fehlenden Karten an – setze sie auf die Wunschliste, dann melden wir uns." : "Keine Karten in dieser Ansicht."}</p></div>`
+    ? `<div class="ps-bpage ps-bpage-empty"><p class="text-xs text-slate-300 text-center col-span-3 self-center">${view.filter === "market" ? "Gerade bietet niemand eine deiner gesuchten Karten an – setze sie auf die Wunschliste, dann melden wir uns." : "Keine Karten in dieser Ansicht."}</p></div>`
     : pages.map(pageHtml).join("");
   updatePage(false);
 }
@@ -422,7 +429,7 @@ function cardSheet(c, html) {
         <p class="text-[10px] font-black text-slate-400">${esc(view.data?.set?.name || "")} · Nr. ${esc(c.number || c.localId)}</p>
         <h3 class="text-base font-black text-white leading-tight">${esc(c.name)}</h3>
         <p>Cardmarket: <strong class="text-emerald-300">${esc(c.priceLabel)}</strong></p>
-        ${c.owned ? `<p class="text-slate-300">✅ In deinem Binder${c.quantity > 1 ? ` (×${Number(c.quantity)})` : ""}${c.condition ? ` · Zustand <b>${esc(c.condition)}</b>` : ""}</p>` : `<p class="text-slate-400">Fehlt noch in deinem Ordner.</p>`}
+        ${c.owned ? `<p class="text-slate-300">✅ In deinem Binder${c.quantity > 1 ? ` (×${Number(c.quantity)})` : ""}${c.condition ? ` · Zustand <b>${esc(c.condition)}</b>` : ""}</p>` : `<p class="text-cyan-200">🎯 Noch gesucht – diese Tasche ist in deinem Ordner noch leer.</p>`}
       </div>
     </div>${html}`);
 }
@@ -460,6 +467,22 @@ async function binderCardTap(cardId) {
     <button type="button" onclick="PS.binderWish(${esc(JSON.stringify(c.cardId))})" data-binder-wish class="w-full bg-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">🔔 Suchauftrag aktivieren (Wunschliste)</button>
     <button type="button" onclick="PS.binderMarketSearch(${esc(JSON.stringify(c.name))})" data-binder-market class="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs">🛒 Zum Marktplatz gehen</button>
   </div>`);
+}
+
+/** 1 Tipp auf das Marktplatz-Etikett einer leeren Tasche: Angebot direkt öffnen, sonst Schnellsuche / Preisalarm. */
+function binderPocketTap(cardId) {
+  const c = view.cards.find((x) => x.cardId === cardId);
+  if (!c || c.owned) return;
+  if (view.demo && c.market?.listingId === DEMO_LISTING_ID) { closeSetBinder(); window.PS?.marketTab?.("all"); return; }
+  if (c.market?.listingId) { window.PS?.openListing?.(c.market.listingId); return; }
+  binderCardTap(cardId);
+}
+
+/** Aus dem Ordner in den eigenen Bereich „🎯 Lücken-Radar“ (Album → Unterreiter) für dieses Set. */
+function openGapRadar(setId) {
+  const id = /^[\w.\-]{1,40}$/.test(String(setId || "")) ? String(setId) : view.setId;
+  closeSetBinder();
+  window.PS?.openGapRadar?.(id);
 }
 
 async function binderWish(cardId) {
@@ -633,6 +656,7 @@ export function initBinder() {
 export const binderApi = {
   ...(IS_STAGE ? { binderDemoPrepare, binderDemoOpen, binderDemoReveal, binderDemoSlot, binderDemoInventory } : {}),
   openSetBinder, closeSetBinder, binderCardTap, binderWish, binderSell, renderFolders, binderOpenOffer, binderMarketSearch, setBinderAlerts, renderHomeFolders,
+  binderPocketTap, binderGapRadar: openGapRadar,
   binderNext: () => go(1), binderPrev: () => go(-1),
   binderCountDupes: (on) => setCountDupes(typeof on === "boolean" ? on : !countDupes()),
   binderGoto: (i) => { view.page = clampPage(i, view.pages.length); updatePage(true); },

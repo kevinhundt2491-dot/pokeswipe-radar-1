@@ -1,16 +1,24 @@
-// PokeSwipe & Radar – Zero-Latency Sweep-Modus (Live-Scanner ohne Zielrahmen, ohne Wartezeit-Zähler, ohne Server-Wartezeit).
-// Handy locker über Kartenstapel oder Ordnerseite ziehen: Jede Karte, die irgendwo im Bild auftaucht, wird im Web Worker
-// gefunden, begradigt und per Bild-Fingerabdruck + Farb-Layout erkannt (2-Frame-Konsens, ≥ 86 %). Treffer → kurzer
-// Vibrations-Impuls + „Pling“ und ab in die Scan-Liste; die Kamera läuft ohne Unterbrechung weiter.
+// PokeSwipe & Radar – 100 % rahmenloser High-Speed-Scanner (Live-Scanner ohne jeden Zielrahmen, ohne Wartezeit-Zähler,
+// ohne Server-Wartezeit). Handy locker über Kartenstapel oder Ordnerseite ziehen: Jede Karte, die irgendwo im Bild
+// auftaucht, wird im Web Worker gefunden, begradigt und per Bild-Fingerabdruck + Farb-Layout (+ Nummern-ROI) erkannt.
+//
+//  • Stapel-Turbo (Einzelkarten): 2-Frame-Konsens ≥ 86 % – Karte #2, #3, #4 … werden ohne jede Wartezeit erkannt,
+//    nur DIESELBE Karte (ID + Position) hat einen 2,5-s-Duplikat-Schutz.
+//  • Binder- & Tisch-Sweep: alle sichtbaren Karten gleichzeitig (strikt: 99–100 % Konfidenz + Nummern-Verifikation),
+//    je Karte ihr eigenes Live-Preisschild, Gesamtwert aller Karten im Bild.
+//  • Treffer → Scanner-Ping + Vibration, Preisschild-Etikett direkt auf der Karte im Kamerabild, sofort im Set-Binder
+//    gespeichert (asynchron im Hintergrund – die Kamera-Schleife hält nie an), 2,5 s Aktionsleiste „Inserieren“ /
+//    „Schnell-Inserieren“, danach automatisch weiter zur nächsten Karte.
 //
 // Diese Datei ist nur Oberfläche + Steuerung. Die Bildverarbeitung steckt in sweep-engine.js (Worker), die reine Logik
-// (Konsens, Sperre, Session) in sweep-logic.js. Worker, Index und Kartendaten kommen über deps aus live-scanner.js.
+// (Konsens, Duplikat-Schutz, Konfidenz, Etikett-Texte, Session) in sweep-logic.js. Worker, Index und Kartendaten kommen
+// über deps aus live-scanner.js.
 import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError } from "../core.js";
 import { haptic, isNative } from "../native.js";
 import { conditionPrice } from "./scan-ui-logic.js";
 import {
   SWEEP, createSweepGate, orderByLang, langOfKey, setIdOfKey, sessionAdd, sessionQty, sessionFinish, sessionUndo, sessionTotals,
-  sessionDuplicates, FINISH_KEYS, FINISH_LABEL,
+  sessionDuplicates, FINISH_KEYS, FINISH_LABEL, quadCenter, tagCode, tagLines, bumpDaily, dailyLabel, viewTotal, strictOk,
 } from "./sweep-logic.js";
 
 const FLAG = { de: "🇩🇪", en: "🇬🇧", ja: "🇯🇵" };
@@ -18,21 +26,35 @@ const LANG_NAME = { de: "Deutsch", en: "Englisch", ja: "Japanisch" };
 const FIN_SHORT = { normal: "Normal", holo: "Holo", reverse_holo: "Reverse" };
 const PREFS_KEY = "ps_sweep_prefs";
 const SESSION_KEY = "ps_sweep_session";
+const DAILY_KEY = "ps_sweep_daily";
 /** Bild-Kanal: so lange gilt ein Bild beim Worker als unterwegs, danach wird das nächste geschickt */
 const FRAME_STALE_MS = 1000;
 /** Mittlere Helligkeit (0…255) darunter gilt das Bild als zu dunkel (Taschenlampe anbieten/einschalten) */
 const DARK_LEVEL = 42;
 const DARK_FRAMES = 30;
 const MAX_ITEMS = 400;
+/** Aktionsleiste nach einem Treffer: genau 2,5 s, dann automatisch weiter zur nächsten Karte */
+export const AUTO_NEXT_MS = 2500;
+/** Preisschild bleibt nach dem letzten Sichtkontakt so lange stehen, danach blendet es aus */
+const TAG_HOLD_MS = 900, TAG_FADE_MS = 400;
+/** Scan-Modi */
+export const MODES = {
+  turbo: { label: "⚡ Stapel-Turbo", sub: "Einzelkarten", hint: "Karte für Karte vor die Kamera – jede landet sofort im Binder." },
+  sweep: { label: "🌊 Binder- & Tisch-Sweep", sub: "Über mehrere Karten fahren", hint: "Langsam über Ordnerseite oder Tisch fahren – jede Karte bekommt ihr eigenes Preisschild." },
+};
 
-const PLING_CSS = `
+const SWEEP_CSS = `
 #ps-sw .ps-sw-scroll{scrollbar-width:none}#ps-sw .ps-sw-scroll::-webkit-scrollbar{display:none}
-#ps-sw-flash{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 0 0 rgba(52,211,153,0);transition:box-shadow .25s}
-#ps-sw-flash.on{box-shadow:inset 0 0 0 4px rgba(52,211,153,.9),inset 0 0 60px rgba(52,211,153,.35);transition:none}
+#ps-sw-flash{position:absolute;inset:0;pointer-events:none;background:rgba(255,255,255,0);transition:background .22s}
+#ps-sw-flash.on{background:rgba(255,255,255,.16);transition:none}
 #ps-sw-dock .ps-sw-pop{animation:psSwPop .32s cubic-bezier(.2,.9,.3,1.3)}
 @keyframes psSwPop{0%{transform:translateY(10px) scale(.96);opacity:.2}100%{transform:none;opacity:1}}
 #ps-sw.ps-sw-full{position:fixed;inset:0;z-index:70;max-width:none;height:100dvh!important;border-radius:0;border:0}
-@media (prefers-reduced-motion:reduce){#ps-sw-dock .ps-sw-pop{animation:none}}
+.ps-sw-auto{height:3px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden}
+.ps-sw-auto>span{display:block;height:100%;background:linear-gradient(90deg,#34d399,#fde047);transform-origin:left center;animation:psSwAuto linear forwards}
+@keyframes psSwAuto{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+.ps-sw-mode[aria-pressed="true"]{background:linear-gradient(90deg,#22d3ee,#34d399);color:#020617}
+@media (prefers-reduced-motion:reduce){#ps-sw-dock .ps-sw-pop,.ps-sw-auto>span{animation:none}}
 `;
 
 /**
@@ -46,24 +68,30 @@ export function createSweep(deps) {
   const sw = {
     running: false, starting: false, camGen: 0, stream: null, track: null, caps: {}, torch: false, torchTouched: false, autoTorch: false,
     cv: null, ctx: null, inFlight: 0, sentAt: 0, seq: 0, bitmapOk: typeof createImageBitmap === "function",
-    frameTimes: [], avgMs: 0, procMs: 0, dark: 0, gate: createSweepGate(), glows: [], lastDets: [], raf: 0,
+    frameTimes: [], avgMs: 0, procMs: 0, dark: 0, gate: null, tags: [], raf: 0, tagRaf: 0, view: { count: 0, value: 0 },
     items: [], history: [], lastUid: null, uidSeq: Date.now(), info: new Map(), probes: new Map(),
     sets: [], setsLoaded: false, setName: "", setRows: -1, layoutsReady: 0, drawer: false, full: false, audio: null,
-    prefs: readPrefs(), configSent: false, statusText: "",
+    prefs: readPrefs(), configSent: false, statusText: "", daily: readDaily(), bar: null, barTimer: 0, saving: new Set(), portfolioTimer: 0,
   };
+  sw.gate = createSweepGate({ mode: sw.prefs.mode });
   restoreSession();
 
   function readPrefs() {
-    const def = { muted: false, lang: "de", finish: "normal", setId: "" };
+    const def = { muted: false, lang: "de", finish: "normal", setId: "", mode: "turbo" };
     try {
       const p = { ...def, ...(JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}) };
       if (!FLAG[p.lang]) p.lang = "de";
       if (!FINISH_KEYS.includes(p.finish)) p.finish = "normal";
       if (typeof p.setId !== "string" || !/^[\w.\-]{0,40}$/.test(p.setId)) p.setId = "";
+      if (!MODES[p.mode]) p.mode = "turbo";
       return p;
     } catch { return def; }
   }
   const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(sw.prefs)); } catch {} };
+  function readDaily() {
+    try { const d = JSON.parse(localStorage.getItem(DAILY_KEY) || "null"); return d && typeof d.day === "string" ? d : null; } catch { return null; }
+  }
+  const saveDaily = () => { try { localStorage.setItem(DAILY_KEY, JSON.stringify(sw.daily)); } catch {} };
   function saveSession() {
     try {
       const slim = sw.items.slice(0, MAX_ITEMS).map((i) => ({ ...i, info: i.info ? pickInfo(i.info) : null }));
@@ -90,23 +118,29 @@ export function createSweep(deps) {
   // ------------------------------------------------------------------ Oberfläche
   const chip = (on, extra = "") => `shrink-0 text-[11px] font-black px-2.5 py-1 rounded-lg whitespace-nowrap ${on ? "bg-yellow-400 text-slate-950" : "bg-slate-900/80 text-slate-200 border border-white/10"} ${extra}`;
   const iconBtn = "w-9 h-9 shrink-0 rounded-full bg-slate-900/80 border border-white/10 text-white text-base flex items-center justify-center";
+  const isSweep = () => sw.prefs.mode === "sweep";
 
   function html() {
-    return `<div id="ps-sw" class="relative w-full mx-auto max-w-xl rounded-3xl overflow-hidden bg-black border border-cyan-400/40 select-none touch-manipulation" style="height:min(calc(100dvh - 200px),820px);min-height:470px">
-      <style>${PLING_CSS}</style>
+    return `<div id="ps-sw" class="relative w-full mx-auto max-w-xl rounded-3xl overflow-hidden bg-black border border-cyan-400/40 select-none touch-manipulation" style="height:min(calc(100dvh - 200px),820px);min-height:470px" data-mode="${esc(sw.prefs.mode)}">
+      <style>${SWEEP_CSS}</style>
       <video id="ps-sw-video" class="absolute inset-0 w-full h-full object-cover hidden" playsinline muted autoplay></video>
       <canvas id="ps-sw-overlay" class="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true"></canvas>
       <div id="ps-sw-flash"></div>
       <div class="absolute inset-x-0 top-0 p-2 space-y-1.5 bg-gradient-to-b from-slate-950/90 via-slate-950/55 to-transparent pb-5">
         <div class="flex items-center gap-1.5">
-          <span id="ps-sw-count" class="shrink-0 text-xs font-black bg-slate-900/85 border border-white/10 text-white px-2.5 py-1.5 rounded-xl" title="Gescannte Karten in dieser Session">🃏 0</span>
-          <span id="ps-sw-value" class="shrink-0 text-xs font-black bg-emerald-400 text-slate-950 px-2.5 py-1.5 rounded-xl" title="Gesamtwert (Cardmarket-Trend)">0,00 €</span>
-          <span id="ps-sw-status" role="status" class="min-w-0 flex-1 text-[10px] font-bold text-cyan-200 truncate"></span>
+          <span id="ps-sw-daily" class="min-w-0 flex-1 truncate text-[10px] sm:text-[11px] font-black bg-slate-900/85 border border-white/10 text-white px-2.5 py-1.5 rounded-xl" title="Tages-Scan-Zähler">${esc(dailyLabel(sw.daily))}</span>
           <label class="${iconBtn} cursor-pointer" title="Foto hochladen" aria-label="Foto aufnehmen oder hochladen">🖼️<input data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
           <button id="ps-sw-torch" type="button" onclick="PS.sweep('torch')" class="${iconBtn}" aria-label="Taschenlampe" aria-pressed="false">🔦</button>
-          <button id="ps-sw-mute" type="button" onclick="PS.sweep('mute')" class="${iconBtn}" aria-label="Ton aus" aria-pressed="false">🔊</button>
+          <button id="ps-sw-mute" type="button" onclick="PS.sweep('mute')" class="${iconBtn}" aria-label="Ton aus" aria-pressed="false" title="Scanner-Ping & Vibration stummschalten">🔊</button>
           <button id="ps-sw-full" type="button" onclick="PS.sweep('full')" class="${iconBtn}" aria-label="Vollbild" aria-pressed="false">⛶</button>
           <button id="ps-sw-stop" type="button" onclick="PS.sweep('stop')" class="${iconBtn} hidden" aria-label="Kamera beenden">✕</button>
+        </div>
+        <div id="ps-sw-modes" class="grid grid-cols-2 gap-1 bg-slate-900/80 border border-white/10 rounded-xl p-0.5" role="group" aria-label="Scan-Modus"></div>
+        <div class="flex items-center gap-1.5">
+          <span id="ps-sw-count" class="shrink-0 text-[11px] font-black bg-slate-900/85 border border-white/10 text-white px-2 py-1 rounded-lg" title="Gescannte Karten in dieser Session">🃏 0</span>
+          <span id="ps-sw-value" class="shrink-0 text-[11px] font-black bg-emerald-400 text-slate-950 px-2 py-1 rounded-lg" title="Gesamtwert der Session (Cardmarket-Trend)">0,00 €</span>
+          <span id="ps-sw-view" class="shrink-0 hidden text-[11px] font-black bg-cyan-400 text-slate-950 px-2 py-1 rounded-lg" title="Gesamtwert aller Karten im Bild"></span>
+          <span id="ps-sw-status" role="status" class="min-w-0 flex-1 text-[10px] font-bold text-cyan-200 truncate"></span>
         </div>
         <div id="ps-sw-sets" class="ps-sw-scroll flex items-center gap-1.5 overflow-x-auto" role="group" aria-label="Set-Lock: Suche auf ein Set beschränken"></div>
         <div class="ps-sw-scroll flex items-center gap-1.5 overflow-x-auto">
@@ -116,15 +150,24 @@ export function createSweep(deps) {
         </div>
       </div>
       <div id="ps-sw-idle" class="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center bg-slate-950/85">
-        <p class="text-4xl" aria-hidden="true">⚡</p>
-        <p class="text-base font-black text-white">Sweep-Modus: einfach drüberziehen</p>
-        <p class="text-xs text-slate-300 max-w-xs">Handy locker über einen Kartenstapel oder eine Ordnerseite ziehen. Jede Karte im Bild wird sofort erkannt – ohne Rahmen, ohne Warten. Pling, und sie liegt in deiner Scan-Liste.</p>
-        <button type="button" onclick="PS.sweep('start')" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">⚡ Kamera starten</button>
+        <p class="text-4xl" aria-hidden="true">${isSweep() ? "🌊" : "⚡"}</p>
+        <p class="text-base font-black text-white">${esc(MODES[sw.prefs.mode].label)} – 100 % rahmenlos</p>
+        <p class="text-xs text-slate-300 max-w-xs">${esc(MODES[sw.prefs.mode].hint)} Kein Rahmen, kein Warten: Preisschild erscheint direkt auf der Karte, sie landet sofort in deinem Set-Binder.</p>
+        <button type="button" onclick="PS.sweep('start')" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">📷 Kamera starten</button>
         <p class="text-[10px] text-slate-500 max-w-xs">Erkennung komplett auf deinem Gerät. Es werden keine Kamerabilder hochgeladen.</p>
       </div>
       <div id="ps-sw-dock" class="absolute inset-x-2 bottom-2" aria-live="polite"></div>
       <div id="ps-sw-drawer" class="absolute inset-x-0 bottom-0 hidden max-h-[80%] flex flex-col bg-slate-950/95 backdrop-blur border-t border-cyan-400/40 rounded-t-3xl"></div>
     </div>`;
+  }
+
+  function renderModes() {
+    const box = $("ps-sw-modes");
+    if (!box) return;
+    box.innerHTML = Object.entries(MODES).map(([k, m]) => `<button type="button" onclick="PS.sweep('mode', '${k}')" aria-pressed="${sw.prefs.mode === k}" class="ps-sw-mode text-left rounded-lg px-2 py-1 ${sw.prefs.mode === k ? "" : "text-slate-200"}" title="${esc(m.hint)}">
+        <span class="block text-[11px] font-black leading-tight truncate">${esc(m.label)}</span><span class="block text-[9px] font-bold opacity-80 leading-tight truncate">${esc(m.sub)}</span></button>`).join("");
+    $("ps-sw")?.setAttribute("data-mode", sw.prefs.mode);
+    $("ps-sw-view")?.classList.toggle("hidden", !isSweep() || !sw.running);
   }
 
   function renderSets() {
@@ -146,23 +189,34 @@ export function createSweep(deps) {
     if (langs) langs.innerHTML = ["de", "en", "ja"].map((l) => `<button type="button" onclick="PS.sweep('lang', '${l}')" aria-pressed="${sw.prefs.lang === l}" title="${LANG_NAME[l]}" class="${chip(sw.prefs.lang === l)}">${FLAG[l]} ${LANG_NAME[l]}</button>`).join("");
     if (fins) fins.innerHTML = FINISH_KEYS.map((f) => `<button type="button" onclick="PS.sweep('finish', '${f}')" aria-pressed="${sw.prefs.finish === f}" class="${chip(sw.prefs.finish === f)}">${esc(FINISH_LABEL[f])}</button>`).join("");
     const m = $("ps-sw-mute");
-    if (m) { m.textContent = sw.prefs.muted ? "🔇" : "🔊"; m.setAttribute("aria-pressed", String(sw.prefs.muted)); m.setAttribute("aria-label", sw.prefs.muted ? "Ton an" : "Ton aus"); }
+    if (m) { m.textContent = sw.prefs.muted ? "🔇" : "🔊"; m.setAttribute("aria-pressed", String(sw.prefs.muted)); m.setAttribute("aria-label", sw.prefs.muted ? "Ton & Vibration an" : "Ton & Vibration aus"); }
     const t = $("ps-sw-torch");
     if (t) { t.setAttribute("aria-pressed", String(sw.torch)); t.classList.toggle("bg-yellow-400", sw.torch); t.classList.toggle("bg-slate-900/80", !sw.torch); }
     const fb = $("ps-sw-full");
     if (fb) fb.setAttribute("aria-pressed", String(sw.full));
+    renderModes();
   }
 
   const priceOf = (it) => {
     const i = it.info || sw.info.get(it.key);
     return i ? conditionPrice(i, it.finish || "normal", "NM") || Number(i.price) || 0 : 0;
   };
+  /** Preis einer Karte nur über ihren Index-Schlüssel (Preisschild, Gesamtwert im Bild) */
+  const priceOfKey = (key) => { const i = sw.info.get(key); return i ? conditionPrice(i, sw.prefs.finish, "NM") || Number(i.price) || 0 : 0; };
 
   function renderTop() {
     const t = sessionTotals(sw.items, priceOf);
-    const c = $("ps-sw-count"), v = $("ps-sw-value");
+    const c = $("ps-sw-count"), v = $("ps-sw-value"), d = $("ps-sw-daily");
     if (c) c.textContent = `🃏 ${t.count.toLocaleString("de-DE")}`;
     if (v) v.textContent = eur(t.value);
+    if (d) d.textContent = dailyLabel(sw.daily);
+  }
+
+  function renderView() {
+    const el = $("ps-sw-view");
+    if (!el) return;
+    el.classList.toggle("hidden", !isSweep() || !sw.running);
+    el.textContent = sw.view.count ? `🌊 Im Bild: ${sw.view.count} ${sw.view.count === 1 ? "Karte" : "Karten"} · ${eur(sw.view.value)}` : "🌊 Im Bild: –";
   }
 
   function setStatus(text) {
@@ -182,6 +236,7 @@ export function createSweep(deps) {
       const fps = span > 0 ? Math.round(((sw.frameTimes.length - 1) * 1000) / span) : 0;
       parts.push(`⚡ ${fps} FPS · ${Math.round(sw.procMs)} ms`);
     }
+    if (isSweep()) parts.push("🎯 99–100 % Prüfung");
     return parts.join(" · ");
   }
 
@@ -196,25 +251,35 @@ export function createSweep(deps) {
     return [i.setCode || i.setName, i.number].filter(Boolean).join(" · ");
   };
 
+  // ------------------------------------------------------------------ Dock: 2,5-s-Aktionsleiste → kompakte Leiste
   function renderDock(pop = false) {
     const dock = $("ps-sw-dock");
     if (!dock) return;
     if (sw.drawer) { dock.innerHTML = ""; return; }
-    const it = sw.items.find((i) => i.uid === sw.lastUid) || sw.items[0];
     const listBtn = `<button type="button" onclick="PS.sweep('drawer')" class="shrink-0 bg-slate-800 text-white text-[11px] font-black px-2.5 py-2 rounded-xl" aria-label="Scan-Liste öffnen">☰ ${sw.items.length}</button>`;
-    if (!it) {
-      dock.innerHTML = `<div class="bg-slate-950/75 backdrop-blur rounded-2xl px-3 py-2.5 border border-white/10 flex items-center gap-2">
-        <p class="flex-1 text-[11px] text-slate-300">${sw.running ? "Langsam über die Karten ziehen – jede erkannte Karte landet hier." : "Kamera starten und über deine Karten ziehen."}</p>${sw.items.length ? listBtn : ""}</div>`;
+    const bar = sw.bar && sw.bar.until > Date.now() ? sw.items.find((i) => i.uid === sw.bar.uid) : null;
+    if (!bar) {
+      const last = sw.items.find((i) => i.uid === sw.lastUid) || sw.items[0];
+      dock.innerHTML = `<div class="bg-slate-950/75 backdrop-blur rounded-2xl px-3 py-2 border border-white/10 flex items-center gap-2">
+        <p class="flex-1 min-w-0 text-[11px] text-slate-300 truncate">${sw.running
+          ? (last ? `Zuletzt: <strong class="text-white">${esc(itemName(last))}</strong>${last.filed ? ` <span class="text-emerald-300">· ✅ im Binder</span>` : ""} – nächste Karte ins Bild` : esc(MODES[sw.prefs.mode].hint))
+          : "Kamera starten und über deine Karten ziehen."}</p>
+        ${last ? `<button type="button" onclick="PS.sweep('undo')" class="shrink-0 bg-slate-800 text-white text-[11px] font-black px-2.5 py-2 rounded-xl" aria-label="Letzten Scan rückgängig machen">↶</button>` : ""}
+        ${sw.items.length ? listBtn : ""}</div>`;
       return;
     }
-    const i = it.info;
+    const it = bar, i = it.info;
     const price = priceOf(it);
-    dock.innerHTML = `<div data-sw-last="${esc(it.uid)}" class="${pop ? "ps-sw-pop " : ""}bg-slate-950/80 backdrop-blur rounded-2xl p-2 border border-emerald-400/50 shadow-2xl space-y-1.5">
+    const lines = tagLines({ price, filed: Boolean(it.filed), saving: sw.saving.has(it.uid), ownedBefore: Boolean(it.ownedBefore), qty: it.qty });
+    const left = Math.max(0, sw.bar.until - Date.now());
+    dock.innerHTML = `<div data-sw-last="${esc(it.uid)}" data-sw-bar="1" class="${pop ? "ps-sw-pop " : ""}bg-slate-950/85 backdrop-blur rounded-2xl p-2 border border-emerald-400/50 shadow-2xl space-y-1.5">
+      <div class="ps-sw-auto" aria-hidden="true"><span style="animation-duration:${left}ms"></span></div>
       <div class="flex items-center gap-2">
         <img src="${esc(cdn(i?.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" class="w-10 h-14 object-contain rounded bg-slate-900 shrink-0" />
         <div class="min-w-0 flex-1">
           <p data-sw-name class="text-sm font-black text-white leading-tight truncate">${FLAG[it.lang] || ""} ${esc(itemName(it))}${it.qty > 1 ? ` <span class="text-emerald-300">×${it.qty}</span>` : ""}</p>
           <p class="text-[11px] text-slate-400 truncate">${esc(itemSet(it))}${it.finish !== "normal" ? ` · ${esc(FIN_SHORT[it.finish])}` : ""}</p>
+          <p data-sw-filed class="text-[10px] font-black ${it.filed ? "text-emerald-300" : "text-slate-300"} truncate">${esc(lines.status)}${lines.flag ? ` · ${esc(lines.flag)}` : ""}</p>
         </div>
         <div class="text-right shrink-0">
           <p class="text-[9px] uppercase font-bold text-slate-500 leading-none">Cardmarket</p>
@@ -222,13 +287,24 @@ export function createSweep(deps) {
         </div>
       </div>
       <div class="flex items-center gap-1.5">
-        <button type="button" onclick="PS.sweep('plus')" class="shrink-0 bg-emerald-500 text-slate-950 text-[11px] font-black px-3 py-2 rounded-xl" aria-label="Noch ein Exemplar">+1</button>
-        <div role="group" aria-label="Variante" class="flex bg-slate-800/80 rounded-xl p-0.5 shrink-0">${FINISH_KEYS.map((f) => `<button type="button" onclick="PS.sweep('dockFinish', '${f}')" aria-pressed="${it.finish === f}" class="text-[10px] font-black px-2 py-1.5 rounded-lg ${it.finish === f ? "bg-yellow-400 text-slate-950" : "text-slate-300"}">${esc(FIN_SHORT[f])}</button>`).join("")}</div>
-        <button type="button" onclick="PS.sweep('undo')" class="shrink-0 bg-slate-800 text-white text-[11px] font-black px-2.5 py-2 rounded-xl" aria-label="Letzten Scan rückgängig machen">↶ Rückgängig</button>
-        <span class="flex-1"></span>${listBtn}
+        <button type="button" onclick="PS.sweep('list', ${jsArg(it.uid)})" class="flex-1 bg-yellow-400 text-slate-950 text-[11px] font-black px-2 py-2 rounded-xl" title="Zum Cardmarket-Preis inserieren">🏷️ Inserieren</button>
+        <button type="button" onclick="PS.sweep('quick', ${jsArg(it.uid)})" class="flex-1 bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-[11px] font-black px-2 py-2 rounded-xl" title="Deal-Preis unter Cardmarket – geht sofort live">⚡ Schnell-Inserieren</button>
+        <div role="group" aria-label="Variante" class="hidden sm:flex bg-slate-800/80 rounded-xl p-0.5 shrink-0">${FINISH_KEYS.map((f) => `<button type="button" onclick="PS.sweep('dockFinish', '${f}')" aria-pressed="${it.finish === f}" class="text-[10px] font-black px-2 py-1.5 rounded-lg ${it.finish === f ? "bg-yellow-400 text-slate-950" : "text-slate-300"}">${esc(FIN_SHORT[f])}</button>`).join("")}</div>
+        <button type="button" onclick="PS.sweep('undo')" class="shrink-0 bg-slate-800 text-white text-[11px] font-black px-2.5 py-2 rounded-xl" aria-label="Letzten Scan rückgängig machen">↶</button>
+        ${listBtn}
       </div>
     </div>`;
   }
+
+  /** Aktionsleiste für genau AUTO_NEXT_MS zeigen – ohne Tipp verschwindet sie von selbst, der Scanner läuft derweil weiter. */
+  function showBar(uid) {
+    const until = Date.now() + AUTO_NEXT_MS;
+    sw.bar = { uid, until };
+    clearTimeout(sw.barTimer);
+    sw.barTimer = setTimeout(() => { if (sw.bar?.uid === uid && sw.bar.until <= Date.now() + 20) { sw.bar = null; renderDock(); } }, AUTO_NEXT_MS + 10);
+    renderDock(true);
+  }
+  function hideBar() { clearTimeout(sw.barTimer); sw.bar = null; renderDock(); }
 
   function renderDrawer() {
     const d = $("ps-sw-drawer");
@@ -249,8 +325,9 @@ export function createSweep(deps) {
             <img src="${esc(cdn(it.info?.image || FALLBACK_IMG, 80))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" class="w-8 h-11 object-contain shrink-0" />
             <div class="min-w-0 flex-1">
               <p class="text-[12px] font-black text-white truncate">${FLAG[it.lang] || ""} ${esc(itemName(it))}</p>
-              <p class="text-[10px] text-slate-400 truncate">${esc(itemSet(it))} · ${p ? eur(p) : "–"}${it.filed ? ` · <span class="text-emerald-300">📒 ${Math.min(it.filed, it.qty)}× im Binder</span>` : ""}</p>
-              <div class="flex gap-1 mt-1">${FINISH_KEYS.map((f) => `<button type="button" onclick="PS.sweep('itemFinish', ${jsArg(it.uid)}, '${f}')" aria-pressed="${it.finish === f}" class="text-[9px] font-black px-1.5 py-0.5 rounded ${it.finish === f ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-300"}">${esc(FIN_SHORT[f])}</button>`).join("")}</div>
+              <p class="text-[10px] text-slate-400 truncate">${esc(itemSet(it))} · ${p ? eur(p) : "–"}${it.filed ? ` · <span class="text-emerald-300">✅ ${Math.min(it.filed, it.qty)}× im Binder</span>` : ""}</p>
+              <div class="flex gap-1 mt-1">${FINISH_KEYS.map((f) => `<button type="button" onclick="PS.sweep('itemFinish', ${jsArg(it.uid)}, '${f}')" aria-pressed="${it.finish === f}" class="text-[9px] font-black px-1.5 py-0.5 rounded ${it.finish === f ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-300"}">${esc(FIN_SHORT[f])}</button>`).join("")}
+                <button type="button" onclick="PS.sweep('list', ${jsArg(it.uid)})" class="ml-auto text-[9px] font-black px-1.5 py-0.5 rounded bg-yellow-400/90 text-slate-950">🏷️ Inserieren</button></div>
             </div>
             <div class="flex items-center gap-1 shrink-0">
               <button type="button" onclick="PS.sweep('qty', ${jsArg(it.uid)}, -1)" class="w-7 h-7 rounded-lg bg-slate-800 text-white font-black" aria-label="Eins weniger">−</button>
@@ -261,13 +338,13 @@ export function createSweep(deps) {
         }).join("") : `<p class="text-xs text-slate-400 text-center py-6">Noch nichts gescannt.</p>`}
       </div>
       <div class="p-2 grid grid-cols-2 gap-1.5 border-t border-white/10">
-        <button type="button" onclick="PS.sweep('file')" ${open ? "" : "disabled"} class="col-span-2 bg-emerald-500 text-slate-950 text-xs font-black py-3 rounded-xl disabled:opacity-40">📒 In Set-Binder einsortieren${open ? ` (${open})` : " · alles erledigt"}</button>
+        <button type="button" onclick="PS.sweep('file')" ${open ? "" : "disabled"} class="col-span-2 bg-emerald-500 text-slate-950 text-xs font-black py-3 rounded-xl disabled:opacity-40">📒 ${open ? `${open} noch offene in den Set-Binder einsortieren` : "Alles im Set-Binder · erledigt"}</button>
         <button type="button" onclick="PS.sweep('sellDupes')" ${dupes ? "" : "disabled"} class="bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-[11px] font-black py-2.5 rounded-xl disabled:opacity-40">🏷️ Doppelte auf Marktplatz${dupes ? ` (${dupes})` : ""}</button>
         <button type="button" onclick="PS.sweep('clear')" ${sw.items.length ? "" : "disabled"} class="bg-slate-800 text-slate-200 text-[11px] font-black py-2.5 rounded-xl disabled:opacity-40">🗑️ Session leeren</button>
       </div>`;
   }
 
-  function renderAll(pop = false) { renderTop(); renderDock(pop); renderDrawer(); setStatus(statusLine()); }
+  function renderAll(pop = false) { renderTop(); renderDock(pop); renderDrawer(); renderView(); setStatus(statusLine()); }
 
   // ------------------------------------------------------------------ Kamera
   async function openCamera() {
@@ -336,7 +413,7 @@ export function createSweep(deps) {
     video.classList.remove("hidden");
     $("ps-sw-idle")?.classList.add("hidden");
     $("ps-sw-stop")?.classList.remove("hidden");
-    sw.running = true; sw.torch = false; sw.dark = 0; sw.frameTimes = []; sw.inFlight = 0; sw.glows = [];
+    sw.running = true; sw.torch = false; sw.dark = 0; sw.frameTimes = []; sw.inFlight = 0; sw.tags = []; sw.view = { count: 0, value: 0 };
     sw.gate.reset();
     deps.worker().postMessage({ type: "sweep-reset" });
     renderToggles(); renderAll();
@@ -347,7 +424,7 @@ export function createSweep(deps) {
     sw.running = false;
     sw.camGen++;
     sw.starting = false;
-    cancelAnimationFrame(sw.raf);
+    cancelAnimationFrame(sw.raf); cancelAnimationFrame(sw.tagRaf);
     try { sw.stream?.getTracks().forEach((t) => t.stop()); } catch {}
     sw.stream = null; sw.track = null; sw.torch = false; sw.inFlight = 0;
     const video = $("ps-sw-video");
@@ -355,7 +432,8 @@ export function createSweep(deps) {
     $("ps-sw-idle")?.classList.remove("hidden");
     $("ps-sw-stop")?.classList.add("hidden");
     if (sw.full) toggleFull(false);
-    sw.glows = []; drawOverlay();
+    sw.tags = []; drawOverlay();
+    hideBar();
     renderToggles(); renderAll();
   }
 
@@ -400,7 +478,7 @@ export function createSweep(deps) {
     // Bevorzugt: ImageBitmap an den Worker übergeben – Verkleinern und Pixel-Auslesen passieren dort, nicht im UI-Thread
     if (sw.bitmapOk && deps.index().offscreen) {
       createImageBitmap(video, g.sx, g.sy, g.sw, g.sh, { resizeWidth: g.W, resizeHeight: g.H, resizeQuality: "low" })
-        .then((bmp) => { if (!sw.running || seq !== sw.seq) { bmp.close?.(); return; } w.postMessage({ type: "sweep-frame", seq, bitmap: bmp, w: g.W, h: g.H }, [bmp]); })
+        .then((bmp) => { if (!sw.running || seq !== sw.seq) { bmp.close?.(); sw.inFlight = 0; return; } w.postMessage({ type: "sweep-frame", seq, bitmap: bmp, w: g.W, h: g.H }, [bmp]); })
         .catch(() => { sw.bitmapOk = false; sw.inFlight = 0; });
       return;
     }
@@ -414,6 +492,11 @@ export function createSweep(deps) {
   /** Ein Dialog liegt über dem Scanner (Schnell-Inserieren, Login …) → keine Treffer dahinter */
   const overlayOpen = () => Boolean(document.querySelector("body > div.fixed.inset-0:not(.hidden)[id]"));
 
+  /**
+   * Kamera-Schleife: läuft per requestVideoFrameCallback/requestAnimationFrame IMMER weiter – Speichern, Preisladen und
+   * Oberfläche passieren asynchron daneben. Das „Bild unterwegs“-Flag (inFlight) wird in onResult für JEDE Antwort
+   * (Treffer, verworfen, Fehler, veraltet) zurückgesetzt und läuft spätestens nach FRAME_STALE_MS von selbst ab.
+   */
   function loop() {
     if (!sw.running) return;
     if (document.hidden || !panelVisible()) { stop(); return; }
@@ -427,49 +510,127 @@ export function createSweep(deps) {
 
   // ------------------------------------------------------------------ Ergebnisse
   function onResult(m) {
+    // Nur die Antwort auf das zuletzt gesendete Bild zählt – der Kanal wird für JEDE Antwort darauf freigegeben
+    // (Treffer, verworfen, Fehler); eine veraltete Antwort darf den Kanal eines neueren Bilds nicht anfassen
     if (m.seq !== sw.seq) return;
     sw.inFlight = 0;
     if (!sw.running || m.skipped || m.error) return;
-    const now = performance.now();
-    sw.frameTimes.push(now);
-    if (sw.frameTimes.length > 20) sw.frameTimes.shift();
-    sw.procMs = sw.procMs ? sw.procMs * 0.85 + (m.ms || 0) * 0.15 : m.ms || 0;
-    const interval = sw.frameTimes.length > 1 ? (sw.frameTimes[sw.frameTimes.length - 1] - sw.frameTimes[0]) / (sw.frameTimes.length - 1) : 0;
-    if (typeof m.setRows === "number" && m.setRows >= 0) sw.setRows = m.setRows;
-    checkDark(m.light);
-    const dets = Array.isArray(m.dets) ? m.dets : [];
-    const { hits, locked } = sw.gate.push({ dets, found: m.found, motion: m.motion }, Date.now(), interval);
-    const t = Date.now();
-    sw.glows = sw.glows.filter((g) => g.hit && g.until > t);
-    for (const d of dets) {
-      if (d.match < SWEEP.TRACK_MATCH) continue;
-      const isHit = hits.some((k) => k === d.keys), isLocked = locked.some((k) => k === d.keys);
-      if (isHit) continue;
-      sw.glows.push({ quad: d.quad, hit: false, locked: isLocked, label: isLocked ? "✓" : "", until: t + 160 });
+    try {
+      const now = performance.now();
+      sw.frameTimes.push(now);
+      if (sw.frameTimes.length > 20) sw.frameTimes.shift();
+      sw.procMs = sw.procMs ? sw.procMs * 0.85 + (m.ms || 0) * 0.15 : m.ms || 0;
+      const interval = sw.frameTimes.length > 1 ? (sw.frameTimes[sw.frameTimes.length - 1] - sw.frameTimes[0]) / (sw.frameTimes.length - 1) : 0;
+      if (typeof m.setRows === "number" && m.setRows >= 0) sw.setRows = m.setRows;
+      checkDark(m.light);
+      const dets = Array.isArray(m.dets) ? m.dets : [];
+      const { hits, view } = sw.gate.push({ dets, found: m.found, motion: m.motion }, Date.now(), interval);
+      const t = Date.now();
+      // Preisschilder der schon erkannten Karten an die aktuelle Lage anheften
+      for (const d of dets) {
+        if (!Array.isArray(d.keys) || d.match < SWEEP.TRACK_MATCH) continue;
+        const tag = findTag(d.keys, d.quad);
+        if (tag) { tag.quad = d.quad; tag.seen = t; tag.conf = d.conf ?? tag.conf; }
+      }
+      for (const keys of hits) {
+        const d = dets.find((x) => x.keys === keys);
+        if (d) onHit(d);
+      }
+      if (isSweep()) {
+        sw.view = viewTotal(view.filter((d) => strictOk(d)), priceOfKey, SWEEP.STRICT_MATCH);
+        renderView();
+      }
+      drawOverlay();
+      if (sw.frameTimes.length % 5 === 0) setStatus(statusLine());
+    } catch (e) {
+      // Ein Fehler in der Anzeige darf die Kamera-Schleife nie anhalten
+      try { console.warn("sweep onResult", e); } catch {}
     }
-    for (const keys of hits) {
-      const d = dets.find((x) => x.keys === keys);
-      if (d) onHit(d);
+  }
+
+  /** Preisschild derselben Karte (Sweep: an ähnlicher Position – zwei Exemplare auf einer Seite bekommen zwei Etiketten) */
+  function findTag(keys, quad) {
+    const c = quadCenter(quad);
+    let best = null, bestD = Infinity;
+    for (const tag of sw.tags) {
+      if (!tag.keys.some((k) => keys.includes(k))) continue;
+      if (!isSweep() || !c || !tag.center) return tag;
+      const d = Math.hypot(c[0] - tag.center[0], c[1] - tag.center[1]);
+      if (d < SWEEP.SAME_POS && d < bestD) { best = tag; bestD = d; }
     }
-    drawOverlay();
-    if (sw.frameTimes.length % 5 === 0) setStatus(statusLine());
+    return best;
   }
 
   function onHit(d) {
     const keys = orderByLang(d.keys, sw.prefs.lang);
     const key = keys[0];
+    const wasOwned = ownedBefore(key);
     const r = sessionAdd(sw.items, { key, finish: sw.prefs.finish, lang: langOfKey(key), label: d.label, info: sw.info.get(key) || null }, ++sw.uidSeq);
-    sw.items = r.items.slice(0, MAX_ITEMS);
+    sw.items = r.items.slice(0, MAX_ITEMS).map((it) => (it.uid === r.uid && it.ownedBefore === undefined ? { ...it, ownedBefore: wasOwned } : it));
     sw.history.push(r.uid);
     sw.lastUid = r.uid;
     if (d.probe) sw.probes.set(key, d.probe);
-    sw.glows.push({ quad: d.quad, hit: true, label: d.label || "", until: Date.now() + 700 });
+    const now = Date.now();
+    const existing = findTag(d.keys, d.quad);
+    const tag = existing || { keys: [...d.keys], key, uid: r.uid, at: now };
+    Object.assign(tag, { quad: d.quad, center: quadCenter(d.quad), seen: now, at: now, uid: r.uid, conf: d.conf ?? null });
+    if (!existing) sw.tags.push(tag);
+    if (sw.tags.length > SWEEP.MAX_CARDS + 3) sw.tags.splice(0, sw.tags.length - (SWEEP.MAX_CARDS + 3));
+    // Tages-Zähler: Anzahl sofort, Wert sobald der Preis bekannt ist
+    const p = priceOfKey(key);
+    sw.daily = bumpDaily(sw.daily, { count: 1, value: p });
+    if (!p) sw.items = sw.items.map((it) => (it.uid === r.uid ? { ...it, dailyPending: (it.dailyPending || 0) + 1 } : it));
+    saveDaily();
     feedback();
-    renderAll(true);
+    showBar(r.uid);
+    renderTop(); renderDrawer(); renderView();
     saveSession();
-    animateGlows();
+    animateTags();
+    // Sofort in den Set-Binder (asynchron, die Kamera-Schleife wartet nie darauf)
+    autoFile(r.uid, key);
     // Name ist schon da (Index auf dem Gerät); Cardmarket-Preis & Bild laden im Hintergrund nach
     loadInfo([key, ...keys.slice(1, 3)]);
+  }
+
+  /** Automatisches Einsortieren eines Treffers – Konto: Set-Ordner, Gast: Test-Binder auf dem Gerät. Fehler → bleibt „offen“ (Liste). */
+  function autoFile(uid, key) {
+    if (deps.isStage) return;
+    sw.saving.add(uid);
+    (async () => {
+      try {
+        let info = sw.info.get(key);
+        if (!info?.kind || info.partial) {
+          try { for (const i of await deps.fetchInfo([key])) sw.info.set(i.key, i); } catch {}
+          info = sw.info.get(key);
+        }
+        const it = sw.items.find((i) => i.uid === uid);
+        if (!info?.kind || !it) return;
+        const ok = await deps.fileItem(info, { condition: "NM", variant: it.finish || "normal" }, 1);
+        if (!ok) return;
+        sw.items = sw.items.map((x) => (x.uid === uid ? { ...x, filed: Math.min(x.qty, (x.filed || 0) + 1), info: x.info?.kind ? x.info : info } : x));
+        const probe = sw.probes.get(key);
+        if (probe) deps.learn(key, probe);
+        saveSession();
+        schedulePortfolioRefresh();
+      } catch (e) {
+        if (e?.status === 401 || e?.status === 403) return;
+        try { console.warn("sweep autoFile", e); } catch {}
+      } finally {
+        sw.saving.delete(uid);
+        if (sw.bar?.uid === uid) renderDock();
+        if (sw.drawer) renderDrawer();
+        drawOverlay();
+      }
+    })();
+  }
+
+  function schedulePortfolioRefresh() {
+    if (sw.portfolioTimer) return;
+    sw.portfolioTimer = setTimeout(() => {
+      sw.portfolioTimer = 0;
+      try { window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" })); } catch {}
+      window.PS?.loadPortfolio?.();
+    }, 3000);
   }
 
   async function loadInfo(keys) {
@@ -477,13 +638,19 @@ export function createSweep(deps) {
     if (missing.length) {
       try { for (const i of await deps.fetchInfo(missing)) sw.info.set(i.key, i); } catch {}
     }
-    let changed = false;
+    let changed = false, dailyAdd = 0;
     sw.items = sw.items.map((it) => {
       const i = sw.info.get(it.key);
-      if (i?.kind && it.info?.kind !== i.kind) { changed = true; return { ...it, info: i }; }
-      return it;
+      let next = it;
+      if (i?.kind && it.info?.kind !== i.kind) { changed = true; next = { ...it, info: i }; }
+      if (next.dailyPending && i?.kind) {
+        const p = priceOf(next);
+        if (p) { dailyAdd += p * next.dailyPending; next = { ...next, dailyPending: 0 }; changed = true; }
+      }
+      return next;
     });
-    if (changed) { renderAll(); saveSession(); }
+    if (dailyAdd) { sw.daily = bumpDaily(sw.daily, { count: 0, value: dailyAdd }); saveDaily(); }
+    if (changed) { renderAll(); saveSession(); drawOverlay(); }
   }
 
   function checkDark(light) {
@@ -498,7 +665,97 @@ export function createSweep(deps) {
     if (light >= DARK_LEVEL + 15) $("ps-sw-torch")?.classList.remove("animate-pulse");
   }
 
-  // ------------------------------------------------------------------ Leuchtrahmen (Canvas-Overlay)
+  // ------------------------------------------------------------------ Live-Preisschild-Etiketten (Canvas-Overlay, kein Rahmen)
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+  function fitText(ctx, text, max) {
+    let t = String(text || "");
+    if (ctx.measureText(t).width <= max) return t;
+    while (t.length > 1 && ctx.measureText(`${t}…`).width > max) t = t.slice(0, -1);
+    return `${t}…`;
+  }
+
+  /** Ein Etikett wie ein echtes Händler-Preisschild: Preis groß, Name, Set-Kürzel + Nummer, Status-Badge. */
+  function drawTag(ctx, tag, W, H, dpr, now) {
+    const age = now - tag.seen;
+    const alpha = age <= TAG_HOLD_MS ? 1 : Math.max(0, 1 - (age - TAG_HOLD_MS) / TAG_FADE_MS);
+    if (alpha <= 0) return false;
+    const pts = tag.quad.map(([x, y]) => [x * W, y * H]);
+    const c = quadCenter(pts) || [W / 2, H / 2];
+    const cardW = (Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) + Math.hypot(pts[2][0] - pts[3][0], pts[2][1] - pts[3][1])) / 2;
+    const cardH = (Math.hypot(pts[3][0] - pts[0][0], pts[3][1] - pts[0][1]) + Math.hypot(pts[2][0] - pts[1][0], pts[2][1] - pts[1][1])) / 2;
+    const it = sw.items.find((i) => i.uid === tag.uid);
+    const info = sw.info.get(tag.key) || it?.info || null;
+    const price = it ? priceOf(it) : priceOfKey(tag.key);
+    const name = info ? (info.lang === "ja" && info.altName ? info.altName : info.name) : (it?.label || "Karte").replace(/\s\d+\/\d+$/, "");
+    const code = tagCode(info, tag.key);
+    const lines = tagLines({ price, filed: Boolean(it?.filed), saving: sw.saving.has(tag.uid), ownedBefore: Boolean(it?.ownedBefore), qty: it?.qty || 1 });
+    const s = Math.max(0.78, Math.min(1.3, cardW / (230 * dpr))) * dpr;
+    const pop = Math.min(1, (now - tag.at) / 180);
+    const scale = 0.86 + 0.14 * (1 - Math.pow(1 - pop, 3));
+    const tw = Math.max(126 * s, Math.min(cardW * 0.94, 236 * s));
+    const padX = 10 * s, lineGap = 3 * s;
+    const fPrice = 23 * s, fName = 11.5 * s, fCode = 10 * s, fBadge = 9.5 * s;
+    const th = 8 * s + fPrice + lineGap + fName + lineGap + fCode + 6 * s + fBadge + 8 * s + 8 * s + (lines.flag ? fBadge + 6 * s : 0);
+    const x = Math.max(4 * dpr, Math.min(W - tw - 4 * dpr, c[0] - tw / 2));
+    const y = Math.max(4 * dpr, Math.min(H - th - 4 * dpr, c[1] + cardH * 0.04 - th / 2));
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x + tw / 2, y + th / 2); ctx.scale(scale, scale); ctx.translate(-(x + tw / 2), -(y + th / 2));
+    // Feiner Faden vom Etikett zur Kartenoberkante
+    ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 1.2 * dpr;
+    ctx.beginPath(); ctx.moveTo(x + 14 * s, y); ctx.lineTo((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2); ctx.stroke();
+    // Etikett-Körper
+    ctx.shadowColor = "rgba(0,0,0,.55)"; ctx.shadowBlur = 18 * dpr; ctx.shadowOffsetY = 6 * dpr;
+    const grad = ctx.createLinearGradient(x, y, x, y + th);
+    grad.addColorStop(0, "#fffbeb"); grad.addColorStop(1, "#fde68a");
+    ctx.fillStyle = grad;
+    roundRect(ctx, x, y, tw, th, 9 * s); ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.lineWidth = 1 * dpr; ctx.strokeStyle = "rgba(120,53,15,.45)"; ctx.stroke();
+    // Öse
+    ctx.beginPath(); ctx.arc(x + 14 * s, y + 10 * s, 3.2 * s, 0, Math.PI * 2); ctx.fillStyle = "#1c1917"; ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 14 * s, y + 10 * s, 1.6 * s, 0, Math.PI * 2); ctx.fillStyle = "#fffbeb"; ctx.fill();
+    // Preis
+    let ty = y + 8 * s + fPrice;
+    ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+    ctx.fillStyle = price ? "#052e16" : "#57534e";
+    ctx.font = `900 ${fPrice}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    ctx.fillText(price ? eur(price) : info ? "– €" : "… €", x + padX + 14 * s, ty);
+    // Konfidenz (Sweep-Modus) rechts oben klein
+    if (isSweep() && tag.conf) {
+      ctx.font = `800 ${8.5 * s}px system-ui, sans-serif`; ctx.textAlign = "right"; ctx.fillStyle = "#166534";
+      ctx.fillText(`✓ ${tag.conf} %`, x + tw - padX, y + 9 * s + 8.5 * s * 0.4); ctx.textAlign = "left";
+    }
+    // Name
+    ty += lineGap + fName;
+    ctx.font = `800 ${fName}px system-ui, sans-serif`; ctx.fillStyle = "#1c1917";
+    ctx.fillText(fitText(ctx, name, tw - 2 * padX), x + padX, ty);
+    // Set-Kürzel + Nummer
+    ty += lineGap + fCode;
+    ctx.font = `700 ${fCode}px ui-monospace, SFMono-Regular, Menlo, monospace`; ctx.fillStyle = "#44403c";
+    ctx.fillText(fitText(ctx, code || "Cardmarket-Trend", tw - 2 * padX), x + padX, ty);
+    // Status-Badge
+    ty += 6 * s;
+    const badge = (text, bg, fg) => {
+      ctx.font = `900 ${fBadge}px system-ui, sans-serif`;
+      const bw = Math.min(tw - 2 * padX, ctx.measureText(text).width + 12 * s), bh = fBadge + 8 * s;
+      ctx.fillStyle = bg; roundRect(ctx, x + padX, ty, bw, bh, bh / 2); ctx.fill();
+      ctx.fillStyle = fg; ctx.fillText(fitText(ctx, text, bw - 10 * s), x + padX + 6 * s, ty + bh - 6 * s);
+      ty += bh + 4 * s;
+    };
+    badge(lines.status, it?.filed ? "#059669" : "#1e293b", it?.filed ? "#ecfdf5" : "#e2e8f0");
+    if (lines.flag) badge(lines.flag, lines.hot ? "#ea580c" : "#0ea5e9", "#fff7ed");
+    ctx.restore();
+    return true;
+  }
+
   function drawOverlay() {
     const cv = $("ps-sw-overlay");
     if (!cv) return;
@@ -508,50 +765,20 @@ export function createSweep(deps) {
     const ctx = cv.getContext("2d");
     ctx.clearRect(0, 0, W, H);
     const now = Date.now();
-    for (const g of sw.glows) {
-      const k = g.hit ? Math.max(0, (g.until - now) / 700) : 1;
-      ctx.save();
-      ctx.beginPath();
-      g.quad.forEach(([x, y], i) => (i ? ctx.lineTo(x * W, y * H) : ctx.moveTo(x * W, y * H)));
-      ctx.closePath();
-      ctx.lineJoin = "round";
-      if (g.hit) {
-        ctx.shadowColor = `rgba(52,211,153,${0.9 * k})`; ctx.shadowBlur = 26 * dpr;
-        ctx.strokeStyle = `rgba(52,211,153,${0.95 * k})`; ctx.lineWidth = 4 * dpr;
-        ctx.fillStyle = `rgba(52,211,153,${0.16 * k})`; ctx.fill();
-      } else {
-        ctx.shadowColor = g.locked ? "rgba(52,211,153,.5)" : "rgba(34,211,238,.55)"; ctx.shadowBlur = 14 * dpr;
-        ctx.strokeStyle = g.locked ? "rgba(52,211,153,.55)" : "rgba(34,211,238,.6)"; ctx.lineWidth = 2 * dpr;
-      }
-      ctx.stroke();
-      ctx.restore();
-      if (g.hit && g.label && k > 0.2) {
-        const [x, y] = g.quad[0];
-        ctx.save();
-        ctx.font = `900 ${12 * dpr}px system-ui, sans-serif`;
-        const text = `✓ ${g.label}`.slice(0, 34);
-        const tw = ctx.measureText(text).width + 12 * dpr;
-        const px = Math.max(4, Math.min(W - tw - 4, x * W)), py = Math.max(20 * dpr, y * H - 8 * dpr);
-        ctx.globalAlpha = Math.min(1, k * 1.4);
-        ctx.fillStyle = "rgba(16,185,129,.95)";
-        ctx.fillRect(px, py - 16 * dpr, tw, 20 * dpr);
-        ctx.fillStyle = "#02130d";
-        ctx.fillText(text, px + 6 * dpr, py - 2 * dpr);
-        ctx.restore();
-      }
-    }
+    sw.tags = sw.tags.filter((t) => now - t.seen <= TAG_HOLD_MS + TAG_FADE_MS);
+    for (const tag of sw.tags) drawTag(ctx, tag, W, H, dpr, now);
   }
 
-  function animateGlows() {
-    cancelAnimationFrame(sw.glowRaf);
+  function animateTags() {
+    cancelAnimationFrame(sw.tagRaf);
     const step = () => {
       drawOverlay();
-      if (sw.glows.some((g) => g.hit && g.until > Date.now())) sw.glowRaf = requestAnimationFrame(step);
+      if (sw.running && sw.tags.length) sw.tagRaf = requestAnimationFrame(step);
     };
-    sw.glowRaf = requestAnimationFrame(step);
+    sw.tagRaf = requestAnimationFrame(step);
   }
 
-  // ------------------------------------------------------------------ Feedback: Vibration + „Pling“
+  // ------------------------------------------------------------------ Feedback: Vibration + Scanner-Ping
   function unlockAudio() {
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -561,7 +788,7 @@ export function createSweep(deps) {
     } catch {}
   }
 
-  /** Kurzer, heller „Pling“ (zwei Sinus-Teiltöne, schneller Anschlag, weiches Ausklingen) – ohne Audiodatei. */
+  /** Kurzer, knackiger Kassen-/Scanner-Ping (zwei schnelle Töne, heller Oberton) – ohne Audiodatei. */
   function pling() {
     if (sw.prefs.muted) return;
     try {
@@ -571,28 +798,30 @@ export function createSweep(deps) {
       const t = ctx.currentTime;
       const out = ctx.createGain();
       out.gain.setValueAtTime(0.0001, t);
-      out.gain.exponentialRampToValueAtTime(0.16, t + 0.006);
-      out.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+      out.gain.exponentialRampToValueAtTime(0.18, t + 0.005);
+      out.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
       out.connect(ctx.destination);
-      for (const [f, g] of [[1760, 1], [2637, 0.35]]) {
+      for (const [f, g, start, dur] of [[1900, 1, 0, 0.07], [2550, 0.8, 0.07, 0.13], [3800, 0.25, 0.07, 0.1]]) {
         const o = ctx.createOscillator(), og = ctx.createGain();
-        o.type = "sine"; o.frequency.setValueAtTime(f, t);
-        og.gain.setValueAtTime(g, t);
+        o.type = f > 3000 ? "sine" : "square"; o.frequency.setValueAtTime(f, t + start);
+        og.gain.setValueAtTime(g * (o.type === "square" ? 0.35 : 1), t + start);
         o.connect(og).connect(out);
-        o.start(t); o.stop(t + 0.27);
+        o.start(t + start); o.stop(t + start + dur);
       }
     } catch {}
   }
 
   function feedback() {
-    if (isNative()) haptic("success");
-    else { try { if (navigator.vibrate) navigator.vibrate(35); } catch {} }
+    if (!sw.prefs.muted) {
+      if (isNative()) haptic("success");
+      else { try { if (navigator.vibrate) navigator.vibrate(35); } catch {} }
+    }
     pling();
     const f = $("ps-sw-flash");
-    if (f) { f.classList.add("on"); setTimeout(() => f.classList.remove("on"), 90); }
+    if (f) { f.classList.add("on"); setTimeout(() => f.classList.remove("on"), 80); }
   }
 
-  // ------------------------------------------------------------------ Set-Lock
+  // ------------------------------------------------------------------ Set-Lock & Modus
   async function ensureSets() {
     if (sw.setsLoaded || sw.setsLoading) return;
     sw.setsLoading = true;
@@ -608,7 +837,7 @@ export function createSweep(deps) {
   }
 
   function sendConfig() {
-    deps.worker().postMessage({ type: "sweep-config", setId: sw.prefs.setId || "" });
+    deps.worker().postMessage({ type: "sweep-config", setId: sw.prefs.setId || "", mode: sw.prefs.mode });
     sw.configSent = true;
     if (sw.prefs.setId) primeSet(sw.prefs.setId);
   }
@@ -649,6 +878,25 @@ export function createSweep(deps) {
     sendConfig();
   }
 
+  function setMode(m) {
+    if (!MODES[m] || sw.prefs.mode === m) return;
+    sw.prefs.mode = m; savePrefs();
+    sw.gate.setMode(m);
+    sw.gate.reset();
+    sw.view = { count: 0, value: 0 };
+    haptic("select");
+    renderToggles(); renderAll();
+    const idle = $("ps-sw-idle");
+    if (idle && !sw.running) {
+      const ps = idle.querySelectorAll("p");
+      if (ps[0]) ps[0].textContent = m === "sweep" ? "🌊" : "⚡";
+      if (ps[1]) ps[1].textContent = `${MODES[m].label} – 100 % rahmenlos`;
+      if (ps[2]) ps[2].textContent = `${MODES[m].hint} Kein Rahmen, kein Warten: Preisschild erscheint direkt auf der Karte, sie landet sofort in deinem Set-Binder.`;
+    }
+    sendConfig();
+    if (sw.running) toast(MODES[m].label, m === "sweep" ? "Langsam über Ordnerseite oder Tisch fahren – alle Karten gleichzeitig, nur Treffer mit 99–100 % Konfidenz zählen." : "Karte für Karte: jede neue Karte wird sofort erkannt, dieselbe Karte 2,5 s lang nicht doppelt gezählt.");
+  }
+
   function setLang(l) {
     if (!FLAG[l]) return;
     sw.prefs.lang = l; savePrefs();
@@ -672,18 +920,24 @@ export function createSweep(deps) {
     sw.history.push(uid);
     haptic("select"); pling();
     renderAll(true); saveSession();
+    autoFile(uid, it.key);
   }
 
   function undo() {
     const r = sessionUndo(sw.items, sw.history);
     if (!r.uid) { toast("↶ Nichts zum Rückgängigmachen", "In dieser Session wurde noch nichts gescannt."); return; }
     const it = sw.items.find((i) => i.uid === r.uid);
-    sw.items = r.items; sw.history = r.history;
+    sw.items = r.items.map((x) => (x.uid === r.uid && x.filed > x.qty ? { ...x, filed: x.qty } : x));
+    sw.history = r.history;
     // Dieselbe Karte darf sofort wieder erkannt werden
     if (it) sw.gate.unlock([it.key]);
+    sw.tags = sw.tags.filter((t) => t.uid !== r.uid || sw.items.some((i) => i.uid === r.uid));
     sw.lastUid = sw.items.some((i) => i.uid === sw.lastUid) ? sw.lastUid : sw.items[0]?.uid || null;
+    sw.daily = bumpDaily(sw.daily, { count: -1, value: -(it ? priceOf(it) : 0) }); saveDaily();
+    if (it?.filed && it.filed >= it.qty) toast("↶ Scan zurückgenommen", "Die Karte liegt weiter im Set-Binder – dort kannst du sie bei Bedarf entfernen.");
     haptic("select");
-    renderAll(); saveSession();
+    hideBar();
+    renderAll(); saveSession(); drawOverlay();
   }
 
   function itemFinish(uid, f) {
@@ -695,14 +949,16 @@ export function createSweep(deps) {
       const twin = sw.items.find((i) => i.key === it.key && i.finish === f);
       sw.history = sw.history.map((h) => (h === uid ? twin?.uid || h : h));
       if (sw.lastUid === uid) sw.lastUid = twin?.uid || null;
+      if (sw.bar?.uid === uid) sw.bar.uid = twin?.uid || uid;
     }
     haptic("select");
     renderAll(); saveSession();
   }
 
   function changeQty(uid, delta) {
+    const it = sw.items.find((i) => i.uid === uid);
     sw.items = sessionQty(sw.items, uid, Number(delta) > 0 ? 1 : -1);
-    if (Number(delta) > 0) sw.history.push(uid);
+    if (Number(delta) > 0) { sw.history.push(uid); if (it) autoFile(uid, it.key); }
     if (!sw.items.some((i) => i.uid === sw.lastUid)) sw.lastUid = sw.items[0]?.uid || null;
     renderAll(); saveSession();
   }
@@ -711,9 +967,10 @@ export function createSweep(deps) {
     if (!sw.items.length) return;
     const open = sw.items.reduce((s, i) => s + Math.max(0, i.qty - (i.filed || 0)), 0);
     if (open && !window.confirm(`${open} Karte${open > 1 ? "n sind" : " ist"} noch nicht im Set-Binder. Session trotzdem leeren?`)) return;
-    sw.items = []; sw.history = []; sw.lastUid = null;
+    sw.items = []; sw.history = []; sw.lastUid = null; sw.tags = [];
     sw.gate.reset();
-    renderAll(); saveSession();
+    hideBar();
+    renderAll(); saveSession(); drawOverlay();
   }
 
   /** Infos (Art + ID) für alle Einträge sicherstellen – nötig zum Einsortieren und Inserieren. */
@@ -723,6 +980,20 @@ export function createSweep(deps) {
       try { for (const x of await deps.fetchInfo(need.slice(i, i + 8))) sw.info.set(x.key, x); } catch {}
     }
     sw.items = sw.items.map((it) => (sw.info.get(it.key)?.kind ? { ...it, info: sw.info.get(it.key) } : it));
+  }
+
+  /** „Inserieren“ (Cardmarket-Preis) bzw. „Schnell-Inserieren“ (Deal-Preis unter Cardmarket, 1 Tipp → live). */
+  async function listItem(uid, quick = false) {
+    const it = sw.items.find((i) => i.uid === uid) || lastItem();
+    if (!it) return;
+    hideBar();
+    haptic("select");
+    await completeInfos([it]);
+    const info = sw.info.get(it.key);
+    if (!info?.kind) { toast("⏳ Kartendaten laden noch", "Einen Moment – dann kannst du die Karte inserieren."); return; }
+    const probe = sw.probes.get(it.key);
+    if (probe) deps.learn(it.key, probe);
+    deps.openQuickList([{ ...info, source: "scan", condition: "nm", variant: it.finish || "normal" }], quick ? { instant: true, strategy: "quick" } : { strategy: "fair" });
   }
 
   async function fileAll() {
@@ -784,7 +1055,7 @@ export function createSweep(deps) {
 
   function toggleDrawer(on = !sw.drawer) {
     sw.drawer = on;
-    if (on) completeInfos(sw.items).then(() => { if (sw.drawer) renderAll(); });
+    if (on) { hideBar(); completeInfos(sw.items).then(() => { if (sw.drawer) renderAll(); }); }
     renderAll();
   }
 
@@ -806,8 +1077,9 @@ export function createSweep(deps) {
 
   const actions = {
     start, stop: () => stop(), torch: () => toggleTorch(), mute: () => { sw.prefs.muted = !sw.prefs.muted; savePrefs(); renderToggles(); if (!sw.prefs.muted) pling(); },
-    full: () => toggleFull(), set: selectSet, lang: setLang, finish: setFinish, plus: () => plusOne(), undo,
-    dockFinish: (f) => { if (lastItem()) itemFinish(sw.lastUid, f); }, itemFinish, qty: changeQty, drawer: () => toggleDrawer(),
+    full: () => toggleFull(), set: selectSet, lang: setLang, finish: setFinish, mode: setMode, plus: () => plusOne(), undo,
+    dockFinish: (f) => { const uid = sw.bar?.uid || sw.lastUid; if (uid) itemFinish(uid, f); }, itemFinish, qty: changeQty, drawer: () => toggleDrawer(),
+    list: (uid) => listItem(uid, false), quick: (uid) => listItem(uid, true),
     file: fileAll, sellDupes, clear: clearSession,
   };
 
@@ -820,6 +1092,7 @@ export function createSweep(deps) {
     start, stop, onWorker,
     onIndex() { setStatus(statusLine()); },
     get running() { return sw.running || sw.starting; },
+    get mode() { return sw.prefs.mode; },
     act(name, ...args) { const f = actions[name]; return f ? f(...args) : null; },
     resize() { if (sw.running) drawOverlay(); },
   };

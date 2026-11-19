@@ -58,7 +58,7 @@ function tileHtml(c) {
   const dup = c.qty >= 2;
   return `<div class="relative rounded-xl border ${dup ? "border-amber-400 bg-amber-500/10" : c.qty ? "border-emerald-400 bg-emerald-500/10" : "border-slate-800 bg-slate-900"} p-1.5 text-center min-w-0">
       <button onclick="PS.toggleOwned(${attr(c.id)})" class="block w-full" aria-label="${c.qty ? "Als fehlend markieren" : "Als vorhanden markieren"}">
-        <img src="${esc(cdn(c.image || FALLBACK_IMG, 180))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-24 mx-auto object-contain ${c.qty ? "" : "opacity-40 grayscale"}" alt="" />
+        <img src="${esc(cdn(c.image || FALLBACK_IMG, 180))}" loading="lazy" onerror="this.src='${FALLBACK_IMG}'" class="h-24 mx-auto object-contain ${c.qty ? "" : "ps-binder-sheet-missing"}" alt="" />
         <p class="text-[10px] font-bold text-white truncate">${esc(c.localId)} ${esc(c.name)}</p>
         <p class="text-[10px] ${c.qty ? "text-emerald-400" : "text-slate-400"} font-bold">${c.price ? eur(c.price) : "–"}</p>
       </button>

@@ -55,6 +55,7 @@ import { oauthStrategy, externalBrowserUrl, IN_APP_LABEL, initialOf, displayName
 import { filterListings, MARKET_CHIP_KEYS, setCodeOf, conditionShort } from "./market-filter-logic.js";
 import { initHome, homeApi, renderHome } from "./home.js";
 import { initHomeBinder, homeBinderApi } from "./home-binder.js";
+import { initGapRadar, gapRadarApi } from "./gap-radar.js";
 import { initMarketBinder, marketBinderApi, renderMarketBinder } from "./market-binder.js";
 import { initMarketSwipe, marketSwipeApi, renderMarketSwipe, browseMode, scopeForBinder } from "./market-swipe.js";
 import { initPresence, presenceApi } from "./presence.js";
@@ -1614,6 +1615,7 @@ window.PS = {
   savePref: (k, v) => savePref(k, v, { api, loggedIn: Boolean(state.user) }),
   ...homeApi,
   ...homeBinderApi,
+  ...gapRadarApi,
   ...valuationApi,
   ...paymentsApi,
   ...nativeApi,
@@ -1682,6 +1684,7 @@ async function boot() {
   initMarketBinder(); // Marktplatz: Angebote seitenweise im virtuellen Binder durchblättern + Einzelkarten-Swipe
   initHomeBinder(); // Startseite: interaktive Set-Binder-Vorschau (eigene Sets oder Beispiel-Set) direkt unter der Gründer-Box
   initBinder(); // Sammlung → Mein Binder: Set-Ordner & durchswipebare Binder-Ansicht mit Marktplatz-Abgleich
+  initGapRadar(); // Album → 🎯 Lücken-Radar: alle noch gesuchten Karten eines Sets mit Direkt-Kauf & Bulk-Suchauftrag
   initArena();
   initFlip();
   initCommunity();

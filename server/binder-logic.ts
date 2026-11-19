@@ -196,6 +196,51 @@ export function buildBinderCards(input: {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Leere Taschen („Lücken“): Marktplatz-Preisschild-Etikett statt „Fehlt“-Text
+// ---------------------------------------------------------------------------
+/** Marktplatz-Angebot gilt als „Deal“, wenn es mindestens so viel unter dem Cardmarket-Trend liegt (15 %). */
+export const DEAL_BELOW = 0.15;
+
+export type PocketLabel = {
+  /** market = Kaufangebot · deal = deutlich unter Cardmarket · trade = Tauschangebot · radar = noch kein Angebot (Preis-Radar) */
+  kind: "market" | "deal" | "trade" | "radar";
+  text: string;
+  /** Inserat, das ein Tipp auf das Etikett öffnet (0 = Schnellsuche / Preisalarm) */
+  listingId: number;
+};
+
+/**
+ * Etikett unter einer noch nicht gesammelten Tasche im Set-Binder:
+ *   🛒 Ab 6,50 €   – Karte liegt auf dem Marktplatz (günstigstes Angebot)
+ *   ⚡ Deal 5,50 € – Angebot mindestens DEAL_BELOW unter dem Cardmarket-Trend
+ *   🔁 Tausch      – reines Tauschangebot
+ *   🔔 Radar aktiv – noch kein Angebot → 1 Tipp öffnet Schnellsuche / Preisalarm
+ * Für eigene Karten gibt es kein Etikett (null).
+ */
+export function pocketLabel(card: Pick<BinderCard, "owned" | "market" | "price">): PocketLabel | null {
+  if (card.owned) return null;
+  const m = card.market;
+  if (!m) return { kind: "radar", text: "🔔 Radar aktiv", listingId: 0 };
+  if (m.trade || !(num(m.price) > 0)) return { kind: "trade", text: "🔁 Tausch möglich", listingId: Number(m.listingId) || 0 };
+  const cm = num(card.price);
+  const deal = cm > 0 && m.price <= cm * (1 - DEAL_BELOW);
+  return { kind: deal ? "deal" : "market", text: deal ? `⚡ Deal ${euroLabel(m.price)}` : `🛒 Ab ${euroLabel(m.price)}`, listingId: Number(m.listingId) || 0 };
+}
+
+/**
+ * Lücken-Radar: alle noch gesuchten Karten eines Sets – zuerst „sofort im Marktplatz verfügbar“ (günstigstes Angebot zuerst),
+ * dann alle übrigen (teuerste Lücke zuerst, damit man die wichtigen Karten sofort sieht).
+ */
+export function gapRadar(cardsList: BinderCard[]) {
+  const missing = (cardsList || []).filter((c) => !c.owned);
+  const available = missing.filter((c) => c.market).sort((a, b) => (a.market!.trade ? 1 : 0) - (b.market!.trade ? 1 : 0) || a.market!.price - b.market!.price);
+  const all = [...missing].sort((a, b) => (b.price || 0) - (a.price || 0) || compareLocalId(a.localId, b.localId));
+  const cost = Math.round(all.reduce((s, c) => s + (c.price || 0), 0) * 100) / 100;
+  const buyNow = Math.round(available.filter((c) => !c.market!.trade).reduce((s, c) => s + c.market!.price, 0) * 100) / 100;
+  return { available, all, count: missing.length, cost, buyNow };
+}
+
 /** Seiten à 9 Karten (3×3). Leere Sets ergeben eine leere Seite, damit der Ordner nie „kaputt“ aussieht. */
 export function paginate<T>(list: T[], size = BINDER_PAGE_SIZE): T[][] {
   const s = Math.max(1, Math.floor(size) || BINDER_PAGE_SIZE);
