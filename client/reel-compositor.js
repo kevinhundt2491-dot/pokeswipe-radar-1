@@ -6,7 +6,7 @@
 // Bedienelemente über das Video. Texte und Untertitel bleiben deshalb in x 80–930, y 230–1500.
 
 import { OUT_W as W, OUT_H as H } from "./live-stage.js";
-import { DOMAIN, CTA_TEXT, isHook4, isShowcase, SHOWCASE_PRO_AT } from "./reel-pro.js";
+import { DOMAIN, CTA_TEXT, isHook4, isShowcase, SHOWCASE_PRO_AT, SHORT_HOOK_Y } from "./reel-pro.js";
 
 const EMOJI = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
 const DISPLAY = `"Lilita One", "Figtree", system-ui, ${EMOJI}, sans-serif`;
@@ -100,6 +100,10 @@ export class ProCompositor {
     // Showcase-Familie: Vorlagen dürfen eigene Kamera-/Zoom-Keyframes mitbringen (Master-Vorlagen), sonst Pro-Showcase
     this.cam = Array.isArray(tpl?.camera) && tpl.camera.length > 1 ? tpl.camera : SC_CAMERA;
     this.zoomPlan = Array.isArray(tpl?.zoomPlan) ? tpl.zoomPlan : SC_ZOOM;
+    // Zeitbasis der Kamera-/Zoom-Keyframes: Showcase & Master 29 s, Kurz-Reels ihre exakte Länge (7–10 s)
+    this.base = tpl?.short && Number(tpl.exact) > 0 ? Number(tpl.exact) : 29;
+    // Kurz-Reels loopen: kein Ausblenden ins Schwarze am Ende
+    if (tpl?.noFade) this.fade = 0;
     if (this.showcase && typeof Image !== "undefined") { this.icon = new Image(); this.icon.decoding = "async"; this.icon.src = "/icons/icon-512.png"; }
     this.accent = look?.accent || tpl.accent || "#ffcb05";
     this.layout = look?.layout || "left";
@@ -889,7 +893,7 @@ export class ProCompositor {
 
   /** Kamera-Zustand des Smartphones zur Zeit t (Bildschirmmitte, Maßstab, Neigung). */
   #scCamera(t) {
-    const D = this.scenes[this.scenes.length - 1].end, k = D / 29;
+    const D = this.scenes[this.scenes.length - 1].end, k = D / this.base;
     const K = this.cam;
     const tt = t / k;
     let i = 0;
@@ -902,7 +906,7 @@ export class ProCompositor {
 
   /** Ziel-Zoom des Bildschirminhalts (1 = ganze App inkl. 5-Reiter-Navigation sichtbar). */
   #scZoom(t) {
-    const tt = t / ((this.scenes[this.scenes.length - 1].end || 29) / 29);
+    const tt = t / ((this.scenes[this.scenes.length - 1].end || this.base) / this.base);
     for (const [a, b, z] of this.zoomPlan) if (tt >= a && tt < b) return z;
     return 1;
   }
@@ -1147,7 +1151,7 @@ export class ProCompositor {
   #showcaseFrame(ctx, t, live) {
     this.#backdrop(ctx, t);
     const [scan, binder, market, finale] = this.scenes;
-    const D = this.scenes[this.scenes.length - 1].end, k = D / 29;
+    const D = this.scenes[this.scenes.length - 1].end, k = D / this.base;
     // Tipp-Erkennung (Finger gedrückt → neuer Impuls)
     let down = false;
     try { down = !!this.pressed(); } catch { down = false; }
@@ -1190,7 +1194,8 @@ export class ProCompositor {
     // Overlays je Szene
     const ov = this.tpl.overlays || {};
     const sc = this.sceneAt(t);
-    if (sc === scan) this.#scHeadline(ctx, ov.scan || this.cover, t, 0, scan.end);
+    // Kurz-Reels: großer Hook-Text ab Frame 0 in der oberen sicheren Zone (bis 3 Zeilen), danach kompakte Schritt-Zeilen
+    if (sc === scan) this.#scHeadline(ctx, ov.scan || this.cover, t, 0, scan.end, this.tpl.short ? { lines: 3, size: 66, y: SHORT_HOOK_Y } : undefined);
     else if (sc === binder) this.#scHeadline(ctx, ov.binder, t, binder.start, binder.end);
     else if (sc === market) {
       this.#scHeadline(ctx, ov.market, t, market.start, market.end);
@@ -1262,7 +1267,7 @@ export class ProCompositor {
 
   /** Start des Abschluss-Lockups (Master-Vorlagen: eigener Zeitpunkt, sonst Beginn der Abschluss-Szene). */
   #lockupAt() {
-    const fin = this.scenes[this.scenes.length - 1], k = fin.end / 29;
+    const fin = this.scenes[this.scenes.length - 1], k = fin.end / this.base;
     return this.tpl.lockupAt != null ? Math.max(fin.start, this.tpl.lockupAt * k) : fin.start;
   }
 

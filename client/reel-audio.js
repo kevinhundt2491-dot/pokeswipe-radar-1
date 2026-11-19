@@ -97,17 +97,17 @@ export function startSoundtrack(ac, D, cues = [], seed = 1, voice = [], opts = {
  * keinen Versatz und keinen Drift zwischen Bild und Ton.
  * @returns {Promise<AudioBuffer>}
  */
-export async function renderSoundtrack(D, cues = [], seed = 1, voice = [], { sampleRate = 48000, fadeOut = 1.2, studio = false } = {}) {
+export async function renderSoundtrack(D, cues = [], seed = 1, voice = [], { sampleRate = 48000, fadeOut = 1.2, studio = false, sfxOnly = false } = {}) {
   const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   if (!OAC) throw new Error("Dieser Browser kann die Tonspur nicht offline rendern");
   const length = Math.round(D * sampleRate);
   const ac = new OAC({ numberOfChannels: 2, length, sampleRate });
-  buildMix(ac, ac.destination, 0, D, cues, seed, voice, { fadeOut, studio });
+  buildMix(ac, ac.destination, 0, D, cues, seed, voice, { fadeOut, studio, sfxOnly });
   return ac.startRendering();
 }
 
 /** Musik + Effekte + Sprecherin in `out` aufbauen (live oder offline). T0 = Kontextzeit von Videosekunde 0. */
-function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2, studio = false } = {}) {
+function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2, studio = false, sfxOnly = false } = {}) {
   // Schutz-Limiter am Ausgang: verhindert Übersteuern (Knistern), greift bei normalem Pegel nicht ein
   const limiter = ac.createDynamicsCompressor();
   limiter.threshold.value = -2; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = 0.002; limiter.release.value = 0.12;
@@ -131,6 +131,8 @@ function buildMix(ac, out, T0, D, cues, seed, voice, { fadeOut = 1.2, studio = f
   if (voice.length) { music.gain.value = 0.2; sfx.gain.value = 0.32; }
   // Studio-Mix (Showcase): Musik als leiser Teppich, Mikro-SFX klar hörbar, aber immer unter der Stimme
   if (studio) { music.gain.value = voice.length ? 0.13 : 0.4; sfx.gain.value = voice.length ? 0.3 : 0.7; }
+  // Kurz-Reels: nur knackige UI-Soundeffekte (kein Musikteppich) – auf TikTok/Reels kommt ein Trending-Sound darüber
+  if (sfxOnly) { music.gain.value = 0; sfx.gain.value = voice.length ? 0.3 : 0.9; }
   const nodes = [];
   const voiceSources = [];
   const track = (n) => { nodes.push(n); return n; };

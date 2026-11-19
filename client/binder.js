@@ -689,6 +689,7 @@ async function binderDemoPrepare(setId, { price = 29.9, hero = SHOWCASE_GAPS[3],
   const at = (i) => binderCardAt(data.catalog, i)?.name || "";
   return {
     setId, name: data.set?.name || setId, cards: data.catalog.length, hero: at(demo.hero),
+    heroCard: (() => { const c = binderCardAt(data.catalog, demo.hero); return c ? { id: c.id, name: c.name, image: c.image || "", market: Number(c.price) || 0 } : null; })(),
     ...(ab ? { scanned: at(AUTOBINDER_DEMO.scanned), listed: at(AUTOBINDER_DEMO.listed) } : {}),
   };
 }
@@ -768,6 +769,16 @@ function binderDemoSlot(which = "hero") {
   return id ? $("ps-binder-view")?.querySelector(`[data-binder-card="${CSS.escape(id)}"]`) || null : null;
 }
 
+/** Demo-Ordner direkt auf der Seite der gescannten Karte ("scanned") bzw. der Lücke ("hero") öffnen – liefert das Slot-Element. */
+function binderDemoGoto(which = "scanned") {
+  if (!IS_STAGE || !demo || !view.demo) return null;
+  const id = which === "scanned" && demo.binned?.id ? demo.binned.id : binderCardAt(demo.data.catalog, demo.hero)?.id;
+  const i = (view.pages || []).findIndex((p) => (p || []).some((c) => c?.cardId === id));
+  if (i < 0) return null;
+  view.page = i; render();
+  return id ? $("ps-binder-view")?.querySelector(`[data-binder-card="${CSS.escape(id)}"]`) || null : null;
+}
+
 /** Sammlung + eigene Inserate des Demo-Ordners im Format der Inserat-Auswahl („Meine Inserate“). */
 function binderDemoInventory() {
   if (!IS_STAGE || !demo) return null;
@@ -801,7 +812,7 @@ export function initBinder() {
 }
 
 export const binderApi = {
-  ...(IS_STAGE ? { binderDemoPrepare, binderDemoOpen, binderDemoReveal, binderDemoSlot, binderDemoInventory } : {}),
+  ...(IS_STAGE ? { binderDemoPrepare, binderDemoOpen, binderDemoReveal, binderDemoSlot, binderDemoInventory, binderDemoGoto } : {}),
   openSetBinder, closeSetBinder, binderCardTap, binderWish, binderSell, renderFolders, binderOpenOffer, binderMarketSearch, setBinderAlerts, renderHomeFolders,
   binderPocketTap, binderEbay, binderGapRadar: openGapRadar,
   binderNext: () => go(1), binderPrev: () => go(-1),

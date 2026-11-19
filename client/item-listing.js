@@ -7,6 +7,10 @@
 // Der bestehende Einzelkarten-Flow bleibt unverändert.
 import { $, esc, jsArg, state, api, toast, handleError, requireLogin } from "./core.js";
 import { ITEM_CATEGORIES, ITEM_CONDITIONS, ITEM_MAX_PHOTOS } from "../server/item-listing-logic.ts";
+import { DEMO_ITEMS, demoItemPng } from "./reel-demo-items.js";
+
+// Reel-Aufnahme (Live-Stage-iframe mit ?reel=1): Formular sichtbar vorbefüllen – es wird nie abgeschickt.
+const IS_STAGE = (() => { try { return window.self !== window.top && new URLSearchParams(location.search).get("reel") === "1"; } catch { return false; } })();
 
 const it = { photos: [], category: "booster", condition: "sealed", busy: false };
 const TITLE_IDEAS = ["Stürmische Funken Display OVP", "Top-Trainer-Box", "9er Sammelordner", "Pikachu Plüschfigur", "Sleeves & Toploader Set", "Sammlung 500 Karten (Lot)"];
@@ -143,7 +147,24 @@ async function submit() {
   }
 }
 
+/** Stage-Demo: Foto „hochladen“ (Produkt-Abbildung), Titel und Preis eintragen – Zustand/Kategorie tippt die Aufnahme selbst. */
+async function itemDemoFill({ index = 0, step = "photo" } = {}) {
+  if (!IS_STAGE) return null;
+  const a = DEMO_ITEMS[Math.max(0, Math.min(DEMO_ITEMS.length - 1, Number(index) || 0))];
+  if (step === "photo") {
+    const png = await demoItemPng(a);
+    if (png) it.photos = [png];
+    refreshPart("ps-item-photos", photosHtml());
+    return $("ps-item-photos");
+  }
+  const t = $("ps-item-title"), p = $("ps-item-price");
+  if (t) t.value = a.title;
+  if (p) p.value = String(a.price);
+  return t;
+}
+
 export const itemListingApi = {
+  ...(IS_STAGE ? { itemDemoFill } : {}),
   itemListingFormHtml,
   itemPhotos: (e) => addPhotos(e),
   itemPhotoRemove: (i) => { it.photos.splice(Number(i), 1); refreshPart("ps-item-photos", photosHtml()); },

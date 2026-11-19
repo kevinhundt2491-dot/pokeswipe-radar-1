@@ -15,6 +15,7 @@ import {
   M16_MODES, M16_PAGE, quickFilter, mixListings, pages16, clampPage, turnDecision, swipeDecision, velocityOf, springStep, rubber, isDeal,
 } from "./market16-logic.js";
 import { ITEM_CATEGORIES, listingTypeOf, itemCategoryLabel, itemCategoryIcon, itemConditionLabel, filterByType } from "../server/item-listing-logic.ts";
+import { DEMO_ITEMS, demoItemPng, demoItemListings, demoCardListings } from "./reel-demo-items.js";
 
 const MODE_KEY = "ps_m16_mode";
 const IS_STAGE = (() => { try { return window.self !== window.top && new URLSearchParams(location.search).get("reel") === "1"; } catch { return false; } })();
@@ -100,8 +101,8 @@ function emptyHtml() {
 export function renderMarket16(list, q = "") {
   const d = ensureDom();
   if (!d) return;
-  m.base = Array.isArray(list) ? list : [];
-  m.q = String(q || "");
+  m.base = IS_STAGE && demo ? demo.list : Array.isArray(list) ? list : [];
+  m.q = IS_STAGE && demo ? "" : String(q || "");
   d.bar.innerHTML = barHtml();
   const on = m.mode !== "std";
   d.main.classList.toggle("ps-m16-on", on);
@@ -114,6 +115,8 @@ export function renderMarket16(list, q = "") {
 function computeList() {
   const searched = m.q ? filterListings(m.base, { q: m.q, chip: "all", buyFirst: false }) : m.base;
   const filtered = quickFilter(searched, { quick: m.quick, type: m.type, category: m.category, myCity: state.me?.city || "" });
+  // Reel-Aufnahme: feste Demo-Reihenfolge (gemischt vorbereitet), damit jede Aufnahme gleich aussieht
+  if (IS_STAGE && demo) return filtered;
   return mixListings(filtered, m.seed);
 }
 
@@ -543,7 +546,56 @@ export function initMarket16() {
 
 const rerender = () => { m.sig = ""; window.renderMarket?.(); };
 
+// ---------------------------------------------------------------------------
+// Reel-Aufnahme NUR in der Live-Stage (?reel=1): volle 16er-Seite aus dem ECHTEN Set-Katalog (echte Bilder & Cardmarket-
+// Preise) + Pokémon-Artikel – nichts wird gespeichert, Kauf-Knöpfe werden in der Aufnahme nur sichtbar angetippt.
+// ---------------------------------------------------------------------------
+let demo = null; // { list, own }
+async function m16DemoPrepare({ setId = "sv03.5", cards = true, items = true, itemsFirst = false, mode = "binder", type = "all", offer = null } = {}) {
+  if (!IS_STAGE || !/^[\w.\-]{1,40}$/.test(String(setId || ""))) return null;
+  let catalog = [];
+  if (cards) { try { catalog = (await api(`/api/binder/set/${encodeURIComponent(setId)}`))?.catalog || []; } catch { catalog = []; } }
+  const realItems = items ? (state.listings || []).filter((l) => listingTypeOf(l) === "item" && l.image).slice(0, 6) : [];
+  const pngs = items ? await Promise.all(DEMO_ITEMS.map((a) => demoItemPng(a))) : [];
+  const itemList = items ? [...realItems, ...demoItemListings(pngs)] : [];
+  const cardList = cards ? demoCardListings(catalog) : [];
+  // Angebot für eine bestimmte Karte (z. B. Lücke aus dem Set-Binder) ganz vorne
+  const offerRow = offer?.name ? demoCardListings([{ id: offer.id || "demo-offer", name: offer.name, image: offer.image || FALLBACK_IMG, price: Math.max(1, Number(offer.market) || Number(offer.price) || 1) }], { startId: -900 })[0] : null;
+  if (offerRow) cardList.unshift({ ...offerRow, price: Number(offer.price) || offerRow.price, market_price: Number(offer.market) || null });
+  // Mischung wie im echten Marktplatz: nach je 2 Karten ein Artikel (bzw. Artikel zuerst)
+  const list = [];
+  const a = itemsFirst ? itemList.slice() : cardList.slice(), b = itemsFirst ? cardList.slice() : itemList.slice();
+  while (a.length || b.length) { if (a.length) list.push(a.shift()); if (a.length) list.push(a.shift()); if (b.length) list.push(b.shift()); }
+  demo = { list, own: null };
+  Object.assign(m, { quick: "all", type: ["card", "item"].includes(type) ? type : "all", category: "", page: 0, pos: 0, posId: null, sig: "" });
+  if (M16_MODES.includes(mode)) m.mode = mode;
+  window.renderMarket?.();
+  return { count: list.length, items: itemList.length, cards: cardList.length, deals: list.filter(isDeal).length, offerId: offerRow ? -900 : null };
+}
+/** Ansicht der Aufnahme setzen, ohne die gespeicherte Wahl des Admins zu verändern. */
+function m16DemoMode(mode, type) {
+  if (!IS_STAGE || !M16_MODES.includes(mode)) return false;
+  m.mode = mode; if (type !== undefined) { m.type = ["card", "item"].includes(type) ? type : "all"; m.category = ""; }
+  m.page = 0; m.pos = 0; m.posId = null; m.sig = "";
+  window.renderMarket?.();
+  return true;
+}
+if (IS_STAGE && typeof window !== "undefined") {
+  // Im Live-Scanner „⚡ Inserat“ angetippt (Demo, ohne Schreibzugriff) → erscheint als eigenes Inserat ganz vorne
+  window.addEventListener("ps:reel-binned", (e) => {
+    const b = e.detail;
+    if (!demo || !b?.listed || !b.name) return;
+    const mp = Number(b.listPrice) || Number(b.price) || 0;
+    demo.own = { id: -1, user_id: state.user?.id || "reel-me", card_id: b.id || "", card_name: b.name, image: b.image || "", price: Math.max(0.5, Math.round(mp * 0.95 * 2) / 2 - 0.1), market_price: mp || null,
+      city: state.me?.city || "Köln", seller: "Du", status: "active", buy_now: true, condition: b.condition || "NM", listing_type: "card" };
+    demo.list = [demo.own, ...demo.list.filter((l) => l.id !== -1)];
+    m.sig = "";
+    window.renderMarket?.();
+  });
+}
+
 export const market16Api = {
+  ...(IS_STAGE ? { m16DemoPrepare, m16DemoMode } : {}),
   m16Mode: (mode) => {
     if (!M16_MODES.includes(mode)) return;
     m.mode = mode; lsSet(MODE_KEY, mode); m.sig = "";

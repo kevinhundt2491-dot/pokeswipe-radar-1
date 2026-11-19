@@ -15,13 +15,19 @@ export const PRO_TEMPLATE_LABELS: Record<string, string> = {
   chase: "Hook-Preset: Tinder für Sammler (Swipe, Tausch-Hub & Sammler-Radar, 15–17 s, 8 Mbit/s)",
   showcase: "Pro-Showcase: Volle App- & Pro-Abo-Power (exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s)",
   autobinder: "Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power (Master, exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s)",
+  shortscan: "Kurz-Reel 1: Verbesserter Live-Scanner & Preisschild (8 s, 60 FPS, ohne KI-Stimme)",
+  shortbinder: "Kurz-Reel 2: Echtes 3D-Binder-Blättern & Preisetiketten (9 s, 60 FPS, ohne KI-Stimme)",
+  shortmarket: "Kurz-Reel 3: 16er Marktplatz-Binder & Echtes Hochschieben (9 s, 60 FPS, ohne KI-Stimme)",
+  shortitems: "Kurz-Reel 4: NEU – Pokémon-Artikel verkaufen & entdecken (8 s, 60 FPS, ohne KI-Stimme)",
 };
 /** High-End-Showcase-Vorlagen (eigenes Format, exakte Länge) – optional in der Rotation, Standard bleibt PRO_TEMPLATE_KEYS. */
 export const SHOWCASE_TEMPLATE_KEYS = ["showcase"] as const;
 /** Master-Vorlagen (Showcase-Familie, exakt 29 s) – direkt im Generator auswählbar, optional in der Rotation. */
 export const MASTER_TEMPLATE_KEYS = ["autobinder"] as const;
+/** Kurz-Reels (7–10 s, High-Retention, standardmäßig ohne KI-Stimme) – direkt im Generator, optional in der Rotation. */
+export const SHORT_TEMPLATE_KEYS = ["shortscan", "shortbinder", "shortmarket", "shortitems"] as const;
 /** Alle Vorlagen, die die Admin-Zentrale auswählen kann. */
-export const VIDEO_TEMPLATE_KEYS = [...PRO_TEMPLATE_KEYS, ...SHOWCASE_TEMPLATE_KEYS, ...MASTER_TEMPLATE_KEYS] as const;
+export const VIDEO_TEMPLATE_KEYS = [...PRO_TEMPLATE_KEYS, ...SHOWCASE_TEMPLATE_KEYS, ...MASTER_TEMPLATE_KEYS, ...SHORT_TEMPLATE_KEYS] as const;
 /** Die 3 Hook-Presets (4 Szenen, 15–17 s) – im Generator einzeln oder gemeinsam per Klick erzeugbar. */
 export const HOOK_PRESET_KEYS = ["fomo", "flea", "chase"] as const;
 export const HOOK_VARIANTS = 2;

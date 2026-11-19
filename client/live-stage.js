@@ -359,7 +359,7 @@ export class LiveStage {
   cardRects() {
     const doc = this.doc;
     if (!doc) return [];
-    const sel = "#ps-ls-demo-card, #ps-ls-hud img, #ps-binder-view:not(.hidden) .ps-bslot.owned .ps-bslot-art img, #ps-binder-view:not(.hidden) .ps-bslot.market .ps-bslot-art img, .ps-tile-art img, #swipe-img, #home-market-grid img, #ps-list-picker [data-pick-card] img";
+    const sel = "#ps-ls-demo-card, #ps-ls-hud img, #ps-binder-view:not(.hidden) .ps-bslot.owned .ps-bslot-art img, #ps-binder-view:not(.hidden) .ps-bslot.market .ps-bslot-art img, .ps-tile-art img, #swipe-img, #home-market-grid img, #ps-list-picker [data-pick-card] img, #ps-m16 .ps-m16-pocket img, #ps-m16 .ps-m16-vimg img, #ps-m16-sheet:not([hidden]) [data-m16-main]";
     const out = [];
     for (const el of doc.querySelectorAll(sel)) {
       const r = el.getBoundingClientRect();
@@ -389,6 +389,29 @@ export class LiveStage {
     this.pointer(el, "pointerup", x + dist, y);
     this.press(false);
     await this.sleep(260);
+  }
+
+  /**
+   * Echtes Hochschieben (vertikal) auf einem Element – PointerEvents → Swipe-Handler der App (z. B. 👆 Hochschieben im
+   * Marktplatz). dy < 0 = nach oben. Der Finger beschleunigt zum Ende hin (Flick), damit das Momentum greift.
+   */
+  async swipeV(el, dy = -260, ms = 480) {
+    this.check();
+    if (!el) throw new Error("Swipe-Fläche nicht gefunden");
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width * 0.55, y = Math.min(VIEW_H - 40, r.top + r.height * (dy < 0 ? 0.72 : 0.3));
+    await this.moveFinger(x, y, 260);
+    this.press(true);
+    this.pointer(el, "pointerdown", x, y);
+    await this.tween(ms, (_, k) => {
+      const py = y + dy * k * k, px = x + 10 * Math.sin(k * Math.PI);
+      this.pointer(el, "pointermove", px, py);
+      this.finger.x = px; this.finger.y = py;
+      this.finger.el.style.transform = `translate(${px}px, ${py}px)`;
+    });
+    this.pointer(el, "pointerup", x, y + dy);
+    this.press(false);
+    await this.sleep(200);
   }
 
   /** Text wie ein Mensch in ein echtes Eingabefeld tippen. */

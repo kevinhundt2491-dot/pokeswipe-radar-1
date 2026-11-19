@@ -5,7 +5,7 @@
 // (Sekunden bis zum nächsten Satz), die aus der echten ElevenLabs-Aufnahme stammt.
 
 import { VIEW_H } from "./live-stage.js";
-import { SHOWCASE_TIMELINE as TL, AUTOBINDER_TIMELINE as AB, AUTOBINDER_BADGES } from "./reel-pro.js";
+import { SHOWCASE_TIMELINE as TL, AUTOBINDER_TIMELINE as AB, AUTOBINDER_BADGES, SHORT_TIMELINES as ST, templateByKey } from "./reel-pro.js";
 
 const num = (s) => {
   const m = String(s || "").replace(/\./g, "").replace(",", ".").match(/-?\d+(\.\d+)?/);
@@ -88,6 +88,30 @@ function bestFlipDeal(s) {
   }
   return best;
 }
+
+
+// ---------------------------------------------------------------------------
+// Kurz-Reels (7–10 s): gemeinsame Bausteine
+// ---------------------------------------------------------------------------
+/** Marktplatz-Reiter öffnen und den 16er-Bereich oben ins Bild holen. */
+async function marketReady(s, sub = "all") {
+  if (s.$("#view-map")?.classList.contains("hidden")) { try { s.win.switchTab?.("map"); } catch {} }
+  try { s.win.PS?.marketTab?.(sub); } catch {}
+  await s.idle({ quietMs: 120, timeoutMs: 900 });
+}
+function m16Top(s, off = 66) {
+  const el = s.$("#ps-m16 [data-m16-book]") || s.$("#ps-m16 [data-vs]") || s.$("#ps-m16");
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - off));
+}
+/** Sichtbares Fach im 16er Binder (bevorzugt ein Deal). */
+function m16Pocket(s, deal = true) {
+  const all = s.$$("#ps-m16 [data-m16-book] [data-front] .ps-m16-pocket[data-m16-id], #ps-m16 [data-m16-book] .ps-m16-pocket[data-m16-id]")
+    .filter((p) => { const r = p.getBoundingClientRect(); return r.width > 10 && r.top > 60 && r.bottom < VIEW_H - 60; });
+  return (deal ? all.find((p) => p.classList.contains("is-deal")) : null) || all[5] || all[0] || null;
+}
+const shortTpl = (k) => templateByKey(k) || {};
 
 // ---------------------------------------------------------------------------
 // Die 10 Choreografien (Schlüssel = SCENARIOS[].key)
@@ -761,6 +785,283 @@ export const CHOREO = {
         s.hideFinger();
         await s.sleep(700);
         await s.scrollBy(VIEW_H * 0.16, 1600);
+      },
+    ],
+  },
+
+
+  // K1) Kurz-Reel „Verbesserter Live-Scanner & Preisschild“ (8 s): Frame 0 = freies Scanner-Kamerabild mit Top-Karte, Laser läuft
+  // sofort → Preis-Etikett poppt auf → automatisch im Set-Ordner (Seite der Karte) → nächste Karte gescannt → „⚡ Inserat“ →
+  // eigenes Inserat unter Cardmarket-Preis im 16er Marktplatz. Kein Schreibzugriff (Stage-Demos).
+  shortscan: {
+    async setup(s) {
+      const tpl = shortTpl("shortscan");
+      try { s.win.PS?.showSub?.("scan", "live"); } catch {}
+      await s.waitFor(() => s.$("#ps-ls-stage"), 15_000, "Live-Scanner lädt nicht").catch(() => {});
+      // 2. Karte einmal vorab bereitlegen (Bild im Cache), damit der zweite Scan ohne Ladezeit startet
+      try { await s.win.PS?.liveScanDemoPrepare?.({ keys: tpl.nextKeys, sleeve: true, listDemo: true, autoFile: true }); } catch (e) { console.warn("Kurz-Reel Scan 2:", e); }
+      try { const b = await s.win.PS?.binderDemoPrepare?.(tpl.binderSet || "sv03.5", { price: 6.5 }); if (b) s.fact("set", b.name); } catch (e) { console.warn("Kurz-Reel Binder:", e); }
+      try { await s.win.PS?.m16DemoPrepare?.({ setId: tpl.binderSet || "sv03.5", mode: "std" }); } catch (e) { console.warn("Kurz-Reel Marktplatz:", e); }
+      let info = null;
+      try { info = await s.win.PS?.liveScanDemoPrepare?.({ keys: tpl.scanKeys, sleeve: true, zoom: 1.4, autoFile: true, listDemo: true }); } catch (e) { console.warn("Kurz-Reel Scan:", e); }
+      if (info) { s.fact("card", info.name); if (Number(info.price) > 0) s.fact("price", `${Number(info.price).toFixed(2).replace(".", ",")} €`); }
+      const st = s.$("#ps-ls-stage");
+      if (st) { const r = st.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 70)); }
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 250, timeoutMs: 4000 });
+    },
+    beats: [
+      async (s, d, at) => {
+        const T = ST.shortscan;
+        s.hideFinger();
+        await at(T.scanStart);
+        await s.win.PS?.liveScanDemoScan?.(T.scanMs);
+        const price = s.$("[data-hud-price]");
+        if (price) { s.fact("price", price.textContent); await s.spotlight(price); }
+        await at(T.filed);
+        unspot(s);
+        const filed = await s.win.PS?.liveScanDemoFile?.();
+        if (filed) await s.spotlight(filed);
+      },
+      async (s, d, at) => {
+        const T = ST.shortscan;
+        await at(T.binderOpen);
+        unspot(s); s.hideFinger();
+        if (!s.win.PS?.binderDemoOpen?.()) { const nav = s.$("#mob-portfolio"); if (nav) await s.tap(nav, { reveal: false }); return; }
+        const slot = s.win.PS?.binderDemoGoto?.("scanned");
+        await s.decodeImages(500);
+        await at(T.scannedSpot);
+        const el = slot?.isConnected ? slot : s.win.PS?.binderDemoSlot?.("scanned");
+        if (el) await s.spotlight(el);
+      },
+      async (s, d, at) => {
+        const T = ST.shortscan, tpl = shortTpl("shortscan");
+        await at(T.scanner2);
+        unspot(s);
+        try { s.win.PS?.closeSetBinder?.(); } catch {}
+        try { s.win.PS?.showSub?.("scan", "live"); } catch {}
+        try { await s.win.PS?.liveScanDemoPrepare?.({ keys: tpl.nextKeys, sleeve: true, zoom: 1.3, listDemo: true, autoFile: true }); } catch {}
+        const st = s.$("#ps-ls-stage");
+        if (st) { const r = st.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 70)); }
+        await at(T.scan2Start);
+        await s.win.PS?.liveScanDemoScan?.(T.scan2Ms);
+        await at(T.instantTap);
+        const btn = s.$('#ps-ls-hud [data-act="instant"]') || s.$('#ps-ls-hud [data-act="sell"]');
+        if (btn) await s.tap(btn, { reveal: false });
+      },
+      async (s, d, at) => {
+        const T = ST.shortscan;
+        await at(T.marketOpen);
+        unspot(s); s.hideFinger();
+        await marketReady(s, "all");
+        s.win.PS?.m16DemoMode?.("binder", "all");
+        await s.idle({ quietMs: 100, timeoutMs: 500 });
+        m16Top(s);
+        await s.decodeImages(500);
+        await at(T.sheetOpen);
+        const own = s.$('#ps-m16 [data-m16-id="-1"]');
+        if (own) await s.spotlight(own);
+        try { s.win.PS?.m16Open?.(own ? -1 : Number(m16Pocket(s)?.dataset.m16Id)); } catch {}
+        await s.idle({ quietMs: 100, timeoutMs: 500 });
+      },
+    ],
+  },
+
+  // K2) Kurz-Reel „Echtes 3D-Binder-Blättern & Preisetiketten“ (9 s): Frame 0 = geöffneter dunkler Set-Ordner, der Finger
+  // blättert sofort in 3D um → Preisetiketten an eigenen Karten → Lücke „🛒 Ab 6,50 €“ (bzw. eBay-Etikett) → 1 Tipp → Angebot
+  // im Marktplatz-Sheet → zurück in den Ordner, Schwenk über die gefüllte Seite.
+  shortbinder: {
+    async setup(s) {
+      const tpl = shortTpl("shortbinder");
+      let b = null;
+      try { b = await s.win.PS?.binderDemoPrepare?.(tpl.binderSet || "sv03.5", { price: tpl.gapPrice || 6.5 }); } catch (e) { console.warn("Kurz-Reel Binder:", e); }
+      if (b) { s.fact("set", b.name); s.fact("gap", b.hero); }
+      try { await s.win.PS?.m16DemoPrepare?.({ setId: tpl.binderSet || "sv03.5", mode: "std", offer: b?.heroCard ? { ...b.heroCard, price: tpl.gapPrice || 6.5 } : null }); } catch (e) { console.warn("Kurz-Reel Marktplatz:", e); }
+      if (s.$("#view-portfolio")?.classList.contains("hidden")) { try { s.win.switchTab?.("portfolio"); } catch {} }
+      s.win.PS?.binderDemoOpen?.();
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 250, timeoutMs: 4000 });
+    },
+    beats: [
+      async (s, d, at) => {
+        const T = ST.shortbinder;
+        const vp = () => s.$("#ps-binder-view [data-binder-viewport]");
+        await at(T.flip1);
+        if (vp()) await s.swipe(vp(), -1, 480);
+        await at(T.flip2);
+        if (vp()) await s.swipe(vp(), -1, 480);
+        s.hideFinger();
+      },
+      async (s, d, at) => {
+        const T = ST.shortbinder;
+        await at(T.tagSpot);
+        const tag = s.$$("#ps-binder-view .ps-bslot.owned").find((el) => s.visible(el));
+        if (tag) await s.spotlight(tag);
+        await at(T.reveal);
+        unspot(s);
+        // Lücke mit Marktplatz-Angebot: Ordner springt auf deren Seite, das Etikett leuchtet auf
+        s.win.PS?.binderDemoReveal?.();
+        const gap = s.win.PS?.binderDemoGoto?.("hero") || s.win.PS?.binderDemoSlot?.("hero");
+        if (gap) { await s.spotlight(gap); const { x, y } = s.center(gap); await s.moveFinger(x + 30, y + 60, 500); }
+      },
+      async (s, d, at) => {
+        const T = ST.shortbinder;
+        await at(T.gapTap);
+        unspot(s);
+        const gap = s.win.PS?.binderDemoSlot?.("hero");
+        if (gap) await s.tap(gap, { reveal: false });
+        await marketReady(s, "all");
+        s.win.PS?.m16DemoMode?.("binder", "all");
+        m16Top(s);
+        await at(T.sheetOpen);
+        try { s.win.PS?.m16Open?.(-900); } catch {}
+        await s.idle({ quietMs: 100, timeoutMs: 500 });
+        await at(T.buyTap);
+        const cta = s.$("#ps-m16-sheet .ps-m16-cta");
+        if (cta) await s.tapVisual(cta); // sichtbarer Tipp – kein echter Kauf in der Aufnahme
+      },
+      async (s, d, at) => {
+        const T = ST.shortbinder;
+        await at(T.binderBack);
+        s.hideFinger();
+        try { s.win.PS?.m16Close?.(); } catch {}
+        try { s.win.switchTab?.("portfolio"); } catch {}
+        s.win.PS?.binderDemoOpen?.();
+        await s.decodeImages(400);
+        await at(T.pan);
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        if (vp) await s.swipe(vp, -1, 560);
+        s.hideFinger();
+      },
+    ],
+  },
+
+  // K3) Kurz-Reel „16er Marktplatz-Binder & Echtes Hochschieben“ (9 s): Frame 0 = voller 4×4-Marktplatz-Binder, Seite schlägt
+  // sofort in 3D um → Deal antippen (Detail-Sheet) → Umschalter „👆 Swipe“ → 2× echtes Hochschieben → „⚡ Spontan mitnehmen“.
+  shortmarket: {
+    async setup(s) {
+      const tpl = shortTpl("shortmarket");
+      await marketReady(s, "all");
+      try { await s.win.PS?.m16DemoPrepare?.({ setId: tpl.binderSet || "sv03.5", mode: "binder" }); } catch (e) { console.warn("Kurz-Reel Marktplatz:", e); }
+      await s.waitFor(() => s.$("#ps-m16 [data-m16-book]"), 8000, "16er Binder lädt nicht").catch(() => {});
+      m16Top(s);
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 250, timeoutMs: 4000 });
+    },
+    beats: [
+      async (s, d, at) => {
+        const T = ST.shortmarket;
+        await at(T.turn1);
+        const book = s.$("#ps-m16 [data-m16-book]");
+        if (book) await s.swipe(book, -1, 460);
+        s.hideFinger();
+        await at(T.dealSpot);
+        const p = m16Pocket(s, true);
+        if (p) { await s.spotlight(p); const { x, y } = s.center(p); await s.moveFinger(x + 20, y + 40, 420); }
+      },
+      async (s, d, at) => {
+        const T = ST.shortmarket;
+        await at(T.dealTap);
+        unspot(s);
+        const p = m16Pocket(s, true);
+        if (p) await s.tap(p, { reveal: false });
+        await at(T.sheetSpot);
+        const price = s.$("#ps-m16-sheet .ps-m16-vprice") || s.$("#ps-m16-sheet .ps-m16-cta");
+        if (price) await s.spotlight(price);
+        await at(T.closeTap);
+        unspot(s);
+        const x = s.$("#ps-m16-sheet .ps-m16-sheet-x");
+        if (x) await s.tap(x, { reveal: false }); else s.win.PS?.m16Close?.();
+        await at(T.swipeMode);
+        const tab = s.$('#ps-m16 [data-m16-mode="swipe"]');
+        if (tab) await s.tap(tab, { reveal: false }); else s.win.PS?.m16DemoMode?.("swipe");
+        await s.idle({ quietMs: 80, timeoutMs: 400 });
+        m16Top(s);
+      },
+      async (s, d, at) => {
+        const T = ST.shortmarket;
+        const vs = () => s.$("#ps-m16 [data-vs-cur]") || s.$("#ps-m16 [data-vs]");
+        await at(T.up1);
+        if (vs()) await s.swipeV(vs(), -270, 430);
+        await at(T.up2);
+        if (vs()) await s.swipeV(vs(), -270, 430);
+        s.hideFinger();
+      },
+      async (s, d, at) => {
+        const T = ST.shortmarket;
+        await at(T.buyTap);
+        const cta = s.$("#ps-m16 .ps-m16-cta");
+        if (cta) await s.tapVisual(cta); // sichtbarer Tipp – kein echter Kauf in der Aufnahme
+        s.hideFinger();
+      },
+    ],
+  },
+
+  // K4) Kurz-Reel „NEU: Pokémon-Artikel verkaufen & entdecken“ (8 s): Frame 0 = 📦 Pokémon-Artikel im Hochschieben-Modus mit
+  // den Unterkategorien → Display, Top-Trainer-Box, Sammelordner → Verkaufen-Flow (Foto, Titel, Preis, „Neu & OVP“) →
+  // 16er Binder mit Karten + Artikeln gemischt. Das Formular wird nie abgeschickt.
+  shortitems: {
+    async setup(s) {
+      const tpl = shortTpl("shortitems");
+      await marketReady(s, "all");
+      try { await s.win.PS?.m16DemoPrepare?.({ setId: tpl.binderSet || "sv03.5", mode: "swipe", type: "item", itemsFirst: true }); } catch (e) { console.warn("Kurz-Reel Artikel:", e); }
+      await s.waitFor(() => s.$("#ps-m16 [data-vs]"), 8000, "Artikel-Stapel lädt nicht").catch(() => {});
+      const bar = s.$("#ps-m16 [data-m16-bar]");
+      if (bar) { const r = bar.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 60)); }
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 250, timeoutMs: 4000 });
+    },
+    beats: [
+      async (s, d, at) => {
+        const T = ST.shortitems;
+        const vs = () => s.$("#ps-m16 [data-vs-cur]") || s.$("#ps-m16 [data-vs]");
+        await at(T.up1);
+        if (vs()) await s.swipeV(vs(), -260, 420);
+        await at(T.up2);
+        if (vs()) await s.swipeV(vs(), -260, 420);
+      },
+      async (s, d, at) => {
+        const T = ST.shortitems;
+        const vs = () => s.$("#ps-m16 [data-vs-cur]") || s.$("#ps-m16 [data-vs]");
+        await at(T.up3);
+        if (vs()) await s.swipeV(vs(), -260, 420);
+        s.hideFinger();
+        await at(T.sellOpen);
+        try { s.win.PS?.marketTab?.("sell"); s.win.PS?.sellType?.("item"); } catch {}
+        await s.waitFor(() => s.$("#ps-item-form"), 3000).catch(() => {});
+        const form = s.$("#ps-item-form");
+        if (form) { const r = form.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 64)); }
+        await at(T.photo);
+        const ph = await s.win.PS?.itemDemoFill?.({ index: 0, step: "photo" });
+        if (ph) await s.spotlight(ph);
+        await at(T.fields);
+        unspot(s);
+        await s.win.PS?.itemDemoFill?.({ index: 0, step: "fields" });
+      },
+      async (s, d, at) => {
+        const T = ST.shortitems;
+        await at(T.condTap);
+        const cond = s.$("#ps-item-conds button");
+        if (cond) await s.tap(cond, { reveal: true });
+        await at(T.catTap);
+        const cat = s.$("#ps-item-cats button");
+        if (cat) await s.tap(cat, { reveal: false });
+        await at(T.submitTap);
+        const sub = s.$("#ps-item-submit");
+        if (sub) { await s.reveal(sub, { ms: 220, ratio: 0.6 }); await s.tapVisual(sub); } // nie abschicken
+      },
+      async (s, d, at) => {
+        const T = ST.shortitems;
+        await at(T.marketAll);
+        s.hideFinger();
+        try { s.win.PS?.marketTab?.("all"); } catch {}
+        s.win.PS?.m16DemoMode?.("binder", "all");
+        await s.idle({ quietMs: 80, timeoutMs: 400 });
+        m16Top(s);
+        await at(T.turn);
+        const book = s.$("#ps-m16 [data-m16-book]");
+        if (book) await s.swipe(book, -1, 460);
+        s.hideFinger();
       },
     ],
   },
