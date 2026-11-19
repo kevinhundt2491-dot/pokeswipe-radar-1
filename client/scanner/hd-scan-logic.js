@@ -4,7 +4,8 @@
 //                                 herausrechnen, Helligkeit & Kontrast normalisieren (Zero-Mean / Unit-Variance)
 //  • artVector / artSimilarity   – Stufe 2: HSV-Farbmatrix + Sobel-Kantengradient des inneren Artworks (sprachunabhängig)
 //  • typeClassOf / probeClasses  – Stufe 1: Schnell-Vorfilter nach Kartentyp / Rahmenfarbe
-//  • fuseMatch                   – Übereinstimmung aus pHash/dHash + Farb-Layout + HSV-Matrix + Kantengradient
+//  • paletteVector / paletteCheck – Pflicht-Farbabgleich: dominante Kartenfarbe (Artwork + Rahmen) Kamera ↔ Katalog
+//  • fuseMatch                   – Übereinstimmung aus pHash/dHash + Farb-Layout + HSV-Matrix + Kantengradient + Farbsignatur
 //  • fitGrid / gridSlots         – 3×3- bzw. 2×2-Binder-Raster an die aufgeschlagene Ordnerseite anpassen
 //  • createSlotGate              – räumliche Slot-Sperre je Fach, Seitenwechsel-Reset (> 65 % Bildänderung), „gleiche Seite“-Schutz
 import { homography, project, ART_BOX } from "../../server/scan-logic.ts";
@@ -176,16 +177,117 @@ export function artSimilarity(a, b) {
   return { hsv: clamp(1 - (2.4 * dc) / n / 255), edge: clamp(1 - (2.4 * de) / n / 255) };
 }
 
+// ---------------------------------------------------------------------------
+// Pflicht-Farbabgleich (Color-Sanity-Check): dominante Kartenfarbe / HSV-Farbverteilung von Artwork + Kartenrahmen
+// ---------------------------------------------------------------------------
+/** 12 Farbton-Fächer à 30° (0 = Rot, 4 = Grün, 7–8 = Blau …) + 1 Byte Farbanteil (wie bunt ist die Karte insgesamt) */
+export const PAL_BINS = 12;
+export const PAL_LEN = PAL_BINS + 1;
+
+/**
+ * Farbsignatur einer begradigten Karte (warpCardRgba): Farbton-Verteilung über die GANZE Karte (Artwork + Rahmen/Hintergrund,
+ * äußerste 3–4 % ohne Hüllenkante), gewichtet mit Sättigung × Helligkeit. Graustufen-Hashes (pHash/dHash) sehen keine Farbe –
+ * diese Signatur trennt z. B. eine rote Feuer-Karte von einer grünen Pflanzen- oder blauen Wasser-Karte.
+ * Folien-Reflexe, sehr dunkle und kaum gesättigte Pixel zählen nicht. Rückgabe: Uint8Array(PAL_LEN).
+ */
+export function paletteVector(card) {
+  const { w, h, rgb, glare } = card;
+  const hist = new Float32Array(PAL_BINS);
+  let chroma = 0, total = 0;
+  const x0 = Math.round(w * 0.04), x1 = Math.round(w * 0.96), y0 = Math.round(h * 0.03), y1 = Math.round(h * 0.97);
+  for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) {
+    const i = y * w + x;
+    if (glare && glare[i]) continue;
+    total++;
+    const r = rgb[i * 3], g = rgb[i * 3 + 1], b = rgb[i * 3 + 2];
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), dl = mx - mn;
+    if (mx < 40 || dl < 24) continue;
+    const sat = dl / mx;
+    if (sat < 0.2) continue;
+    let hue = mx === r ? ((g - b) / dl) % 6 : mx === g ? (b - r) / dl + 2 : (r - g) / dl + 4;
+    hue = ((hue * 60) + 360) % 360;
+    const wgt = sat * (mx / 255);
+    // weiche Zuordnung auf die zwei nächsten Fächer (kein Sprung an Fachgrenzen)
+    const f = hue / 30 - 0.5, b0 = Math.floor(f), frac = f - b0;
+    hist[(b0 + PAL_BINS) % PAL_BINS] += wgt * (1 - frac);
+    hist[(b0 + 1 + PAL_BINS) % PAL_BINS] += wgt * frac;
+    chroma += wgt;
+  }
+  const out = new Uint8Array(PAL_LEN);
+  for (let k = 0; k < PAL_BINS; k++) out[k] = chroma > 0 ? Math.round((255 * hist[k]) / chroma) : 0;
+  out[PAL_BINS] = Math.round(255 * Math.min(1, total ? chroma / total : 0));
+  return out;
+}
+
+/** Fächer → geglättete Verteilung (Summe 1), mittlerer Farbton (Grad) und Bündelung R (0 = bunt gemischt, 1 = eine Farbe) */
+function palStats(v) {
+  const p = new Float32Array(PAL_BINS);
+  let s = 0;
+  for (let k = 0; k < PAL_BINS; k++) s += v[k];
+  for (let k = 0; k < PAL_BINS; k++) p[k] = s ? v[k] / s : 0;
+  const sm = new Float32Array(PAL_BINS);
+  for (let k = 0; k < PAL_BINS; k++) sm[k] = 0.5 * p[k] + 0.25 * (p[(k + PAL_BINS - 1) % PAL_BINS] + p[(k + 1) % PAL_BINS]);
+  let X = 0, Y = 0;
+  for (let k = 0; k < PAL_BINS; k++) { const t = ((k + 0.5) * 30 * Math.PI) / 180; X += p[k] * Math.cos(t); Y += p[k] * Math.sin(t); }
+  return { sm, hue: ((Math.atan2(Y, X) * 180) / Math.PI + 360) % 360, R: Math.hypot(X, Y), chroma: v[PAL_BINS] / 255 };
+}
+
+/** Schwellen des Farbabgleichs */
+export const COLOR = {
+  /** darunter gilt eine Karte als (fast) farblos – Trainer/Farblos/Metall: dann kein Verwerfen über den Farbton */
+  MIN_CHROMA: 0.08,
+  /** dominante Farbe nur vergleichen, wenn sie gebündelt ist (keine Regenbogen-Karte) */
+  MIN_FOCUS: 0.3,
+  /** Grundfarben weiter auseinander als HUE_REJECT (Grad) UND Überlappung der Verteilungen < OVERLAP_REJECT → verwerfen */
+  HUE_REJECT: 70,
+  OVERLAP_REJECT: 0.45,
+  /** Verteilungen überlappen kaum noch → verwerfen (unabhängig vom mittleren Farbton) */
+  OVERLAP_HARD: 0.2,
+};
+
+/**
+ * Farb-Abgleich Kamera ↔ Katalogbild: { sim 0…1, overlap, hueDist (Grad oder null), reject }.
+ * reject = true: Grundfarbe passt nicht (z. B. rote Feuer-Karte vor der Kamera vs. grüne Pflanzen-/blaue Wasser-Karte im
+ * Katalog) → Kandidat wird sofort verworfen. null bei fehlendem Vektor.
+ */
+export function paletteCheck(a, b) {
+  if (!a || !b || a.length !== PAL_LEN || b.length !== PAL_LEN) return null;
+  const A = palStats(a), B = palStats(b);
+  const colorful = A.chroma >= COLOR.MIN_CHROMA && B.chroma >= COLOR.MIN_CHROMA;
+  let overlap = 0;
+  for (let k = 0; k < PAL_BINS; k++) overlap += Math.min(A.sm[k], B.sm[k]);
+  const dh = Math.abs(A.hue - B.hue), hueDist = colorful && A.R >= COLOR.MIN_FOCUS && B.R >= COLOR.MIN_FOCUS ? Math.min(dh, 360 - dh) : null;
+  const reject = colorful && ((hueDist !== null && hueDist >= COLOR.HUE_REJECT && overlap < COLOR.OVERLAP_REJECT) || overlap < COLOR.OVERLAP_HARD);
+  const chromaSim = 1 - Math.min(1, Math.abs(A.chroma - B.chroma) / 0.5);
+  const sim = colorful ? 0.8 * overlap + 0.2 * chromaSim : 0.6 + 0.4 * chromaSim;
+  return { sim: Math.max(0, Math.min(1, sim)), overlap: Math.round(overlap * 1000) / 1000, hueDist: hueDist === null ? null : Math.round(hueDist), reject };
+}
+
+/**
+ * Schärfe einer begradigten, normalisierten Karte (zmuv): mittlere Gradientenstärke. Verwischte Bilder (Bewegungsunschärfe
+ * beim Wegziehen) liegen deutlich darunter – der Gate vergleicht sie mit dem vorigen Bild derselben Karte.
+ */
+export function cardSharpness(g) {
+  const { w, h, d } = g;
+  let s = 0, n = 0;
+  for (let y = 4; y < h - 4; y += 3) for (let x = 4; x < w - 4; x += 3) {
+    const i = y * w + x;
+    s += Math.abs(d[i + 1] - d[i - 1]) + Math.abs(d[i + w] - d[i - w]);
+    n++;
+  }
+  return n ? Math.round((s / n) * 100) / 100 : 0;
+}
+
 /** Anteil übereinstimmender Fingerabdruck-Bits (gewichteter Hash-Abstand → 0…1). */
 const hashSim = (score) => Math.max(0, Math.min(1, 1 - Number(score) / SWEEP.HASH_SCALE));
 
 /**
  * Übereinstimmung 0…1 aus allen Stufen: Bild-Fingerabdruck (64-Bit pHash + 64-Bit dHash + Karten-pHash) und – sobald für
- * die Referenz vorhanden – Farb-Layout, HSV-Farbmatrix und Kantengradient (zusammen VECTOR_WEIGHT).
+ * die Referenz vorhanden – Farb-Layout, HSV-Farbmatrix, Kantengradient und Farbsignatur (zusammen VECTOR_WEIGHT).
  */
-export function fuseMatch(score, { layout = null, hsv = null, edge = null } = {}) {
+export function fuseMatch(score, { layout = null, hsv = null, edge = null, color = null } = {}) {
   const h = hashSim(score);
-  const parts = [[layout, 0.4], [hsv, 0.35], [edge, 0.25]].filter(([v]) => v !== null && v !== undefined && Number.isFinite(v));
+  const parts = [[layout, 0.4], [hsv, 0.35], [edge, 0.25], [color, 0.4]].filter(([v]) => v !== null && v !== undefined && Number.isFinite(v));
   if (!parts.length) return h;
   const wsum = parts.reduce((s, [, k]) => s + k, 0);
   const vec = parts.reduce((s, [v, k]) => s + v * k, 0) / wsum;
@@ -462,7 +564,7 @@ export function createSlotGate(opts = {}) {
   let prevPage = null; // Map slot → keys der Seite vor dem letzten Umblättern
   let mismatch = new Map(); // gesperrtes Fach → Anzahl Prüfungen in Folge, die dort eine ANDERE Karte zeigten
   let flipping = false, calm = 0, diff = 0;
-  const qualifies = (d) => Array.isArray(d?.keys) && d.keys.length && Number(d.match) >= cfg.MIN_MATCH && (d.margin === undefined || d.margin === null || d.margin >= cfg.MARGIN_MIN) && d.numOk !== false;
+  const qualifies = (d) => Array.isArray(d?.keys) && d.keys.length && !d.colorReject && !d.colorPending && Number(d.match) >= cfg.MIN_MATCH && (d.margin === undefined || d.margin === null || d.margin >= cfg.MARGIN_MIN) && d.numOk !== false;
   const clear = () => { pending = new Map(); locks = new Map(); held = new Map(); mismatch = new Map(); diff = 0; };
   return {
     push(frame, now = Date.now()) {

@@ -5,7 +5,8 @@
 //   • Stapel / Einzelkarte (frame), ~480 px breit, bis zu 30 Bilder/s:
 //   Graustufen 320 px → Sobel → rahmenlose Karten-Suche (Seitenverhältnis 63:88) bzw. Verfolgen der zuletzt gefundenen
 //   Karten → Kanten verfeinern → perspektivisch begradigen → pHash/dHash von Karte + Artwork-Fenster → Hamming-Suche
-//   (ganzer Index oder nur das gesperrte Set) → Farb-/Layout-Vektor gegen den IndexedDB-Cache → Übereinstimmung
+//   (ganzer Index) → Pflicht-Farbabgleich (dominante Kartenfarbe Kamera ↔ Katalogbild, Farb-Referenz im IndexedDB-Cache):
+//   falsche Grundfarbe → Kandidat sofort verworfen, nächstbester Kandidat rückt nach → Übereinstimmung + Abstand
 //   → Sammlernummer im Nummern-Fenster (ROI) gegenlesen, wenn der Streifen groß genug ist.
 // Multi-Card-Fix: NEUE Karten im Bild werden IMMER zuerst ausgewertet (vor den schon verfolgten), verfolgte Karten reihum –
 // so kann eine schon erkannte Karte, die im Bild liegen bleibt, nie das Zeitbudget für Karte #2, #3, #4 … verbrauchen.
@@ -16,10 +17,10 @@ import {
 } from "../../server/scan-logic.ts";
 import {
   SWEEP, findCardRects, edgeLines, rectQuad, quadBox, rectIou, frameThumb, motionStats, layoutFromRgba, layoutSimilarity,
-  hashSimilarity, topMatchesIn, grayDown, warpGrayRgba, LAYOUT_LEN, confidencePercent,
+  hashSimilarity, topMatchesIn, grayDown, warpGrayRgba, LAYOUT_LEN, confidencePercent, anchorThumb,
 } from "./sweep-logic.js";
 import {
-  HD, warpCardRgba, glareGray, zmuv, artVector, artSimilarity, fuseMatch, ART_LEN,
+  HD, warpCardRgba, glareGray, zmuv, artVector, artSimilarity, fuseMatch, ART_LEN, paletteVector, paletteCheck, PAL_LEN, cardSharpness,
   GRID_LAYOUTS, defaultGrid, fitGrid, gridSlots, smoothGrid, polishRect, cropRgba,
 } from "./hd-scan-logic.js";
 import { idbGetMany, idbSetMany } from "./idb-cache.js";
@@ -29,9 +30,14 @@ const PROFILE = {
   turbo: { maxEval: 2, maxRects: 3, budgetMs: 22, globalEvery: 2, trackMs: 500, minEval: 1 },
   binder: { maxEval: SWEEP.MAX_CARDS, budgetMs: 44, minEval: 3 },
 };
-/** Schlüssel-Präfix der Mehrfach-Fingerabdrücke im IndexedDB-Store „layout“ (Farb-Layout + HSV-Matrix + Kantengradient) */
-const FP_PREFIX = "v2:";
-const FP_LEN = LAYOUT_LEN + ART_LEN;
+/** Schlüssel-Präfix der Mehrfach-Fingerabdrücke im IndexedDB-Store „layout“ (Farb-Layout + HSV-Matrix + Kantengradient + Farbsignatur) */
+const FP_PREFIX = "v3:";
+const FP_LEN = LAYOUT_LEN + ART_LEN + PAL_LEN;
+/** So lange wartet ein Kandidat höchstens auf seine Farb-Referenz – danach gilt der strengere Rückfall ohne Farbe */
+const REF_WAIT_MS = 2500;
+/** Bis zu so viele verschiedene Motive werden der Reihe nach geprüft, wenn der Farbabgleich den besten verwirft */
+const COLOR_RERANK = 3;
+const unpackFp = (u) => ({ layout: u.subarray(0, LAYOUT_LEN), art: u.subarray(LAYOUT_LEN, LAYOUT_LEN + ART_LEN), pal: u.subarray(LAYOUT_LEN + ART_LEN) });
 /**
  * Multi-Crop (Stapel / Einzelkarte): je Bild drei überlappende, mittige Ausschnitte im Kartenformat (88 %, 72 %, 55 % der
  * größtmöglichen Kartenhöhe) – Karte nah, mittel oder weiter weg. Reihum kommt je Bild eine leichte Verschiebung bzw.
@@ -61,13 +67,13 @@ const STRIP_W = 252, STRIP_H = 72;
  */
 export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs = () => null }) {
   const st = {
-    mode: "turbo", layouts: new Map(), layoutLoading: new Set(), asked: new Set(),
+    mode: "turbo", layouts: new Map(), layoutLoading: new Set(), asked: new Map(), noRef: new Set(),
     prevThumb: null, tracks: [], frameNo: 0, canvas: null, ctx: null, needAt: 0, busy: false,
     grid: null, gridAt: 0, gridFor: "", slotCursor: 0, slotLast: new Map(), small: null, slotCv: null,
   };
   const offscreen = (() => { try { return typeof OffscreenCanvas !== "undefined" && !!new OffscreenCanvas(1, 1).getContext("2d"); } catch { return false; } })();
 
-  /** Kein Set-Lock und kein Farb-Vorfilter mehr: es wird IMMER der komplette Katalog durchsucht. */
+  /** Kein Set-Lock und kein Farb-Vorfilter: es wird IMMER der komplette Katalog durchsucht (Farbe prüft evaluate je Kandidat). */
   const rowsForSet = () => null;
 
   // ------------------------------------------------------------------ Mehrfach-Fingerabdrücke (dauerhaft in IndexedDB)
@@ -83,7 +89,7 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
     for (const [k, v] of cached) {
       if (!v || v.length !== FP_LEN) continue;
       const u = v instanceof Uint8Array ? v : new Uint8Array(v);
-      st.layouts.set(k.slice(FP_PREFIX.length), { layout: u.subarray(0, LAYOUT_LEN), art: u.subarray(LAYOUT_LEN) });
+      st.layouts.set(k.slice(FP_PREFIX.length), unpackFp(u));
     }
     const todo = want.filter((it) => !st.layouts.has(it.key));
     let done = want.length - todo.length;
@@ -110,7 +116,8 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
             const u = new Uint8Array(FP_LEN);
             u.set(layoutFromRgba(px, NORM_W, NORM_H, full), 0);
             u.set(artVector(card, zmuv(card)), LAYOUT_LEN);
-            st.layouts.set(it.key, { layout: u.subarray(0, LAYOUT_LEN), art: u.subarray(LAYOUT_LEN) });
+            u.set(paletteVector(card), LAYOUT_LEN + ART_LEN);
+            st.layouts.set(it.key, unpackFp(u));
             fresh.push([FP_PREFIX + it.key, u]); done++;
             if (fresh.length >= 40) { idbSetMany("layout", fresh).catch(() => {}); fresh = []; }
             if (want.length > 8 && Date.now() - lastPost > 250) { lastPost = Date.now(); progress(); }
@@ -120,7 +127,8 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
       await Promise.all(Array.from({ length: Math.min(6, todo.length) }, one));
       if (fresh.length) idbSetMany("layout", fresh).catch(() => {});
     }
-    want.forEach((it) => st.layoutLoading.delete(it.key));
+    // Bild fehlt/gesperrt bzw. ohne OffscreenCanvas → keine Farb-Referenz möglich (strengerer Rückfall statt ewig warten)
+    want.forEach((it) => { st.layoutLoading.delete(it.key); if (!st.layouts.has(it.key)) st.noRef.add(it.key); });
     if (want.length > 8) progress(true);
     return done;
   }
@@ -128,14 +136,28 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
   /** Vektoren eines Treffers – gleiches Motiv in anderer Sprache darf sie mitbenutzen. */
   const layoutOf = (keys) => { for (const k of keys) { const v = st.layouts.get(k); if (v) return v; } return null; };
 
-  /** Für knappe Kandidaten ohne Layout den Haupt-Thread nach Bildadressen fragen (gedrosselt, je Karte einmal). */
+  /** Für Kandidaten ohne Farb-Referenz den Haupt-Thread nach Bildadressen fragen (gedrosselt, je Karte einmal). */
   function askLayouts(keys) {
     const now = Date.now();
-    const fresh = keys.filter((k) => !st.asked.has(k) && !st.layouts.has(k));
-    if (!fresh.length || now - st.needAt < 350) return;
+    const fresh = keys.filter((k) => k && !st.asked.has(k) && !st.layouts.has(k) && !st.noRef.has(k));
+    if (!fresh.length || now - st.needAt < 120) return;
     st.needAt = now;
-    fresh.slice(0, 4).forEach((k) => st.asked.add(k));
+    fresh.slice(0, 4).forEach((k) => st.asked.set(k, now));
     post({ type: "sweep-need-layout", keys: fresh.slice(0, 4) });
+  }
+
+  /**
+   * Farb-Referenz eines Motivs (alle Sprach-Schlüssel derselben Karte):
+   *   { ref } – liegt vor · "pending" – wird gerade geladen (Kandidat wartet, lieber 1 Bild länger) · "none" – nicht ladbar
+   */
+  function refState(keys) {
+    const ref = layoutOf(keys);
+    if (ref) return { ref };
+    if (!offscreen || keys.every((k) => st.noRef.has(k))) return "none";
+    const now = Date.now();
+    const asked = keys.map((k) => st.asked.get(k)).filter(Boolean);
+    if (asked.length && now - Math.min(...asked) > REF_WAIT_MS && !keys.some((k) => st.layoutLoading.has(k))) return "none";
+    return "pending";
   }
 
   // ------------------------------------------------------------------ Ein Live-Bild
@@ -175,8 +197,10 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
    * Eine Kandidaten-Lage auswerten:
    *   begradigen → Folien-Reflexe (Luminanz > 238, kaum Sättigung) maskieren & herausrechnen → Helligkeit/Kontrast normalisieren
    *   → 64-Bit pHash + 64-Bit dHash des inneren Artworks (+ Karten-pHash) per XOR-Popcount gegen den KOMPLETTEN Katalog
-   *     (kein Farb-Vorfilter, kein Set-Lock) → Farb-Layout/HSV/Kanten nur als Bonus, wenn sie schon im Cache liegen
-   *   → Übereinstimmung + Abstand zum zweitbesten Motiv (die Schwelle entscheidet der Stapel-Gate, siehe quickOk).
+   *   → PFLICHT-FARBABGLEICH: dominante Kartenfarbe / HSV-Farbverteilung (Artwork + Rahmen) gegen das Katalogbild des
+   *     Kandidaten. Falsche Grundfarbe → Kandidat sofort verworfen, das nächstbeste Motiv rückt nach (bis COLOR_RERANK).
+   *     Fehlt die Farb-Referenz noch, wird sie geladen und der Kandidat wartet (colorPending) – kein Treffer ohne Farbprüfung.
+   *   → Übereinstimmung (inkl. Farb-Übereinstimmung) + Abstand zum zweitbesten Motiv (Schwelle: Stapel-Gate, siehe quickOk).
    */
   function evaluate(rgba, w, h, quad, idx, rows, withNumber) {
     const card = warpCardRgba(rgba, w, h, quad, NORM_W, NORM_H);
@@ -186,26 +210,51 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
     const norm = zmuv(gg ? suppressGlare(gg) : card);
     const probe = cardHashes(norm);
     const meta = { localNum: (i) => idx.localNum[i], total: (i) => idx.total[i] };
-    const matches = topMatchesIn(probe, idx.words, rows, idx.count, 10, mask);
+    let matches = topMatchesIn(probe, idx.words, rows, idx.count, 12, mask);
     if (!matches.length) return null;
-    const d = decide(matches, idx.words, meta, null);
-    const seen = new Set();
-    const keys = d.group.map((i) => idx.keys[i]).filter((k) => (seen.has(k) ? false : seen.add(k)));
+    const pal = paletteVector(card);
+    let layoutProbe = null, artProbe = null;
+    const groupKeys = (d) => { const seen = new Set(); return d.group.map((i) => idx.keys[i]).filter((k) => (seen.has(k) ? false : seen.add(k))); };
+    // Kandidaten der Reihe nach: verwirft der Farbabgleich das beste Motiv, rückt das nächste nach
+    let d = null, keys = null, rs = null, cc = null, rejected = 0, rejectedKey = "";
+    for (let t = 0; t < COLOR_RERANK && matches.length; t++) {
+      d = decide(matches, idx.words, meta, null);
+      keys = groupKeys(d);
+      rs = refState(keys);
+      cc = rs?.ref ? paletteCheck(pal, rs.ref.pal) : null;
+      if (!cc?.reject) break;
+      rejected++; rejectedKey ||= keys[0];
+      const drop = new Set(d.group);
+      matches = matches.filter((m) => !drop.has(m.i));
+      if (!matches.length) { d = null; break; }
+    }
+    if (!d) return null;
     const lead = idx.keys[d.best];
-    const ref = layoutOf(keys);
-    const ls = ref ? layoutSimilarity(layoutFromRgba(rgba, w, h, quad), ref.layout) : null;
-    const as = ref ? artSimilarity(artVector(card, norm), ref.art) : null;
-    // Zusatz-Vektoren sind nur Bonus: fehlen sie (oder passen sie schlechter), zählt zu 100 % der Hash-Index – keine Strafe
-    const match = Math.max(hashSimilarity(d.score), fuseMatch(d.score, { layout: ls, hsv: as?.hsv, edge: as?.edge }));
-    // Vektoren fehlen → Referenzbilder der Top-Kandidaten im Hintergrund nachladen (Bonus für die nächsten Bilder)
-    if (!ref && hashSimilarity(d.score) > 0.55) askLayouts([lead, ...matches.slice(1, 3).map((m) => idx.keys[m.i])]);
+    const ref = rs?.ref || null;
+    const hs = hashSimilarity(d.score);
+    if (ref) { layoutProbe = layoutFromRgba(rgba, w, h, quad); artProbe = artVector(card, norm); }
+    const ls = ref ? layoutSimilarity(layoutProbe, ref.layout) : null;
+    const as = ref ? artSimilarity(artProbe, ref.art) : null;
+    // Übereinstimmung inkl. Farbe: Zusatz-Vektoren heben eine sichere Karte an; eine schwache Farb-Übereinstimmung zieht ab
+    let match = Math.max(hs, fuseMatch(d.score, { layout: ls, hsv: as?.hsv, edge: as?.edge, color: cc?.sim }));
+    if (cc && cc.sim < 0.55) match -= (0.55 - cc.sim) * 0.5;
+    match = Math.max(0, match);
+    const colorPending = rs === "pending";
+    // Farb-Referenzen der aussichtsreichen Kandidaten sofort nachladen (Pflicht für die Freigabe)
+    if (!ref && hs > 0.5) askLayouts([lead, ...keys.slice(1, 2), ...matches.slice(1, 3).map((m) => idx.keys[m.i])]);
+    else if (cc?.reject === false && hs > 0.5) askLayouts(matches.slice(1, 3).map((m) => idx.keys[m.i]));
     // Nummern-ROI nur für aussichtsreiche Kandidaten (spart Zeit bei klaren Nicht-Treffern)
     let numOk = null;
     if (withNumber && match >= SWEEP.MIN_MATCH - 0.06) { try { numOk = verifyNumber(rgba, w, h, quad, idx, d.best); } catch { numOk = null; } }
+    const r3 = (v) => Math.round(v * 1000) / 1000;
     const det = {
-      quad, keys, lead, match: Math.round(match * 1000) / 1000, hash: Math.round(hashSimilarity(d.score) * 1000) / 1000,
-      layout: ls === null ? null : Math.round(ls * 1000) / 1000, hsv: as ? Math.round(as.hsv * 1000) / 1000 : null, edge: as ? Math.round(as.edge * 1000) / 1000 : null,
-      score: d.score, margin: d.margin, glare: glare > GLARE_HIGH, glareRatio: Math.round(glare * 1000) / 1000, numOk,
+      quad, keys, lead, match: r3(match), hash: r3(hs),
+      layout: ls === null ? null : r3(ls), hsv: as ? r3(as.hsv) : null, edge: as ? r3(as.edge) : null,
+      // Farbabgleich: Übereinstimmung 0…1, "none" = keine Referenz ladbar (strengerer Rückfall), verworfene Motive
+      color: cc ? r3(cc.sim) : colorPending ? null : "none", hueDist: cc?.hueDist ?? null, colorPending, colorRejected: rejected,
+      ...(cc?.reject ? { colorReject: true } : {}), ...(rejectedKey ? { rejectedKey } : {}),
+      sharp: cardSharpness(norm),
+      score: d.score, margin: d.margin, glare: glare > GLARE_HIGH, glareRatio: r3(glare), numOk,
       label: labelOf(keys[0]) || "",
       probe: { artP: wordsToHex(probe[0], probe[1]), artD: wordsToHex(probe[2], probe[3]), fullP: wordsToHex(probe[4], probe[5]) },
     };
@@ -310,8 +359,10 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
           let best = null, bestQuad = s.quad;
           for (const q of [q1, q0]) {
             const r = evaluate(reg.rgba, reg.w, reg.h, q, idx, rows, false);
-            if (r && (!best || r.match > best.match)) { best = r; bestQuad = q.map(reg.unmap); }
-            if (best && best.match >= SWEEP.MIN_MATCH) break;
+            // Farblich verworfene Kandidaten verlieren immer gegen eine farblich passende Lage
+            const rank = (x) => (x.colorReject ? x.match - 1 : x.match);
+            if (r && (!best || rank(r) > rank(best))) { best = r; bestQuad = q.map(reg.unmap); }
+            if (best && !best.colorReject && best.match >= SWEEP.MIN_MATCH) break;
           }
           if (best) {
             glareSum += best.glareRatio || 0; glareN++;
@@ -389,19 +440,19 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
         if (dets.length >= pr.minEval && performance.now() - t0 > pr.budgetMs) break;
         const r = evaluate(rgba, w, h, c.quad.map(([x, y]) => [x * k, y * k]), idx, rows, false);
         evaluated.add(c);
-        if (r) { dets.push({ ...r, small: c.quad }); best = Math.max(best, r.match); }
+        if (r) { dets.push({ ...r, small: c.quad }); if (!r.colorReject) best = Math.max(best, r.match); }
       }
       // 2) Multi-Crop – auch wenn eine Kontur gefunden wurde (sie kann ein Teil der Hülle/des Tischs sein)
       let cropBest = null;
       for (const cr of cropQuads(sw, sh, st.frameNo)) {
-        if (best >= SWEEP.DIRECT_MATCH + 0.06 || (cropBest && performance.now() - t0 > pr.budgetMs)) break;
+        if (best >= SWEEP.MIN_MATCH + 0.06 || (cropBest && performance.now() - t0 > pr.budgetMs)) break;
         // An die Kartenkanten anlegen, wenn sie im Ausschnitt zu sehen sind – sonst den Ausschnitt selbst hashen
         const det = detectCard(small, cr.box, grad);
         for (const q of det.found ? [det.corners, cr.quad] : [cr.quad]) {
           const r = evaluate(rgba, w, h, q.map(([x, y]) => [x * k, y * k]), idx, rows, false);
-          if (r && (!cropBest || r.match > cropBest.match)) cropBest = { ...r, small: q, crop: true };
-          if (r) best = Math.max(best, r.match);
-          if (cropBest && cropBest.match >= SWEEP.DIRECT_MATCH) break;
+          if (r && !r.colorReject && (!cropBest || r.match > cropBest.match)) cropBest = { ...r, small: q, crop: true };
+          if (r && !r.colorReject) best = Math.max(best, r.match);
+          if (cropBest && cropBest.match >= SWEEP.MIN_MATCH) break;
           if (performance.now() - t0 > pr.budgetMs) break;
         }
       }
@@ -420,11 +471,11 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
       dets.push({ ...c.track.last, quad: q, small: c.quad, carried: true });
     }
     // Verfolgung nur für sichere Kanten (keine reinen Ausschnitte)
-    st.tracks = dets.filter((d) => !d.crop).map((d) => ({ quad: d.small, at: d.carried ? d.at || now : now, last: d.match >= SWEEP.TRACK_MATCH ? { ...d, small: undefined, carried: undefined, at: now } : null }))
+    st.tracks = dets.filter((d) => !d.crop).map((d) => ({ quad: d.small, at: d.carried ? d.at || now : now, last: d.match >= SWEEP.TRACK_MATCH && !d.colorReject && !d.colorPending ? { ...d, small: undefined, carried: undefined, at: now } : null }))
       .concat(cands.filter((c) => !dets.some((d) => d.small === c.quad)).map((c) => ({ quad: c.quad, at: now, last: null })))
       .slice(0, pr.maxRects);
     dets.sort((a, b) => b.match - a.match);
-    const found = cands.length > 0 || dets.some((d) => d.match >= SWEEP.TRACK_MATCH);
+    const found = cands.length > 0 || dets.some((d) => d.match >= SWEEP.TRACK_MATCH && !d.colorReject);
     return {
       type: "sweep-result", seq: msg.seq, w, h, ms: Math.round((performance.now() - t0) * 10) / 10, msDetect: Math.round((tDetect - t0) * 10) / 10,
       motion: Math.round(motion * 1000) / 1000, center: Math.round(mo.center * 1000) / 1000, changed: Math.round(mo.changed * 1000) / 1000,
@@ -433,6 +484,8 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
       top: Math.round(best * 1000) / 1000,
       glare: dets.length ? Math.round((dets.reduce((s, d) => s + (d.glareRatio || 0), 0) / dets.length) * 1000) / 1000 : 0,
       dets: dets.map((d) => ({ ...d, small: undefined, at: undefined, quad: d.quad.map(([x, y]) => [x / w, y / h]) })),
+      // Anker-Miniatur für die Karten-Sperre im Haupt-Thread (Bildveränderung gegenüber dem Treffer-Bild)
+      thumb: anchorThumb(small),
       boxes: cands.map((c) => c.quad.map(([x, y]) => [(x * k) / w, (y * k) / h])),
     };
   }
@@ -451,6 +504,8 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
       }
       if (msg.type === "sweep-layouts") {
         const items = Array.isArray(msg.items) ? msg.items.slice(0, 700) : [];
+        // Karten ohne Bild: keine Farb-Referenz möglich → strengerer Rückfall statt zu warten
+        if (Array.isArray(msg.missing)) for (const k of msg.missing.slice(0, 20)) if (typeof k === "string" && !st.layouts.has(k)) st.noRef.add(k);
         const n = await loadLayouts(items, msg.setId || "");
         post({ type: "sweep-layouts-done", requested: items.length, ready: n, total: st.layouts.size, setId: msg.setId || "" });
         return true;

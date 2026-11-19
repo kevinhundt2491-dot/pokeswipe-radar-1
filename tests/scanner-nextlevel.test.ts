@@ -1,10 +1,11 @@
-// Next-Level-Scanner: 100 % rahmenlos, Multi-Card-Fix (Karte #2, #3 … ohne Wartezeit), Live-Preisschild, 2,5-s-Auto-Binder,
+// Next-Level-Scanner: 100 % rahmenlos, 0,8-s-Verschnaufpause + 2-Frame-Stabilität + Karten-Sperre, Live-Preisschild, Auto-Binder,
 // Binder- & Tisch-Sweep (99–100 % Konfidenz + Nummern-ROI), Tages-Zähler – und der Set-Binder ohne „Fehlt“/Grau mit Lücken-Radar.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   SWEEP, createSweepGate, confidencePercent, strictOk, quadCenter, tagCode, tagLines, bumpDaily, dailyLabel, dayKey, viewTotal, euro,
+  filedLabel, oneTapPrice, thumbDrift, anchorThumb,
 } from "../client/scanner/sweep-logic.js";
 import { pocketLabel, gapRadar, buildBinderCards, DEAL_BELOW } from "../server/binder-logic.ts";
 
@@ -13,26 +14,77 @@ const A = ["card:sv08-238", "print:en:sv08-238"], B = ["card:sv08-001"], C = ["c
 const quadAt = (cx: number, cy: number, w = 0.3): [number, number][] => [[cx - w / 2, cy - w * 0.7], [cx + w / 2, cy - w * 0.7], [cx + w / 2, cy + w * 0.7], [cx - w / 2, cy + w * 0.7]];
 const det = (keys: string[], match = 0.9, extra: Record<string, unknown> = {}) => ({ keys, match, margin: 12, quad: quadAt(0.5, 0.5), ...extra });
 
-test("Multi-Card-Fix: nach Karte #1 wird Karte #2, #3, #4 sofort erkannt (0 ms Wartezeit) – gesperrt ist nur das Exemplar im Bild, ohne Zeit-Cooldown", () => {
-  assert.equal(SWEEP.NEW_CARD_MS, 0);
-  assert.equal((SWEEP as any).COOLDOWN_MS, undefined, "kein starrer Zeit-Cooldown mehr");
+/** Anker-Miniatur (16 × 24) für die Karten-Sperre: Grundmuster + Rauschen bzw. ein geänderter Flächenanteil */
+const thumbOf = (changedShare = 0, noise = 0, seed = 1) => {
+  const w = 16, h = 24, d = new Float32Array(w * h);
+  let sum = 0;
+  for (let i = 0; i < d.length; i++) {
+    let v = 60 + ((i * 37 + seed) % 120);
+    if (noise) v += ((i * 13) % 7) - 3 > 0 ? noise : -noise;
+    if (i < Math.round(changedShare * d.length)) v += 90;
+    d[i] = v; sum += v;
+  }
+  return { w, h, d, mean: sum / d.length };
+};
+
+test("0,8-Sekunden-Verschnaufpause + 2-Frame-Stabilität + Karten-Sperre (cardId): keine Mehrfach-Auslösung auf derselben Karte", () => {
+  assert.equal(SWEEP.HIT_PAUSE_MS, 800);
+  assert.equal(SWEEP.CONSENSUS_FRAMES, 2);
+  assert.equal(SWEEP.CONSENSUS_MS, 120);
+  assert.equal(SWEEP.LOCK_DRIFT, 0.18);
   const gate = createSweepGate();
   let t = 1000;
-  const push = (dets: any[], motion = 0.02) => gate.push({ dets, found: true, motion }, t);
-  assert.equal(push([det(A)]).hits.length, 1, "Karte #1 im ersten Bild");
-  // Karte #1 bleibt liegen, Karte #2 kommt dazu → sofort, keine globale Wartezeit
+  const push = (dets: any[], extra: Record<string, unknown> = {}) => gate.push({ dets, found: true, motion: 0.02, center: 0.02, thumb: thumbOf(), ...extra }, t);
+  // 2 direkt aufeinanderfolgende Bilder (≤ 120 ms) bestätigen die Karte → Treffer im 2. Bild (< 0,25 s)
+  assert.equal(push([det(A)]).hits.length, 0, "1. Bild: noch kein Treffer");
+  t += 40;
+  assert.deepEqual(push([det(A)]).hits, [A], "2. Bild: Treffer");
+  // Verschnaufpause: 0,8 s lang löst nichts aus – auch keine andere Karte
+  for (let i = 0; i < 15; i++) { t += 40; const r = push([det(A), det(B, 0.9, { quad: quadAt(0.2, 0.3) })]); assert.equal(r.hits.length, 0, `Pause ${t}`); }
+  assert.ok(gate.pauseLeft(t) > 0);
+  t = 1000 + 40 + SWEEP.HIT_PAUSE_MS + 10;
+  push([det(A), det(B, 0.9, { quad: quadAt(0.2, 0.3) })]);
   t += 40;
   const r2 = push([det(A), det(B, 0.9, { quad: quadAt(0.2, 0.3) })]);
-  assert.deepEqual(r2.hits, [B], "Karte #2 ohne Wartezeit");
+  assert.deepEqual(r2.hits, [B], "nach der Pause: Karte #2 (2 Bilder)");
   assert.deepEqual(r2.locked, [A], "Karte #1 weiter gesperrt (liegt noch im Bild)");
-  t += 40; assert.deepEqual(push([det(C)]).hits, [C], "Karte #3");
-  const D = ["card:me01-010"];
-  t += 40; assert.deepEqual(push([det(D)]).hits, [D], "Karte #4");
-  // Dieselbe Karte bleibt im Bild → kein zweiter Treffer, egal wie lange
-  for (let i = 0; i < 100; i++) { t += 40; assert.equal(push([det(D)]).hits.length, 0); }
-  // Dieselbe Karte an deutlich anderer Stelle = zweites Exemplar → zählt eigenständig
-  t += 40;
-  assert.equal(push([det(D), det(D, 0.9, { quad: quadAt(0.85, 0.2, 0.2) })]).hits.length, 1, "zweites Exemplar daneben");
+  // Handzittern (< 18 % Bildveränderung), Karte kurz nicht erkannt, Karte wandert im Bild → KEIN zweiter Treffer
+  t += 1000;
+  for (let i = 0; i < 100; i++) {
+    t += 40;
+    const shake = i % 7 === 3 ? [] : [det(A, 0.9, { quad: quadAt(0.5 + (i % 5) * 0.06, 0.5) })];
+    assert.equal(push(shake, { thumb: thumbOf(0.1, 6), center: 0.05 }).hits.length, 0, `Zittern ${i}`);
+  }
+  // Dieselbe Karte an anderer Stelle bleibt gesperrt (cardId) – weitere Exemplare zählt der „+1“-Knopf
+  t += 40; push([det(A, 0.9, { quad: quadAt(0.8, 0.2, 0.2) })]);
+  t += 40; assert.equal(push([det(A, 0.9, { quad: quadAt(0.8, 0.2, 0.2) })]).hits.length, 0, "gleiche Karte woanders = gesperrt");
+  // Karte wirklich weggezogen (Karte weg + ≥ 18 % des Bilds neu) → Sperre frei → nächste identische Karte zählt
+  t += 40; push([], { thumb: thumbOf(0.4), center: 0.3, motion: 0.2 });
+  assert.equal(gate.locks.filter((l: any) => l.keys.includes(A[0])).length, 0, "Sperre nach dem Wegziehen frei");
+  t += 40; push([det(A)], { thumb: thumbOf(0.4) });
+  t += 40; assert.deepEqual(push([det(A)], { thumb: thumbOf(0.4) }).hits, [A], "Duplikat vom Stapel nach dem Wegziehen");
+});
+
+test("Keine Fehlschüsse beim Wegziehen: verwackelte Bilder (Bewegung/Schärfe-Einbruch) zählen nie, nur 2 ruhige Bilder in Folge", () => {
+  const gate = createSweepGate();
+  let t = 0;
+  const push = (dets: any[], center = 0.02, motion = 0.02) => gate.push({ dets, found: true, motion, center }, (t += 40));
+  // Karte wird ins/aus dem Bild gezogen: starke Bewegung → keine Treffer, egal wie gut die Erkennung
+  for (let i = 0; i < 10; i++) assert.equal(push([det(C, 0.95)], 0.15, 0.1).hits.length, 0);
+  // Ein ruhiges Bild allein reicht nicht – das nächste ist wieder verwackelt
+  push([det(C, 0.95)]); assert.equal(push([det(C, 0.95)], 0.2, 0.2).hits.length, 0);
+  // Schärfe bricht ein (Bewegungsunschärfe) → Konsens beginnt neu
+  push([det(C, 0.95, { sharp: 30 })]);
+  assert.equal(push([det(C, 0.95, { sharp: 12 })]).hits.length, 0, "verwischt");
+  assert.deepEqual(push([det(C, 0.95, { sharp: 13 })]).hits, [C], "2 ruhige, gleich scharfe Bilder in Folge");
+  // Zu großer Abstand zwischen den beiden Bildern (> ~120 ms bei schnellem Gerät) → kein Konsens
+  const g2 = createSweepGate();
+  g2.push({ dets: [det(B)], found: true, motion: 0.01 }, 0);
+  assert.equal(g2.push({ dets: [det(B)], found: true, motion: 0.01 }, 400, 33).hits.length, 0);
+  // Farbabgleich: verworfener oder noch ungeprüfter Kandidat wird nie freigegeben
+  const g3 = createSweepGate();
+  for (let i = 0; i < 4; i++) assert.equal(g3.push({ dets: [det(B, 0.95, { colorReject: true })], found: true, motion: 0.01 }, i * 40).hits.length, 0);
+  for (let i = 4; i < 8; i++) assert.equal(g3.push({ dets: [det(B, 0.95, { colorPending: true })], found: true, motion: 0.01 }, i * 40).hits.length, 0);
 });
 
 test("Sweep-Modus: dieselbe Karte an deutlich anderer Position = zweites Exemplar; strikt nur ≥ 99 % Konfidenz, 3 Bilder, Nummer darf nicht widersprechen", () => {
@@ -60,7 +112,8 @@ test("Sweep-Modus: dieselbe Karte an deutlich anderer Position = zweites Exempla
   // Modus umschalten → Turbo-Schwellen gelten wieder
   gate.setMode("turbo");
   assert.equal(gate.mode, "turbo");
-  assert.equal(gate.push({ dets: [det(C, 0.9)], found: true, motion: 0 }, 9000).hits.length, 1, "Turbo: erstes klares Bild");
+  gate.push({ dets: [det(C, 0.9)], found: true, motion: 0 }, 9000);
+  assert.equal(gate.push({ dets: [det(C, 0.9)], found: true, motion: 0 }, 9040).hits.length, 1, "Turbo: 2 ruhige Bilder");
 });
 
 test("Konfidenz-Skala: 99 % = klarer Treffer mit Abstand, 100 % = Nummer bestätigt, falsche Nummer ≤ 60 %, knapper Abstand ≤ 85 %", () => {
@@ -81,12 +134,15 @@ test("Live-Preisschild: Set-Kürzel + Nummer, Status-Badges, Tages-Zähler und G
   assert.equal(tagCode({ setCode: "DRI", number: "45/182" }), "DRI 045/182");
   assert.equal(tagCode({ setCode: "", number: "" }, "card:sv08-238"), "SV08");
   assert.equal(tagCode({ number: "TG12" }, "print:en:swsh12.5-TG12"), "SWSH12.5 TG12");
-  const a = tagLines({ price: 14.9, filed: true, ownedBefore: false });
-  assert.equal(a.status, "✅ Im Set-Binder");
+  const a = tagLines({ price: 14.9, filed: true, ownedBefore: false, setName: "Reisegefährten", ownedQty: 1 });
+  assert.equal(a.status, "✅ Automatisch im Ordner: Reisegefährten (1×)");
+  assert.equal(tagLines({ price: 1, filed: true, ownedBefore: true, ownedQty: 2 }).status, "✅ Im Ordner gespeichert · Jetzt 2× vorhanden");
+  assert.equal(filedLabel({ setName: "Prismatische Entwicklungen", ownedQty: 1 }), "✅ Automatisch im Ordner: Prismatische Entwicklungen (1×)");
+  assert.equal(filedLabel({ ownedQty: 3 }), "✅ Im Ordner gespeichert · Jetzt 3× vorhanden");
   assert.equal(a.flag, "🔥 Hit > 10 €");
   assert.equal(a.hot, true);
   const b = tagLines({ price: 2.5, filed: false, saving: true, ownedBefore: false });
-  assert.equal(b.status, "📒 Sortiere in den Set-Binder …");
+  assert.equal(b.status, "📒 Sortiere automatisch in den Ordner …");
   assert.equal(b.flag, "⚡ Fehlt dir noch!");
   assert.equal(tagLines({ price: 2.5, filed: true, ownedBefore: true, qty: 2 }).flag, "×2 · Doppelte");
   assert.equal(tagLines({ price: 2.5, filed: true, ownedBefore: true, qty: 1 }).flag, "");
@@ -108,6 +164,38 @@ test("Live-Preisschild: Set-Kürzel + Nummer, Status-Badges, Tages-Zähler und G
   assert.deepEqual(v, { count: 4, value: 22.5, priced: 3 });
 });
 
+test("1-Klick-Inserieren: CM-Preis exakt, Schnell-Inserieren 0,50 € bis 5,00 € unter Cardmarket", () => {
+  assert.equal(oneTapPrice(12.4, "cm"), 12.4);
+  assert.equal(oneTapPrice(0, "cm"), null);
+  assert.equal(oneTapPrice(null, "deal"), null);
+  for (const cm of [0.6, 1, 2.35, 4.99, 9.9, 14.9, 37.5, 49.99, 120, 899]) {
+    const p = oneTapPrice(cm, "deal")!;
+    const off = Math.round((cm - p) * 100) / 100;
+    assert.ok(off >= 0.5 && off <= 5.04, `${cm} → ${p} (−${off})`);
+    assert.ok(p > 0 && Math.abs(Math.round(p * 20) - p * 20) < 1e-6, `5-ct-Raster ${p}`);
+  }
+  assert.equal(oneTapPrice(14.9, "deal"), 13.4);
+  assert.equal(oneTapPrice(899, "deal"), 894);
+  assert.ok(oneTapPrice(0.3, "deal")! >= 0.05, "sehr günstige Karte: nie 0 €");
+});
+
+test("Bildveränderung für die Karten-Sperre: Handzittern bleibt deutlich unter 18 %, weggezogene Karte darüber", () => {
+  const w = 160, h = 240, base = new Float32Array(w * h), shake = new Float32Array(w * h), away = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const card = x > 30 && x < 130 && y > 40 && y < 200;
+    const bg = 50 + 10 * Math.sin(x * 0.07) + 8 * Math.sin(y * 0.11);
+    const art = 140 + 60 * Math.sin(x * 0.09) * Math.cos(y * 0.05);
+    base[y * w + x] = card ? art : bg;
+    const xs = x - 2, ys = y + 1, cs = xs > 30 && xs < 130 && ys > 40 && ys < 200;
+    shake[y * w + x] = (cs ? 140 + 60 * Math.sin(xs * 0.09) * Math.cos(ys * 0.05) : bg) + 4;
+    away[y * w + x] = bg;
+  }
+  const A0 = anchorThumb({ w, h, d: base }), S = anchorThumb({ w, h, d: shake }), G = anchorThumb({ w, h, d: away });
+  assert.ok(thumbDrift(A0, S)! < 0.1, `Zittern ${thumbDrift(A0, S)}`);
+  assert.ok(thumbDrift(A0, G)! >= SWEEP.LOCK_DRIFT, `weggezogen ${thumbDrift(A0, G)}`);
+  assert.equal(thumbDrift(null, G), null);
+});
+
 test("Scanner-Quelltext: kein Zielrahmen, Modus-Umschalter, Session-Dock mit +1, Auto-Binder im Hintergrund, Worker-Gegendruck per try/finally", () => {
   const ls = src("client/scanner/live-scanner.js");
   assert.ok(!/id="ps-ls-guide"|id="ps-ls-quad"|id="ps-ls-mask"|ps-ls-corner|ps-ls-laser/.test(ls), "kein Zielrahmen, keine Maske, kein grünes Kanten-Polygon");
@@ -116,6 +204,12 @@ test("Scanner-Quelltext: kein Zielrahmen, Modus-Umschalter, Session-Dock mit +1,
   const ui = src("client/scanner/sweep-scanner.js");
   assert.ok(!/AUTO_NEXT_MS|ps-sw-auto|animation-duration/.test(ui), "keine ablaufende Aktionsleiste mehr – das Dock bleibt stehen");
   assert.match(ui, /🏷️ Inserieren/); assert.match(ui, /⚡ Schnell-Inserieren/);
+  assert.match(ui, /🏷️ 1-Klick Inserieren \(CM-Preis\)/); assert.match(ui, /⚡ Schnell-Inserieren \(Deal unter CM\)/);
+  assert.match(ui, /✅ Live auf dem Marktplatz!/);
+  assert.match(ui, /function sellButtons/, "Verkaufsbuttons stehen immer im Dock (auch eingeklappt)");
+  assert.match(ui, /unfileExtra\(r\.uid, it\.key, it\.finish\)/, "Rückgängig nimmt den automatischen Ordner-Eintrag zurück");
+  assert.match(src("server/app.ts"), /\/api\/portfolio\/:id\/undo-one/);
+  assert.match(src("client/scanner/quick-list.js"), /export async function listNow/);
   assert.match(ui, /strategy: "quick"/, "Schnell-Inserieren = Deal-Preis unter Cardmarket");
   assert.match(ui, /⚡ Stapel \/ Einzelkarte/); assert.match(ui, /📒 Ordner-Seite/); assert.ok(!/✨ Auto/.test(ui), "keine Modus-Automatik mehr");
   assert.match(ui, /if \(sw\.prefs\.autoFile\) autoFile\(r\.uid, key\)/, "jeder Treffer wird sofort ohne Klick gespeichert (abschaltbar)");

@@ -11,7 +11,7 @@ import {
   createActionRunner, createCooldown, zoomPlan, glareCheck, lockDecision, createFrameVoter, voteWindow, TARGET_ZOOM, shouldAutoFile, createAutoFiler,
 } from "./scan-ui-logic.js";
 import { haptic, isNative } from "../native.js";
-import { openQuickList, quickListApi } from "./quick-list.js";
+import { openQuickList, quickListApi, listNow } from "./quick-list.js";
 import { priceTagHtml } from "../price-tag.js";
 import { renderGlyphBitmaps } from "./glyph-render.js";
 import { createSweep } from "./sweep-scanner.js";
@@ -1482,6 +1482,32 @@ function addGuest(i, choice, qty = 1) {
   return true;
 }
 
+/** Gast-Binder: Anzahl dieser Karte (gleiche Karte + Variante) auf dem Gerät */
+function guestQty(i, choice) {
+  const cardId = i?.kind === "card" ? i.id : i?.baseCardId;
+  const variant = choice?.variant || "normal";
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem("pokeswipe_portfolio_clean") || "[]"); } catch {}
+  if (!Array.isArray(list) || !cardId) return 0;
+  return list.filter((x) => x?.cardId === cardId && (x.variant || "normal") === variant).reduce((s, x) => s + (Number(x.quantity) || 1), 0);
+}
+
+/** Gast-Binder: ein Exemplar wieder entfernen („Rückgängig“ im Live-Scanner) */
+function removeGuestOne(i, choice) {
+  const cardId = i?.kind === "card" ? i.id : i?.baseCardId;
+  const variant = choice?.variant || "normal";
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem("pokeswipe_portfolio_clean") || "[]"); } catch {}
+  if (!Array.isArray(list) || !cardId) return false;
+  const at = list.findIndex((x) => x?.cardId === cardId && (x.variant || "normal") === variant);
+  if (at < 0) return { quantity: 0 };
+  const q = Number(list[at].quantity) || 1;
+  if (q > 1) list[at] = { ...list[at], quantity: q - 1 }; else list.splice(at, 1);
+  try { localStorage.setItem("pokeswipe_portfolio_clean", JSON.stringify(list)); } catch {}
+  try { window.dispatchEvent(new CustomEvent("ps:portfolio")); } catch {}
+  return { quantity: guestQty(i, choice) };
+}
+
 async function addToCollection(key) {
   const i = infoOf(key);
   if (!i) return;
@@ -1969,13 +1995,24 @@ function sweepUi() {
       if (sc.worker) loadIndex();
     },
     fetchInfo: (keys) => fetchInfo(keys),
-    // „In Set-Binder einsortieren“: gleicher Weg wie der bisherige Scanner (Konto → Set-Ordner, Gast → Test-Binder)
+    // Automatisches Einsortieren / „In Set-Binder einsortieren“: gleicher Weg wie der bisherige Scanner (Konto → Set-Ordner,
+    // Gast → Test-Binder). Liefert den Ordner-Eintrag (ID + Anzahl danach) für die Anzeige „Jetzt 2× vorhanden“ und „Rückgängig“.
     fileItem: async (info, choice, qty) => {
       if (IS_STAGE) return false;
-      if (!state.user) return addGuest(info, choice, qty);
-      await addOne(info, choice, qty);
-      return true;
+      if (!state.user) return addGuest(info, choice, qty) ? { guest: true, quantity: guestQty(info, choice) } : false;
+      const item = await addOne(info, choice, qty);
+      return { id: Number(item?.id) || null, quantity: Number(item?.quantity) || Number(qty) || 1 };
     },
+    // „Rückgängig“: genau ein automatisch einsortiertes Exemplar wieder aus dem Set-Ordner nehmen
+    unfileItem: async (rec, info, choice) => {
+      if (IS_STAGE) return false;
+      if (rec?.guest || !state.user) return removeGuestOne(info, choice);
+      if (!(Number(rec?.id) > 0)) return false;
+      const r = await api(`/api/portfolio/${Number(rec.id)}/undo-one`, { method: "POST" });
+      return { quantity: Number(r?.quantity) || 0 };
+    },
+    // 1-Klick-Inserieren ohne Formular (Cardmarket-Preis bzw. Deal-Preis unter Cardmarket)
+    listNow: (info, price) => listNow(info, price),
     learn: (key, probe) => learn(key, probe, "confirm"),
     openQuickList: (infos, opts) => openQuickList(infos, opts),
     beforeStart: () => {

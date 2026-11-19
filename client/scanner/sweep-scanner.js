@@ -3,10 +3,13 @@
 //
 //  • Zero-Setup: keine Set-Auswahl, kein Set-Lock, kein Zielrahmen – jede Karte wird gegen den kompletten Katalog
 //    abgeglichen und automatisch in ihren Set-Ordner im Set-Binder einsortiert („✅ Einsortiert in: [Set-Name]“).
-//  • Stapel / Einzelkarte (Ruckzuck-Serienscan, Standard bei jedem Start): Karte irgendwo ins Bild halten → Treffer im ersten
-//    klaren Bild (≥ 66 % direkt bzw. ≥ 60 % mit ≥ 5 % Abstand zum zweitbesten Motiv) → Vibration + Pling. KEIN Zeit-Cooldown: gesperrt ist nur das Exemplar, das gerade im Bild liegt. Wird es weggezogen
-//    oder die nächste Karte aufgedeckt (Bewegungsdifferenz im Bildzentrum), zählt die nächste Karte sofort – auch wenn
-//    sie exakt dieselbe ist. Dazu der große „+1“-Knopf im Dock.
+//  • Stapel / Einzelkarte (Ruckzuck-Serienscan, Standard bei jedem Start): Karte irgendwo ins Bild halten → Treffer, sobald
+//    2 direkt aufeinanderfolgende, ruhige Bilder (~120 ms) dieselbe Karte mit ≥ 68 % (inkl. Farb-Abgleich) und ≥ 6 % Vorsprung
+//    bestätigen → Vibration + Pling. Danach 0,8 s Verschnaufpause; die Karte (cardId) bleibt gesperrt, bis sie wirklich aus
+//    dem Bild gezogen oder ausgetauscht wurde (≥ 18 % Bildveränderung). Weitere gleiche Exemplare: großer „+1“-Knopf im Dock.
+//  • Jeder Treffer landet ohne Klick automatisch (+1) im passenden Set-Ordner („✅ Automatisch im Ordner: [Set-Name] (1×)“);
+//    „Rückgängig“ nimmt den Scan UND den Ordner-Eintrag wieder zurück. Direkt darunter: „🏷️ 1-Klick Inserieren (CM-Preis)“
+//    und „⚡ Schnell-Inserieren (Deal unter CM)“ – ohne Formular sofort live auf dem Marktplatz.
 //  • Ordner-Seite (9er-Binder-Scan): dezentes 3 × 3- bzw. 2 × 2-Raster passt sich der aufgeschlagenen Seite an, jedes Fach
 //    wird hochauflösend aus dem nativen HD-Bild geschnitten. Jedes Fach hat seine eigene Positions-Sperre: grüner Haken +
 //    Name + Cardmarket-Preis direkt auf dem Fach, nichts wird doppelt gezählt. Umblättern (> 65 % Bildänderung) oder der
@@ -24,7 +27,7 @@ import { haptic, isNative } from "../native.js";
 import { conditionPrice } from "./scan-ui-logic.js";
 import {
   SWEEP, createSweepGate, orderByLang, langOfKey, setIdOfKey, sessionAdd, sessionQty, sessionFinish, sessionUndo, sessionTotals,
-  sessionDuplicates, FINISH_KEYS, FINISH_LABEL, quadCenter, tagCode, tagLines, bumpDaily, dailyLabel,
+  sessionDuplicates, FINISH_KEYS, FINISH_LABEL, quadCenter, tagCode, tagLines, bumpDaily, dailyLabel, filedLabel, oneTapPrice,
 } from "./sweep-logic.js";
 import { HD, GRID_LAYOUTS, createSlotGate } from "./hd-scan-logic.js";
 
@@ -47,8 +50,8 @@ const MAX_LIST = 40;
 const TAG_HOLD_MS = 900, TAG_FADE_MS = 400;
 /** Taschenlampe an + so viele Bilder mit starkem Reflex auf der Folie → Warnung */
 const GLARE_WARN = 0.05, GLARE_WARN_FRAMES = 8;
-/** „✅ Einsortiert in: [Set-Name]“ bleibt so lange in der Status-Pille stehen */
-const FILED_MSG_MS = 1800;
+/** „✅ Automatisch im Ordner: [Set-Name] (1×)“ bleibt so lange in der Status-Pille stehen */
+const FILED_MSG_MS = 2200;
 /** Scan-Modi (Sofort-Umschalter oben im Kamerabild) */
 export const MODES = {
   stack: { label: "⚡ Stapel / Einzelkarte", sub: "Ruckzuck-Sweep", icon: "⚡", hint: "Karte für Karte ins Bild schieben – jede zählt sofort, auch Doppelte direkt nacheinander." },
@@ -73,7 +76,9 @@ const SWEEP_CSS = `
 /**
  * deps: {
  *   worker(): Worker · ensureIndex() · index(): { ready, loading, count, offscreen } · ensureLang(lang)
- *   fetchInfo(keys) → Promise<info[]> · fileItem(info, choice, qty) → Promise · learn(key, probe)
+ *   fetchInfo(keys) → Promise<info[]> · fileItem(info, choice, qty) → Promise<{ id?, quantity?, guest? } | false> · learn(key, probe)
+ *   unfileItem(record, info, choice) → Promise<{ quantity } | false> (ein Exemplar wieder aus dem Set-Ordner nehmen)
+ *   listNow(info, price) → Promise<{ id } | null> (1-Klick-Inserat ohne Formular)
  *   openQuickList(infos, opts) · beforeStart() (Foto-Ansicht schließen) · isStage
  * }
  */
@@ -84,7 +89,9 @@ export function createSweep(deps) {
     frameTimes: [], avgMs: 0, procMs: 0, dark: 0, gate: null, tags: [], raf: 0, tagRaf: 0, view: { count: 0, value: 0 },
     items: [], history: [], lastUid: null, uidSeq: Date.now(), info: new Map(), probes: new Map(),
     layoutsReady: 0, top: 0, filedMsg: null, drawer: false, full: false, audio: null,
-    prefs: readPrefs(), configSent: false, statusText: "", daily: readDaily(), saving: new Set(), portfolioTimer: 0,
+    prefs: readPrefs(), configSent: false, statusText: "", daily: readDaily(), saving: new Map(), portfolioTimer: 0,
+    // Set-Ordner-Einträge je Session-Eintrag (für „Rückgängig“) und eine Warteschlange je Eintrag (Speichern → Zurücknehmen)
+    fileLog: new Map(), chains: new Map(), gateInfo: null,
     // Ordner-Seite: Slot-Sperren, Raster/Fächer aus dem letzten Bild, Etikett je Fach, zuletzt gesehene Erkennung je Fach
     slotGate: createSlotGate(), grid: null, cells: [], slotTags: new Map(), slotSeen: new Map(), flipAt: 0,
     // Tatsächlich laufender Modus („turbo“ = Stapel, „binder“ = Ordner-Seite – nur per Knopf)
@@ -116,7 +123,8 @@ export function createSweep(deps) {
   function saveSession() {
     try {
       const slim = sw.items.slice(0, MAX_ITEMS).map((i) => ({ ...i, info: i.info ? pickInfo(i.info) : null }));
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ items: slim, history: sw.history.slice(-200), at: Date.now() }));
+      const log = [...sw.fileLog].filter(([uid, l]) => l.length && sw.items.some((i) => i.uid === uid)).slice(0, MAX_ITEMS);
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ items: slim, history: sw.history.slice(-200), fileLog: log, at: Date.now() }));
     } catch {}
   }
   function restoreSession() {
@@ -128,6 +136,7 @@ export function createSweep(deps) {
       sw.history = Array.isArray(s.history) ? s.history.filter((u) => typeof u === "string") : [];
       sw.lastUid = sw.items[0]?.uid || null;
       for (const i of sw.items) if (i.info) sw.info.set(i.key, i.info);
+      if (Array.isArray(s.fileLog)) for (const [uid, l] of s.fileLog) if (typeof uid === "string" && Array.isArray(l)) sw.fileLog.set(uid, l.filter((r) => r && typeof r === "object").slice(0, 999));
     } catch {}
   }
   const pickInfo = (i) => ({
@@ -235,6 +244,14 @@ export function createSweep(deps) {
     if (sw.filedMsg && Date.now() - sw.filedMsg.at < FILED_MSG_MS) return sw.filedMsg.text;
     const parts = [`⚡ Bereit (${Number(ix.count || 0).toLocaleString("de-DE")} Karten)`];
     if (sw.running) parts.push(`Top-Match: ${Math.round((sw.top || 0) * 100)} %`);
+    // Live-Diagnose der Präzisions-Prüfungen (Stapel): Pause, Farb-Abgleich, Unschärfe
+    const gi = sw.gateInfo;
+    if (sw.running && !isBinder() && gi) {
+      if (gi.paused) parts.push("⏸️ 0,8 s Pause – Karte wegziehen");
+      else if (gi.colorReject) parts.push("🎨 Farbe passt nicht – suche weiter");
+      else if (gi.colorPending) parts.push("🎨 Farbprüfung …");
+      else if (gi.blurry) parts.push("〰️ Verwackelt – kurz ruhig halten");
+    }
     if (sw.running && sw.frameTimes.length > 4) {
       const span = sw.frameTimes[sw.frameTimes.length - 1] - sw.frameTimes[0];
       const fps = span > 0 ? Math.round(((sw.frameTimes.length - 1) * 1000) / span) : 0;
@@ -279,26 +296,44 @@ export function createSweep(deps) {
     }
     const i = it.info;
     const price = priceOf(it);
-    const lines = tagLines({ price, filed: Boolean(it.filed), saving: sw.saving.has(it.uid), ownedBefore: Boolean(it.ownedBefore), qty: it.qty });
+    const lines = tagLines({ price, filed: Boolean(it.filed), saving: sw.saving.has(it.uid), ownedBefore: Boolean(it.ownedBefore), qty: it.qty, setName: it.setName || i?.setName || "", ownedQty: it.binderQty || 0 });
     const open = sw.prefs.dock;
+    const filedCls = it.filed ? "bg-emerald-500 text-slate-950" : sw.saving.has(it.uid) ? "bg-emerald-500/25 text-emerald-100 animate-pulse" : "bg-slate-800 text-slate-200";
     dock.innerHTML = `<div data-sw-last="${esc(it.uid)}" class="${pop ? "ps-sw-pop " : ""}bg-slate-950/85 backdrop-blur rounded-2xl p-2 border border-emerald-400/50 shadow-2xl space-y-1.5">
       <div class="flex items-center gap-2">
         <img src="${esc(cdn(i?.image || FALLBACK_IMG, 120))}" onerror="this.src='${FALLBACK_IMG}'" alt="" class="${open ? "w-10 h-14" : "w-7 h-10"} object-contain rounded bg-slate-900 shrink-0" />
         <div class="min-w-0 flex-1">
           <p data-sw-name class="text-sm font-black text-white leading-tight truncate">${FLAG[it.lang] || ""} ${esc(itemName(it))}${it.qty > 1 ? ` <span class="text-emerald-300">×${it.qty}</span>` : ""}</p>
-          <p class="text-[11px] text-slate-400 truncate">${esc(itemSet(it))}${it.finish !== "normal" ? ` · ${esc(FIN_SHORT[it.finish])}` : ""} · <span data-sw-price class="font-black text-emerald-400" title="Cardmarket-Trend">${price ? eur(price) : i ? "–" : "…"}</span></p>
-          ${open ? `<p data-sw-filed class="text-[10px] font-black ${it.filed ? "text-emerald-300" : "text-slate-300"} truncate">${esc(it.filed && i?.setName ? `✅ Einsortiert in: ${i.setName}` : lines.status)}${lines.flag ? ` · ${esc(lines.flag)}` : ""}</p>` : ""}
+          <p class="text-[11px] text-slate-400 truncate">${esc(itemSet(it))}${it.finish !== "normal" ? ` · ${esc(FIN_SHORT[it.finish])}` : ""} · <span data-sw-price class="font-black text-emerald-400" title="Cardmarket-Trend">${price ? eur(price) : i ? "–" : "…"}</span>${lines.flag ? ` · ${esc(lines.flag)}` : ""}</p>
         </div>
-        <button type="button" onclick="PS.sweep('plus')" class="ps-sw-plus shrink-0 bg-gradient-to-br from-emerald-400 to-cyan-400 text-slate-950 text-xl font-black px-3 rounded-2xl shadow-lg" aria-label="Dieselbe Karte noch einmal zählen (+1)" title="Identische Karte hochzählen">+1</button>
-        <button type="button" onclick="PS.sweep('undo')" class="shrink-0 bg-slate-800 text-white text-base font-black w-10 h-12 rounded-xl" aria-label="Letzten Scan rückgängig machen" title="Rückgängig">↶</button>
+        <button type="button" onclick="PS.sweep('plus')" class="ps-sw-plus shrink-0 bg-gradient-to-br from-emerald-400 to-cyan-400 text-slate-950 text-xl font-black px-3 rounded-2xl shadow-lg" aria-label="Noch ein weiteres Exemplar dieser Karte hinzufügen (+1)" title="Weiteres gleiches Exemplar hinzufügen">+1</button>
+        <button type="button" onclick="PS.sweep('undo')" class="shrink-0 bg-slate-800 text-white text-[10px] font-black w-12 h-12 rounded-xl leading-tight" aria-label="Rückgängig: letzten Scan und den automatischen Ordner-Eintrag zurücknehmen" title="Rückgängig (entfernt auch den Ordner-Eintrag)">↶<br>Rückg.</button>
         <div class="flex flex-col gap-1 shrink-0">${listBtn}
           <button type="button" onclick="PS.sweep('dock')" class="bg-slate-800 text-white text-[11px] font-black px-2.5 py-1 rounded-xl" aria-expanded="${open}" aria-label="${open ? "Dock einklappen" : "Dock ausklappen"}">${open ? "⌄" : "⌃"}</button></div>
       </div>
-      ${open ? `<div class="ps-sw-scroll flex items-center gap-1.5 overflow-x-auto">
-        ${dockToggles(it)}
-        <button type="button" onclick="PS.sweep('list', ${jsArg(it.uid)})" class="shrink-0 bg-yellow-400 text-slate-950 text-[11px] font-black px-2.5 py-2 rounded-xl" title="Zum Cardmarket-Preis inserieren">🏷️ Inserieren</button>
-        <button type="button" onclick="PS.sweep('quick', ${jsArg(it.uid)})" class="shrink-0 bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-[11px] font-black px-2.5 py-2 rounded-xl" title="Deal-Preis unter Cardmarket – geht sofort live">⚡ Schnell-Inserieren (unter CM)</button>
-      </div>` : ""}
+      <p data-sw-filed class="text-[12px] font-black ${filedCls} rounded-xl px-2.5 py-1.5 truncate" role="status">${esc(lines.status)}</p>
+      ${sellButtons(it)}
+      ${open ? `<div class="ps-sw-scroll flex items-center gap-1.5 overflow-x-auto">${dockToggles(it)}</div>` : ""}
+    </div>`;
+  }
+
+  /**
+   * Zwei große 1-Klick-Verkaufsbuttons direkt am Scan-Ergebnis. Nach dem Antippen: „✅ Live auf dem Marktplatz!“ –
+   * die Kamera scannt währenddessen weiter.
+   */
+  function sellButtons(it) {
+    const l = it.listed || null;
+    const btn = (mode, label, cls) => {
+      const mine = l && l.mode === mode;
+      const text = mine && l.state === "busy" ? "⏳ Stelle ein …" : mine && l.state === "live" ? "✅ Live auf dem Marktplatz!" : label;
+      const dis = l && (l.state === "busy" || l.state === "live");
+      return `<button type="button" data-sw-sell="${mode}" onclick="PS.sweep('${mode === "deal" ? "oneTapDeal" : "oneTap"}', ${jsArg(it.uid)})" ${dis ? "disabled" : ""}
+        class="min-h-[3rem] rounded-xl px-2 py-2 text-[12px] leading-tight font-black shadow-lg touch-manipulation ${mine && l.state === "live" ? "bg-emerald-500 text-slate-950" : cls} ${dis && !mine ? "opacity-40" : ""}"
+        ${mine && l.state === "live" && l.price ? `title="Live für ${esc(eur(l.price))}"` : ""}>${esc(text)}${mine && l.state === "live" && l.price ? `<span class="block text-[10px] font-bold opacity-80">${esc(eur(l.price))}</span>` : ""}</button>`;
+    };
+    return `<div class="grid grid-cols-2 gap-1.5">
+      ${btn("cm", "🏷️ 1-Klick Inserieren (CM-Preis)", "bg-yellow-400 text-slate-950")}
+      ${btn("deal", "⚡ Schnell-Inserieren (Deal unter CM)", "bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950")}
     </div>`;
   }
 
@@ -567,7 +602,10 @@ export function createSweep(deps) {
   function onStackResult(m, interval) {
     const dets = Array.isArray(m.dets) ? m.dets : [];
     sw.top = Number(m.top) || dets.reduce((x, d) => Math.max(x, Number(d.match) || 0), 0);
-    const { hits } = sw.gate.push({ dets, found: m.found, motion: m.motion, center: m.center }, Date.now(), interval);
+    const g = sw.gate.push({ dets, found: m.found, motion: m.motion, center: m.center, changed: m.changed, thumb: m.thumb }, Date.now(), interval);
+    const { hits } = g;
+    const top = dets[0];
+    sw.gateInfo = { paused: g.paused, blurry: g.blurry && dets.length > 0, colorReject: Boolean(top?.colorReject), colorPending: Boolean(top?.colorPending) };
     const t = Date.now();
     // Preisschilder der schon erkannten Karten an die aktuelle Lage anheften
     for (const d of dets) {
@@ -655,25 +693,56 @@ export function createSweep(deps) {
     loadInfo([key, ...keys.slice(1, 3)]);
   }
 
-  /** Automatisches Einsortieren eines Treffers – Konto: Set-Ordner, Gast: Test-Binder auf dem Gerät. Fehler → bleibt „offen“ (Liste). */
+  /** Speichern/Zurücknehmen je Session-Eintrag strikt nacheinander (ein „Rückgängig“ wartet auf ein laufendes Speichern). */
+  function queue(uid, job) {
+    const prev = sw.chains.get(uid) || Promise.resolve();
+    const next = prev.then(job, job).catch(() => {}).finally(() => { if (sw.chains.get(uid) === next) sw.chains.delete(uid); });
+    sw.chains.set(uid, next);
+    return next;
+  }
+  const savingAdd = (uid) => sw.saving.set(uid, (sw.saving.get(uid) || 0) + 1);
+  const savingDone = (uid) => { const n = (sw.saving.get(uid) || 1) - 1; if (n > 0) sw.saving.set(uid, n); else sw.saving.delete(uid); };
+
+  /** Kartendaten (Art + ID) für einen Schlüssel sicherstellen */
+  async function fullInfo(key) {
+    let info = sw.info.get(key);
+    if (!info?.kind || info.partial) {
+      try { for (const i of await deps.fetchInfo([key])) sw.info.set(i.key, i); } catch {}
+      info = sw.info.get(key);
+    }
+    return info?.kind ? info : null;
+  }
+
+  /** Ordner-Eintrag merken (für „Rückgängig“): Server-ID bzw. Gast-Binder */
+  function logFiled(uid, res, n = 1) {
+    const rec = { id: Number(res?.id) > 0 ? Number(res.id) : null, guest: Boolean(res?.guest) };
+    const log = sw.fileLog.get(uid) || [];
+    for (let k = 0; k < n; k++) log.push(rec);
+    sw.fileLog.set(uid, log.slice(-999));
+  }
+
+  /**
+   * Automatisches Einsortieren eines Treffers (+1, ohne Klick auf „+“) – Konto: Set-Ordner, Gast: Test-Binder auf dem Gerät.
+   * Danach steht unübersehbar auf Preisschild, Dock und Status-Pille „✅ Automatisch im Ordner: [Set-Name] (1×)“ bzw.
+   * „✅ Im Ordner gespeichert · Jetzt 2× vorhanden“. Fehler → bleibt „offen“ (Liste → „In Set-Binder einsortieren“).
+   */
   function autoFile(uid, key) {
     if (deps.isStage) return;
-    sw.saving.add(uid);
-    (async () => {
+    savingAdd(uid);
+    queue(uid, async () => {
       try {
-        let info = sw.info.get(key);
-        if (!info?.kind || info.partial) {
-          try { for (const i of await deps.fetchInfo([key])) sw.info.set(i.key, i); } catch {}
-          info = sw.info.get(key);
-        }
+        const info = await fullInfo(key);
         const it = sw.items.find((i) => i.uid === uid);
-        if (!info?.kind || !it) return;
-        const ok = await deps.fileItem(info, { condition: "NM", variant: it.finish || "normal" }, 1);
-        if (!ok) return;
-        sw.items = sw.items.map((x) => (x.uid === uid ? { ...x, filed: Math.min(x.qty, (x.filed || 0) + 1), info: x.info?.kind ? x.info : info } : x));
-        // Automatisch erkannter Set-Ordner (setId/setName aus den Kartendaten) – kurz in der Status-Pille bestätigen
-        const setLabel = info.setName || info.setCode || setIdOfKey(key).toUpperCase();
-        sw.filedMsg = { text: `✅ Einsortiert in: ${setLabel}${it.qty > 1 ? ` (×${it.qty})` : ""}`, at: Date.now() };
+        if (!info || !it) return;
+        const res = await deps.fileItem(info, { condition: "NM", variant: it.finish || "normal" }, 1);
+        if (!res) return;
+        logFiled(uid, res);
+        const setName = info.setName || info.setCode || setIdOfKey(key).toUpperCase();
+        const cur = sw.items.find((i) => i.uid === uid);
+        // Anzahl dieser Karte im Ordner nach dem Speichern (Server zählt bei gleicher Karte hoch)
+        const ownedQty = Number(res?.quantity) > 0 ? Number(res.quantity) : (cur?.binderQty || 0) + 1;
+        sw.items = sw.items.map((x) => (x.uid === uid ? { ...x, filed: Math.min(x.qty, (x.filed || 0) + 1), binderQty: ownedQty, setName, info: x.info?.kind ? x.info : info } : x));
+        sw.filedMsg = { text: filedLabel({ setName, ownedQty }), at: Date.now() };
         setStatus(statusLine());
         const probe = sw.probes.get(key);
         if (probe) deps.learn(key, probe);
@@ -683,12 +752,43 @@ export function createSweep(deps) {
         if (e?.status === 401 || e?.status === 403) return;
         try { console.warn("sweep autoFile", e); } catch {}
       } finally {
-        sw.saving.delete(uid);
+        savingDone(uid);
         if (sw.lastUid === uid) renderDock();
         if (sw.drawer) renderDrawer();
         drawOverlay();
       }
-    })();
+    });
+  }
+
+  /**
+   * Ordner an die Session angleichen: liegen von einem Eintrag mehr Exemplare im Set-Ordner als er noch zählt (nach
+   * „Rückgängig“ oder „−“), werden die überzähligen automatischen Ordner-Einträge wieder entfernt.
+   */
+  function unfileExtra(uid, key, finish, quiet = false) {
+    if (deps.isStage) return;
+    queue(uid, async () => {
+      const log = sw.fileLog.get(uid) || [];
+      const want = sw.items.find((i) => i.uid === uid)?.qty || 0;
+      let removed = 0, left = null;
+      const info = sw.info.get(key) || null;
+      while (log.length > want) {
+        const rec = log[log.length - 1];
+        let res = null;
+        try { res = await deps.unfileItem(rec, info, { condition: "NM", variant: finish || "normal" }); } catch (e) { if (e?.status !== 404) { handleError(e); break; } res = { quantity: 0 }; }
+        if (!res) break;
+        log.pop(); removed++;
+        left = Number(res.quantity) || 0;
+      }
+      if (log.length) sw.fileLog.set(uid, log); else sw.fileLog.delete(uid);
+      if (!removed) return;
+      sw.items = sw.items.map((x) => (x.uid === uid ? { ...x, filed: Math.min(x.qty, log.length), binderQty: left ?? x.binderQty } : x));
+      if (!quiet) {
+        const setName = info?.setName || setIdOfKey(key).toUpperCase();
+        toast("↶ Rückgängig", `Automatischer Eintrag aus dem Ordner${setName ? ` „${setName}“` : ""} entfernt${left ? ` – noch ${left}× vorhanden` : ""}.`);
+      }
+      saveSession(); schedulePortfolioRefresh();
+      renderAll(); drawOverlay();
+    });
   }
 
   function schedulePortfolioRefresh() {
@@ -773,7 +873,7 @@ export function createSweep(deps) {
     const price = it ? priceOf(it) : priceOfKey(tag.key);
     const name = info ? (info.lang === "ja" && info.altName ? info.altName : info.name) : (it?.label || "Karte").replace(/\s\d+\/\d+$/, "");
     const code = tagCode(info, tag.key);
-    const lines = tagLines({ price, filed: Boolean(it?.filed), saving: sw.saving.has(tag.uid), ownedBefore: Boolean(it?.ownedBefore), qty: it?.qty || 1 });
+    const lines = tagLines({ price, filed: Boolean(it?.filed), saving: sw.saving.has(tag.uid), ownedBefore: Boolean(it?.ownedBefore), qty: it?.qty || 1, setName: it?.setName || info?.setName || "", ownedQty: it?.binderQty || 0 });
     const s = Math.max(0.78, Math.min(1.3, cardW / (230 * dpr))) * dpr;
     const pop = Math.min(1, (now - tag.at) / 180);
     const scale = 0.86 + 0.14 * (1 - Math.pow(1 - pop, 3));
@@ -1062,7 +1162,7 @@ export function createSweep(deps) {
     const r = sessionUndo(sw.items, sw.history);
     if (!r.uid) { toast("↶ Nichts zum Rückgängigmachen", "In dieser Session wurde noch nichts gescannt."); return; }
     const it = sw.items.find((i) => i.uid === r.uid);
-    sw.items = r.items.map((x) => (x.uid === r.uid && x.filed > x.qty ? { ...x, filed: x.qty } : x));
+    sw.items = r.items;
     sw.history = r.history;
     // Die Sperre bleibt, solange genau dieses Exemplar im Bild liegt bzw. das Fach offen aufgeschlagen ist – sonst würde
     // die zurückgenommene Karte sofort wieder gezählt. Nur das Etikett/der Haken verschwindet.
@@ -1071,7 +1171,8 @@ export function createSweep(deps) {
     if (gone || isBinder()) { const last = [...sw.slotTags].reverse().find(([, t]) => t.uid === r.uid); if (last) sw.slotTags.delete(last[0]); }
     sw.lastUid = sw.items.some((i) => i.uid === sw.lastUid) ? sw.lastUid : sw.items[0]?.uid || null;
     sw.daily = bumpDaily(sw.daily, { count: -1, value: -(it ? priceOf(it) : 0) }); saveDaily();
-    if (it?.filed && it.filed >= it.qty) toast("↶ Scan zurückgenommen", "Die Karte liegt weiter im Set-Binder – dort kannst du sie bei Bedarf entfernen.");
+    // Der automatische Ordner-Eintrag dieses Scans wird mit zurückgenommen (wartet ggf. auf ein laufendes Speichern)
+    if (it) unfileExtra(r.uid, it.key, it.finish);
     haptic("select");
     renderAll(); saveSession(); drawOverlay();
   }
@@ -1084,6 +1185,8 @@ export function createSweep(deps) {
     if (!sw.items.some((i) => i.uid === uid)) {
       const twin = sw.items.find((i) => i.key === it.key && i.finish === f);
       sw.history = sw.history.map((h) => (h === uid ? twin?.uid || h : h));
+      // Ordner-Einträge wandern mit (Rückgängig bleibt korrekt)
+      if (twin && sw.fileLog.has(uid)) { sw.fileLog.set(twin.uid, [...(sw.fileLog.get(twin.uid) || []), ...sw.fileLog.get(uid)]); sw.fileLog.delete(uid); }
       if (sw.lastUid === uid) sw.lastUid = twin?.uid || null;
       for (const tag of [...sw.tags, ...sw.slotTags.values()]) if (tag.uid === uid) tag.uid = twin?.uid || null;
     }
@@ -1095,6 +1198,7 @@ export function createSweep(deps) {
     const it = sw.items.find((i) => i.uid === uid);
     sw.items = sessionQty(sw.items, uid, Number(delta) > 0 ? 1 : -1);
     if (Number(delta) > 0) { sw.history.push(uid); if (it) autoFile(uid, it.key); }
+    else if (it) unfileExtra(uid, it.key, it.finish);
     if (!sw.items.some((i) => i.uid === sw.lastUid)) sw.lastUid = sw.items[0]?.uid || null;
     renderAll(); saveSession();
   }
@@ -1130,6 +1234,47 @@ export function createSweep(deps) {
     deps.openQuickList([{ ...info, source: "scan", condition: "nm", variant: it.finish || "normal" }], quick ? { instant: true, strategy: "quick" } : { strategy: "fair" });
   }
 
+  /**
+   * 1-Klick-Inserieren direkt am Scan-Ergebnis – ohne Formular:
+   *   mode „cm“   → „🏷️ 1-Klick Inserieren (CM-Preis)“: sofort zum aktuellen Cardmarket-Wert auf den Marktplatz
+   *   mode „deal“ → „⚡ Schnell-Inserieren (Deal unter CM)“: 0,50 € bis 5,00 € unter Cardmarket – neue Inserate unter dem
+   *                 Zielpreis lösen beim Server den Radar-/Deal-Alarm der Beobachter aus
+   * Der Button wechselt sofort auf „✅ Live auf dem Marktplatz!“; die Kamera scannt währenddessen weiter.
+   */
+  async function oneTapList(uid, mode = "cm") {
+    const it = sw.items.find((i) => i.uid === uid) || lastItem();
+    if (!it || (it.listed && (it.listed.state === "busy" || it.listed.state === "live"))) return;
+    const setListed = (v) => { sw.items = sw.items.map((x) => (x.uid === it.uid ? { ...x, listed: v } : x)); renderDock(); if (sw.drawer) renderDrawer(); };
+    haptic("select");
+    setListed({ mode, state: "busy" });
+    try {
+      await completeInfos([it]);
+      const cur = sw.items.find((x) => x.uid === it.uid) || it;
+      const info = sw.info.get(it.key);
+      const cm = priceOf(cur);
+      const price = oneTapPrice(cm, mode === "deal" ? "deal" : "cm");
+      if (!info?.kind || !price) {
+        setListed(null);
+        // Ohne Cardmarket-Wert: Inserieren-Dialog mit Preisvorschlag als Rückfall
+        if (info?.kind) deps.openQuickList([{ ...info, source: "scan", condition: "nm", variant: cur.finish || "normal" }], mode === "deal" ? { strategy: "quick" } : { strategy: "fair" });
+        else toast("⏳ Kartendaten laden noch", "Einen Moment – dann geht das Inserat mit einem Tipp live.");
+        return;
+      }
+      const probe = sw.probes.get(it.key);
+      if (probe) deps.learn(it.key, probe);
+      const r = await deps.listNow({ ...info, source: "scan", condition: "nm", variant: cur.finish || "normal" }, price);
+      if (!r) { setListed(null); return; }
+      setListed({ mode, state: "live", price, id: r.id || null });
+      if (!sw.prefs.muted) haptic("success");
+      toast("✅ Live auf dem Marktplatz!", mode === "deal"
+        ? `${itemName(cur)} für ${eur(price)} – ${eur(Math.round((cm - price) * 100) / 100)} unter Cardmarket. 📡 Radar-Alarm für Sammler mit passendem Zielpreis ausgelöst.`
+        : `${itemName(cur)} für ${eur(price)} (Cardmarket-Preis) – scanne einfach weiter.`);
+    } catch (e) {
+      setListed(null);
+      handleError(e);
+    }
+  }
+
   async function fileAll() {
     const open = sw.items.filter((i) => i.qty > (i.filed || 0));
     if (!open.length) { toast("📒 Alles einsortiert", "Alle Karten dieser Session liegen schon in deinen Set-Ordnern."); return; }
@@ -1146,8 +1291,9 @@ export function createSweep(deps) {
         // Mengen-Addierung: liegt die Karte schon im Set-Ordner, wird dort die Anzahl erhöht (kein zweiter Slot)
         const ok = await deps.fileItem(info, { condition: "NM", variant: it.finish || "normal" }, qty);
         if (!ok) break;
+        logFiled(it.uid, ok, qty);
         n += qty; sets.add(setIdOfKey(it.key));
-        sw.items = sw.items.map((x) => (x.uid === it.uid ? { ...x, filed: x.qty } : x));
+        sw.items = sw.items.map((x) => (x.uid === it.uid ? { ...x, filed: x.qty, ...(Number(ok?.quantity) > 0 ? { binderQty: Number(ok.quantity) } : {}), setName: info.setName || x.setName } : x));
         const probe = sw.probes.get(it.key);
         if (probe) deps.learn(it.key, probe);
       }
@@ -1224,7 +1370,9 @@ export function createSweep(deps) {
       deps.fetchInfo(keys).then((infos) => {
         for (const i of infos) if (!sw.info.get(i.key)?.kind) sw.info.set(i.key, i);
         const items = infos.filter((i) => i.image).map((i) => ({ key: i.key, url: cdn(i.image, 160) }));
-        if (items.length) deps.worker().postMessage({ type: "sweep-layouts", items });
+        // Ohne Katalogbild keine Farb-Referenz → der Worker nutzt den strengeren Rückfall statt zu warten
+        const missing = keys.filter((k) => !items.some((x) => x.key === k));
+        if (items.length || missing.length) deps.worker().postMessage({ type: "sweep-layouts", items, missing });
       }).catch(() => {});
     }
   }
@@ -1237,6 +1385,7 @@ export function createSweep(deps) {
     grid: toggleGrid, nextPage, sellAll,
     autoFile: () => { sw.prefs.autoFile = !sw.prefs.autoFile; savePrefs(); renderDrawer(); },
     list: (uid) => listItem(uid, false), quick: (uid) => listItem(uid, true),
+    oneTap: (uid) => oneTapList(uid, "cm"), oneTapDeal: (uid) => oneTapList(uid, "deal"),
     file: fileAll, sellDupes, clear: clearSession,
   };
 

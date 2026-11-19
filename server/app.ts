@@ -463,6 +463,22 @@ app.delete("/api/portfolio/:id", auth, async (c) => {
   return c.json({ ok: true });
 });
 
+// Live-Scanner „Rückgängig“: genau ein automatisch einsortiertes Exemplar zurücknehmen (Anzahl − 1, beim letzten Exemplar
+// wird der Eintrag entfernt) – atomar in einer Anweisung, damit parallele +1/−1 nie eine falsche Anzahl hinterlassen.
+app.post("/api/portfolio/:id/undo-one", auth, async (c) => {
+  const userId = c.get("user").id;
+  const id = int(c.req.param("id"), 1, 2 ** 31 - 1, 0);
+  if (!id) return c.json({ error: "Nicht gefunden" }, 404);
+  const [dec] = await db.update(portfolioItems).set({ quantity: sql`${portfolioItems.quantity} - 1` })
+    .where(and(eq(portfolioItems.id, id), eq(portfolioItems.userId, userId), gt(portfolioItems.quantity, 1)))
+    .returning({ id: portfolioItems.id, quantity: portfolioItems.quantity });
+  if (dec) return c.json({ ok: true, id: dec.id, quantity: dec.quantity });
+  const gone = await db.delete(portfolioItems).where(and(eq(portfolioItems.id, id), eq(portfolioItems.userId, userId), sql`${portfolioItems.quantity} <= 1`))
+    .returning({ id: portfolioItems.id });
+  if (!gone.length) return c.json({ error: "Nicht gefunden" }, 404);
+  return c.json({ ok: true, id, quantity: 0 });
+});
+
 app.get("/api/portfolio/export.csv", auth, async (c) => {
   if (c.get("plan") !== "pro") return c.json({ error: "CSV-Export ist im Pro-Trader-Tarif enthalten.", upgrade: true }, 402);
   const items = await db.select({ name: portfolioItems.name, quantity: portfolioItems.quantity, purchasePrice: portfolioItems.purchasePrice,

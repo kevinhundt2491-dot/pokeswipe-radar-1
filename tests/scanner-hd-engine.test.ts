@@ -1,4 +1,4 @@
-// High-End-Scanner-Engine: Ruckzuck-Sweep (Duplikate vom Stapel zählen, kein Zeit-Cooldown) und 9er-Ordner-Scan
+// High-End-Scanner-Engine: Ruckzuck-Sweep (2-Frame-Stabilität, 0,8-s-Pause, Karten-Sperre, Pflicht-Farbabgleich) und 9er-Ordner-Scan
 // (Raster passt sich der Seite an, Slot-Sperre je Fach, Seitenwechsel-Reset), Anti-Glare, Normalisierung,
 // Typ-Vorfilter, HSV-/Kanten-Vektor – inkl. Ende-zu-Ende-Lauf der Worker-Engine auf einer gerenderten Ordnerseite.
 import { test } from "node:test";
@@ -9,7 +9,7 @@ import { buildTextIndex, typeClassOf as serverClass } from "../server/scan-text-
 import { SWEEP, createSweepGate, edgeLines, grayDown, frameThumb, motionStats } from "../client/scanner/sweep-logic.js";
 import {
   HD, warpCardRgba, glareGray, zmuv, artVector, artSimilarity, fuseMatch, typeClassOf, frameColor, probeClasses, classRows, CLASS_UNKNOWN,
-  TYPE_CLASSES, fitGrid, gridSlots, defaultGrid, polishRect, createSlotGate, ART_LEN,
+  TYPE_CLASSES, fitGrid, gridSlots, defaultGrid, polishRect, createSlotGate, ART_LEN, paletteVector, paletteCheck, PAL_LEN,
 } from "../client/scanner/hd-scan-logic.js";
 import { createSweepEngine } from "../client/scanner/sweep-engine.js";
 
@@ -66,31 +66,70 @@ function testEngine() {
   return { engine, posts, last: () => posts[posts.length - 1] };
 }
 
-test("ABNAHME Stapel: zwei identische Karten nacheinander → beide werden gezählt (kein Zeit-Cooldown, Sperre fällt beim Aufdecken)", () => {
+test("ABNAHME Stapel: keine 5-fach-Auslösung – Handzittern/Flackern hält die Sperre, erst Wegziehen gibt sie frei; Duplikat zählt danach", () => {
   const A = ["card:sv08-238"];
   const quad: [number, number][] = [[0.3, 0.25], [0.7, 0.25], [0.7, 0.8], [0.3, 0.8]];
-  const see = (center: number, carried = false) => ({ dets: [{ keys: A, match: 0.93, margin: 14, quad, carried }], found: true, motion: center * 0.6, center });
+  const see = (center: number, changed = 0.02, carried = false) => ({ dets: [{ keys: A, match: 0.93, margin: 14, quad, carried }], found: true, motion: center * 0.6, center, changed });
   const gate = createSweepGate();
   let t = 0, hits = 0;
-  const push = (f: any) => { hits += gate.push(f, (t += 33)).hits.length; };
+  const push = (f: any, dt = 33) => { hits += gate.push(f, (t += dt), 33).hits.length; };
   push(see(0.01)); push(see(0.01));
   assert.equal(hits, 1, "Exemplar 1 nach 2 Bildern (≈ 66 ms bei 30 FPS)");
   for (let i = 0; i < 30; i++) push(see(0.01));
   assert.equal(hits, 1, "liegt ruhig → nicht doppelt");
-  // a) Hand greift die Karte: ein Bild ohne Erkennung bei Bewegung im Zentrum → Sperre sofort weg → Duplikat zählt
-  push({ dets: [], found: true, motion: 0.1, center: 0.18 });
-  push(see(0.06)); push(see(0.01));
-  assert.equal(hits, 2, "Exemplar 2 (identische Karte) nur ~100 ms später");
-  // b) Aufdecken an derselben Stelle: starke Änderung im Bildzentrum, Karte liegt am selben Fleck → Sperre weg
-  push(see(0.3)); push(see(0.01));
-  assert.equal(hits, 3, "Exemplar 3 nach Frame-Delta im Zentrum");
-  // c) Kamera wackelt leicht, Karte durchgehend erkannt → KEIN Doppel-Scan
-  for (let i = 0; i < 20; i++) push(see(0.08));
-  assert.equal(hits, 3);
-  // d) Karte wird aus dem Bild gezogen (wandert, bleibt erkannt) → kein Doppel-Scan unterwegs
-  for (let i = 1; i <= 4; i++) push({ dets: [{ keys: A, match: 0.9, margin: 12, quad: quad.map(([x, y]) => [x + i * 0.08, y]) }], found: true, motion: 0.1, center: 0.12 });
-  assert.equal(hits, 3);
-  assert.ok(!/COOLDOWN_MS/.test(src("client/scanner/sweep-logic.js")), "kein Zeit-Cooldown im Quelltext");
+  // a) Handzittern mit kurzen Erkennungs-Aussetzern (< 18 % Bildveränderung) → Sperre bleibt → KEIN Doppel-Scan
+  for (let i = 0; i < 40; i++) push(i % 4 === 1 ? { dets: [], found: true, motion: 0.05, center: 0.07, changed: 0.12 } : see(0.05, 0.1));
+  assert.equal(hits, 1, "Zittern löst nie erneut aus");
+  // b) Karte wird aus dem Bild gezogen: verwackelt (keine Treffer unterwegs), dann weg mit großer Bildveränderung → frei
+  for (let i = 1; i <= 4; i++) push({ dets: [{ keys: A, match: 0.9, margin: 12, quad: quad.map(([x, y]) => [x + i * 0.08, y]) }], found: true, motion: 0.12, center: 0.15, changed: 0.25 });
+  assert.equal(hits, 1, "unterwegs kein Fehlschuss");
+  push({ dets: [], found: false, motion: 0.12, center: 0.2, changed: 0.5 });
+  assert.equal(gate.locks.length, 0, "weggezogen → Sperre frei");
+  // c) Nächste identische Karte vom Stapel: erst 2 ruhige Bilder
+  push(see(0.3, 0.5)); assert.equal(hits, 1, "Heranführen ist verwackelt");
+  push(see(0.01)); push(see(0.01));
+  assert.equal(hits, 2, "Exemplar 2 (identische Karte)");
+  // d) Kamera wackelt leicht, Karte durchgehend erkannt → KEIN Doppel-Scan
+  for (let i = 0; i < 20; i++) push(see(0.08, 0.1));
+  assert.equal(hits, 2);
+  assert.ok(!/COOLDOWN_MS/.test(src("client/scanner/sweep-logic.js")), "Pause heißt HIT_PAUSE_MS (feste 0,8 s), kein Karten-Cooldown");
+});
+
+test("Pflicht-Farbabgleich: rote Feuer-Karte ≠ grüne Pflanzen-/blaue Wasser-Karte; gleiche Karte bei anderem Licht passt", () => {
+  /** Karte mit Typ-Farbe (Rahmen/Hintergrund) und etwas Artwork-Struktur */
+  const typed = (rgb: [number, number, number], seed = 3, light = 1, tint: [number, number, number] = [1, 1, 1]) => {
+    const w = NORM_W, h = NORM_H, d = new Uint8ClampedArray(w * h * 4), art = cardRgba(seed);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4, inArt = x > w * 0.12 && x < w * 0.88 && y > h * 0.12 && y < h * 0.5;
+      for (let c = 0; c < 3; c++) {
+        const base = inArt ? 0.45 * art[o + c] + 0.55 * rgb[c] : rgb[c] * (0.85 + 0.15 * Math.sin(x * 0.2 + y * 0.1));
+        d[o + c] = Math.max(0, Math.min(255, base * light * tint[c]));
+      }
+      d[o + 3] = 255;
+    }
+    return paletteVector(warpCardRgba(d, w, h, FULL, w, h));
+  };
+  const fire = typed([215, 55, 35]), grass = typed([70, 170, 60]), water = typed([45, 110, 210]);
+  assert.equal(fire.length, PAL_LEN);
+  assert.equal(paletteCheck(fire, grass)!.reject, true, "Feuer vs. Pflanze → verworfen");
+  assert.equal(paletteCheck(fire, water)!.reject, true, "Feuer vs. Wasser → verworfen");
+  assert.equal(paletteCheck(grass, water)!.reject, true, "Pflanze vs. Wasser → verworfen");
+  // Gleiche Karte: dunkler, wärmeres Raumlicht, leicht kühles Tageslicht → passt
+  for (const [light, tint] of [[0.7, [1, 1, 1]], [1, [1.1, 1, 0.85]], [0.9, [0.92, 1, 1.08]]] as const) {
+    const cc = paletteCheck(typed([215, 55, 35], 3, light, tint as any), fire)!;
+    assert.equal(cc.reject, false, JSON.stringify(cc));
+    assert.ok(cc.sim > paletteCheck(grass, fire)!.sim + 0.3, `gleiche Karte klar ähnlicher ${cc.sim}`);
+  }
+  // Farblose Karten (Trainer/Metall) werden nie über den Farbton verworfen
+  const gray = typed([150, 150, 152]);
+  assert.equal(paletteCheck(gray, fire)!.reject, false);
+  assert.equal(paletteCheck(fire, null), null);
+  // Farbe fließt in die Übereinstimmung ein; Engine prüft jeden Top-Kandidaten und lässt bei falscher Farbe den nächsten nachrücken
+  assert.ok(fuseMatch(16, { color: 1 }) > fuseMatch(16, { color: 0.2 }));
+  const eng = src("client/scanner/sweep-engine.js");
+  assert.match(eng, /paletteCheck\(pal, rs\.ref\.pal\)/);
+  assert.match(eng, /if \(!cc\?\.reject\) break;/);
+  assert.match(eng, /colorPending/);
 });
 
 test("Slot-Sperre: jedes Fach zählt genau einmal; Umblättern (> 65 % Bildänderung) und „Nächste Seite“ leeren die Sperren; gleiche Seite wird nicht doppelt gezählt", () => {
@@ -147,7 +186,7 @@ test("Bewegung: Frame-Delta im Zentrum und geänderter Flächenanteil (ruhig ≈
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = (y * W + x) * 4, v = x < W * 0.12 ? 60 : 150 + 90 * Math.sin(x * 0.02 + y * 0.013); turning[o] = v; turning[o + 1] = v; turning[o + 2] = v; turning[o + 3] = 255; }
   const other = frameThumb(grayDown(turning, W, H, W, H));
   const calm = motionStats(a, same), flip = motionStats(a, other);
-  assert.ok(calm.changed < 0.2 && calm.center < SWEEP.CENTER_RESET, JSON.stringify(calm));
+  assert.ok(calm.changed < 0.2 && calm.center < 0.2, JSON.stringify(calm));
   assert.ok(flip.changed >= HD.FLIP_AREA, `Seitenwechsel ${JSON.stringify(flip)}`);
   assert.ok(flip.center >= SWEEP.CENTER_MOVE);
   assert.deepEqual(motionStats(null, a), { motion: 1, center: 0, changed: 0, first: true });
@@ -217,7 +256,7 @@ test("Stufe 2: HSV-Farbmatrix + Kantengradient des Artworks trennen Karten; fehl
   assert.ok(fuseMatch(16, { layout: 0.95, hsv: same.hsv, edge: same.edge }) >= SWEEP.DIRECT_MATCH);
   assert.ok(fuseMatch(16, { layout: 0.95, hsv: same.hsv, edge: same.edge }) - fuseMatch(16, { layout: 0.5, hsv: other.hsv, edge: other.edge }) > 0.1, "falsche Farben/Kanten liegen klar darunter");
   // Live-Engine: Vektoren sind nur Bonus – die Übereinstimmung ist nie schlechter als der reine Hash-Wert
-  assert.match(src("client/scanner/sweep-engine.js"), /Math\.max\(hashSimilarity\(d\.score\), fuseMatch\(/);
+  assert.match(src("client/scanner/sweep-engine.js"), /Math\.max\(hs, fuseMatch\(d\.score, \{ layout: ls, hsv: as\?\.hsv, edge: as\?\.edge, color: cc\?\.sim \}\)\)/);
 });
 
 test("Typ-/Rahmenfarben-Klassen (12) bleiben als Katalog-Metadaten erhalten; die Live-Engine filtert damit nicht mehr", () => {
@@ -287,7 +326,7 @@ test("ABNAHME Ordner: Worker-Engine erkennt alle 9 Fächer einer Seite (auch mit
   assert.ok(maxSlots >= 3, "mehrere Fächer je Bild");
 });
 
-test("Stapel-Engine: Treffer im ersten Bild, ruhige Karte nicht doppelt, Wegziehen → Duplikat zählt; Multi-Crop findet Karten ohne Kontur", async () => {
+test("Stapel-Engine: Treffer nach 2 ruhigen Bildern, ruhige Karte nicht doppelt, Wegziehen → Duplikat zählt; Multi-Crop findet Karten ohne Kontur", async () => {
   const { engine, last } = testEngine();
   const W = 480, H = 760;
   /** Karte bei (x0, y0) mit Breite cw; edge = false → kein Kontrast zum Hintergrund (Hand/Hülle/heller Tisch) */
@@ -304,29 +343,37 @@ test("Stapel-Engine: Treffer im ersten Bild, ruhige Karte nicht doppelt, Wegzieh
     return out;
   };
   const gate = createSweepGate();
-  let hits = 0, seq = 0;
+  let hits = 0, seq = 0, t = 0;
   const frame = async (px: Uint8ClampedArray, extra = {}) => {
     await engine.handle({ type: "sweep-frame", seq: ++seq, data: px.slice().buffer, w: W, h: H, mode: "turbo", ...extra });
     const m = last();
     assert.equal(m.error, undefined);
-    hits += gate.push({ dets: m.dets, found: m.found, motion: m.motion, center: m.center }, seq * 40).hits.length;
+    hits += gate.push({ dets: m.dets, found: m.found, motion: m.motion, center: m.center, changed: m.changed, thumb: m.thumb }, (t += 40), 40).hits.length;
     return m;
   };
   let m = await frame(scene(5));
   assert.equal(m.dets[0].lead, "card:t-5");
-  assert.ok(m.dets[0].match >= SWEEP.DIRECT_MATCH, `Übereinstimmung ${m.dets[0].match}`);
-  assert.equal(hits, 1, "Treffer im ersten Bild – kein Stillhalten über 2 Bilder");
+  assert.ok(m.dets[0].match >= SWEEP.MIN_MATCH + SWEEP.NO_COLOR_EXTRA, `Übereinstimmung ${m.dets[0].match}`);
+  assert.equal(m.dets[0].color, "none", "Test ohne OffscreenCanvas: keine Farb-Referenz → strengerer Rückfall");
+  assert.ok(Number.isFinite(m.dets[0].sharp) && m.dets[0].sharp > 0, "Schärfe je Karte");
+  assert.ok(m.thumb && m.thumb.w === 16, "Anker-Miniatur für die Karten-Sperre");
+  assert.equal(hits, 0, "1. Bild: Bestätigung durch das 2. Bild abwarten");
+  m = await frame(scene(5));
+  assert.equal(hits, 1, "Treffer im 2. ruhigen Bild (< 0,25 s)");
   assert.ok(typeof m.top === "number" && m.top >= m.dets[0].match - 1e-9, "Top-Match für die Live-Diagnose");
   assert.equal(m.gridSeen, undefined, "keine Modus-Automatik");
   for (let i = 0; i < 6; i++) await frame(scene(5));
   assert.equal(hits, 1, "ruhig liegende Karte zählt nicht doppelt");
-  // Karte weg (leerer Tisch), dann dieselbe Karte wieder → zählt erneut, sofort im nächsten Bild
+  // Karte weg (leerer Tisch) → Sperre frei; nach der Pause dieselbe Karte wieder → zählt erneut (2 ruhige Bilder)
+  t += SWEEP.HIT_PAUSE_MS;
   m = await frame(scene(null));
   assert.ok(m.center >= SWEEP.CENTER_MOVE, `Zentrum ${m.center}`);
-  await frame(scene(5));
+  assert.equal(gate.locks.length, 0, "weggezogen → frei");
+  await frame(scene(5)); await frame(scene(5)); await frame(scene(5));
   assert.equal(hits, 2, "Duplikat vom Stapel");
-  // Nächste (andere) Karte direkt darübergelegt → sofort
-  await frame(scene(8));
+  // Nächste (andere) Karte direkt darübergelegt → nach Pause + 2 ruhigen Bildern
+  t += SWEEP.HIT_PAUSE_MS;
+  await frame(scene(8)); await frame(scene(8)); await frame(scene(8));
   assert.equal(hits, 3, "nächste Karte vom Stapel");
   // Multi-Crop: Karte füllt das Bild fast (sehr nah, keine Kontur) bzw. liegt weiter weg und leicht neben der Mitte
   const near = createTestEngineRun(testEngine);
@@ -362,7 +409,7 @@ test("Oberfläche: Modi, Raster-Overlay, Slot-Haken, Dock (+1, Variante, DE/EN/J
   assert.ok(!/fetch\(|XMLHttpRequest/.test(ui), "die Oberfläche lädt keine Kamerabilder hoch");
   const engine = src("client/scanner/sweep-engine.js");
   assert.ok(!/api\/scan\/(vision|ai)|anthropic|genai/i.test(engine), "keine Cloud-Vision im Live-Pfad");
-  assert.match(engine, /idbSetMany\("layout"/); assert.match(engine, /FP_PREFIX = "v2:"/);
+  assert.match(engine, /idbSetMany\("layout"/); assert.match(engine, /FP_PREFIX = "v3:"/);
   // Bestehende Wege bleiben verdrahtet: Set-Binder (Mengen-Addierung), Bulk-Listing, Foto-Upload
   const ls = src("client/scanner/live-scanner.js");
   assert.match(ls, /body\.merge = true/); assert.match(ls, /openQuickList: \(infos, opts\) => openQuickList\(infos, opts\)/);

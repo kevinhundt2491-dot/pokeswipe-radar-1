@@ -444,6 +444,34 @@ async function submit() {
   paintSummary();
 }
 
+/**
+ * 1-Klick-Inserat direkt aus dem Live-Scanner – ohne Formular: eine Karte zum übergebenen Preis (Cardmarket-Wert bzw.
+ * Deal-Preis unter Cardmarket) sofort veröffentlichen. Stadt, Tauschwunsch, Sofort-Kauf und Versand kommen aus den zuletzt
+ * genutzten Angaben. Der Server benachrichtigt dabei wie bei jedem Inserat Beobachter, deren Zielpreis erreicht ist
+ * (Radar-/Deal-Alarm), und passende Wunschlisten. Liefert { id } oder null (nicht angemeldet / Limit).
+ */
+export async function listNow(info, price) {
+  const p = Math.round(Number(price) * 100) / 100;
+  if (!info?.id || !(p > 0)) return null;
+  if (IS_STAGE) { await new Promise((r) => setTimeout(r, 300)); return { id: null, demo: true }; }
+  if (!requireLogin()) return null;
+  readPrefs();
+  const buyNow = ql.prefs.buyNow !== false && Boolean(state.me?.sellerReady);
+  const extra = {
+    city: ql.prefs.city || state.me?.city || "", want: ql.prefs.want || "Verkauf / Tausch", buyNow,
+    shippingCents: buyNow ? Math.round((parsePrice(ql.prefs.ship) ?? 0) * 100) : 0,
+  };
+  const cond = String(info.condition || "nm").toLowerCase();
+  const row = { info, price: p, condition: CONDS[cond] ? cond : "nm", variant: VARIANT_KEYS.includes(info.variant) ? info.variant : "normal", usePhoto: false };
+  const r = await api("/api/listings", { method: "POST", body: { items: [itemFor(row, extra)] } });
+  if (!(Number(r?.created) > 0)) { toast("Inserat-Limit erreicht", "Für weitere Inserate brauchst du einen größeren Tarif."); return null; }
+  const id = Number(r.listings?.[0]?.id) || null;
+  if (id) ql.lastIds = [id];
+  try { window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "listing" })); } catch {}
+  window.PS?.loadListings?.(); window.PS?.refreshMe?.(); window.PS?.loadMyListings?.();
+  return { id };
+}
+
 /** Aufnahme-Modus: gleicher Ablauf und gleiche Erfolgsansicht, aber ohne Anfrage an /api/listings. */
 async function demoSubmit() {
   stopCountdown(); ql.instant = false;
