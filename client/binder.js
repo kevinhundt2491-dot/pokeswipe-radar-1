@@ -8,8 +8,8 @@
 // Reine Logik (Gruppierung, Seiten, Swipe, Badges) teilt sich der Browser mit dem Server: server/binder-logic.ts
 import { $, esc, eur, cdn, state, api, toast, handleError, requireLogin, modal, closeModalEl, FALLBACK_IMG } from "./core.js";
 import {
-  groupBinderBySet, buildBinderCards, paginate, clampPage, swipeDirection, binderSummary, setIdOfCard, BINDER_PAGE_SIZE,
-  showcaseBinderFill, binderCardAt, SHOWCASE_GAPS, autobinderBinderFill, AUTOBINDER_DEMO, pocketLabel,
+  groupBinderBySet, buildBinderCards, paginate, clampPage, binderSummary, setIdOfCard, BINDER_PAGE_SIZE,
+  showcaseBinderFill, binderCardAt, SHOWCASE_GAPS, autobinderBinderFill, AUTOBINDER_DEMO, pocketLabel, ownedPriceTag, ebaySearchQuery, ebaySearchUrl,
 } from "../server/binder-logic.ts";
 import { folderValue, binderTotal, readCountDupes, quantityBadge, COUNT_DUPES_KEY } from "../server/duplicates-logic.ts";
 
@@ -207,31 +207,53 @@ function rebuild() {
   const owned = view.demo || state.user ? d.owned || [] : guestItems().filter((i) => setIdOfCard(i.cardId) === view.setId);
   view.cards = buildBinderCards({
     catalog: d.catalog || [], owned, myListings: d.myListings || [], marketListings: d.marketListings || [],
-    viewerId: state.user?.id || "", official: Number(d.set?.official) || 0,
+    viewerId: state.user?.id || "", official: Number(d.set?.official) || 0, ebayOffers: d.ebayOffers || [],
   });
   view.pages = paginate(filtered(view.cards), BINDER_PAGE_SIZE);
   view.page = clampPage(view.page, view.pages.length);
 }
 
+/** eBay-Sofort-Kaufen-Suche (günstigster Preis zuerst) für eine fehlende Binder-Karte – mit ePN-Partner-ID. */
+const ebayLinkFor = (c) => ebaySearchUrl(ebaySearchQuery(c, view.data?.set?.name || ""), view.data?.ebayCampaign || "", "pokeswipe-binder");
+
+/**
+ * Genau EIN Preisetikett je Tasche:
+ *   eigene Karte  → Cardmarket-Wert unten rechts (wie ein Sammler-Preisschild) + Mengen-Badge „×2“ bei Mehrfachbesitz
+ *   fehlende Karte → Stufe 1 PokeSwipe-Marktplatz (🛒 Ab … / ⚡ Deal … / 🔁 Tausch), sonst Stufe 2 eBay (🏷️ eBay ab … / ~ … / 🔎 eBay prüfen)
+ */
 function slotHtml(c, idx) {
-  const badge = c.owned && c.myListing ? `<span class="ps-bslot-badge ps-bslot-sale" data-my-listing="${Number(c.myListing.id)}">${esc(c.myListing.label)}</span>` : "";
-  // Leere Tasche: Marktplatz-Preisschild-Etikett – 1 Tipp öffnet direkt das Angebot bzw. Schnellsuche/Preisalarm
-  const tag = c.owned ? null : pocketLabel(c);
   const id = esc(JSON.stringify(c.cardId));
-  const tagHtml = tag ? `<span role="button" tabindex="0" class="ps-pocket-tag ps-pocket-tag-${tag.kind}" data-pocket-tag="${tag.kind}"${tag.listingId ? ` data-market-listing="${Number(tag.listingId)}"` : ""}
-        onclick="event.stopPropagation(); PS.binderPocketTap(${id})" onkeydown="if(event.key==='Enter'){event.stopPropagation(); event.preventDefault(); PS.binderPocketTap(${id})}"
-        aria-label="${esc(`${c.name}: ${tag.text}`)}">${esc(tag.text)}</span>` : "";
+  const tap = (fn) => `onclick="event.stopPropagation(); ${fn}" onkeydown="if(event.key==='Enter'){event.stopPropagation(); event.preventDefault(); ${fn}}"`;
+  let tagHtml = "";
+  let tagText = "";
+  if (c.owned) {
+    const t = ownedPriceTag(c);
+    tagText = `Cardmarket ${t.text}${t.qty ? ` ${t.qty}` : ""}`;
+    tagHtml = `<span class="ps-price-tag ps-price-tag-owned" data-owned-tag aria-hidden="true"><span class="ps-price-tag-v">${esc(t.text)}</span>${t.qty ? `<span class="ps-bslot-qty" data-qty="${Number(c.quantity)}" aria-label="${Number(c.quantity)} Exemplare">${quantityBadge(c.quantity)}</span>` : ""}</span>`;
+  } else {
+    const tag = pocketLabel(c);
+    tagText = tag.text;
+    if (tag.kind === "ebay") {
+      // Stufe 2: nicht auf dem PokeSwipe-Marktplatz → vorbefüllte eBay-Suche (Sofort-Kaufen, günstigster Preis zuerst)
+      tagHtml = `<span role="link" tabindex="0" class="ps-pocket-tag ps-price-tag ps-pocket-tag-ebay${tag.live ? " live" : ""}" data-pocket-tag="ebay" data-ebay-href="${esc(ebayLinkFor(c))}"
+        ${tap(`PS.binderEbay(${id})`)} aria-label="${esc(`${c.name}: ${tag.text} – bei eBay ansehen`)}">${esc(tag.text)}</span>`;
+    } else {
+      tagHtml = `<span role="button" tabindex="0" class="ps-pocket-tag ps-price-tag ps-pocket-tag-${tag.kind}" data-pocket-tag="${tag.kind}"${tag.listingId ? ` data-market-listing="${Number(tag.listingId)}"` : ""}
+        ${tap(`PS.binderPocketTap(${id})`)} aria-label="${esc(`${c.name}: ${tag.text}`)}">${esc(tag.text)}</span>`;
+    }
+  }
+  // Eigenes Inserat: Status-Hinweis ohne zweiten Preis (der Preis steht im Inserat)
+  const badge = c.owned && c.myListing ? `<span class="ps-bslot-badge ps-bslot-sale" data-my-listing="${Number(c.myListing.id)}">${c.myListing.price ? "🏷️ Im Verkauf" : "🔁 Zum Tausch"}</span>` : "";
   const state_ = c.owned ? "owned" : c.market ? "missing market" : "missing";
   return `<button type="button" class="ps-bslot ${state_}" data-binder-card="${esc(c.cardId)}" data-idx="${idx}" onclick="PS.binderCardTap(${id})"
-      aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? " – in deiner Sammlung" : " – noch gesucht"}${tag ? ` – ${tag.text}` : ""}`)}">
+      aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? " – in deiner Sammlung" : " – noch gesucht"} – ${tagText}`)}">
     <span class="ps-bslot-art">${imgTag(c.image, 260, `alt="" loading="lazy" draggable="false"`)}
       ${c.owned && c.condition ? `<span class="ps-badge ps-badge-cond ps-bslot-cond">${esc(c.condition)}</span>` : ""}
-      ${c.owned && c.quantity > 1 ? `<span class="ps-bslot-qty" data-qty="${Number(c.quantity)}" aria-label="${Number(c.quantity)} Exemplare">${quantityBadge(c.quantity)}</span>` : ""}
       ${!c.owned ? `<span class="ps-bslot-emboss" aria-hidden="true">${esc(c.number || c.localId)}</span>` : ""}
-      ${tagHtml}
       ${badge}
-      ${c.owned && !c.myListing && c.portfolioItemId && state.user && !view.demo ? `<span role="button" tabindex="0" class="ps-bslot-sell" data-binder-sell="${Number(c.portfolioItemId)}" onclick="event.stopPropagation(); PS.binderSell(${Number(c.portfolioItemId)})" onkeydown="if(event.key==='Enter'){event.stopPropagation(); event.preventDefault(); PS.binderSell(${Number(c.portfolioItemId)})}" aria-label="${esc(`${c.name} inserieren`)}">🏷️ Inserieren</span>` : ""}</span>
-    <span class="ps-bslot-info"><span class="ps-bslot-num">${esc(c.number || c.localId)}</span><span class="ps-bslot-price">${esc(c.priceLabel)}</span></span>
+      ${c.owned && !c.myListing && c.portfolioItemId && state.user && !view.demo ? `<span role="button" tabindex="0" class="ps-bslot-sell" data-binder-sell="${Number(c.portfolioItemId)}" ${tap(`PS.binderSell(${Number(c.portfolioItemId)})`)} aria-label="${esc(`${c.name} inserieren`)}">🏷️ Inserieren</span>` : ""}
+      ${tagHtml}</span>
+    <span class="ps-bslot-info"><span class="ps-bslot-num">${esc(c.number || c.localId)}</span></span>
     <span class="ps-bslot-name">${esc(c.name)}</span>
   </button>`;
 }
@@ -240,6 +262,7 @@ function pageHtml(page, p) {
   const empties = Math.max(0, BINDER_PAGE_SIZE - page.length);
   return `<div class="ps-bpage" data-page="${p}" aria-hidden="${p === view.page ? "false" : "true"}">
     ${page.map((c, i) => slotHtml(c, p * BINDER_PAGE_SIZE + i)).join("")}${Array.from({ length: empties }, () => `<span class="ps-bslot ps-bslot-empty" aria-hidden="true"></span>`).join("")}
+    <span class="ps-bpage-shade" aria-hidden="true"></span><span class="ps-bpage-gloss" aria-hidden="true"></span>
   </div>`;
 }
 
@@ -273,18 +296,23 @@ function render() {
   const track = root.querySelector("[data-binder-track]");
   const noHits = pages.length === 1 && !pages[0].length;
   track.innerHTML = noHits
-    ? `<div class="ps-bpage ps-bpage-empty"><p class="text-xs text-slate-300 text-center col-span-3 self-center">${view.filter === "market" ? "Gerade bietet niemand eine deiner gesuchten Karten an – setze sie auf die Wunschliste, dann melden wir uns." : "Keine Karten in dieser Ansicht."}</p></div>`
+    ? `<div class="ps-bpage ps-bpage-empty is-current" data-page="0"><p class="text-xs text-slate-300 text-center col-span-3 self-center">${view.filter === "market" ? "Gerade bietet niemand eine deiner gesuchten Karten an – setze sie auf die Wunschliste, dann melden wir uns." : "Keine Karten in dieser Ansicht."}</p></div>`
     : pages.map(pageHtml).join("");
-  updatePage(false);
+  updatePage();
 }
 
-function updatePage(animate = true) {
+function updatePage() {
   const root = $("ps-binder-view");
   if (!root) return;
+  stopFlip();
+  flip.busy = false; flip.el = null; flip.under = null;
   const track = root.querySelector("[data-binder-track]");
-  track.style.transition = animate ? "transform .32s cubic-bezier(.2,.8,.2,1)" : "none";
-  track.style.transform = `translateX(${-view.page * 100}%)`;
-  track.querySelectorAll(".ps-bpage").forEach((p, i) => p.setAttribute("aria-hidden", i === view.page ? "false" : "true"));
+  track.querySelectorAll(".ps-bpage").forEach((p, i) => {
+    p.classList.toggle("is-current", i === view.page);
+    p.classList.remove("is-under", "is-turning", "ps-flip-back");
+    p.style.transform = ""; p.style.removeProperty("--flip"); p.style.removeProperty("--cast");
+    p.setAttribute("aria-hidden", i === view.page ? "false" : "true");
+  });
   const n = view.pages.length;
   const label = root.querySelector("[data-binder-page]");
   if (label) label.textContent = `Seite ${view.page + 1} / ${n}`;
@@ -292,51 +320,157 @@ function updatePage(animate = true) {
   root.querySelector("[data-binder-next]").disabled = view.page >= n - 1;
   const dots = root.querySelector("[data-binder-dots]");
   if (dots) {
-    const max = 12, start = Math.max(0, Math.min(view.page - Math.floor(max / 2), n - max));
+    const max = 9, start = Math.max(0, Math.min(view.page - Math.floor(max / 2), n - max));
     dots.innerHTML = Array.from({ length: Math.min(n, max) }, (_, k) => start + k)
       .map((i) => `<button type="button" class="ps-bdot ${i === view.page ? "on" : ""}" onclick="PS.binderGoto(${i})" aria-label="Seite ${i + 1}"></button>`).join("");
   }
 }
 
-function go(delta) {
-  const next = clampPage(view.page + delta, view.pages.length);
-  if (next === view.page) {
-    // Kurzes „Gummiband“ am Ordnerrand
-    const t = $("ps-binder-view")?.querySelector("[data-binder-track]");
-    if (t) { t.style.transition = "transform .12s"; t.style.transform = `translateX(calc(${-view.page * 100}% + ${delta > 0 ? -18 : 18}px))`; setTimeout(() => updatePage(true), 120); }
-    return;
+// ---------------------------------------------------------------------------
+// 3D-Umblättern wie im echten Sammelordner (1:1 Finger-Physik)
+//   • Die Seite dreht sich um den Ordner-Rücken (linke Kante) – Winkel 0° = flach, −180° = umgeschlagen.
+//   • Beim Ziehen bleibt der angefasste Punkt unter dem Finger (cos θ = Fingerabstand zum Rücken / Startabstand).
+//   • Falz-Schatten, Folien-Glanz und Schlagschatten auf der darunterliegenden Seite folgen dem Winkel live.
+//   • Loslassen: vor ~30 % federt die Seite zurück (Feder mit leichtem Nachschwingen), über die Mitte oder mit
+//     schnellem Wisch (Velocity) schlägt sie mit Momentum um. Nur transform/opacity → GPU, 60 FPS.
+// ---------------------------------------------------------------------------
+const REDUCED_MOTION = (() => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } })();
+const flip = { raf: 0, el: null, under: null, dir: 0, angle: 0, busy: false };
+const haptic = (ms) => { try { navigator.vibrate?.(ms); } catch {} };
+
+function pagesEls() {
+  return [...($("ps-binder-view")?.querySelectorAll("[data-binder-track] > .ps-bpage[data-page]") || [])];
+}
+function stopFlip() { if (flip.raf) cancelAnimationFrame(flip.raf); flip.raf = 0; }
+
+/** Seiten für einen Blätter-Vorgang vorbereiten: dir +1 = vorwärts (aktuelle Seite dreht weg), −1 = zurück (vorige Seite kommt zurück). */
+function beginFlip(dir) {
+  const els = pagesEls();
+  const cur = els[view.page], other = els[view.page + dir];
+  if (!cur) return false;
+  stopFlip();
+  flip.dir = dir;
+  flip.busy = true;
+  if (!other) { flip.el = cur; flip.under = null; flip.angle = 0; return true; } // Ordnerrand: nur Gummiband
+  flip.el = dir > 0 ? cur : other;
+  flip.under = dir > 0 ? other : cur;
+  flip.under.classList.add("is-under");
+  flip.el.classList.add("is-turning");
+  flip.angle = dir > 0 ? 0 : -180;
+  paintFlip(flip.angle);
+  return true;
+}
+
+/** Winkel auf die Seite malen: Drehung, Anheben, Falz-Schatten, Glanz, Schatten auf der Seite darunter. */
+function paintFlip(angle) {
+  const el = flip.el;
+  if (!el) return;
+  flip.angle = angle;
+  const a = Math.abs(angle);
+  const lift = Math.sin((a * Math.PI) / 180); // 0 flach … 1 senkrecht
+  el.style.transform = `rotateY(${angle.toFixed(2)}deg) translateZ(${(lift * 14).toFixed(1)}px)`;
+  el.style.setProperty("--flip", lift.toFixed(3));
+  el.classList.toggle("ps-flip-back", a > 90);
+  if (flip.under) flip.under.style.setProperty("--cast", Math.min(1, lift * (1.15 - a / 180)).toFixed(3));
+}
+
+/** Feder-Animation (gedämpfte Schwingung) zum Ziel-Winkel; v0 in °/s aus der Wisch-Geschwindigkeit. */
+function springTo(target, v0, { stiffness = 170, damping = 22, onDone } = {}) {
+  stopFlip();
+  if (REDUCED_MOTION || !flip.el) { paintFlip(target); onDone?.(); return; }
+  let x = flip.angle, v = v0 || 0, last = performance.now();
+  const lo = Math.min(0, target, -180), hi = flip.under ? 0 : 20; // nie über den Rücken hinaus schwingen
+  const tick = (now) => {
+    const dt = Math.min(0.032, Math.max(0.001, (now - last) / 1000)); last = now;
+    const f = -stiffness * (x - target) - damping * v;
+    v += f * dt; x += v * dt;
+    if (x < lo) { x = lo; v = Math.abs(v) * 0.25; }
+    if (x > hi) { x = hi; v = -Math.abs(v) * 0.25; }
+    if (Math.abs(x - target) < 0.25 && Math.abs(v) < 6) { flip.raf = 0; paintFlip(target); onDone?.(); return; }
+    paintFlip(x);
+    flip.raf = requestAnimationFrame(tick);
+  };
+  flip.raf = requestAnimationFrame(tick);
+}
+
+/** Blätter-Vorgang abschließen: commit = Seite schlägt um (mit Haptik), sonst federt sie zurück. */
+function settleFlip(commit, v0 = 0) {
+  const dir = flip.dir;
+  if (!flip.under) { springTo(0, v0, { stiffness: 320, damping: 24, onDone: updatePage }); return; }
+  const turned = -180, flat = 0;
+  const target = dir > 0 ? (commit ? turned : flat) : (commit ? flat : turned);
+  if (commit) {
+    // Mit Gewicht umschlagen: etwas weicher, Momentum aus dem Wisch bleibt erhalten
+    springTo(target, v0, { stiffness: 150, damping: 21, onDone: () => { view.page = clampPage(view.page + dir, view.pages.length); haptic(10); updatePage(); } });
+  } else {
+    // Zurückfedern: straffer, leichtes Nachschwingen
+    springTo(target, v0, { stiffness: 260, damping: 19, onDone: updatePage });
   }
-  view.page = next;
-  updatePage(true);
+}
+
+function go(delta) {
+  if (!delta || !beginFlip(delta > 0 ? 1 : -1)) return;
+  if (!flip.under) { paintFlip(delta > 0 ? -10 : 6); settleFlip(false); return; } // Gummiband am Ordnerrand
+  settleFlip(true, delta > 0 ? -260 : 260);
 }
 
 function bindGestures(root) {
   const vp = root.querySelector("[data-binder-viewport]");
-  let sx = 0, sy = 0, active = false, dragging = false, pid = null;
-  const track = root.querySelector("[data-binder-track]");
+  let sx = 0, sy = 0, active = false, dragging = false, pid = null, spine = 0, width = 1, grab = 1, samples = [];
   vp.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    sx = e.clientX; sy = e.clientY; active = true; dragging = false; pid = e.pointerId;
+    if (flip.raf) return; // laufende Animation nicht unterbrechen
+    const r = vp.getBoundingClientRect();
+    spine = r.left; width = Math.max(1, r.width);
+    sx = e.clientX; sy = e.clientY; active = true; dragging = false; pid = e.pointerId; samples = [[e.timeStamp, e.clientX]];
+    grab = Math.max(width * 0.45, sx - spine); // Abstand des Fingers zum Ordner-Rücken
   });
   vp.addEventListener("pointermove", (e) => {
     if (!active || e.pointerId !== pid) return;
     const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (!dragging && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) { dragging = true; try { vp.setPointerCapture(pid); } catch {} }
-    if (dragging) { track.style.transition = "none"; track.style.transform = `translateX(calc(${-view.page * 100}% + ${dx}px))`; }
+    if (!dragging) {
+      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy) * 1.1) { if (Math.abs(dy) > 12) active = false; return; }
+      dragging = true;
+      try { vp.setPointerCapture(pid); } catch {}
+      if (!beginFlip(dx < 0 ? 1 : -1)) { active = false; return; }
+    }
+    samples.push([e.timeStamp, e.clientX]);
+    if (samples.length > 6) samples.shift();
+    let angle;
+    if (!flip.under) {
+      // Ordnerrand: Widerstand (Gummiband), maximal ein paar Grad
+      angle = flip.dir > 0 ? -Math.min(14, Math.sqrt(Math.max(0, -dx)) * 1.4) : Math.min(8, Math.sqrt(Math.max(0, dx)) * 0.9);
+    } else if (flip.dir > 0) {
+      // Vorwärts: angefasster Punkt klebt am Finger
+      const c = Math.max(-1, Math.min(1, (grab + dx) / grab));
+      angle = -(Math.acos(c) * 180) / Math.PI;
+    } else {
+      // Zurück: die vorige Seite kommt vom Rücken her mit dem Finger zurück
+      const p = Math.max(0, Math.min(1, dx / (width * 0.9)));
+      angle = -180 + (Math.acos(1 - 2 * p) * 180) / Math.PI;
+    }
+    paintFlip(angle);
   });
   const end = (e) => {
     if (!active || e.pointerId !== pid) return;
     active = false;
-    // Abgebrochene Geste (senkrechtes Scrollen übernimmt der Browser) blättert nie um
-    const dir = e.type === "pointercancel" && !dragging ? 0 : swipeDirection(e.clientX - sx, e.clientY - sy, Math.min(60, vp.clientWidth * 0.12 || 40));
-    if (dragging) {
-      // Nach einem Wisch keinen Karten-Tipp auslösen
-      const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
-      vp.addEventListener("click", stop, { capture: true, once: true });
-      setTimeout(() => vp.removeEventListener("click", stop, { capture: true }), 50);
-    }
+    if (!dragging) return;
     dragging = false;
-    if (dir) go(dir); else updatePage(true);
+    // Nach einem Wisch keinen Karten-Tipp auslösen
+    const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+    vp.addEventListener("click", stop, { capture: true, once: true });
+    setTimeout(() => vp.removeEventListener("click", stop, { capture: true }), 50);
+    // Geschwindigkeit der letzten ~100 ms (px/ms, negativ = nach links)
+    const now = e.timeStamp || performance.now();
+    const recent = samples.filter(([t]) => now - t < 110);
+    const first = recent[0] || samples[0], lastS = samples[samples.length - 1];
+    const vx = first && lastS && lastS[0] > first[0] ? (lastS[1] - first[1]) / (lastS[0] - first[0]) : 0;
+    if (e.type === "pointercancel" || !flip.under) { settleFlip(false); return; }
+    const progress = flip.dir > 0 ? -flip.angle / 180 : (flip.angle + 180) / 180;
+    const along = flip.dir > 0 ? -vx : vx; // Geschwindigkeit in Blätter-Richtung
+    const commit = progress > 0.5 || (progress > 0.3 && along > 0.18) || (progress > 0.06 && along > 0.55);
+    const degPerSec = Math.max(-1400, Math.min(1400, (vx * 1000 * 180) / width));
+    settleFlip(commit && along > -0.25, degPerSec);
   };
   vp.addEventListener("pointerup", end);
   vp.addEventListener("pointercancel", end);
@@ -383,7 +517,7 @@ async function openSetBinder(setId) {
   root.classList.remove("hidden");
   document.body.classList.add("ps-binder-open");
   root.querySelector("[data-binder-head]").innerHTML = `<div class="ps-binder-head"><p class="text-sm font-black text-white" id="ps-binder-title">📒 Ordner wird geöffnet …</p><button type="button" onclick="PS.closeSetBinder()" class="ps-binder-close" aria-label="Binder schließen">✕</button></div>`;
-  root.querySelector("[data-binder-track]").innerHTML = `<div class="ps-bpage">${Array.from({ length: 9 }, () => `<span class="ps-bslot ps-skeleton !min-h-0"></span>`).join("")}</div>`;
+  root.querySelector("[data-binder-track]").innerHTML = `<div class="ps-bpage is-current">${Array.from({ length: 9 }, () => `<span class="ps-bslot ps-skeleton !min-h-0"></span>`).join("")}</div>`;
   try {
     view.data = await api(`/api/binder/set/${encodeURIComponent(setId)}`);
   } catch (e) { handleError(e); closeSetBinder(); return; }
@@ -396,7 +530,7 @@ async function openSetBinder(setId) {
 
 /** Live-Abgleich: nur die Marktplatz-Angebote neu laden, Seite & Filter bleiben. */
 async function refreshMarket() {
-  if (!view.setId || !view.data || document.hidden || view.busy) return;
+  if (!view.setId || !view.data || document.hidden || view.busy || flip.busy) return; // nie mitten im Umblättern neu zeichnen
   view.busy = true;
   try {
     const r = await api(`/api/binder/set/${encodeURIComponent(view.setId)}?market=1`);
@@ -465,7 +599,9 @@ async function binderCardTap(cardId) {
   cardSheet(c, `<div class="space-y-2">
     <p class="text-[11px] text-slate-300 bg-slate-900 rounded-xl p-2.5">Gerade bietet niemand diese Karte auf dem Marktplatz an. Aktiviere den Suchauftrag – wir benachrichtigen dich automatisch (In-App & Push), sobald jemand sie einstellt.</p>
     <button type="button" onclick="PS.binderWish(${esc(JSON.stringify(c.cardId))})" data-binder-wish class="w-full bg-yellow-400 text-slate-950 font-black py-2.5 rounded-xl text-xs">🔔 Suchauftrag aktivieren (Wunschliste)</button>
+    <button type="button" onclick="PS.binderEbay(${esc(JSON.stringify(c.cardId))})" data-binder-ebay class="w-full bg-blue-600 text-white font-black py-2.5 rounded-xl text-xs">${esc(pocketLabel(c)?.text || "🔎 eBay prüfen")} · Sofort-Kaufen bei eBay* ↗</button>
     <button type="button" onclick="PS.binderMarketSearch(${esc(JSON.stringify(c.name))})" data-binder-market class="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs">🛒 Zum Marktplatz gehen</button>
+    <p class="text-[10px] text-slate-500">* Partner-Link: günstigstes Sofort-Kaufen-Angebot zuerst. ${c.ebayPrice ? "eBay-Preis aus den zuletzt geprüften Angeboten." : "Ohne Live-eBay-Preis zeigen wir den Cardmarket-Referenzpreis als Orientierung."}</p>
   </div>`);
 }
 
@@ -476,6 +612,17 @@ function binderPocketTap(cardId) {
   if (view.demo && c.market?.listingId === DEMO_LISTING_ID) { closeSetBinder(); window.PS?.marketTab?.("all"); return; }
   if (c.market?.listingId) { window.PS?.openListing?.(c.market.listingId); return; }
   binderCardTap(cardId);
+}
+
+/** Stufe-2-Etikett: vorbefüllte eBay-Suche (Sofort-Kaufen, günstigster Preis zuerst) – in der App im System-Browser. */
+function binderEbay(cardId) {
+  const c = view.cards.find((x) => x.cardId === cardId);
+  if (!c || c.owned) return;
+  const a = document.createElement("a");
+  a.href = ebayLinkFor(c); a.target = "_blank"; a.rel = "noopener sponsored"; a.hidden = true;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 /** Aus dem Ordner in den eigenen Bereich „🎯 Lücken-Radar“ (Album → Unterreiter) für dieses Set. */
@@ -656,9 +803,9 @@ export function initBinder() {
 export const binderApi = {
   ...(IS_STAGE ? { binderDemoPrepare, binderDemoOpen, binderDemoReveal, binderDemoSlot, binderDemoInventory } : {}),
   openSetBinder, closeSetBinder, binderCardTap, binderWish, binderSell, renderFolders, binderOpenOffer, binderMarketSearch, setBinderAlerts, renderHomeFolders,
-  binderPocketTap, binderGapRadar: openGapRadar,
+  binderPocketTap, binderEbay, binderGapRadar: openGapRadar,
   binderNext: () => go(1), binderPrev: () => go(-1),
   binderCountDupes: (on) => setCountDupes(typeof on === "boolean" ? on : !countDupes()),
-  binderGoto: (i) => { view.page = clampPage(i, view.pages.length); updatePage(true); },
+  binderGoto: (i) => { const to = clampPage(i, view.pages.length); if (Math.abs(to - view.page) === 1) go(to - view.page); else { view.page = to; updatePage(); } },
   binderFilter: (k) => { view.filter = ["all", "missing", "market", "owned"].includes(k) ? k : "all"; view.page = 0; rebuild(); render(); },
 };

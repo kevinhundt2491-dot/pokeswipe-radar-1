@@ -211,7 +211,7 @@ export function createSweep(deps) {
         </div>
       </div>
       <div id="ps-sw-dock" class="ps-sw-below shrink-0" aria-live="polite"></div>
-      <div id="ps-sw-drawer" class="ps-sw-below hidden max-h-[60vh] flex flex-col bg-slate-950 border border-cyan-400/40 rounded-3xl overflow-hidden"></div>
+      <div id="ps-sw-drawer" class="ps-sw-below hidden max-h-[60dvh] flex flex-col bg-slate-950 border border-cyan-400/40 rounded-3xl overflow-hidden"></div>
     </div>`;
   }
 

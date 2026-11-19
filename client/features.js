@@ -616,7 +616,7 @@ async function openShop(slug, lang = "") {
       </div>
       <div class="flex gap-1.5 overflow-x-auto no-scrollbar">${tab("", "Alle", st.active)}${tab("de", "🇩🇪 DE", st.langs?.de)}${tab("en", "🇬🇧 EN", st.langs?.en)}${tab("ja", "🇯🇵 JP", st.langs?.ja)}</div>
       <p id="ps-shop-sync" class="text-[10px] text-emerald-400">🟢 Live-Inventar</p>
-      <div id="ps-shop-inv" class="space-y-2 max-h-[50vh] overflow-y-auto"></div>`, {
+      <div id="ps-shop-inv" class="space-y-2 max-h-[50dvh] overflow-y-auto"></div>`, {
       wide: true,
       onClose: () => { stopShopSync(); shopView.slug = ""; if (location.pathname.startsWith("/shop/") || location.search.includes("shop=")) history.replaceState(null, "", "/"); },
     });

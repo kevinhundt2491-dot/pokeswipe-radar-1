@@ -32,7 +32,7 @@ function rowHtml(c, live) {
     <div class="min-w-0 flex-1">
       <p class="text-[12px] font-black text-white truncate"><span class="text-cyan-200 font-mono">${esc(c.number || c.localId)}</span> ${esc(c.name)}</p>
       <p class="text-[10px] text-slate-400 truncate">Cardmarket <strong class="text-emerald-300">${esc(c.priceLabel)}</strong>${m ? ` · ${m.trade ? "Tauschangebot" : `Angebot <strong class="text-white">${eur(m.price)}</strong>`}${m.condition ? ` · ${esc(m.condition)}` : ""}${m.seller ? ` · ${esc(m.seller)}` : ""}${m.offers > 1 ? ` · ${Number(m.offers)} Angebote` : ""}` : " · noch kein Angebot"}</p>
-      ${tag ? `<span class="inline-block mt-1 text-[9px] font-black px-1.5 py-0.5 rounded ${tag.kind === "deal" ? "bg-orange-400 text-orange-950" : tag.kind === "market" ? "bg-emerald-400 text-emerald-950" : tag.kind === "trade" ? "bg-sky-300 text-sky-950" : "bg-slate-800 text-slate-300"}">${esc(tag.text)}</span>` : ""}
+      ${tag ? `<span class="inline-block mt-1 text-[9px] font-black px-1.5 py-0.5 rounded ${tag.kind === "deal" ? "bg-orange-400 text-orange-950" : tag.kind === "market" ? "bg-emerald-400 text-emerald-950" : tag.kind === "trade" ? "bg-sky-300 text-sky-950" : "bg-blue-600 text-white"}">${esc(tag.text)}</span>` : ""}
     </div>
     ${m?.listingId ? `<button type="button" class="ps-gap-buy" onclick="PS.openListing(${Number(m.listingId)})" aria-label="${esc(`${c.name} ${m.trade ? "zum Tausch anfragen" : "jetzt kaufen"}`)}">${m.trade ? "🔁 Anfragen" : "🛒 Kaufen"}</button>`
       : `<button type="button" class="ps-gap-wish" onclick="PS.gapRadarWish(${id})" aria-label="${esc(`Suchauftrag für ${c.name}`)}">🔔 Suchauftrag</button>`}
@@ -86,7 +86,7 @@ async function load(setId) {
     if (gr.loading !== setId) return;
     const owned = state.user ? data.owned || [] : guestOwned(setId);
     gr.data = data;
-    gr.cards = buildBinderCards({ catalog: data.catalog || [], owned, myListings: data.myListings || [], marketListings: data.marketListings || [], viewerId: state.user?.id || "", official: Number(data.set?.official) || 0 });
+    gr.cards = buildBinderCards({ catalog: data.catalog || [], owned, myListings: data.myListings || [], marketListings: data.marketListings || [], viewerId: state.user?.id || "", official: Number(data.set?.official) || 0, ebayOffers: data.ebayOffers || [] });
     gr.radar = gapRadar(gr.cards);
     if (gr.view === "available" && !gr.radar.available.length && gr.radar.count) gr.view = "all";
     render();

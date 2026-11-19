@@ -9,7 +9,11 @@ import { fetchSet } from "./features.ts";
 import { itemUnitValue, type VariantPrices } from "./variant-logic.ts";
 import { profileSlug } from "./community-logic.ts";
 import { rows, rateLimit, clientIp } from "./util.ts";
-import { setIdOfCard, localIdOfCard, groupBinderBySet, type SetMeta, type CatalogCard, type ListingRef } from "./binder-logic.ts";
+import { setIdOfCard, localIdOfCard, groupBinderBySet, type SetMeta, type CatalogCard, type ListingRef, type EbayRef } from "./binder-logic.ts";
+import { EPN_CAMPAIGN_ID } from "./flip-logic.ts";
+
+/** eBay-Partner-ID für die Binder-Etiketten (Env-Variable hat Vorrang, sonst die feste ePN-Campaign-ID). */
+const ebayCampaign = () => String(process.env.EBAY_CAMPAIGN_ID || process.env.EPN_CAMPAIGN_ID || EPN_CAMPAIGN_ID).replace(/\D/g, "").slice(0, 20);
 
 const SET_ID_RE = /^[a-zA-Z0-9.\-_]{1,40}$/;
 const tcgdexImage = (u: unknown) => (u ? `${String(u).slice(0, 280)}/high.webp` : "");
@@ -73,6 +77,23 @@ async function setListings(setId: string): Promise<ListingRef[]> {
   }));
 }
 
+/**
+ * Günstigstes aktives eBay-Sofort-Kaufen-Angebot (ungegradet, nicht beschädigt, nicht verdächtig) je Karte des Sets –
+ * aus den gespeicherten Flip-Radar-Daten (market_offers). Ohne eBay-Anbindung einfach leer.
+ */
+async function setEbayOffers(setId: string): Promise<EbayRef[]> {
+  const like = `${setId.replace(/[%_\\]/g, (m) => `\\${m}`)}-%`;
+  try {
+    const list = rows(await db.execute(sql`
+      SELECT target_id, min(total)::float AS price FROM market_offers
+      WHERE target_kind = 'card' AND target_id LIKE ${like} AND status = 'active' AND buying_option = 'FIXED_PRICE'
+        AND grade_key = 'raw' AND raw_condition <> 'dmg' AND NOT suspicious
+      GROUP BY target_id LIMIT 600
+    `));
+    return list.map((r: any) => ({ cardId: String(r.target_id), price: Number(r.price) || 0 })).filter((r) => r.price > 0);
+  } catch { return []; }
+}
+
 /** Eigene Binder-Einträge (mit Wert wie in /api/portfolio) – nur Karten mit Katalog-ID. */
 async function ownedItems(userId: string, setId?: string) {
   const items = await db.select({
@@ -123,11 +144,13 @@ export function registerBinder(app: any, h: { auth: any }) {
     const myListings = listingsInSet.filter((l) => viewerId && l.userId === viewerId);
     c.header("Cache-Control", "no-store");
     if (c.req.query("market") === "1") return c.json({ setId, viewerId, marketListings, myListings, at: new Date().toISOString() });
-    const [metas, catalog, owned] = await Promise.all([setMetas([setId]), setCatalog(setId), viewerId ? ownedItems(viewerId, setId) : Promise.resolve([])]);
+    const [metas, catalog, owned, ebayOffers] = await Promise.all([
+      setMetas([setId]), setCatalog(setId), viewerId ? ownedItems(viewerId, setId) : Promise.resolve([]), setEbayOffers(setId),
+    ]);
     const meta = metas.get(setId) ?? { id: setId, name: setId, total: catalog.length, official: 0 };
     return c.json({
       set: { ...meta, total: Math.max(Number(meta.total) || 0, catalog.length) },
-      catalog, owned, myListings, marketListings, viewerId, at: new Date().toISOString(),
+      catalog, owned, myListings, marketListings, ebayOffers, ebayCampaign: ebayCampaign(), viewerId, at: new Date().toISOString(),
     });
   });
 }

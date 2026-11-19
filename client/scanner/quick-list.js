@@ -293,7 +293,7 @@ function render() {
       <div class="space-y-1"><span class="text-slate-400 font-bold block">Preis-Strategie</span>
         <div class="flex gap-1">${stratBtn("fair", "⚖️ Fair")}${stratBtn("quick", "⚡ Schnell")}</div></div>
     </div>
-    <div id="ql-rows" class="space-y-2 max-h-[52vh] overflow-y-auto pr-0.5">${ql.rows.map(rowHtml).join("")}</div>
+    <div id="ql-rows" class="space-y-2 max-h-[52dvh] overflow-y-auto pr-0.5">${ql.rows.map(rowHtml).join("")}</div>
     <details class="text-[11px] bg-slate-950 border border-slate-800 rounded-2xl p-2">
       <summary class="font-bold text-slate-300 cursor-pointer">Weitere Angaben (Stadt, Tauschwunsch${ready ? ", Sofort-Kauf" : ""})</summary>
       <div class="space-y-1.5 mt-2">

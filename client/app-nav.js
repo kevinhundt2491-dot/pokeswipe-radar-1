@@ -339,8 +339,7 @@ export async function renderProfileHub() {
   sections.push(card("👑 PokeSwipe Pro-Pass", `
     <p class="text-slate-300">${m && m.plan !== "free" ? `Dein Tarif: <strong class="text-yellow-300">${esc(plan)}</strong>${m.proSource === "bonus" ? ` · geschenkt, ${esc(proStatusText(m))} – danach automatisch Free, außer du hast ein Abo` : ""}` : "Sniper-Deals ab 25 %, sofortige Restock-Alarme, niedrigere Marktplatz-Provision (3 %), Händler-Shop und Pro-Videos."}</p>
     ${row("👑", m && m.plan !== "free" ? "Tarif & Vorteile ansehen" : "Premium oder Pro freischalten", "PS.openPro()", "", "text-yellow-300")}
-    ${m?.hasBilling ? row("🧾", "Abo & Rechnungen verwalten", "PS.openBillingPortal()") : ""}
-    ${link("🛑 Verträge hier kündigen", "/kuendigen")}`, { open: !user || m?.plan === "free" }));
+    ${m?.hasBilling ? row("🧾", "Abo & Rechnungen verwalten", "PS.openBillingPortal()") : ""}`, { open: !user || m?.plan === "free" }));
   if (user) {
     sections.push(card("🔒 Verkaufen mit Käuferschutz", `
       ${row("💳", m?.sellerReady ? "Verkäuferkonto ✓ (Stripe Connect)" : "Verkäuferkonto einrichten", "PS.openSeller()", m?.sellerReady ? "Auszahlungen aktiv" : "Identitätsprüfung über Stripe – danach Sofort-Kauf mit Treuhand", "text-cyan-200")}

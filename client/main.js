@@ -943,7 +943,7 @@ function renderServerPortfolio() {
             ${i.change30 !== null ? `<span class="${i.change30 >= 0 ? "text-emerald-400" : "text-rose-400"} text-[10px] font-bold">${pct(i.change30)}</span>` : ""}
             ${i.purchasePrice !== null ? `<span class="text-slate-500 text-[10px]">• EK ${eur(i.purchasePrice)}</span>` : ""}</p>
           ${dupeBadge(i)}
-          ${listed ? `<span class="mt-0.5 inline-block text-[10px] font-black text-emerald-300">✅ Inseriert für ${eur(listed.price)}${listed.buy_now ? " • Sofort-Kauf" : ""}</span>` : ""}
+          ${listed ? `<span class="mt-0.5 inline-block text-[10px] font-black text-emerald-300">✅ Inseriert${listed.buy_now ? " • Sofort-Kauf" : ""}</span>` : ""}
         </div>
       </div>
       <div class="flex gap-1.5 shrink-0 items-center">
@@ -1144,7 +1144,7 @@ function listingTile(l) {
         <span class="ps-tile-price">${Number(l.price) > 0 ? eur(l.price) : "Tausch"}</span>
         ${l.market_price ? `<span class="text-[10px] text-slate-400" title="Cardmarket-Trend">CM ${eur(l.market_price)}</span>` : ""}
       </div>
-      <div class="flex gap-1">${primary}<button type="button" onclick="PS.openListing(${Number(l.id)})" class="ps-tile-more" aria-label="Details & weitere Aktionen">⋯</button></div>
+      <div class="flex gap-1">${primary}${own ? "" : `<button type="button" onclick="PS.openListing(${Number(l.id)})" class="ps-tile-more" aria-label="Details & weitere Aktionen">⋯</button>`}</div>
     </div>
   </article>`;
 }
@@ -1184,7 +1184,7 @@ function listingCard(l) {
             ${listingMetaHtml(l)}
           </div>
           <h4 class="font-black text-white text-sm truncate">${esc(l.card_name)}</h4>
-          <p><span class="font-black text-emerald-400">${eur(l.price)}</span>${l.market_price ? ` <span class="text-slate-500">(Markt ${eur(l.market_price)})</span>` : ""} • <span class="text-slate-400">📍 ${esc(l.city)}</span></p>
+          <p>${l.market_price ? `<span class="text-slate-500">Markt ${eur(l.market_price)}</span> • ` : ""}<span class="text-slate-400">📍 ${esc(l.city)}</span></p>
           <p class="text-amber-300 truncate">Sucht: ${esc(l.want)}</p>
           <button onclick="PS.openUser(${jsArg(l.user_id)})" class="text-slate-300 hover:text-white font-bold">${esc(l.seller)} ${l.verified ? `<span class="text-cyan-300">✔ Verifiziert</span>` : ""} ${REF_BADGE[l.seller_badge] ? `<span class="text-yellow-300" title="Empfehlungs-Badge">${REF_BADGE[l.seller_badge]}</span>` : ""} ${l.seller_founder ? `<span class="ps-founder-chip" title="Verifizierter Gründer-Sammler">🏅 Gründer-Sammler</span>` : ""} ${l.rating_count ? `<span class="text-amber-300">⭐ ${Number(l.rating) || 0} (${Number(l.rating_count) || 0})</span>` : `<span class="text-slate-500">• neu</span>`}</button>
         </div>
@@ -1287,7 +1287,7 @@ function renderTrades(selectId) {
   modal("ps-trades", `
     <h3 class="text-base font-black text-white">🤝 Meine Tausche</h3>
     ${t.length ? `<div class="grid grid-cols-1 md:grid-cols-5 gap-3">
-      <div class="md:col-span-2 space-y-1.5 max-h-[60vh] overflow-y-auto">
+      <div class="md:col-span-2 space-y-1.5 max-h-[60dvh] overflow-y-auto">
         ${t.map((x) => `<button onclick="PS.selectTrade(${Number(x.id)})" class="w-full text-left bg-slate-900 border ${x.id === selectId ? "border-yellow-400" : "border-slate-800"} rounded-xl p-2.5 text-xs">
           <p class="font-bold text-white truncate">${esc(x.request)}</p>
           <p class="text-slate-400 truncate">${x.role === "sender" ? `an ${esc(x.to_name)}` : `von ${esc(x.from_name)}`} • <span class="${(statusLabel[x.status] || statusLabel.pending)[1]}">${(statusLabel[x.status] || statusLabel.pending)[0]}</span></p>
@@ -1491,7 +1491,7 @@ async function openNotifications() {
       <button type="button" onclick="PS.closeAll(); PS.openFriends()" class="bg-slate-900 border border-slate-800 hover:border-yellow-400 rounded-xl px-2 py-2 font-black text-white">👥 Freunde & Chats</button>
       <button type="button" onclick="PS.closeAll(); PS.openTradeHub()" class="bg-emerald-500/10 border border-emerald-400/50 hover:border-yellow-400 rounded-xl px-2 py-2 font-black text-emerald-200">🔄 Tauschen</button>
     </div>
-    <div class="space-y-1.5 max-h-[60vh] overflow-y-auto text-xs">
+    <div class="space-y-1.5 max-h-[60dvh] overflow-y-auto text-xs">
       ${list.length ? list.map((n) => {
         const nl = String(n.link || "");
         const sub = /^\/\?tab=(\w+)&sub=(\w+)(?:&|$)/.exec(nl);

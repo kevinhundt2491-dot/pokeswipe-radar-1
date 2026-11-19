@@ -665,7 +665,7 @@ async function openBuySheet(item) {
     try { offers = (await api(`/api/marketplace/offers?card=${encodeURIComponent(cardId)}&limit=8`)).offers || []; } catch { offers = []; }
   }
   const list = offers.length ? `<p class="text-xs font-black text-white">🔒 Bei PokeSwipe-Sammlern (Käuferschutz)</p>
-    <div class="space-y-2 max-h-[45vh] overflow-y-auto">${offers.map((o) => `
+    <div class="space-y-2 max-h-[45dvh] overflow-y-auto">${offers.map((o) => `
       <div class="flex gap-2 items-center bg-slate-950 border border-slate-800 rounded-2xl p-2">
         <img src="${esc(cdn(o.image || FALLBACK_IMG, 100))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" class="w-10 h-14 ${String(o.image || "").startsWith("/api/images/") ? "object-cover" : "object-contain"} rounded" />
         <div class="flex-1 min-w-0 text-[11px]">

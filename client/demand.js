@@ -58,7 +58,7 @@ async function openDemand() {
       ${dm.items.length ? `
         <p class="text-xs text-slate-300">${dm.items.length === 1 ? "1 Karte" : `${dm.items.length} Karten`} aus deiner Sammlung ${dm.items.length === 1 ? "steht" : "stehen"} bei anderen Sammlern auf der Wunschliste.
           Sobald du inserierst, werden die Suchenden sofort benachrichtigt.${total ? ` Zusammen etwa <b class="text-emerald-300">${eur(total)}</b>.` : ""}</p>
-        <div class="space-y-2 max-h-[55vh] overflow-y-auto">${dm.items.map(row).join("")}</div>
+        <div class="space-y-2 max-h-[55dvh] overflow-y-auto">${dm.items.map(row).join("")}</div>
         <div class="grid grid-cols-1 gap-2">${btn(`🏷️ Alle ${dm.items.length > 20 ? "20 wichtigsten " : ""}inserieren`, "PS.listAllDemand()", "w-full bg-yellow-400 text-slate-950")}</div>
         <p class="text-[10px] text-slate-500">Vor dem Veröffentlichen kannst du Preis, Zustand und Käuferschutz noch anpassen.</p>`
       : `<p class="text-xs text-slate-300">Gerade sucht niemand eine Karte, die du noch nicht anbietest${r.alreadyListed ? ` – ${r.alreadyListed} gesuchte ${r.alreadyListed === 1 ? "Karte ist" : "Karten sind"} schon inseriert 👍` : ""}.
