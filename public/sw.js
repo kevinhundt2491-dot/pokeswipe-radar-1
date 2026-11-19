@@ -1,6 +1,6 @@
 // PokeSwipe & Radar – Service Worker: echte Web-Push-Nachrichten (auch bei geschlossener App)
 // und Offline-Modus (App, Sammlung und Bilder bleiben auf Messen & Börsen ohne Netz verfügbar).
-const VERSION = "v14"; // v14: Serien-Scanner ohne Set-Einstellungen (Multi-Crop, 60-%-Schwelle, Auto-Einsortieren) – Worker und App neu laden. // v13: neue Scanner-Engine (Ruckzuck-Sweep & 9er-Ordner-Scan) – Worker und App neu laden. // v12: Anmelde-/Sitzungs-Aufrufe nie aus dem Cache, Offline-Kopien nur ohne Netz und nur erfolgreiche Antworten. // v11: neues App-Icon (Radar + Sammelkarte), Set-Binder & Einladen. // v10: i18n-boot.js (DE/EN). // Phase 6: ausgelagerte Skripte (/js/*), Code-Splitting (/assets/chunks/*), strikte CSP
+const VERSION = "v15"; // v15: Präzisions-Scanner (0,8-s-Pause, 2-Frame-Stabilität, Pflicht-Farbabgleich, Auto-Ordner mit Rückgängig, 1-Klick-Inserieren) – Worker und App neu laden. // v14: Serien-Scanner ohne Set-Einstellungen (Multi-Crop, 60-%-Schwelle, Auto-Einsortieren) – Worker und App neu laden. // v13: neue Scanner-Engine (Ruckzuck-Sweep & 9er-Ordner-Scan) – Worker und App neu laden. // v12: Anmelde-/Sitzungs-Aufrufe nie aus dem Cache, Offline-Kopien nur ohne Netz und nur erfolgreiche Antworten. // v11: neues App-Icon (Radar + Sammelkarte), Set-Binder & Einladen. // v10: i18n-boot.js (DE/EN). // Phase 6: ausgelagerte Skripte (/js/*), Code-Splitting (/assets/chunks/*), strikte CSP
 const STATIC = `ps-static-${VERSION}`;
 const API = "ps-api";
 const IMG = "ps-img";
