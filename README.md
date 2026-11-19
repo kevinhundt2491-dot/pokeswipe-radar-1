@@ -197,10 +197,27 @@ automatisch `utm_source=pokeswipe_radar`; sobald `CARDMARKET_PARTNER_ID` gefüll
 
 Der Bereich **Live-Scanner → ⚡ Live-Scan** erkennt Karten direkt im Browser, ohne Foto-Upload und ohne Server-KI pro Bild:
 
-- `client/scanner/live-scanner.js`: Rückkamera (`getUserMedia`), Rahmenführung, Taschenlampe, Live-HUD mit Name, Sprache, Marktpreis,
-  PSA-10-Wert und den Knöpfen *Zur Sammlung*, *Auf Wishlist*, *Flip-Check*, außerdem eine Liste der in der Sitzung gescannten Karten.
-- `client/scanner/scan-worker.js` (wird zu `public/assets/scan-worker.js` gebündelt): Kantenerkennung, Perspektivkorrektur,
-  pHash/dHash, Suche im lokalen Index, Kartennummer per Texterkennung bzw. Ziffern-Vorlagen – ca. 5–20 ms pro Bild.
+- `client/scanner/sweep-scanner.js`: Oberfläche des Live-Scanners (ohne Zielrahmen, ohne Countdown). Zwei Modi plus Automatik:
+  - **⚡ Stapel / Einzelkarte (Ruckzuck-Sweep):** 2-Frame-Konsens ≥ 85 % mit klarem Abstand zum zweitbesten Motiv → Vibration + Pling.
+    Kein Zeit-Cooldown: gesperrt ist nur das Exemplar, das gerade im Bild liegt. Wird es weggezogen oder die nächste Karte
+    aufgedeckt (Bewegungsdifferenz im Bildzentrum), zählt die nächste Karte sofort – auch wenn sie identisch ist. Dazu „+1“ im Dock.
+  - **📒 Ordner-Seite (9er-Binder-Scan):** ein dezentes 3 × 3- bzw. 2 × 2-Raster passt sich der aufgeschlagenen Seite an; jedes Fach
+    wird aus dem nativen HD-Bild (bis 1280 px breit) geschnitten und hat seine eigene Positions-Sperre (grüner Haken + Name +
+    Cardmarket-Preis auf dem Fach). Umblättern (> 65 % Bildänderung oder ein gesperrtes Fach zeigt eine andere Karte) bzw. der
+    Knopf „Nächste Seite“ leert die Sperren.
+  - Session-Dock (Miniatur, Name, Set, Cardmarket-Trend, +1, Normal/Holo/Reverse, DE/EN/JP, Rückgängig), Live-Summe oben,
+    Session-Drawer mit „In Set-Binder einsortieren“ und „Direkt auf Marktplatz inserieren“ (alle Karten oder nur Doppelte).
+- `client/scanner/sweep-engine.js` (im Worker): Anti-Glare (Luminanz > 238 bei niedriger Sättigung wird maskiert und herausgerechnet),
+  Helligkeits-/Kontrast-Normalisierung, Stufe 1 Vorfilter nach Kartentyp/Rahmenfarbe (12 Klassen, aus dem Text-Index; ohne klaren
+  Treffer wird der ganze Index durchsucht), Stufe 2 pHash + dHash des inneren Artworks, Farb-Layout, HSV-Farbmatrix und
+  Kantengradient. Die Hash-Fingerabdrücke aller Karten kommen als Index vom Server und liegen in IndexedDB; die zusätzlichen
+  Farb-/Kanten-Vektoren werden je Set (Set-Lock) bzw. für knappe Kandidaten aus den Kartenbildern berechnet und dauerhaft in
+  IndexedDB gehalten (Fortschritt in der Statuszeile).
+- `client/scanner/sweep-logic.js` / `client/scanner/hd-scan-logic.js`: reine Logik (Stapel-Sperre, Session, Raster-Anpassung,
+  Slot-Sperre, Fingerabdruck-Vektoren) – in `tests/scanner-hd-engine.test.ts` u. a. mit gerenderten Ordnerseiten geprüft.
+- `client/scanner/live-scanner.js`: Foto-Upload/Foto-Scan (inkl. KI-Rückfall), Kartendaten, Set-Binder-Ablage, Schnell-Inserieren.
+- `client/scanner/scan-worker.js` (wird zu `public/assets/scan-worker.js` gebündelt): Index laden, Foto-Erkennung, Kartennummer per
+  Texterkennung bzw. Ziffern-Vorlagen; bindet die Live-Engine ein.
 - `server/scan-logic.ts`: gemeinsame Bildverarbeitung für Browser, Server und Tests.
 - Job `scan-hash-index` (alle 10 Minuten): berechnet die Referenz-Fingerabdrücke aus den TCGdex-Bildern (wertvolle Karten zuerst).
   `/api/scan/index?lang=de|en|ja` liefert den Index (CDN-gecacht, offline über den Service Worker), `/api/scan/lookup` die Details.

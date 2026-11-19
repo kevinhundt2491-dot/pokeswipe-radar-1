@@ -13,9 +13,9 @@ const A = ["card:sv08-238", "print:en:sv08-238"], B = ["card:sv08-001"], C = ["c
 const quadAt = (cx: number, cy: number, w = 0.3): [number, number][] => [[cx - w / 2, cy - w * 0.7], [cx + w / 2, cy - w * 0.7], [cx + w / 2, cy + w * 0.7], [cx - w / 2, cy + w * 0.7]];
 const det = (keys: string[], match = 0.9, extra: Record<string, unknown> = {}) => ({ keys, match, margin: 12, quad: quadAt(0.5, 0.5), ...extra });
 
-test("Multi-Card-Fix: nach Karte #1 wird Karte #2, #3, #4 sofort erkannt (0 ms Wartezeit) – nur dieselbe Karte hat 2,5 s Duplikat-Schutz", () => {
+test("Multi-Card-Fix: nach Karte #1 wird Karte #2, #3, #4 sofort erkannt (0 ms Wartezeit) – gesperrt ist nur das Exemplar im Bild, ohne Zeit-Cooldown", () => {
   assert.equal(SWEEP.NEW_CARD_MS, 0);
-  assert.equal(SWEEP.COOLDOWN_MS, 2500);
+  assert.equal((SWEEP as any).COOLDOWN_MS, undefined, "kein starrer Zeit-Cooldown mehr");
   const gate = createSweepGate();
   let t = 1000;
   const push = (dets: any[], motion = 0.02) => gate.push({ dets, found: true, motion }, t);
@@ -26,15 +26,16 @@ test("Multi-Card-Fix: nach Karte #1 wird Karte #2, #3, #4 sofort erkannt (0 ms W
   t += 40;
   const r2 = push([det(A), det(B, 0.9, { quad: quadAt(0.2, 0.3) })]);
   assert.deepEqual(r2.hits, [B], "Karte #2 ohne Wartezeit");
-  assert.deepEqual(r2.locked, [A], "Karte #1 weiter gesperrt (Duplikat-Schutz)");
-  // Karte #3 und #4 im Stapel-Turbo: Karte #1/#2 weg, neue Karten → je 2 Bilder
+  assert.deepEqual(r2.locked, [A], "Karte #1 weiter gesperrt (liegt noch im Bild)");
+  // Karte #3 und #4: neue Karten → je 2 Bilder
   t += 40; push([det(C)]); t += 40; assert.deepEqual(push([det(C)]).hits, [C], "Karte #3");
   const D = ["card:me01-010"];
   t += 40; push([det(D)]); t += 40; assert.deepEqual(push([det(D)]).hits, [D], "Karte #4");
-  // Dieselbe Karte bleibt im Bild → kein zweiter Treffer, auch nicht nach 2,5 s (Sperre verlängert sich, solange sie sichtbar ist)
+  // Dieselbe Karte bleibt im Bild → kein zweiter Treffer, egal wie lange
   for (let i = 0; i < 100; i++) { t += 40; assert.equal(push([det(D)]).hits.length, 0); }
-  // Karte 2,6 s aus dem Bild → danach zählt dasselbe Exemplar erneut (bewusst: z. B. zweites Exemplar aus dem Stapel)
-  t += 2600; push([det(D)]); t += 40; assert.equal(push([det(D)]).hits.length, 1);
+  // Dieselbe Karte an deutlich anderer Stelle = zweites Exemplar → zählt eigenständig
+  t += 40; push([det(D), det(D, 0.9, { quad: quadAt(0.85, 0.2, 0.2) })]); t += 40;
+  assert.equal(push([det(D), det(D, 0.9, { quad: quadAt(0.85, 0.2, 0.2) })]).hits.length, 1, "zweites Exemplar daneben");
 });
 
 test("Sweep-Modus: dieselbe Karte an deutlich anderer Position = zweites Exemplar; strikt nur ≥ 99 % Konfidenz, 3 Bilder, Nummer darf nicht widersprechen", () => {
@@ -111,30 +112,27 @@ test("Live-Preisschild: Set-Kürzel + Nummer, Status-Badges, Tages-Zähler und G
   assert.deepEqual(v, { count: 4, value: 22.5, priced: 3 });
 });
 
-test("Scanner-Quelltext: kein grüner Rahmen mehr, Modus-Umschalter, 2,5-s-Aktionsleiste, Auto-Binder im Hintergrund, Worker-Gegendruck per try/finally", () => {
+test("Scanner-Quelltext: kein Zielrahmen, Modus-Umschalter, Session-Dock mit +1, Auto-Binder im Hintergrund, Worker-Gegendruck per try/finally", () => {
   const ls = src("client/scanner/live-scanner.js");
   assert.ok(!/id="ps-ls-guide"|id="ps-ls-quad"|id="ps-ls-mask"|ps-ls-corner|ps-ls-laser/.test(ls), "kein Zielrahmen, keine Maske, kein grünes Kanten-Polygon");
   assert.ok(!/stroke="#34d399"/.test(ls), "kein grüner SVG-Rahmen");
   assert.ok(!/Karte in den Rahmen halten/.test(ls), "Hinweise ohne „Rahmen“");
   const ui = src("client/scanner/sweep-scanner.js");
-  assert.ok(!/ctx\.stroke\(\)[^]*quad/.test(ui.slice(ui.indexOf("function drawOverlay"), ui.indexOf("function animateTags"))), "Overlay zeichnet keine Karten-Rahmen, nur Etiketten");
-  assert.match(ui, /export const AUTO_NEXT_MS = 2500/);
-  assert.match(ui, /ps-sw-auto/, "sichtbarer Fortschrittsbalken der Aktionsleiste");
+  assert.ok(!/AUTO_NEXT_MS|ps-sw-auto|animation-duration/.test(ui), "keine ablaufende Aktionsleiste mehr – das Dock bleibt stehen");
   assert.match(ui, /🏷️ Inserieren/); assert.match(ui, /⚡ Schnell-Inserieren/);
   assert.match(ui, /strategy: "quick"/, "Schnell-Inserieren = Deal-Preis unter Cardmarket");
-  assert.match(ui, /⚡ Stapel-Turbo/); assert.match(ui, /🌊 Binder- & Tisch-Sweep/);
-  assert.match(ui, /autoFile\(r\.uid, key\)/, "jeder Treffer wird sofort ohne Klick gespeichert");
-  assert.match(ui, /Heute gescannt/.source === "Heute gescannt" ? /dailyLabel\(sw\.daily\)/ : /dailyLabel/);
+  assert.match(ui, /⚡ Stapel \/ Einzelkarte/); assert.match(ui, /📒 Ordner-Seite/); assert.match(ui, /✨ Auto/);
+  assert.match(ui, /if \(sw\.prefs\.autoFile\) autoFile\(r\.uid, key\)/, "jeder Treffer wird sofort ohne Klick gespeichert (abschaltbar)");
+  assert.match(ui, /dailyLabel\(sw\.daily\)/);
   assert.match(ui, /navigator\.vibrate\(35\)/); assert.match(ui, /createOscillator/);
   assert.match(ui, /function drawTag/, "Preisschild-Etikett direkt auf der Karte");
-  assert.match(ui, /viewTotal\(/, "Gesamtwert aller Karten im Bild");
   // Die Kamera-Schleife wartet nie auf das Speichern: autoFile ist eine nicht erwartete Hintergrund-Aufgabe
   assert.ok(!/await autoFile\(/.test(ui));
   const engine = src("client/scanner/sweep-engine.js");
-  assert.match(engine, /st\.busy = true;\s*try \{ post\(frame\(msg\)\); \}[^]*finally \{ st\.busy = false; \}/, "Worker-Flag garantiert per try/finally zurückgesetzt");
+  assert.match(engine, /st\.busy = true;\s*try \{ post\([^;]*frame\(msg\)\); \}[^]*finally \{ st\.busy = false; \}/, "Worker-Flag garantiert per try/finally zurückgesetzt");
   assert.match(engine, /const cands = \[\.\.\.fresh, \.\.\.tracked\]/, "neue Karten werden vor den verfolgten ausgewertet");
   assert.match(engine, /function verifyNumber/, "Nummern-ROI-Verifikation");
-  assert.match(engine, /sweep: \{ maxEval: 6/, "Sweep-Modus prüft mehrere Karten je Bild");
+  assert.match(engine, /binder: \{ maxEval: SWEEP\.MAX_CARDS/, "Ordner-Modus prüft bis zu 9 Fächer je Bild");
   const worker = src("client/scanner/scan-worker.js");
   assert.match(worker, /getGlyphs: \(\) => glyphs/);
 });

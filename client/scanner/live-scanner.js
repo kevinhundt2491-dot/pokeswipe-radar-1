@@ -147,7 +147,7 @@ export function liveScanPanelHtml() {
       <div>
         <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚡ 100 % rahmenloser High-Speed-Scanner · auf dem Gerät</span>
         <h2 class="text-base sm:text-lg font-black text-white mt-1">Karte ins Bild – Preisschild drauf – ab in den Binder</h2>
-        <p class="text-xs text-slate-300">Kein Rahmen, kein Warten: Jede Karte bekommt direkt im Kamerabild ihr Live-Preisschild und landet sofort in deinem Set-Binder. Stapel-Turbo für Einzelkarten, Binder- &amp; Tisch-Sweep für ganze Ordnerseiten.</p>
+        <p class="text-xs text-slate-300">Kein Rahmen, kein Warten: „Stapel / Einzelkarte“ zählt jede Karte sofort – auch Doppelte direkt nacheinander. „Ordner-Seite“ erkennt alle 9 Fächer einer aufgeschlagenen Binder-Seite auf einmal und zählt keines doppelt.</p>
       </div>
     </div>
     ${sweepUi().html()}
