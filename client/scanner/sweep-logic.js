@@ -1,17 +1,24 @@
 // PokeSwipe & Radar – Zero-Latency Sweep-Modus: reine Rechen-Logik (ohne DOM/Netzwerk, im Worker und in Tests nutzbar).
 //
+//  4-Stufen-Pipeline (Stapel / Einzelkarte):
+//   1) cardPresence    – Präsenz- & Ruhe-Gate: GENAU EIN klares Karten-Rechteck (Seitenverhältnis 1 : 1,25 … 1 : 1,55,
+//                        20 … 88 % der Bildfläche), scharf (Laplace-Varianz), nicht dunkel/einfarbig – sonst Standby (0 Scans)
+//   2) insetQuad       – unsichtbare Perspektiv-Begradigung: Karte auf 300 × 420 px, 3 % Rand ab (Sleeve/Ordner/Tisch weg)
+//   3) imageOk / verifiedOk – Hybrid-Verifikation: Sammlernummer + Artwork (sofort) ODER reines Artwork ≥ 82 % mit ≥ 10 %
+//                        Vorsprung in 2 aufeinanderfolgenden Bildern (keine 58-%-Zufallsschwelle mehr)
+//   4) createSweepGate – physische Karten-Sperre: nach einem Treffer friert der Auslöser global ein, bis die Karte wirklich
+//                        weg bzw. ausgetauscht ist (Rechteck weg oder > 40 % Bildveränderung im Zentrum für ≥ 200 ms)
+//
 //  • findCardRects    – rahmenlose Karten-Suche: rechteckige Silhouetten im Seitenverhältnis 63:88 irgendwo im Bild
 //                       (Kanten-Linienintegrale über Präfixsummen, alle Größen/Positionen in wenigen Millisekunden)
 //  • layoutFromRgba   – räumlicher Farb-/Layout-Vektor (4 × 6 Zellen, weißabgleich-normiert) einer entzerrten Karte
 //  • matchPercent     – Übereinstimmung 0…1 aus Bild-Fingerabdruck (pHash/dHash) und Farb-Layout
 //  • topMatchesIn     – Hamming-Suche im ganzen Index oder nur in den Zeilen eines Sets („Set-Lock“), mit Früh-Abbruch
-//  • createSweepGate  – Sofort-Auslösung im ersten ruhigen Bild (≥ 58 %, ≥ 4 % Vorsprung) und Karten-Sperre (cardId):
-//                       1,2 s bzw. bis die Karte weggezogen/ausgetauscht wurde (≥ 18 % Bildveränderung)
 //  • motionStats      – Frame-Delta: ganzes Bild, Bildzentrum, geänderter Flächenanteil (Seitenwechsel im Ordner)
 //  • confidencePercent – kalibrierte Konfidenz 0…100 % aus Übereinstimmung, Abstand zum nächsten Motiv und Nummern-ROI
 //  • Preisschild-/Zähler-Helfer – Etikett-Texte, Tages-Scan-Zähler, Gesamtwert der Karten im Bild
 //  • Session-Helfer   – Scan-Liste mit Anzahl, Variante, Rückgängig, Gesamtwert, Doppelte
-import { popcount32, WORDS, GLARE_MASK_MAX, maskBits, homography, project } from "../../server/scan-logic.ts";
+import { popcount32, WORDS, GLARE_MASK_MAX, maskBits, homography, project, detectCard } from "../../server/scan-logic.ts";
 
 export const SWEEP = {
   /** Breite des Analyse-Bilds für die Kantensuche */
@@ -21,24 +28,63 @@ export const SWEEP = {
   /** Höchstens ~30 Bilder/s an den Worker */
   MIN_FRAME_MS: 33,
   /**
-   * Schwellen (Stapel / Einzelkarte), kalibriert auf echte Handykamera-Werte (60–70 % bei realen Karten): ein Treffer
-   * braucht ≥ 58 % Übereinstimmung UND ≥ 4 % Vorsprung vor dem zweitbesten Motiv (MARGIN_PCT, siehe quickOk) – dann
-   * löst schon das erste Bild aus. Keine Farb-Sperre. DIRECT_MATCH (66 %): Schwelle je Fach im Ordner-Modus.
+   * Stufe 3 – reiner Artwork-Treffer (ohne gelesene Nummer): ≥ 82 % Übereinstimmung (inkl. normalisierter Farbverteilung)
+   * UND ≥ 10 % Vorsprung vor dem zweitbesten Motiv (MARGIN_PCT · HASH_SCALE = 16 Punkte) in 2 aufeinanderfolgenden Bildern.
+   * Die frühere 58-%-Schwelle ist abgeschafft: Bildrauschen über 35 000 Karten erreicht 58–59 % und löste Geister-Scans aus.
+   * DIRECT_MATCH (66 %): Schwelle je Fach im Ordner-Modus (unverändert).
    */
-  MIN_MATCH: 0.58,
+  MIN_MATCH: 0.82,
   DIRECT_MATCH: 0.66,
-  /** Abstand zum zweitbesten Motiv als Anteil der Ähnlichkeit (margin / HASH_SCALE) – 4 % Vorsprung */
-  MARGIN_PCT: 0.04,
-  /** Keine Farb-Sperre mehr: ohne Farb-Referenz gilt dieselbe Schwelle */
+  /** Abstand zum zweitbesten Motiv als Anteil der Ähnlichkeit (margin / HASH_SCALE) – 10 % Vorsprung */
+  MARGIN_PCT: 0.1,
+  /** Farbe ohne Referenzbild: keine zusätzliche Hürde (die 82 % gelten trotzdem) */
   NO_COLOR_EXTRA: 0,
+  /**
+   * Stufe 3 A – Nummer + Artwork: Sammlernummer auf der begradigten Karte gelesen, passt zu einem Kandidaten der Bild-Suche
+   * (Gesamtzahl „/159“ muss passen) UND dessen Artwork-Ähnlichkeit ≥ NUM_MATCH → sofort sicherer Treffer (1 Bild).
+   */
+  NUM_MATCH: 0.66,
+  /** Stufe 3 C – unsicherer Bereich (klare, scharfe Karte, aber < 82 %): ab hier Name+Nummer-OCR bzw. Vision-Rückfall */
+  FALLBACK_MIN: 0.65,
+  /** So lange muss eine Karte im unsicheren Bereich ruhig im Bild liegen, bevor der Rückfall startet (ms) */
+  FALLBACK_HOLD_MS: 300,
+  /** Stufe 1 – Präsenz-Gate: Karten-Rechteck (Hochformat lang:kurz) und Flächenanteil am Kamerabild */
+  RECT_RATIO_MIN: 1.25,
+  RECT_RATIO_MAX: 1.55,
+  RECT_MIN_AREA: 0.2,
+  RECT_MAX_AREA: 0.88,
+  /** Mindest-Kantenbewertung eines Rechtecks (findCardRects) und Stärke, ab der es auch ohne Ecken-Verfeinerung zählt */
+  RECT_MIN_SCORE: 1.45,
+  RECT_STRONG: 1.9,
+  /** Zweites, getrenntes Rechteck (ab 8 % Fläche) mit ≥ 80 % der Kantenstärke des besten → mehrere Karten im Bild → Standby */
+  MULTI_SCORE: 0.8,
+  MULTI_MIN_AREA: 0.08,
+  /** Schärfe: Laplace-Varianz (Graubild 320 px) innerhalb der Karte – darunter verwackelt/unscharf → Standby */
+  FOCUS_MIN: 30,
+  /** Dunkel (mittlere Helligkeit 0…255) bzw. einfarbig (Standardabweichung) – z. B. Handy liegt auf Tisch/Sofa → Standby */
+  DARK_MEAN: 22,
+  FLAT_STD: 9,
+  /** Stufe 2 – Rand, der nach der Begradigung abgeschnitten wird (je Seite) – Sleeve, Ordner-Tasche, Tisch */
+  CROP_INSET: 0.03,
+  /** Standardbild der begradigten Karte (Name+Nummer-OCR / Vision-Rückfall) */
+  STD_W: 300,
+  STD_H: 420,
+  /**
+   * Stufe 4 – physische Karten-Sperre: nach einem Treffer friert der Auslöser für den GANZEN Scanner ein. Frei erst, wenn die
+   * Karte wirklich weg bzw. ausgetauscht ist: Karten-Rechteck verschwunden oder > 40 % Veränderung im Bildzentrum, jeweils
+   * durchgehend ≥ 200 ms – und das Bildzentrum hat sich seit dem Treffer mindestens einmal um > 40 % verändert (ein kurz
+   * flackerndes Rechteck über derselben, ruhig liegenden Karte gibt die Sperre also nie frei).
+   */
+  FREEZE_DRIFT: 0.4,
+  FREEZE_RELEASE_MS: 200,
   /** Ab dieser Übereinstimmung gilt eine Karte als „im Bild gesehen“ (hält die Sperre, Etikett folgt der Karte) */
   TRACK_MATCH: 0.55,
-  /** Sofort-Auslösung: schon das erste ruhige Bild mit ≥ 58 % und ≥ 4 % Vorsprung zählt */
-  CONSENSUS_FRAMES: 1,
+  /** Reiner Artwork-Treffer: 2 aufeinanderfolgende ruhige Bilder mit derselben Karte (Nummer + Artwork: sofort) */
+  CONSENSUS_FRAMES: 2,
   /** Zeitfenster zwischen den beiden Bildern (~120 ms; langsame Geräte: bis 2,2 Bildzeiten, höchstens CONSENSUS_MAX_MS) */
   CONSENSUS_MS: 120,
   CONSENSUS_MAX_MS: 200,
-  /** Keine globale Pause mehr: die nächste (andere) Karte löst sofort aus – Doppel-Scans verhindert die Karten-Sperre */
+  /** Keine Zeit-Pause: die physische Karten-Sperre (Stufe 4) verhindert Doppel- und Mehrfach-Namen */
   HIT_PAUSE_MS: 0,
   /** Verwackelt: Bewegungsdifferenz im Bildzentrum bzw. im ganzen Bild ab hier = Bewegungsunschärfe → Bild zählt nicht */
   BLUR_CENTER: 0.1,
@@ -132,14 +178,14 @@ export function edgeLines(grad, w, h, dilate = Math.max(1, Math.round(Math.min(w
   return { hLine, vLine, norm: Math.max(4, grad.mean) };
 }
 
-export function findCardRects(grad, w, h, { max = 4, minFrac = 0.2, maxFrac = 0.96, minScore = 1.35, ratio = SWEEP.CARD_RATIO, lines = null } = {}) {
+export function findCardRects(grad, w, h, { max = 4, minFrac = 0.2, maxFrac = 0.96, minScore = 1.35, ratio = SWEEP.CARD_RATIO, lines = null, sizeStep = 1.12, posStep = 0.035 } = {}) {
   const { hLine, vLine, norm } = lines || edgeLines(grad, w, h);
   const cands = [];
   const minH = Math.max(24, h * minFrac), maxH = Math.min(h * maxFrac, (w * maxFrac) / ratio);
-  for (let ch = maxH; ch >= minH; ch /= 1.12) {
+  for (let ch = maxH; ch >= minH; ch /= sizeStep) {
     const cw = ch * ratio;
     const iw = Math.round(cw), ih = Math.round(ch);
-    const step = Math.max(2, Math.round(ch * 0.035));
+    const step = Math.max(2, Math.round(ch * posStep));
     // Ecken sind abgerundet: nur die mittleren 80 % jeder Seite messen; Innen-Linie 5 % weiter innen
     const mx = Math.round(iw * 0.1), my = Math.round(ih * 0.1), inX = Math.max(2, Math.round(iw * 0.05)), inY = Math.max(2, Math.round(ih * 0.05));
     for (let y0 = 1; y0 + ih < h - 1; y0 += step) {
@@ -209,6 +255,143 @@ export function quadBox(q, pad = 0) {
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   const px = (x1 - x0) * pad, py = (y1 - y0) * pad;
   return { x0: x0 - px, y0: y0 - py, x1: x1 + px, y1: y1 + py };
+}
+
+// ---------------------------------------------------------------------------
+// Stufe 1: Karten-Präsenz- & Ruhe-Gate
+// ---------------------------------------------------------------------------
+/** Fläche (Shoelace), Seitenverhältnis lang:kurz (Mittel gegenüberliegender Seiten) und Konvexität eines Vierecks. */
+export function quadGeometry(q) {
+  let area = 0;
+  for (let i = 0; i < 4; i++) { const [x0, y0] = q[i], [x1, y1] = q[(i + 1) % 4]; area += x0 * y1 - x1 * y0; }
+  const side = (a, b) => Math.hypot(q[b][0] - q[a][0], q[b][1] - q[a][1]);
+  const wAvg = (side(0, 1) + side(3, 2)) / 2, hAvg = (side(0, 3) + side(1, 2)) / 2;
+  let sign = 0, convex = true;
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = q[i], [bx, by] = q[(i + 1) % 4], [cx, cy] = q[(i + 2) % 4];
+    const z = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+    if (Math.abs(z) < 1e-9) continue;
+    if (!sign) sign = Math.sign(z); else if (Math.sign(z) !== sign) convex = false;
+  }
+  return { area: Math.abs(area) / 2, ratio: Math.max(wAvg, hAvg) / Math.max(1e-6, Math.min(wAvg, hAvg)), w: wAvg, h: hAvg, convex };
+}
+
+/** Viereck um k (Anteil je Seite) nach innen ziehen – in Karten-Koordinaten (u, v), also auch für schräge Karten exakt. */
+export function insetQuad(q, k = SWEEP.CROP_INSET) {
+  const H = homography(q);
+  return [project(H, k, k), project(H, 1 - k, k), project(H, 1 - k, 1 - k), project(H, k, 1 - k)];
+}
+
+/** Mittlere Helligkeit und Standardabweichung eines Graubilds (dunkel / einfarbig erkennen). */
+export function grayStats(g) {
+  let s = 0, q = 0;
+  const n = g.d.length;
+  for (let i = 0; i < n; i++) { const v = g.d[i]; s += v; q += v * v; }
+  const mean = n ? s / n : 0;
+  return { mean, std: n ? Math.sqrt(Math.max(0, q / n - mean * mean)) : 0 };
+}
+
+/** Schärfe: Varianz des Laplace-Operators im Rechteck box (inkl. Kartenkante) des Graubilds. */
+export function laplacianVar(g, box = null) {
+  const { w, h, d } = g;
+  const bx0 = box ? box.x0 : 0, bx1 = box ? box.x1 : w, by0 = box ? box.y0 : 0, by1 = box ? box.y1 : h;
+  const x0 = Math.max(1, Math.floor(bx0)), x1 = Math.min(w - 1, Math.ceil(bx1)), y0 = Math.max(1, Math.floor(by0)), y1 = Math.min(h - 1, Math.ceil(by1));
+  let s = 0, q = 0, n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const i = y * w + x;
+    const v = 4 * d[i] - d[i - 1] - d[i + 1] - d[i - w] - d[i + w];
+    s += v; q += v * v; n++;
+  }
+  if (!n) return 0;
+  const m = s / n;
+  return Math.max(0, q / n - m * m);
+}
+
+/** Überdeckung zweier Rechtecke: { iou, small } (small = Schnittfläche / Fläche des kleineren). */
+function boxOverlap(a, b) {
+  const ix = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)), iy = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  const sa = (a.x1 - a.x0) * (a.y1 - a.y0), sb = (b.x1 - b.x0) * (b.y1 - b.y0), inter = ix * iy;
+  return { iou: inter / Math.max(1e-6, sa + sb - inter), small: inter / Math.max(1e-6, Math.min(sa, sb)) };
+}
+
+/**
+ * Stufe 1 – Karten-Präsenz- & Ruhe-Gate (Graubild ~320 px + Sobel-Gradient). Erst wenn GENAU EIN klares Karten-Rechteck
+ * im Trading-Card-Format (lang:kurz 1,25 … 1,55) 20 … 88 % des Bilds einnimmt, scharf ist und das Bild weder dunkel noch
+ * einfarbig ist, darf überhaupt gegen den Katalog abgeglichen werden.
+ *  • Karte ↔ Sleeve (fast deckungsgleich, IoU ≥ 0,5) = EIN Objekt; Rechtecke innerhalb der Karte zählen nie als 2. Karte.
+ *  • Weitere getrennte Karten-Rechtecke (ab 8 % Fläche, ≥ 80 % der Kantenstärke) → „multi“ (z. B. 4 Karten auf dem Tisch).
+ * Liefert { ok, reason: "" | "dark" | "flat" | "none" | "multi" | "blur", quad?, area?, ratio?, focus?, mean, std, count }.
+ */
+export function cardPresence(g, grad, cfg = SWEEP) {
+  const { mean, std } = grayStats(g);
+  const base = { mean: Math.round(mean), std: Math.round(std * 10) / 10 };
+  if (mean < cfg.DARK_MEAN) return { ok: false, reason: "dark", count: 0, ...base };
+  if (std < cfg.FLAT_STD) return { ok: false, reason: "flat", count: 0, ...base };
+  const W = g.w, H = g.h;
+  // kleinste gesuchte Kartenhöhe: 8 % Fläche (kleinere Karten zählen nur für „mehrere Karten im Bild“), etwas Luft für Perspektive
+  const minH = Math.sqrt((cfg.MULTI_MIN_AREA * W * H) / SWEEP.CARD_RATIO) * 0.85;
+  // feines Größen-/Positionsraster (4 % / 2 %): die Kante muss exakt sitzen, sonst scheitert die Ecken-Verfeinerung
+  const rects = findCardRects(grad, W, H, { max: 8, minFrac: Math.min(0.95, minH / H), maxFrac: 0.995, minScore: cfg.RECT_MIN_SCORE, sizeStep: 1.04, posStep: 0.02 });
+  const found = [];
+  // Ecken nur für konkurrenzfähige Rechtecke verfeinern (≥ MULTI_SCORE der besten Kantenstärke) – der Rest spielt keine Rolle
+  const top = rects.length ? rects[0].score : 0;
+  for (const r of rects) {
+    if (r.score < top * cfg.MULTI_SCORE) break;
+    const det = detectCard(g, r, grad);
+    const quad = det.found ? det.corners : r.score >= cfg.RECT_STRONG ? rectQuad(r) : null;
+    if (!quad) continue;
+    const geo = quadGeometry(quad);
+    const area = geo.area / (W * H);
+    if (!geo.convex || geo.ratio < cfg.RECT_RATIO_MIN || geo.ratio > cfg.RECT_RATIO_MAX || area < cfg.MULTI_MIN_AREA || area > cfg.RECT_MAX_AREA) continue;
+    found.push({ quad, area, ratio: geo.ratio, score: r.score, box: quadBox(quad) });
+  }
+  // Karte ↔ Sleeve zusammenfassen (bestes Rechteck mit ≥ 20 % Fläche vertritt das Objekt)
+  const objs = [];
+  for (const f of found) {
+    const o = objs.find((x) => boxOverlap(x.members[0].box, f.box).iou >= 0.5);
+    if (o) o.members.push(f); else objs.push({ members: [f], score: f.score });
+  }
+  const big = objs.map((o) => ({ o, rep: o.members.find((m) => m.area >= cfg.RECT_MIN_AREA) || null })).filter((x) => x.rep);
+  const separate = (a, b) => boxOverlap(a.box, b.box).small <= 0.3;
+  if (!big.length) {
+    const small = objs.filter((o, i) => objs.findIndex((x) => !separate(x.members[0], o.members[0])) === i);
+    return { ok: false, reason: small.length >= 2 ? "multi" : "none", count: small.length, ...base };
+  }
+  const best = big.sort((a, b) => b.o.score - a.o.score)[0];
+  const rivals = objs.filter((o) => o !== best.o && o.score >= best.o.score * cfg.MULTI_SCORE && separate(o.members[0], best.rep)).length;
+  if (rivals) return { ok: false, reason: "multi", count: rivals + 1, ...base };
+  const focus = laplacianVar(g, best.rep.box);
+  const r2 = (v) => Math.round(v * 100) / 100;
+  if (focus < cfg.FOCUS_MIN) return { ok: false, reason: "blur", count: 1, focus: Math.round(focus), quad: best.rep.quad, ...base };
+  return { ok: true, reason: "", count: 1, quad: best.rep.quad, area: r2(best.rep.area), ratio: r2(best.rep.ratio), score: r2(best.o.score), focus: Math.round(focus), ...base };
+}
+
+/**
+ * Veränderung im Bildzentrum (mittlere 50 % × 50 % der Anker-Miniatur) gegenüber dem Anker, 0…1:
+ * größerer Wert aus 1 − normierter Kreuzkorrelation und Anteil deutlich geänderter Zellen (Belichtung kürzt sich heraus). Dieselbe Karte mit Handzittern ≈ 0 … 0,15,
+ * eine andere Karte bzw. leerer Tisch ≫ 0,4. Sehr kontrastarme Zentren: Helligkeitssprung relativ. Ohne Miniaturen: null.
+ */
+export function centerDrift(a, b) {
+  if (!a || !b || a.w !== b.w || a.h !== b.h || !a.d || !b.d) return null;
+  const x0 = Math.floor(a.w * 0.25), x1 = Math.ceil(a.w * 0.75), y0 = Math.floor(a.h * 0.25), y1 = Math.ceil(a.h * 0.75);
+  let ma = 0, mb = 0, n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const i = y * a.w + x; ma += a.d[i]; mb += b.d[i]; n++; }
+  if (!n) return null;
+  ma /= n; mb /= n;
+  let sab = 0, saa = 0, sbb = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const i = y * a.w + x, da = a.d[i] - ma, db = b.d[i] - mb;
+    sab += da * db; saa += da * da; sbb += db * db;
+  }
+  const sa = Math.sqrt(saa / n), sb = Math.sqrt(sbb / n);
+  // beide (fast) einfarbig: nur der Helligkeitssprung zählt; nur eines einfarbig: Struktur kam/ging → deutliche Änderung
+  if (sa < 4 && sb < 4) return Math.min(1, Math.abs(ma - mb) / 60);
+  if (sa < 4 || sb < 4) return 1;
+  // zusätzlich: Anteil deutlich geänderter Zellen (ohne Belichtungs-Sprung) – der größere Wert zählt
+  const off = mb - ma;
+  let c = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const i = y * a.w + x; if (Math.abs(b.d[i] - a.d[i] - off) > SWEEP.ANCHOR_DELTA) c++; }
+  return Math.max(c / n, Math.max(0, Math.min(1, 1 - sab / Math.sqrt(saa * sbb))));
 }
 
 // ---------------------------------------------------------------------------
@@ -385,17 +568,25 @@ export function confidencePercent(d) {
 }
 
 /**
- * Treffer-Prüfung (Stapel / Einzelkarte) je Bild: ≥ MIN_MATCH (58 %) UND Abstand zum zweitbesten Motiv ≥ MARGIN_PCT (4 %).
- * margin = Hash-Abstand (Punkte) zum nächsten anderen Motiv; fehlt er → klar. Keine Farb-Sperre (Farbe ist im Engine-Wert
- * höchstens ein +3-%-Tie-Breaker).
- * Bewusst KEIN Treffer allein über die Höhe der Übereinstimmung: Ein leeres Bild (Tisch, Hand, Hintergrund) erreicht
- * gelegentlich hohe Werte – aber nie mit klarem Abstand. Der Abstand trennt eine echte Karte vom Bildrauschen.
+ * Stufe 3 B – reiner Artwork-Treffer (Stapel / Einzelkarte) je Bild: ≥ MIN_MATCH (82 %) UND Vorsprung zum zweitbesten Motiv
+ * ≥ MARGIN_PCT (10 % ≙ 16 Hash-Punkte). Dazu: Grundfarbe darf nicht widersprechen (colorReject = rote Karte vs. grüne/blaue
+ * Referenz), Farb-Referenz darf nicht gerade noch laden (colorPending – lieber ein Bild länger) und eine gelesene Nummer darf
+ * nicht widersprechen. margin = Hash-Abstand (Punkte) zum nächsten anderen Motiv; fehlt er → klar.
  */
 export function quickOk(d, cfg = SWEEP) {
   const match = Number(d?.match) || 0;
   const margin = Number.isFinite(d?.margin) ? d.margin : 99;
   const min = cfg.MIN_MATCH + (d?.color === "none" ? cfg.NO_COLOR_EXTRA || 0 : 0);
-  return match >= min && margin / cfg.HASH_SCALE >= cfg.MARGIN_PCT;
+  return match >= min && margin / cfg.HASH_SCALE >= cfg.MARGIN_PCT && !d?.colorReject && !d?.colorPending && d?.numOk !== false;
+}
+export { quickOk as imageOk };
+
+/**
+ * Stufe 3 A – Nummer + Artwork: Sammlernummer auf der begradigten Karte gelesen und sie passt zu genau diesem Kandidaten
+ * (verified, vom Worker gesetzt), Artwork-Ähnlichkeit ≥ NUM_MATCH, keine widersprechende Grundfarbe → sofort sicher.
+ */
+export function verifiedOk(d, cfg = SWEEP) {
+  return d?.verified === true && d?.numOk === true && Number(d?.match) >= cfg.NUM_MATCH && !d?.colorReject;
 }
 
 /** Strikte Prüfung für den Binder- & Tisch-Sweep: 99–100 % Konfidenz, keine widersprüchliche Nummer. */
@@ -445,7 +636,126 @@ export function thumbDrift(a, b, delta = SWEEP.ANCHOR_DELTA) {
 }
 
 /**
- * Entscheidet je Live-Bild, ob eine erkannte Karte als Scan zählt (Modus „Stapel / Einzelkarte“).
+ * Stapel / Einzelkarte (Modus „turbo“) – entscheidet je Live-Bild, ob eine erkannte Karte als Scan zählt.
+ * push({ dets, card?, motion, center?, changed?, thumb? }, now, avgFrameMs)
+ *   → { hits: [keys[]], locked: [keys[]], view, paused, blurry, frozen, epoch }
+ *  • card = Ergebnis des Präsenz-Gates (Stufe 1). Fehlt es, gilt „Karte da“, sobald eine Erkennung vorliegt.
+ *  • Stufe 3: Nummer + Artwork (verifiedOk) → sofort; reiner Artwork-Treffer (imageOk: ≥ 82 %, ≥ 10 % Vorsprung) erst,
+ *    wenn 2 DIREKT aufeinanderfolgende, nicht verwackelte Bilder dieselbe Karte zeigen. Höchstens EIN Treffer je Bild.
+ *  • Stufe 4 – physische Karten-Sperre: nach jedem Treffer friert der Auslöser für ALLE Karten ein (kein zweiter oder
+ *    dritter Name über derselben Karte). Frei erst, wenn das Bildzentrum sich gegenüber dem Treffer-Bild um > 40 %
+ *    verändert hat UND (Karten-Rechteck weg oder > 40 % Veränderung) durchgehend ≥ 200 ms anhält.
+ *    Wurde die Sperre freigegeben, ohne dass das Rechteck je verschwand (Karte nur stark bewegt), bleibt genau diese Karte
+ *    noch gesperrt, bis einmal keine Karte im Bild war – weitere Exemplare zählt der „+1“-Knopf.
+ *  • epoch zählt jede neue physische Karte (Sperre frei bzw. ≥ 200 ms keine Karte) – für den OCR-/Vision-Rückfall.
+ *  • external(keys, now, thumb?) – Treffer aus dem Name+Nummer-OCR bzw. Vision-Rückfall (respektiert die Sperre).
+ */
+function createTurboGate(opts = {}) {
+  const cfg = { ...SWEEP, ...opts, mode: "turbo" };
+  let prev = null; // { keys, at, n, sharp }
+  let freeze = null; // { keys, thumb, at, awayAt, moved, gone }
+  let ghost = null; // keys, die nach einer Freigabe ohne „Karte weg“ noch gesperrt bleiben
+  let epoch = 0, absentAt = null, lastThumb = null;
+  const lockOn = (keys, now, thumb) => { freeze = { keys: [...keys], thumb, at: now, awayAt: null, moved: false, gone: false }; prev = null; };
+  return {
+    push(frame, now = Date.now(), avgFrameMs = 0) {
+      const dets = Array.isArray(frame?.dets) ? frame.dets : [];
+      const motion = Number(frame?.motion);
+      const hasPrev = Number.isFinite(motion) && motion < 1;
+      const center = Number.isFinite(Number(frame?.center)) && frame?.center !== undefined && frame?.center !== null ? Number(frame.center) : hasPrev ? motion : 0;
+      const changed = Number(frame?.changed) || 0;
+      const thumb = frame?.thumb && frame.thumb.d ? frame.thumb : null;
+      if (thumb) lastThumb = thumb;
+      const present = typeof frame?.card === "boolean" ? frame.card : dets.some((d) => Array.isArray(d.keys) && d.keys.length);
+      const blurry = hasPrev && (center >= cfg.BLUR_CENTER || motion >= cfg.BLUR_MOTION);
+      // Neue physische Karte: ≥ 200 ms gar keine Karte im Bild
+      if (!present) { if (absentAt === null) absentAt = now; ghost = null; }
+      else if (absentAt !== null) { if (now - absentAt >= cfg.FREEZE_RELEASE_MS) epoch++; absentAt = null; }
+      // Stufe 4: globale Sperre fortschreiben
+      if (freeze) {
+        const cd = thumb && freeze.thumb ? centerDrift(freeze.thumb, thumb) : null;
+        const drift = cd === null ? changed : cd;
+        if (drift > cfg.FREEZE_DRIFT) freeze.moved = true;
+        if (!present) freeze.gone = true;
+        const away = !present || drift > cfg.FREEZE_DRIFT;
+        if (away) { if (freeze.awayAt === null) freeze.awayAt = now; } else freeze.awayAt = null;
+        if (freeze.moved && freeze.awayAt !== null && now - freeze.awayAt >= cfg.FREEZE_RELEASE_MS) {
+          ghost = freeze.gone || !present ? null : freeze.keys;
+          freeze = null; prev = null; epoch++;
+        }
+      }
+      const valid = (d) => Array.isArray(d.keys) && d.keys.length && !d.carried;
+      const verified = dets.filter((d) => valid(d) && verifiedOk(d, cfg));
+      const image = dets.filter((d) => valid(d) && !verifiedOk(d, cfg) && quickOk(d, cfg));
+      const view = [...verified, ...image];
+      const hits = [];
+      if (freeze) return { hits, locked: [freeze.keys], view, paused: false, blurry, frozen: true, epoch };
+      const windowMs = Math.max(cfg.CONSENSUS_MS, Math.min(cfg.CONSENSUS_MAX_MS, 2.2 * (Number(avgFrameMs) || 0)));
+      const blocked = (d) => ghost && overlap(ghost, d.keys);
+      let next = null, hit = null;
+      if (!blurry && present) {
+        hit = verified.find((d) => !blocked(d)) || null;
+        if (!hit) {
+          // reiner Artwork-Treffer: nur die beste Erkennung des Bilds, 2 Bilder in Folge
+          const d = image.filter((x) => !blocked(x)).sort((a, b) => Number(b.match) - Number(a.match))[0];
+          if (d) {
+            const sharp = Number(d.sharp);
+            const p = prev && overlap(prev.keys, d.keys) && now - prev.at <= windowMs ? prev : null;
+            const smeared = p && Number.isFinite(sharp) && Number.isFinite(p.sharp) && sharp < p.sharp * cfg.BLUR_DROP;
+            const n = p && !smeared ? p.n + 1 : 1;
+            if (n >= cfg.CONSENSUS_FRAMES) hit = d;
+            else next = { keys: d.keys, at: now, n, sharp: Number.isFinite(sharp) ? sharp : undefined };
+          }
+        }
+      }
+      prev = next;
+      if (hit) { hits.push(hit.keys); lockOn(hit.keys, now, thumb || lastThumb); }
+      return { hits, locked: freeze ? [freeze.keys] : [], view, paused: false, blurry, frozen: Boolean(freeze), epoch };
+    },
+    /** Treffer aus dem Name+Nummer-OCR- bzw. Vision-Rückfall: zählt nur, wenn der Scanner gerade nicht gesperrt ist */
+    external(keys, now = Date.now(), thumb = null) {
+      if (freeze || !Array.isArray(keys) || !keys.length || (ghost && overlap(ghost, keys))) return false;
+      lockOn(keys, now, thumb || lastThumb);
+      return true;
+    },
+    /** Sperre aufheben (z. B. Modus-Wechsel): die Karte im Bild darf sofort neu erkannt werden */
+    unlock(keys) { if (!keys || (freeze && overlap(freeze.keys, keys))) freeze = null; if (!keys || (ghost && overlap(ghost, keys))) ghost = null; },
+    reset() { prev = null; freeze = null; ghost = null; absentAt = null; lastThumb = null; epoch++; },
+    pauseLeft() { return 0; },
+    get frozen() { return Boolean(freeze); },
+    get epoch() { return epoch; },
+    get locks() { return freeze ? [{ keys: [...freeze.keys], at: freeze.at, moved: freeze.moved, gone: freeze.gone }] : []; },
+  };
+}
+
+/**
+ * Scan-Gate: „turbo“ (Stapel / Einzelkarte – 4-Stufen-Pipeline mit physischer Karten-Sperre) oder „sweep“ (strikt, Binder-/
+ * Tisch-Sweep: ≥ 99 % Konfidenz über 3 Bilder, gleiche Karte an anderer Stelle = 2. Exemplar).
+ */
+export function createSweepGate(opts = {}) {
+  let mode = opts.mode === "sweep" ? "sweep" : "turbo";
+  let g = mode === "sweep" ? createStrictGate(opts) : createTurboGate(opts);
+  return {
+    push: (frame, now, avg) => g.push(frame, now, avg),
+    external: (keys, now, thumb) => (g.external ? g.external(keys, now, thumb) : false),
+    unlock: (keys) => g.unlock(keys),
+    reset: () => g.reset(),
+    setMode(m) {
+      const next = m === "sweep" ? "sweep" : "turbo";
+      if (next === mode) return;
+      mode = next;
+      g = mode === "sweep" ? createStrictGate({ ...opts, mode }) : createTurboGate({ ...opts, mode });
+    },
+    pauseLeft: (now) => g.pauseLeft(now),
+    get mode() { return mode; },
+    get frozen() { return Boolean(g.frozen); },
+    get epoch() { return g.epoch || 0; },
+    get locks() { return g.locks; },
+  };
+}
+
+/**
+ * Strikter Binder-/Tisch-Sweep (Modus „sweep“, früherer Stapel-Gate) – entscheidet je Live-Bild, ob eine erkannte Karte zählt.
  * push({ dets: [{ keys, match, margin?, numOk?, quad?, carried?, sharp?, colorReject?, colorPending? }], found, motion, center?,
  *        changed?, thumb? }, now, avgFrameMs) → { hits: [keys[]], locked: [keys[]], view: dets[], paused, blurry }
  *  • 2-Frame-Stabilitätsprüfung: Treffer erst, wenn 2 DIREKT aufeinanderfolgende Bilder (innerhalb von ~120 ms) dieselbe
@@ -460,7 +770,7 @@ export function thumbDrift(a, b, delta = SWEEP.ANCHOR_DELTA) {
  *  • carried = vom Worker nur weitergetragene Erkennung (nicht neu ausgewertet) → hält die Sperre, zählt nicht für den Konsens
  *  • Modus „sweep“ (strikt, Binder-/Tisch-Sweep): ≥ 99 % Konfidenz über 3 Bilder, gleiche Karte an anderer Stelle = 2. Exemplar.
  */
-export function createSweepGate(opts = {}) {
+function createStrictGate(opts = {}) {
   let cfg = { mode: "turbo", ...SWEEP, ...opts };
   let prev = []; // qualifizierte Karten des letzten Bilds: [{ keys, at, n, center, sharp }]
   let locks = []; // [{ keys, center, miss, thumb, drift, lost, seenAt }]

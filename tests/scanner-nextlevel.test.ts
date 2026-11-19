@@ -1,4 +1,4 @@
-// Next-Level-Scanner: 100 % rahmenlos, Sofort-Treffer ab 58 % + 1,2-s-Karten-Sperre, Live-Preisschild, Auto-Binder,
+// Next-Level-Scanner: 100 % rahmenlos, Präsenz-Gate + ≥ 82 % / Nummer + physische Karten-Sperre, Live-Preisschild, Auto-Binder,
 // Binder- & Tisch-Sweep (99–100 % Konfidenz + Nummern-ROI), Tages-Zähler – und der Set-Binder ohne „Fehlt“/Grau mit Lücken-Radar.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -27,65 +27,48 @@ const thumbOf = (changedShare = 0, noise = 0, seed = 1) => {
   return { w, h, d, mean: sum / d.length };
 };
 
-test("Echte Kamera-Werte: Sofort-Treffer im 1. Bild ab 58 % mit ≥ 4 % Vorsprung, 1,2-s-Sperre pro Karte, nächste Karte ohne Wartezeit", () => {
-  assert.equal(SWEEP.MIN_MATCH, 0.58);
-  assert.equal(SWEEP.MARGIN_PCT, 0.04);
-  assert.equal(SWEEP.CONSENSUS_FRAMES, 1);
+test("Physische Karten-Sperre: ein Treffer je Karte, kein Namens-Wechsel bei ruhigem Handy, frei nach Wegziehen ≥ 200 ms bzw. > 40 % Zentrumsänderung", () => {
+  assert.equal(SWEEP.MIN_MATCH, 0.82);
+  assert.equal(SWEEP.MARGIN_PCT, 0.1);
+  assert.equal(SWEEP.FREEZE_DRIFT, 0.4);
+  assert.equal(SWEEP.FREEZE_RELEASE_MS, 200);
   assert.equal(SWEEP.HIT_PAUSE_MS, 0);
-  assert.equal(SWEEP.LOCK_IDLE_MS, 1200);
-  assert.equal(SWEEP.LOCK_DRIFT, 0.18);
   const gate = createSweepGate();
   let t = 1000;
-  const push = (dets: any[], extra: Record<string, unknown> = {}) => gate.push({ dets, found: true, motion: 0.02, center: 0.02, thumb: thumbOf(), ...extra }, t);
-  // Realer Kamera-Bereich (60–70 %): schon das erste Bild löst aus
-  assert.deepEqual(push([det(A, 0.62, { margin: 8 })]).hits, [A], "1. Bild: Treffer bei 62 %");
-  // Unter 58 % oder zu knapper Vorsprung (< 4 % ≙ 6,4 Punkte) → kein Treffer
-  const g0 = createSweepGate();
-  assert.equal(g0.push({ dets: [det(B, 0.57, { margin: 12 })], found: true, motion: 0.01 }, 0).hits.length, 0, "57 % reicht nicht");
-  assert.equal(g0.push({ dets: [det(B, 0.66, { margin: 5 })], found: true, motion: 0.01 }, 40).hits.length, 0, "Vorsprung zu knapp");
-  assert.deepEqual(g0.push({ dets: [det(B, 0.58, { margin: 7 })], found: true, motion: 0.01 }, 80).hits, [B], "58 % + 4 % Vorsprung");
-  // Keine globale Pause: die nächste (andere) Karte löst im direkt folgenden Bild aus
-  t += 40;
-  const r2 = push([det(A), det(B, 0.64, { quad: quadAt(0.2, 0.3) })]);
-  assert.deepEqual(r2.hits, [B], "Karte #2 sofort");
-  assert.deepEqual(r2.locked, [A], "Karte #1 weiter gesperrt (liegt noch im Bild)");
-  assert.equal(gate.pauseLeft(t), 0);
-  // Handzittern (< 18 % Bildveränderung), kurze Erkennungslücken, Karte wandert im Bild → KEIN zweiter Treffer
-  for (let i = 0; i < 100; i++) {
-    t += 40;
-    const shake = i % 7 === 3 ? [] : [det(A, 0.65, { quad: quadAt(0.5 + (i % 5) * 0.06, 0.5) })];
-    assert.equal(push(shake, { thumb: thumbOf(0.1, 6), center: 0.05 }).hits.length, 0, `Zittern ${i}`);
+  const push = (dets: any[], extra: Record<string, unknown> = {}) => gate.push({ dets, card: true, motion: 0.02, center: 0.02, thumb: thumbOf(), ...extra }, (t += 40));
+  push([det(A, 0.9, { margin: 20 })]);
+  assert.deepEqual(push([det(A, 0.9, { margin: 20 })]).hits, [A], "Treffer nach 2 Bildern");
+  // Handy ruhig über derselben Karte – Erkennung rattert durch 5 falsche Namen → 0 weitere Treffer
+  for (const k of ["card:sv1-1", "card:sv2-2", "card:sv3-3", "card:sv4-4", "card:sv5-5"]) for (let i = 0; i < 20; i++) {
+    const r = push([det([k], 0.95, { margin: 30 })], { thumb: thumbOf(0.1, 6) });
+    assert.equal(r.hits.length, 0, `kein Geister-Name ${k}`);
+    assert.equal(r.frozen, true);
   }
-  // Dieselbe Karte an anderer Stelle bleibt gesperrt (cardId) – weitere Exemplare zählt der „+1“-Knopf
-  t += 40; assert.equal(push([det(A, 0.9, { quad: quadAt(0.8, 0.2, 0.2) })]).hits.length, 0, "gleiche Karte woanders = gesperrt");
-  // Karte wirklich weggezogen (Karte weg + ≥ 18 % des Bilds neu) → Sperre frei → nächste identische Karte zählt sofort
-  t += 40; push([], { thumb: thumbOf(0.4), center: 0.3, motion: 0.2 });
-  assert.equal(gate.locks.filter((l: any) => l.keys.includes(A[0])).length, 0, "Sperre nach dem Wegziehen frei");
-  t += 40; assert.deepEqual(push([det(A)], { thumb: thumbOf(0.4) }).hits, [A], "Duplikat vom Stapel nach dem Wegziehen");
-  // 1,2-s-Sperre: Karte ohne große Bildveränderung kurz weg (< 1,2 s) → gesperrt; ≥ 1,2 s nicht gesehen → frei
-  const g1 = createSweepGate();
-  let u = 0;
-  const p1 = (dets: any[]) => g1.push({ dets, found: true, motion: 0.01, center: 0.01, thumb: thumbOf() }, u);
-  assert.equal(p1([det(C, 0.63)]).hits.length, 1);
-  u += 600; p1([]);
-  u += 400; assert.equal(p1([det(C, 0.63)]).hits.length, 0, "nach 1,0 s wieder im Bild: noch gesperrt");
-  u += 1300; p1([]);
-  u += 40; assert.deepEqual(p1([det(C, 0.63)]).hits, [C], "1,2 s nicht gesehen → frei");
+  // > 40 % Zentrumsänderung, aber nur 120 ms → noch gesperrt
+  push([det(B, 0.95, { margin: 30 })], { thumb: thumbOf(0.5) }); push([det(B, 0.95, { margin: 30 })], { thumb: thumbOf(0.5) });
+  assert.equal(gate.frozen, true, "< 200 ms Veränderung gibt nicht frei");
+  // Karte gegen die nächste ausgetauscht (≥ 200 ms deutlich anders) → frei, nächste Karte zählt nach 2 Bildern
+  for (let i = 0; i < 4; i++) push([det(B, 0.95, { margin: 30 })], { thumb: thumbOf(0.5) });
+  assert.equal(gate.frozen, false, "ausgetauscht → frei");
+  assert.deepEqual(push([det(B, 0.95, { margin: 30 })], { thumb: thumbOf(0.5) }).hits, [B], "nächste Karte (2. ruhiges Bild)");
+  // Rechteck verschwindet ≥ 200 ms (Karte weg) → frei; dieselbe Karte als Duplikat zählt danach wieder
+  for (let i = 0; i < 7; i++) push([], { card: false, thumb: thumbOf(0.3) });
+  assert.equal(gate.frozen, false);
+  push([det(B, 0.95, { margin: 30 })], { thumb: thumbOf() });
+  assert.deepEqual(push([det(B, 0.95, { margin: 30 })], { thumb: thumbOf() }).hits, [B], "Duplikat vom Stapel");
 });
 
-test("Keine Farb-Sperre & keine Fehlschüsse beim Wegziehen: Farbe blockiert nie, verwackelte Bilder zählen nie", () => {
+test("Farbverteilung & Wegziehen: widersprechende Grundfarbe sperrt reine Artwork-Treffer, verwackelte Bilder zählen nie", () => {
   const gate = createSweepGate();
   let t = 0;
-  const push = (dets: any[], center = 0.02, motion = 0.02) => gate.push({ dets, found: true, motion, center }, (t += 40));
-  // Karte wird ins/aus dem Bild gezogen: starke Bewegung → keine Treffer, egal wie gut die Erkennung
-  for (let i = 0; i < 10; i++) assert.equal(push([det(C, 0.95)], 0.15, 0.1).hits.length, 0);
-  assert.deepEqual(push([det(C, 0.66)]).hits, [C], "erstes ruhiges Bild löst aus");
-  // Alte Farb-Flags (warmes Licht / Sleeves) sperren keinen Treffer mehr
+  const push = (dets: any[], center = 0.02, motion = 0.02) => gate.push({ dets, card: true, motion, center }, (t += 40));
+  for (let i = 0; i < 10; i++) assert.equal(push([det(C, 0.95, { margin: 30 })], 0.15, 0.1).hits.length, 0);
+  push([det(C, 0.9, { margin: 30 })]);
+  assert.deepEqual(push([det(C, 0.9, { margin: 30 })]).hits, [C], "2 ruhige Bilder lösen aus");
   const g3 = createSweepGate();
-  assert.deepEqual(g3.push({ dets: [det(B, 0.64, { colorReject: true })], found: true, motion: 0.01 }, 0).hits, [B]);
-  const g4 = createSweepGate();
-  assert.deepEqual(g4.push({ dets: [det(B, 0.64, { colorPending: true, color: "none" })], found: true, motion: 0.01 }, 0).hits, [B]);
-  assert.ok(!/Farbe passt nicht|Farbprüfung/.test(src("client/scanner/sweep-scanner.js")), "keine Farb-Meldung mehr");
+  g3.push({ dets: [det(B, 0.9, { margin: 30, colorReject: true })], card: true, motion: 0.01 }, 0);
+  assert.equal(g3.push({ dets: [det(B, 0.9, { margin: 30, colorReject: true })], card: true, motion: 0.01 }, 40).hits.length, 0, "rote Karte ≠ grüne/blaue Referenz");
+  assert.ok(!/Farbe passt nicht|Farbprüfung/.test(src("client/scanner/sweep-scanner.js")), "keine Farb-Meldung im Scanner");
 });
 
 test("Sweep-Modus: dieselbe Karte an deutlich anderer Position = zweites Exemplar; strikt nur ≥ 99 % Konfidenz, 3 Bilder, Nummer darf nicht widersprechen", () => {
@@ -113,7 +96,8 @@ test("Sweep-Modus: dieselbe Karte an deutlich anderer Position = zweites Exempla
   // Modus umschalten → Turbo-Schwellen gelten wieder
   gate.setMode("turbo");
   assert.equal(gate.mode, "turbo");
-  assert.equal(gate.push({ dets: [det(C, 0.9)], found: true, motion: 0 }, 9000).hits.length, 1, "Turbo: Sofort-Treffer im 1. ruhigen Bild");
+  gate.push({ dets: [det(C, 0.9, { margin: 20 })], found: true, motion: 0 }, 9000);
+  assert.equal(gate.push({ dets: [det(C, 0.9, { margin: 20 })], found: true, motion: 0 }, 9040).hits.length, 1, "Turbo: Treffer nach 2 ruhigen Bildern");
 });
 
 test("Konfidenz-Skala: 99 % = klarer Treffer mit Abstand, 100 % = Nummer bestätigt, falsche Nummer ≤ 60 %, knapper Abstand ≤ 85 %", () => {
@@ -219,9 +203,12 @@ test("Scanner-Quelltext: kein Zielrahmen, Modus-Umschalter, Session-Dock mit +1,
   // Die Kamera-Schleife wartet nie auf das Speichern: autoFile ist eine nicht erwartete Hintergrund-Aufgabe
   assert.ok(!/await autoFile\(/.test(ui));
   const engine = src("client/scanner/sweep-engine.js");
-  assert.match(engine, /st\.busy = true;\s*try \{ post\([^;]*frame\(msg\)\); \}[^]*finally \{ st\.busy = false; \}/, "Worker-Flag garantiert per try/finally zurückgesetzt");
-  assert.match(engine, /const cands = \[\.\.\.fresh, \.\.\.tracked\]/, "neue Karten werden vor den verfolgten ausgewertet");
-  assert.match(engine, /function verifyNumber/, "Nummern-ROI-Verifikation");
+  assert.match(engine, /st\.busy = true;\s*try \{[^]*frame\(msg\);[^]*finally \{ st\.busy = false; \}/, "Worker-Flag garantiert per try/finally zurückgesetzt");
+  assert.match(engine, /const pres = cardPresence\(small, grad\)/, "Präsenz-Gate vor jedem Abgleich");
+  assert.match(engine, /if \(!pres\.ok \|\| !ready\)/, "ohne Karten-Rechteck kein Abgleich");
+  assert.match(engine, /insetQuad\(outer, SWEEP\.CROP_INSET\)/, "3 % Rand ab nach der Begradigung");
+  assert.match(engine, /function readCardNumber/, "Sammlernummer auf der begradigten Karte");
+  assert.ok(!/cropQuads|Multi-Crop findet/.test(engine), "kein unentzerrter Mittel-Zuschnitt mehr");
   assert.match(engine, /binder: \{ maxEval: SWEEP\.MAX_CARDS/, "Ordner-Modus prüft bis zu 9 Fächer je Bild");
   const worker = src("client/scanner/scan-worker.js");
   assert.match(worker, /getGlyphs: \(\) => glyphs/);
@@ -287,5 +274,5 @@ test("100 % freies Kamerabild: im Kamerafenster nur Video (+ Start-Hinweis vor d
   assert.match(ui, /`Match: \$\{Math\.round/);
   assert.match(ui, /`\$\{fps\} FPS`/);
   assert.match(ui, /1-Klick Inserieren \(CM-Preis\)/); assert.match(ui, /Schnell-Inserieren \(Deal unter CM\)/);
-  assert.match(src("public/sw.js"), /const VERSION = "v16"/);
+  assert.match(src("public/sw.js"), /const VERSION = "v17"/);
 });

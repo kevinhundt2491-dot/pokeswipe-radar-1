@@ -728,11 +728,11 @@ function glareOf(src, rect) {
 }
 
 /** Text-Anfrage an den Worker (Text-Index + letzte Bild-Treffer). */
-function workerText(text, useHash = true, timeoutMs = 3000) {
+function workerText(text, useHash = true, timeoutMs = 3000, hash = null) {
   const reqId = `t${++sc.reqSeq}`;
   return new Promise((resolve) => {
     sc.pending.set(reqId, resolve);
-    ensureWorker().postMessage({ type: "text", reqId, text, useHash });
+    ensureWorker().postMessage({ type: "text", reqId, text, useHash, ...(Array.isArray(hash) ? { hash } : {}) });
     setTimeout(() => { if (sc.pending.delete(reqId)) resolve(null); }, timeoutMs);
   });
 }
@@ -2014,6 +2014,18 @@ function sweepUi() {
     // 1-Klick-Inserieren ohne Formular (Cardmarket-Preis bzw. Deal-Preis unter Cardmarket)
     listNow: (info, price) => listNow(info, price),
     learn: (key, probe) => learn(key, probe, "confirm"),
+    // Stufe 3 A/C des Stapel-Scanners: Name + Nummer auf dem begradigten Ausschnitt lesen (Text-Index im Worker, bestätigt
+    // durch die Bild-Kandidaten) und – nur angemeldet, einmal je unsicherer Karte – der Vision-Rückfall
+    readText: (src, rect, ms) => (sc.textCount ? readTextTimed(src, rect, ms) : Promise.resolve(null)),
+    decideText: (text, hash) => workerText(text, true, 3000, hash),
+    vision: async (image) => {
+      if (IS_STAGE || !state.user) return null;
+      try {
+        const r = await api("/api/scan/vision", { method: "POST", body: { image } });
+        window.PS?.refreshMe?.();
+        return r || null;
+      } catch { return null; }
+    },
     openQuickList: (infos, opts) => openQuickList(infos, opts),
     beforeStart: () => {
       if (sc.running) stop();

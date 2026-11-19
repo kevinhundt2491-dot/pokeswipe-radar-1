@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+const src0 = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 import {
   sobel, detectCard, cardHashes, warp, homography, topMatches, NORM_W, NORM_H, WORDS, type Gray,
 } from "../server/scan-logic.ts";
@@ -135,52 +136,41 @@ test("Bewegung: ruhiges Bild ≈ 0, Belichtungs-Sprung zählt nicht, neue Karte 
   assert.equal(thumbMotion(null, ta), 1);
 });
 
-test("Gate: Sofort-Treffer im 1. ruhigen Bild (≥ 58 % mit ≥ 4 % Abstand); ruhig liegende Karte zählt nie doppelt; Wegziehen gibt frei", () => {
-  const gate = createSweepGate();
-  const A = ["card:sv08-238", "print:en:sv08-238"];
-  const f = (match: number, motion = 0.01, keys = A, margin?: number, changed = 0) => ({ dets: [{ keys, match, margin }], found: true, motion, changed });
-  let t = 1000;
-  assert.equal(gate.push(f(0.65), t).hits.length, 1, "1. Bild → Treffer (realer Kamera-Wert 65 %)");
-  // Karte bleibt ruhig liegen → gesperrt, egal wie lange
-  for (let i = 0; i < 100; i++) assert.equal(gate.push(f(0.66), (t += 40)).hits.length, 0);
-  assert.ok(gate.push(f(0.66), (t += 40)).locked.length === 1);
-  assert.equal(gate.push(f(0.66), (t += 1000)).hits.length, 0, "auch nach einer Sekunde Lücke kein zweiter Treffer");
-  // Ruhiges Bild, Erkennung flackert kurz weg (Licht) → Sperre bleibt, kein Doppel-Zählen
-  for (let i = 0; i < 6; i++) gate.push({ dets: [], found: false, motion: 0.005, changed: 0.02 }, (t += 40));
-  assert.equal(gate.push(f(0.65), (t += 40)).hits.length, 0, "flackernde, ruhig liegende Karte zählt nicht doppelt");
-  // Karte weggezogen (Karte weg, ≥ 18 % des Bilds verändert) → Sperre frei, gleiche Karte zählt sofort erneut
-  gate.push({ dets: [], found: false, motion: 0.2, changed: 0.45 }, (t += 40));
-  assert.equal(gate.push(f(0.65), (t += 40)).hits.length, 1, "nächste identische Karte");
-  // Nächste (andere) Karte: sofort, ohne Wartezeit
-  assert.equal(gate.push(f(0.62, 0.01, ["card:sv08-100"]), (t += 40)).hits.length, 1, "andere Karte sofort");
-  // Schwellen
-  assert.equal(SWEEP.MIN_MATCH, 0.58);
-  assert.equal(SWEEP.MARGIN_PCT, 0.04);
+test("Gate: 58-%-Schwelle abgeschafft – reines Artwork nur ≥ 82 % mit ≥ 10 % Vorsprung in 2 Bildern; Nummer + Artwork sofort", () => {
+  assert.equal(SWEEP.MIN_MATCH, 0.82);
+  assert.equal(SWEEP.MARGIN_PCT, 0.1);
+  assert.equal(SWEEP.CONSENSUS_FRAMES, 2);
   assert.equal(SWEEP.DIRECT_MATCH, 0.66);
-  const one = (g: any, fr: any, t0: number) => g.push(fr, t0).hits.length;
-  assert.equal(one(createSweepGate(), f(0.57, 0.01, ["card:x-1"], 40), 0), 0, "unter 58 % nie");
-  assert.equal(one(createSweepGate(), f(0.6, 0.01, ["card:x-2"], 6), 0), 0, "≥ 58 % mit zu knappem Abstand (6 / 160 < 4 %)");
-  assert.equal(one(createSweepGate(), f(0.6, 0.01, ["card:x-3"], 7), 0), 1, "≥ 58 % mit ≥ 4 % Abstand (7 / 160)");
-  assert.equal(one(createSweepGate(), f(0.85, 0.01, ["card:x-4"], 3), 0), 0, "hohe Übereinstimmung ohne Abstand = Bildrauschen → kein Treffer");
-  // Ohne Farb-Referenz gilt dieselbe Schwelle (keine Farb-Sperre)
-  const nc = (m: number) => ({ dets: [{ keys: ["card:x-5"], match: m, margin: 20, color: "none" }], found: true, motion: 0.01 });
-  assert.equal(one(createSweepGate(), nc(0.6), 0), 1, "ohne Farbprüfung reichen 60 %");
-  // Kamera wackelt, die Karte bleibt durchgehend erkannt → KEIN zweiter Treffer
-  const g3 = createSweepGate();
-  g3.push(f(0.8, 0.01), 0);
-  for (let i = 0; i < 30; i++) assert.equal(g3.push(f(0.8, 0.08, A, undefined, 0.1), 40 + i * 40).hits.length, 0);
+  const f = (match: number, margin = 20, keys = ["card:x-1"], extra = {}) => ({ dets: [{ keys, match, margin, ...extra }], card: true, motion: 0.01 });
+  const twice = (fr: any) => { const g = createSweepGate(); g.push(fr, 0); return g.push(fr, 40).hits.length; };
+  assert.equal(twice(f(0.59)), 0, "59 % (Bildrauschen) nie");
+  assert.equal(twice(f(0.81)), 0, "81 % reicht nicht");
+  assert.equal(twice(f(0.85, 15)), 0, "Vorsprung < 10 % (15 / 160)");
+  assert.equal(twice(f(0.85, 16)), 1, "≥ 82 % + ≥ 10 % in 2 Bildern");
+  assert.equal(createSweepGate().push(f(0.95), 0).hits.length, 0, "1 Bild genügt nicht");
+  assert.equal(twice(f(0.9, 20, ["card:x-1"], { colorReject: true })), 0, "widersprechende Grundfarbe sperrt");
+  assert.equal(twice(f(0.9, 20, ["card:x-1"], { numOk: false })), 0, "widersprechende Nummer sperrt");
+  // Nummer + Artwork: sofort im 1. Bild
+  assert.equal(createSweepGate().push(f(0.7, 3, ["card:x-2"], { verified: true, numOk: true }), 0).hits.length, 1);
+  // Kein Karten-Rechteck → nie ein Treffer, egal welche Werte
+  const g = createSweepGate();
+  for (let i = 0; i < 10; i++) assert.equal(g.push({ ...f(0.99), card: false }, i * 40).hits.length, 0);
+  // Verwackelt → zählt nicht
+  const gb = createSweepGate();
+  for (let i = 0; i < 5; i++) assert.equal(gb.push({ ...f(0.95), motion: 0.2, center: 0.2 }, i * 40).hits.length, 0);
   // unlock
   const g4 = createSweepGate();
-  g4.push(f(0.9), 0); g4.unlock(A);
+  g4.push(f(0.9), 0); g4.push(f(0.9), 40); assert.equal(g4.frozen, true); g4.unlock(["card:x-1"]);
   assert.equal(g4.locks.length, 0);
 });
 
-test("Mehrere Karten im Bild: jede eigene Karte löst einzeln aus (im selben Bild), danach Sperre", () => {
+test("Höchstens ein Treffer je Bild; danach ist der ganze Scanner eingefroren (globale Objekt-Sperre)", () => {
   const gate = createSweepGate();
-  const fr = { dets: [{ keys: ["card:a-1"], match: 0.9 }, { keys: ["card:b-2"], match: 0.88 }], found: true, motion: 0.02 };
-  assert.equal(gate.push(fr, 0).hits.length, 2);
-  assert.equal(gate.push(fr, 40).hits.length, 0);
-  assert.equal(gate.push(fr, 2000).hits.length, 0, "beide bleiben gesperrt");
+  const fr = { dets: [{ keys: ["card:a-1"], match: 0.9, margin: 20 }, { keys: ["card:b-2"], match: 0.88, margin: 20 }], card: true, motion: 0.02 };
+  gate.push(fr, 0);
+  assert.equal(gate.push(fr, 40).hits.length, 1);
+  for (let i = 0; i < 20; i++) assert.equal(gate.push(fr, 80 + i * 40).hits.length, 0);
+  assert.equal(gate.external(["card:c-3"], 2000), false, "auch der OCR-/Vision-Rückfall respektiert die Sperre");
 });
 
 test("Schlüssel-Helfer: Set, Sprache, Reihenfolge nach Session-Sprache", () => {
@@ -236,7 +226,8 @@ test("Sweep-Scanner: kein Zielrahmen/Countdown, Kamera-Vorgaben, Torch, Vibratio
   const worker = readFileSync(new URL("../client/scanner/scan-worker.js", import.meta.url), "utf8");
   assert.match(worker, /sweep-engine\.js/);
   const engine = readFileSync(new URL("../client/scanner/sweep-engine.js", import.meta.url), "utf8");
-  assert.match(engine, /findCardRects\(/);
+  assert.match(engine, /cardPresence\(/);
+  assert.match(src0("client/scanner/sweep-logic.js"), /findCardRects\(grad/);
   assert.match(engine, /indexedDB|idb/);
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.ok(!/sweep-worker/.test(pkg.scripts["build:worker"]), "ein gemeinsamer Worker (Index nur einmal im Speicher)");
