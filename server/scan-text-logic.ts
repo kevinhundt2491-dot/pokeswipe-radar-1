@@ -8,6 +8,8 @@
 // Reine Funktionen – läuft im Web Worker des Scanners und in den Tests.
 
 export type TextRow = {
+  /** Kartentyp-Klasse für den Scanner-Vorfilter (Index in TYPE_CLASSES, 255 = unbekannt) */
+  cls?: number;
   key: string; // card:<id> | print:<lang>:<id>
   lang: string;
   name: string;
@@ -52,16 +54,32 @@ const numKey = (prefix: string, num: number) => `${prefix}|${num}`;
 /**
  * Text-Index aus der Server-Antwort aufbauen. Zeilenformat (Tab-getrennt): key, name, localId, total, setCode[, hp].
  */
+/** Stufe 1 des Scanner-Vorfilters: Kartentyp / Rahmenfarbe als Klasse (Index in TYPE_CLASSES, 255 = unbekannt) */
+export const TYPE_CLASSES = ["Feuer", "Wasser", "Pflanze", "Elektro", "Psycho", "Kampf", "Finsternis", "Metall", "Drache", "Farblos", "Trainer", "Energie"];
+export const CLASS_UNKNOWN = 255;
+const TYPE_ALIASES: Record<string, number> = {
+  feuer: 0, fire: 0, wasser: 1, water: 1, pflanze: 2, grass: 2, elektro: 3, lightning: 3, psycho: 4, psychic: 4, kampf: 5, fighting: 5,
+  finsternis: 6, darkness: 6, unlicht: 6, metall: 7, metal: 7, drache: 8, dragon: 8, farblos: 9, colorless: 9,
+};
+/** Klasse einer Katalogkarte aus Kategorie („Pokémon“ / „Trainer“ / „Energie“) und Typen („Feuer“, „Wasser,Metall“ …). */
+export function typeClassOf(category: unknown, types: unknown): number {
+  const cat = String(category || "").toLowerCase();
+  if (cat.startsWith("trainer")) return 10;
+  if (cat.startsWith("energ")) return 11;
+  const first = String(types || "").split(",")[0].trim().toLowerCase();
+  return first in TYPE_ALIASES ? TYPE_ALIASES[first] : CLASS_UNKNOWN;
+}
+
 export function buildTextIndex(parts: { lang: string; t: string }[]): TextIndex {
   const rows: TextRow[] = [];
   for (const p of parts) {
     for (const line of String(p.t || "").split("\n")) {
       if (!line) continue;
-      const [key, name = "", local = "", total = "0", code = "", hp = "0"] = line.split("\t");
+      const [key, name = "", local = "", total = "0", code = "", hp = "0", cls = ""] = line.split("\t");
       if (!key) continue;
       const { prefix, num } = splitLocalId(local);
       const id = key.replace(/^(card|print):/, "").replace(/^(en|ja|de):/, "");
-      rows.push({ key, lang: p.lang, name, norm: normName(name), prefix, num, total: Number(total) || 0, set: normName(code), ident: `${p.lang === "ja" ? "ja:" : ""}${id}`, hp: Number(hp) > 0 ? Number(hp) : 0 });
+      rows.push({ key, lang: p.lang, name, norm: normName(name), prefix, num, total: Number(total) || 0, set: normName(code), ident: `${p.lang === "ja" ? "ja:" : ""}${id}`, hp: Number(hp) > 0 ? Number(hp) : 0, cls: /^\d{1,3}$/.test(cls) ? Number(cls) : CLASS_UNKNOWN });
     }
   }
   const byNumber = new Map<string, number[]>(), byName = new Map<string, number[]>();

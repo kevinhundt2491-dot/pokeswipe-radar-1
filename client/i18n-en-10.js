@@ -109,4 +109,14 @@ export default [
   ["🎯 Noch gesucht – diese Tasche ist in deinem Ordner noch leer.", "🎯 Still wanted – this pocket in your binder is empty."],
   ["Alle Karten, die dir im gewählten Set noch fehlen – sortiert nach „Sofort im Marktplatz verfügbar“ und „Alle gesuchten Karten“, mit Direkt-Kauf und Bulk-Suchauftrag.", "Every card you are still missing in the selected set – sorted into “available on the marketplace now” and “all wanted cards”, with direct buy and a bulk search order."],
   ["Tippe einen Ordner an und blättere wie in einem echten Binder – noch gesuchte Karten stecken als dunkle Folientaschen mit Marktplatz-Preisschild im Ordner.", "Tap a binder and flip through it like a real one – cards you still want sit in dark sleeve pockets with a marketplace price tag."],
+  // High-End-Scanner: Ruckzuck-Sweep & 9er-Ordner-Scan
+  ["Kein Rahmen, kein Warten: „Stapel / Einzelkarte“ zählt jede Karte sofort – auch Doppelte direkt nacheinander. „Ordner-Seite“ erkennt alle 9 Fächer einer aufgeschlagenen Binder-Seite auf einmal und zählt keines doppelt.", "No frame, no waiting: “Stack / single card” counts every card instantly – even duplicates back to back. “Binder page” recognises all 9 pockets of an open binder page at once and never counts one twice."],
+  ["⚡ Stapel / Einzelkarte", "⚡ Stack / single card"],
+  ["Ruckzuck-Sweep", "Rapid sweep"],
+  ["📒 Ordner-Seite", "📒 Binder page"],
+  ["9er-Binder-Scan", "9-pocket binder scan"],
+  ["✨ Auto", "✨ Auto"],
+  ["erkennt Ordner", "detects binders"],
+  ["📖 Nächste Seite", "📖 Next page"],
+  ["🔦 LED blendet auf der Folie", "🔦 LED glare on the sleeve"],
 ];
