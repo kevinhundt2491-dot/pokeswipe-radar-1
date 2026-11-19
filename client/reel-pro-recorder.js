@@ -161,7 +161,10 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
   const marks = voice ? voice.marks.map(shift) : estimateMarks(script.say, D);
   const wordMarks = voice?.wordMarks ? voice.wordMarks.map((ws) => ws.map(shift)) : null;
   const scenes = show ? showcaseScenes(D, tpl.plan) : sceneTimes(marks, D, scenesFor(tpl));
-  const captions = captionChunks(script.show, marks, wordMarks);
+  // Kurz-Reels ohne Sprecherin: keine Untertitel – der große Hook-Text oben trägt die Botschaft
+  const captions = tpl.short && !voice ? [] : captionChunks(script.show, marks, wordMarks);
+  const audioFade = tpl.noFade ? 0.15 : END_FADE;
+  const mixOpts = show ? { studio: true, ...(tpl.sfxOnly ? { sfxOnly: true } : {}) } : {};
   const useMbit = show ? Math.min(bitrateFor(D, tpl.mbit || mbit, maxMb), 12) : bitrateFor(D, mbit, maxMb);
   const cues = show ? templateCues(tpl, scenes) : cuesFor(scenes), seed = tpl.key.length + variant;
   const placed = voice ? [{ id: "narration", start: PRO_LEAD, stop: PRO_LEAD + speech, buffer: voice.buffer, rate: 1 }] : [];
@@ -180,7 +183,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
     let mixed = null;
     if (exactCfg) {
       onStatus?.("🎚️ Rendere die Tonspur sample-genau (Sprecherin, Musik, Effekte) …");
-      try { mixed = await renderSoundtrack(D, cues, seed, placed, { sampleRate: exactCfg.sampleRate, fadeOut: END_FADE, ...(show ? { studio: true } : {}) }); }
+      try { mixed = await renderSoundtrack(D, cues, seed, placed, { sampleRate: exactCfg.sampleRate, fadeOut: audioFade, ...mixOpts }); }
       catch (e) { if (voice) throw new Error(`Tonspur konnte nicht gerendert werden: ${e?.message || e}`); mixed = null; }
     }
     onStatus?.(`🌐 Lade die Live-Website (${tpl.label}) …`);
@@ -230,7 +233,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
     } else {
       vstream = canvas.captureStream(fps);
       if (ac && ac.state === "running") {
-        try { sound = startSoundtrack(ac, D, cues, seed, placed, { fadeOut: END_FADE, ...(show ? { studio: true } : {}) }); } catch (e) { if (voice) throw e; sound = null; }
+        try { sound = startSoundtrack(ac, D, cues, seed, placed, { fadeOut: audioFade, ...mixOpts }); } catch (e) { if (voice) throw e; sound = null; }
       }
       if (voice && !sound?.voiceEnded) throw new Error("Tonspur mit Sprecherin konnte nicht gestartet werden");
       const stream = sound ? new MediaStream([...vstream.getVideoTracks(), sound.track]) : vstream;

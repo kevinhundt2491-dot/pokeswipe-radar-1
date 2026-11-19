@@ -184,7 +184,7 @@ function sammlerBatchHtml(d, ready, busy) {
   const dmOnly = d.leads.filter((l) => !l.placeholder && l.dmOnly).length;
   const label = b && b.sammler
     ? `⏳ Sende … ${Number(b.sent)}/${Number(b.total)} versendet${b.failed ? ` · ${Number(b.failed)} Fehler` : ""}${b.skipped ? ` · ${Number(b.skipped)} übersprungen` : ""}`
-    : `📧 Mails an alle noch nicht kontaktierten Creator senden <span class="font-bold text-xs opacity-80">(${ready} offen)</span>`;
+    : `📧 Alle offenen Creator-Mails jetzt echt absenden <span class="font-bold text-xs opacity-80">(${ready} offen)</span>`;
   const cfg = s.configured
     ? `✓ Resend aktiv${s.senderOnDomain ? " · Absender @pokeswipe-radar.de" : " · ⚠ Absender nicht auf pokeswipe-radar.de"}${s.replyTo ? " · Antwort-Adresse gesetzt" : " · ⚠ keine Antwort-Adresse (ADMIN_EMAILS)"}`
     : "✗ Resend nicht eingerichtet (RESEND_API_KEY / MAIL_FROM)";
@@ -199,7 +199,25 @@ function sammlerBatchHtml(d, ready, busy) {
       ${btn("+ Neuen Creator & E-Mail hinzufügen", "PS.caQuickAdd()", "bg-emerald-500 text-slate-950 text-[11px]")}
     </div>
     ${sendLogHtml()}
+    ${dmQuickListHtml(d)}
   </div>`;
+}
+
+// Schnell-Liste: kopierfertige TikTok-DM-Texte für alle Creator ohne E-Mail (noch nicht per DM angeschrieben zuerst)
+function dmQuickListHtml(d) {
+  const list = d.leads.filter((l) => !l.placeholder && !EMAIL_OK.test(String(l.email || "")) && l.dm && !["optout", "active", "replied"].includes(l.status))
+    .sort((a, b) => (a.status === "dm_sent") - (b.status === "dm_sent"));
+  if (!list.length) return "";
+  const open = list.filter((l) => l.status !== "dm_sent").length;
+  return `<details class="bg-slate-950/70 border border-cyan-500/40 rounded-xl p-2">
+    <summary class="cursor-pointer font-black text-white">💬 TikTok-DM-Schnell-Liste (${list.length} ohne E-Mail · ${open} noch nicht per DM angeschrieben)</summary>
+    <div class="mt-2 flex flex-wrap gap-1.5">${btn("📋 Alle DM-Texte kopieren", "PS.caCopyAllDms()", "bg-cyan-500 text-slate-950 text-[11px] font-black")}</div>
+    <ul class="mt-2 space-y-1.5">${list.map((l) => `<li class="border-t border-slate-800 pt-1.5">
+      <div class="flex flex-wrap items-center gap-1.5"><strong class="text-white">${esc(l.name)}</strong>${l.status === "dm_sent" ? '<span class="text-[10px] text-emerald-300">📩 DM gesendet</span>' : ""}
+        ${btn("📋 DM kopieren", `PS.caCopyDm(${Number(l.id)})`, "bg-slate-800 text-white text-[10px]")}
+        ${l.platform === "tiktok" && l.tiktokUrl ? btn("⚡ Kopieren & Profil öffnen", `PS.caTurboDm(${Number(l.id)})`, "bg-gradient-to-r from-cyan-400 to-fuchsia-500 text-slate-950 text-[10px] font-black") : ""}</div>
+      <p class="text-[10px] text-slate-300 mt-0.5 whitespace-pre-wrap select-text">${esc(l.dm)}</p></li>`).join("")}</ul>
+  </details>`;
 }
 
 function sendLogHtml() {
@@ -208,7 +226,7 @@ function sendLogHtml() {
   const rowsOf = (list) => list.map((r) => `<tr class="border-t border-slate-800">
       <td class="py-1 pr-2 align-top"><span class="text-white font-bold">${esc(r.name || "")}</span><br><span class="text-slate-400 break-all">${esc(r.email || "")}</span></td>
       <td class="py-1 pr-2 align-top whitespace-nowrap">${r.ok ? `<span class="text-emerald-300 font-black">✅ Gesendet</span><br><span class="text-slate-400">${esc(fmt(r.at))}</span>` : r.skip ? '<span class="text-slate-300 font-bold">⏭ übersprungen</span>' : r.pending ? '<span class="text-violet-300 font-bold">⏳ sendet …</span>' : '<span class="text-rose-300 font-black">❌ Fehler</span>'}</td>
-      <td class="py-1 pr-2 align-top font-mono text-[10px] text-slate-300 break-all">${esc(r.resendId || "–")}</td>
+      <td class="py-1 pr-2 align-top font-mono text-[10px] ${r.ok && r.resendId ? "text-emerald-300 font-bold" : "text-slate-300"} break-all">${esc(r.resendId || "–")}</td>
       <td class="py-1 align-top text-[10px] ${r.ok ? "text-slate-500" : "text-rose-200"}">${esc(r.error || "")}</td></tr>`).join("");
   const table = (list) => `<div class="overflow-x-auto"><table class="w-full text-[11px] text-left"><thead><tr class="text-[10px] uppercase text-slate-400"><th class="pr-2">Empfänger</th><th class="pr-2">Status</th><th class="pr-2">Resend-ID</th><th>Fehlermeldung</th></tr></thead><tbody>${rowsOf(list)}</tbody></table></div>`;
   return `<details class="bg-slate-950/70 border border-slate-800 rounded-xl p-2" ${live.length ? "open" : ""}>
@@ -715,6 +733,11 @@ export const creatorAdminApi = {
   },
   caCopyDm: (id) => { const l = leadById(id); if (l) copy(l.dm, "Kurz-Nachricht inkl. Link kopiert – jetzt in TikTok/Instagram/Discord einfügen."); },
   caCopy: (text, msg) => copy(text, msg),
+  caCopyAllDms: () => {
+    const list = (ca.data?.leads || []).filter((l) => !l.placeholder && !EMAIL_OK.test(String(l.email || "")) && l.dm && !["optout", "active", "replied", "dm_sent"].includes(l.status));
+    if (!list.length) return toast("💬 Keine offenen DMs", "Alle Creator ohne E-Mail wurden schon per DM angeschrieben.");
+    copy(list.map((l) => `— ${l.name}${l.tiktokUrl ? ` (${l.tiktokUrl})` : ""}\n${l.dm}`).join("\n\n"), `${list.length} DM-Texte kopiert – jeweils in die TikTok-DM einfügen.`);
+  },
   async caGrantPass(id) {
     const l = leadById(id);
     const email = prompt("E-Mail des PokeSwipe-Kontos des Creators:", l?.email || "");

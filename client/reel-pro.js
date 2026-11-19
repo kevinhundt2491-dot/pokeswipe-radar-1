@@ -325,7 +325,7 @@ export function pickCoverCard(cards, recent = []) {
   return cards.find((c) => !used.has(c.id)) || cards[0] || null;
 }
 
-export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || MASTER_TEMPLATES.find((t) => t.key === k) || null;
+export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || MASTER_TEMPLATES.find((t) => t.key === k) || SHORT_TEMPLATES.find((t) => t.key === k) || null;
 
 export const isHook4 = (tpl) => tpl?.format === "hook4";
 /** Szenen-Schlüssel einer Vorlage (5 Standard-Szenen bzw. 4 Hook-Szenen). */
@@ -658,6 +658,7 @@ export function showcaseCues(scenes, tl = SHOWCASE_TIMELINE) {
 
 /** Prüfbericht der Showcase-Spezifikation (für Metadaten und Tests). */
 export function showcaseSpec(tpl, { duration, fps, mbit, width = 1080, height = 1920 } = {}) {
+  if (tpl?.short) return shortSpec(tpl, { duration, fps, mbit, width, height });
   const [lo, hi] = SHOWCASE_MBIT_RANGE;
   const checks = {
     duration: Math.abs(Number(duration) - (tpl.exact || SHOWCASE_SECONDS)) < 0.5 / (fps || SHOWCASE_FPS) + 1e-6,
@@ -796,4 +797,169 @@ export function autobinderCues(scenes, tl = AUTOBINDER_TIMELINE) {
 }
 
 /** Sound-Cues einer Showcase-Familien-Vorlage (Pro-Showcase oder Master-Vorlage). */
-export const templateCues = (tpl, scenes) => (tpl?.key === "autobinder" ? autobinderCues(scenes) : showcaseCues(scenes));
+export const templateCues = (tpl, scenes) => (tpl?.short ? shortCues(tpl, scenes) : tpl?.key === "autobinder" ? autobinderCues(scenes) : showcaseCues(scenes));
+
+// ---------------------------------------------------------------------------------------------------------------
+// Kurz-Reels (High-Retention, format "showcase" + short): 8–9 s · 9:16 · 1080×1920 · 60 FPS · 11 Mbit/s
+//   • Frame 0 zeigt sofort Action in der echten App (kein Logo-Intro, kein schwarzes Bild, kein Stempel-Badge)
+//   • großer Hook-Text ab Frame 0 in der oberen sicheren Zone (y ≈ 250–420, nie hinter TikTok-Buttons/Beschreibung)
+//   • alle 1,5–2 s ein visueller Wechsel (Scan, Preis-Pop-up, Blättern, Hochschieben, Zoom)
+//   • Standard OHNE KI-Stimme: nur knackige UI-Soundeffekte (Scanner-Ping, Blättern, Klick) – Trending-Sound passt darüber.
+//     Voiceover optional per Schalter im Generator (Standard AUS).
+//   • Kein Ausblenden ins Schwarze: das letzte Bild (End-Tag) loopt sauber in Frame 0
+// Alle Oberflächen sind die echte Live-Website in der 9:16-Stage (Live-Scanner, 3D-Set-Binder, 16er Marktplatz-Binder,
+// 👆 Hochschieben, 📦 Pokémon-Artikel-Verkaufsseite). Eigene Liste: bestehende Vorlagen bleiben unverändert.
+// ---------------------------------------------------------------------------------------------------------------
+export const SHORT_FPS = 60;
+export const SHORT_MBIT = 11;
+/** Erlaubte Länge der Kurz-Reels (s). */
+export const SHORT_RANGE = Object.freeze([7, 10]);
+/** Wortlimit des optionalen Voiceovers (≈ 2,6 Wörter/s). */
+export const SHORT_WORDS = Object.freeze([10, 26]);
+/** Obere sichere Zone für den Hook-Text (Mitte y). */
+export const SHORT_HOOK_Y = 350;
+
+/** Regie-Zeitpläne (Videozeit in s) – Choreografie, Kamera und Mikro-SFX nutzen exakt diese Werte. */
+export const SHORT_TIMELINES = Object.freeze({
+  shortscan: Object.freeze({ scanStart: 0.05, scanMs: 850, pricePop: 0.95, filed: 1.75, binderOpen: 2.15, scannedSpot: 2.75,
+    scanner2: 3.6, scan2Start: 3.75, scan2Ms: 650, instantTap: 4.55, marketOpen: 5.5, sheetOpen: 5.95, lockup: 6.5 }),
+  shortbinder: Object.freeze({ flip1: 0.0, flip2: 1.15, tagSpot: 2.1, reveal: 2.85, gapTap: 3.55, sheetOpen: 4.35, buyTap: 5.35,
+    binderBack: 6.5, pan: 6.75, lockup: 7.4 }),
+  shortmarket: Object.freeze({ turn1: 0.0, dealSpot: 1.25, dealTap: 2.0, sheetSpot: 2.75, closeTap: 3.4, swipeMode: 3.85,
+    up1: 4.45, up2: 5.45, buyTap: 6.55, lockup: 7.3 }),
+  shortitems: Object.freeze({ up1: 0.05, up2: 1.05, up3: 2.0, sellOpen: 2.9, photo: 3.25, fields: 3.7, condTap: 4.3, catTap: 4.95,
+    submitTap: 5.45, marketAll: 6.0, turn: 6.2, lockup: 6.7 }),
+});
+
+const shortCamera = (lockup, D) => Object.freeze([
+  [0, { cx: 505, cy: 962, s: 0.96, rot: -0.02 }], [1.2, { cx: 505, cy: 958, s: 0.96, rot: -0.006 }],
+  [lockup - 0.6, { cx: 505, cy: 956, s: 0.97, rot: 0.004 }], [lockup + 0.45, { cx: 505, cy: 700, s: 0.64, rot: 0 }], [D, { cx: 505, cy: 694, s: 0.66, rot: 0 }],
+]);
+
+const SHORT_BASE = {
+  format: "showcase", short: true, visual: "showcase", gold: "#fbbf24",
+  fps: SHORT_FPS, mbit: SHORT_MBIT, cbr: true, tone: "energetic", maxSpeed: SPEED_CAP, startSpeed: SPEED_CAP, words: SHORT_WORDS,
+  proAt: null, noFade: true, sfxOnly: true, captionY: 1290, binderSet: "sv03.5", binderSetName: "Karmesin & Purpur – 151",
+  tags: ["#PokemonKarten", "#PokemonSammler", "#TCGDeutschland"],
+};
+
+export const SHORT_TEMPLATES = [
+  {
+    ...SHORT_BASE, key: "shortscan", label: "Kurz-Reel 1: Verbesserter Live-Scanner & Preisschild (8 s)",
+    choreo: "shortscan", tab: "scan", accent: "#22d3ee",
+    title: "Live-Scanner: Karte scannen, Preis sofort, automatisch im Binder, Schnell-Inserieren",
+    seconds: [8, 8], exact: 8, plan: Object.freeze([0, 1.8, 3.6, 5.5, 8]), timeline: SHORT_TIMELINES.shortscan,
+    scanKeys: ["card:sv03.5-199", "card:sv03.5-205", "card:sv03.5-006", "card:sv03.5-025"], nextKeys: ["card:sv03.5-025", "card:sv03.5-006"],
+    hooks: [{ badge: "", cover: "Dein Handy scannt Pokémon-Karten jetzt schneller als du blinzeln kannst 👀⚡" }],
+    lines: [{ say: "Karte vors Handy, Preis steht sofort, sie landet automatisch im Binder – und mit einem Tipp ist sie auf dem Marktplatz." }],
+    overlays: {
+      scan: "Dein Handy scannt Pokémon-Karten jetzt schneller als du blinzeln kannst 👀⚡",
+      binder: "📒 Landet automatisch im richtigen Set",
+      market: "⚡ Nächste Karte – Schnell-Inserieren",
+      finale: "🛒 Live auf dem Marktplatz – unter Cardmarket-Preis",
+    },
+    finaleHeadline: { text: "🛒 Live auf dem Marktplatz – unter Cardmarket-Preis", lines: 2, size: 50, y: 300 },
+    finale: { domain: DOMAIN, sub: "Kostenlos testen", chips: [] },
+    zoomPlan: Object.freeze([[0, 1.7, 1.32], [1.7, 2.2, 1.0], [2.2, 3.5, 1.12], [3.5, 3.8, 1.0], [3.8, 5.4, 1.22], [5.4, 8, 1.04]]),
+    body: ["📸 Karte frei vors Handy halten – der Live-Scanner erkennt sie in Sekundenbruchteilen und zeigt sofort das Preisschild.",
+      "📒 Sie landet automatisch im richtigen Set-Ordner. ⚡ Schnell-Inserieren: 1 Tipp und sie steht unter Cardmarket-Preis auf dem Marktplatz."],
+    captionCta: ["👉 pokeswipe-radar.de – kostenlos testen, kein Download."],
+  },
+  {
+    ...SHORT_BASE, key: "shortbinder", label: "Kurz-Reel 2: Echtes 3D-Binder-Blättern & Preisetiketten (9 s)",
+    choreo: "shortbinder", tab: "portfolio", accent: "#fbbf24", gold: "#22d3ee",
+    title: "Digitaler Pokémon-Ordner mit echtem 3D-Blättern, Preisetiketten und Marktplatz-Lücken",
+    seconds: [9, 9], exact: 9, plan: Object.freeze([0, 2.0, 4.3, 6.5, 9]), timeline: SHORT_TIMELINES.shortbinder, gapPrice: 6.5,
+    hooks: [{ badge: "", cover: "Endlich ein digitaler Pokémon-Ordner, der sich anfühlt wie echt 🔥📖" }],
+    lines: [{ say: "Blättern wie im echten Ordner – mit Preis an jeder Karte, und fehlende Karten kaufst du direkt aus der Lücke." }],
+    overlays: {
+      scan: "Endlich ein digitaler Pokémon-Ordner, der sich anfühlt wie echt 🔥📖",
+      binder: "💶 Live-Preis an jeder Karte",
+      market: "🛒 Fehlt? 1 Tipp – direkt zum Angebot",
+      finale: "📖 Dein ganzes Set auf einen Blick",
+    },
+    finaleHeadline: { text: "📖 Dein ganzes Set auf einen Blick", lines: 1, size: 52, y: 300 },
+    finale: { domain: DOMAIN, sub: "Kostenlos testen", chips: [] },
+    zoomPlan: Object.freeze([[0, 2.0, 1.06], [2.0, 4.2, 1.2], [4.2, 6.4, 1.08], [6.4, 9, 1.0]]),
+    body: ["📖 Dein Set-Ordner blättert sich wie echt – mit Falz-Schatten, Folien-Glanz und Live-Preis an jeder Karte.",
+      "🛒 An fehlenden Karten steht direkt der günstigste Marktplatz-Preis (oder eBay) – 1 Tipp öffnet das Angebot."],
+    captionCta: ["👉 pokeswipe-radar.de – kostenlos, direkt im Browser."],
+  },
+  {
+    ...SHORT_BASE, key: "shortmarket", label: "Kurz-Reel 3: 16er Marktplatz-Binder & Echtes Hochschieben (9 s)",
+    choreo: "shortmarket", tab: "map", accent: "#34d399",
+    title: "16 Sammler-Deals auf einer Ordnerseite + Hochschieben wie bei Reels",
+    seconds: [9, 9], exact: 9, plan: Object.freeze([0, 2.0, 4.4, 6.5, 9]), timeline: SHORT_TIMELINES.shortmarket,
+    hooks: [{ badge: "", cover: "16 echte Sammler-Deals auf einer Seite – einfach spontan mitnehmen 🤯" }],
+    lines: [{ say: "Sechzehn Deals auf einer Ordnerseite, ein Tipp für Details – oder einfach hochschieben und spontan mitnehmen." }],
+    overlays: {
+      scan: "16 echte Sammler-Deals auf einer Seite – einfach spontan mitnehmen 🤯",
+      binder: "👆 1 Tipp – Deal-Details",
+      market: "👆 Hochschieben wie bei Reels",
+      finale: "⚡ Spontan mitnehmen – mit Käuferschutz",
+    },
+    finaleHeadline: { text: "⚡ Spontan mitnehmen – mit Käuferschutz", lines: 1, size: 50, y: 300 },
+    finale: { domain: DOMAIN, sub: "0 % Gebühren zum Start", chips: [] },
+    zoomPlan: Object.freeze([[0, 2.0, 1.04], [2.0, 3.8, 1.08], [3.8, 6.4, 1.06], [6.4, 9, 1.0]]),
+    body: ["📖 Der 16er Marktplatz-Binder zeigt 16 echte Inserate auf einer Ordnerseite – Deals unter Cardmarket sind grün markiert.",
+      "👆 Oder hochschieben wie bei Reels: Karte für Karte, mit „⚡ Spontan mitnehmen“ immer griffbereit."],
+    captionCta: ["👉 pokeswipe-radar.de – 0 % Gebühren zum Start."],
+  },
+  {
+    ...SHORT_BASE, key: "shortitems", label: "Kurz-Reel 4: NEU – Pokémon-Artikel verkaufen & entdecken (8 s)",
+    choreo: "shortitems", tab: "map", accent: "#a78bfa",
+    title: "Nicht nur Karten: Displays, ETBs, Ordner & Zubehör verkaufen und entdecken",
+    seconds: [8, 8], exact: 8, plan: Object.freeze([0, 2.0, 4.0, 6.0, 8]), timeline: SHORT_TIMELINES.shortitems,
+    hooks: [{ badge: "", cover: "Nicht nur Karten – verkaufe jetzt auch Displays, ETBs & Zubehör ohne Gebühren 📦⚡" }],
+    lines: [{ say: "Displays, Top-Trainer-Boxen, Ordner und Zubehör: Foto, Zustand, Preis – fertig. Karten und Artikel in einer App." }],
+    overlays: {
+      scan: "Nicht nur Karten – verkaufe jetzt auch Displays, ETBs & Zubehör ohne Gebühren 📦⚡",
+      binder: "📦 Displays · ETBs · Ordner & Zubehör",
+      market: "📷 Foto · Zustand · Preis – fertig",
+      finale: "🃏 Karten + 📦 Artikel in einer App",
+    },
+    finaleHeadline: { text: "🃏 Karten + 📦 Artikel in einer App", lines: 1, size: 52, y: 300 },
+    finale: { domain: DOMAIN, sub: "Kostenlos testen", chips: [] },
+    zoomPlan: Object.freeze([[0, 2.9, 1.04], [2.9, 6.0, 1.12], [6.0, 8, 1.0]]),
+    body: ["📦 Neu: Pokémon-Artikel verkaufen – Booster & Displays, ETBs & Kollektionen, Ordner & Zubehör, Plüsch & Sammlungen.",
+      "📷 Foto hochladen, Zustand wählen (z. B. Neu & OVP), Preis eintragen – fertig. Karten und Artikel in einer App."],
+    captionCta: ["👉 pokeswipe-radar.de – kostenlos inserieren."],
+  },
+].map((t) => ({ ...t, camera: shortCamera(t.timeline.lockup, t.exact), lockupAt: t.timeline.lockup }));
+ALL_TEMPLATES.push(...SHORT_TEMPLATES);
+export const isShort = (tpl) => !!tpl?.short;
+
+/** Mikro-Sounddesign der Kurz-Reels: Scanner-Ping, Blättern, Klicks, Erfolgs-Plings – exakt auf den Regie-Zeitplan. */
+export function shortCues(tpl, scenes) {
+  const tl = tpl?.timeline || {};
+  const D = scenes[scenes.length - 1]?.end || tpl?.exact || 8;
+  const k = D / (tpl?.exact || D);
+  const at = (s) => +(s * k).toFixed(3);
+  const tap = (s) => [at(s + TAP_LEAD), "tap"];
+  const page = (s) => [at(s + 0.3 + 0.28), "page"];
+  const up = (s) => [at(s + 0.26 + 0.3), "swipe"];
+  const cues = { // Frame 0 startet mit einem weichen Akzent – sofort hörbar, ohne Intro
+    shortscan: [[0.02, "softhit"], [at(tl.scanStart + 0.02), "scanhum"], [at(tl.scanStart + tl.scanMs / 1000), "beep"], [at(tl.pricePop + 0.05), "coin"],
+      [at(tl.filed), "drop"], [at(tl.binderOpen), "whoosh"], [at(tl.scannedSpot), "pop"], [at(tl.scanner2), "whoosh"],
+      [at(tl.scan2Start + 0.02), "scanhum"], [at(tl.scan2Start + tl.scan2Ms / 1000), "beep"], tap(tl.instantTap), [at(tl.instantTap + TAP_LEAD + 0.2), "pling"],
+      [at(tl.marketOpen), "whoosh"], [at(tl.sheetOpen), "pop"], [at(tl.lockup + 0.5), "chime"]],
+    shortbinder: [[0.02, "softhit"], page(tl.flip1), page(tl.flip2), [at(tl.tagSpot), "tick"], [at(tl.reveal), "pling"], tap(tl.gapTap),
+      [at(tl.sheetOpen), "whoosh"], tap(tl.buyTap), [at(tl.binderBack), "whoosh"], page(tl.pan), [at(tl.lockup + 0.5), "chime"]],
+    shortmarket: [[0.02, "softhit"], page(tl.turn1), [at(tl.dealSpot), "pling"], tap(tl.dealTap), [at(tl.dealTap + TAP_LEAD + 0.1), "pop"],
+      tap(tl.closeTap), tap(tl.swipeMode), up(tl.up1), up(tl.up2), [at(tl.up2 + 0.9), "shimmer"], tap(tl.buyTap), [at(tl.buyTap + TAP_LEAD + 0.15), "coin"], [at(tl.lockup + 0.5), "chime"]],
+    shortitems: [[0.02, "softhit"], up(tl.up1), up(tl.up2), up(tl.up3), [at(tl.sellOpen), "whoosh"], [at(tl.photo), "drop"], [at(tl.fields), "tick"],
+      tap(tl.condTap), tap(tl.catTap), tap(tl.submitTap), [at(tl.submitTap + TAP_LEAD + 0.15), "pling"], [at(tl.marketAll), "whoosh"], page(tl.turn), [at(tl.lockup + 0.5), "chime"]],
+  }[tpl?.key] || [[0.02, "softhit"]];
+  return cues.filter(([t]) => t >= 0 && t <= D).sort((a, b) => a[0] - b[0]);
+}
+
+/** Prüfbericht der Kurz-Reel-Spezifikation (7–10 s, 60 FPS, 10–12 Mbit/s, 1080×1920). */
+export function shortSpec(tpl, { duration, fps, mbit, width = 1080, height = 1920 } = {}) {
+  const [lo, hi] = SHOWCASE_MBIT_RANGE, [smin, smax] = SHORT_RANGE;
+  const d = Number(duration);
+  const checks = {
+    duration: d >= smin - 1e-6 && d <= smax + 1e-6 && Math.abs(d - (tpl?.exact || d)) < 0.5 / (fps || SHORT_FPS) + 1e-6,
+    fps: Number(fps) === SHORT_FPS, bitrate: Number(mbit) >= lo && Number(mbit) <= hi, size: width === 1080 && height === 1920,
+  };
+  return { ok: Object.values(checks).every(Boolean), checks };
+}

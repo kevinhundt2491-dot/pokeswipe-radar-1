@@ -17,7 +17,7 @@ test("Showcase: Vorlage „Pro-Showcase: Volle App- & Pro-Abo-Power“ – 29 s,
   assert.equal(tpl.label, "Pro-Showcase: Volle App- & Pro-Abo-Power");
   assert.deepEqual(SHOWCASE_TEMPLATES.map((t: any) => t.key), ["showcase"]);
   // Showcase-Familie: Pro-Showcase + Master-Vorlage „autobinder“ (tests/reel-autobinder.test.ts)
-  assert.deepEqual(ALL_TEMPLATES.map((t: any) => t.key), [...PRO_TEMPLATES.map((t: any) => t.key), "showcase", "autobinder"]);
+  assert.deepEqual(ALL_TEMPLATES.map((t: any) => t.key), [...PRO_TEMPLATES.map((t: any) => t.key), "showcase", "autobinder", "shortscan", "shortbinder", "shortmarket", "shortitems"]);
   // bestehende Vorlagen-Liste bleibt unverändert
   assert.ok(!PRO_TEMPLATES.includes(tpl));
   assert.equal(tpl.exact, 29); assert.deepEqual(secondsFor(tpl), [29, 29]);
@@ -131,7 +131,7 @@ test("Showcase: Beschreibung für Make.com mit Hook, CTA zu pokeswipe-radar.de u
 
 test("Showcase: Admin-Zentrale kann die Vorlage in die Rotation aufnehmen, Standard bleibt unverändert", () => {
   assert.deepEqual([...SHOWCASE_TEMPLATE_KEYS], ["showcase"]);
-  assert.deepEqual([...VIDEO_TEMPLATE_KEYS], [...PRO_TEMPLATE_KEYS, "showcase", "autobinder"]);
+  assert.deepEqual([...VIDEO_TEMPLATE_KEYS], [...PRO_TEMPLATE_KEYS, "showcase", "autobinder", "shortscan", "shortbinder", "shortmarket", "shortitems"]);
   assert.ok(PRO_TEMPLATE_LABELS.showcase.includes("29 s"));
   assert.deepEqual(DEFAULT_VIDEO.templates, [...PRO_TEMPLATE_KEYS]);
   const c = cleanVideoConfig({ templates: ["radar", "showcase", "x"] });

@@ -13,7 +13,7 @@ import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
 import { recordLive, previewLive, loadNarration, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
 import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
-import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S } from "./reel-pro.js";
+import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S, SHORT_TEMPLATES, isShort } from "./reel-pro.js";
 import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
 import { lookFor, cardImageUrl, pickCoverCard } from "./reel-pro.js";
 import { sameOriginImageUrl } from "./dom-capture.js";
@@ -126,6 +126,11 @@ const estMb = () => (mbit * estSeconds()) / 8 * 1.05; // +5 % Container-Overhead
 // Deutsche Sprecherstimme (Voiceover) – ElevenLabs "Matilda"
 const VOICE_KEY = "pokeswipe.autoReels.voice";
 let voiceOn = load(VOICE_KEY, "1") !== "0";
+// Kurz-Reels (7–10 s): standardmäßig OHNE KI-Stimme (nur UI-Soundeffekte) – Voiceover nur per eigenem Schalter
+const SHORT_VOICE_KEY = "pokeswipe.autoReels.shortVoice";
+let shortVoiceOn = load(SHORT_VOICE_KEY, "0") === "1";
+/** Bekommt diese Vorlage eine Sprecherin? Kurz-Reels nur mit eigenem Schalter, alle anderen wie bisher. */
+const wantsVoice = (tpl) => voiceOn && (!isShort(tpl) || shortVoiceOn);
 const voiceModes = new Map(); // Episode -> "voice" | "off" (geht als Feld voiceover_mode an Make)
 const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
 
@@ -256,6 +261,11 @@ function build() {
   ui.voiceInfo = el.querySelector("#ar-voice-info");
   ui.voice.checked = voiceOn;
   ui.voice.addEventListener("change", () => { voiceOn = ui.voice.checked; save(VOICE_KEY, voiceOn ? "1" : "0"); updateVoiceInfo(); });
+  ui.shortVoice = el.querySelector("#ar-short-voice");
+  if (ui.shortVoice) {
+    ui.shortVoice.checked = shortVoiceOn;
+    ui.shortVoice.addEventListener("change", () => { shortVoiceOn = ui.shortVoice.checked; save(SHORT_VOICE_KEY, shortVoiceOn ? "1" : "0"); });
+  }
   ui.voicePick = el.querySelector("#ar-voice-pick");
   ui.voiceTest = el.querySelector("#ar-voice-test");
   ui.voiceTest.addEventListener("click", testVoice);
@@ -717,7 +727,9 @@ const PRO_HTML = `
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="showcase" title="High-End-Showcase: Scanner, Set-Binder, Marktplatz, Live-Chat und Pro-Abo – exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s">🎬 Pro-Showcase (29 s · 60 FPS)</button>
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="autobinder" data-master="autobinder" title="Master-Vorlage: Live-Scan → automatisch im Set-Binder → Doppelte zählen → alle Doppelten mit 1 Klick inserieren → Lücken kaufen – exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s, ElevenLabs-Voiceover">📒 Reel: Neuer automatischer Binder &amp; Bulk-Marktplatz-Power (29 s · 60 FPS)</button>
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="hook4" title="Schnäppchen-FOMO, Flohmarkt-Schutz und Tinder für Sammler nacheinander aufnehmen">🎯 Alle 3 Hook-Presets (15–17 s)</button>
+      <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="short" title="4 High-Retention-Kurz-Reels nacheinander: Live-Scanner & Preisschild · 3D-Binder & Preisetiketten · 16er Marktplatz-Binder & Hochschieben · Pokémon-Artikel – je 8–9 s, 1080×1920, 60 FPS, Action ab Frame 0, Hook-Text oben, nur UI-Soundeffekte">⚡ 4 Kurz-Reels (8–9 s · ohne KI-Stimme)</button>
     </div>
+    <label class="ar-short-voice" style="display:flex;gap:6px;align-items:center;font-size:12px;font-weight:700"><input type="checkbox" id="ar-short-voice"> 🎙️ Voiceover auch für Kurz-Reels (optional · Standard AUS = nur Scanner-Ping, Blättern &amp; Klick – Trending-Sound passt darüber)</label>
     <ul id="ar-pro-list"></ul>
     <small>Cover mit Hook-Schlagzeile (0–2 s, zugleich Vorschaubild) → Fokus-Zoom auf die echte App → „Warum das genial ist“ mit Feature-Badges → Vertrauen &amp; Praxis-Mehrwert → Endscreen „${esc("Jetzt kostenlos testen auf pokeswipe-radar.de")}“. Untertitel im sicheren Mittelbereich. Einstellungen: Admin-Zentrale → 🎬 Make.com &amp; Auto-Reels.</small>
   </div>`;
@@ -778,6 +790,8 @@ async function onProClick(btn) {
   if (what === "autobinder") return generatePro([{ tpl: templateByKey("autobinder"), variant: proNext?.template === "autobinder" ? proNext.variant : 0 }]);
   // Die 3 Hook-Presets immer gemeinsam – unabhängig davon, ob sie in der Rotation der Admin-Zentrale aktiv sind
   if (what === "hook4") return generatePro(PRO_TEMPLATES.filter(isHook4).map((tpl) => ({ tpl, variant: 0 })));
+  // Die 4 Kurz-Reels (7–10 s) immer gemeinsam – unabhängig von der Rotation der Admin-Zentrale
+  if (what === "short") return generatePro(SHORT_TEMPLATES.map((tpl) => ({ tpl, variant: 0 })));
   if (what === "next") {
     let pick = null;
     try { pick = await api("/api/admin/make/video/next", { method: "POST", body: {} }); } catch { pick = proNext; }
@@ -827,16 +841,18 @@ async function generatePro(list) {
   const { mime } = pickMime();
   if (mime === null || typeof ui.canvas.captureStream !== "function") return setStatus("⚠️ Dieser Browser kann nicht aufnehmen. Bitte aktuelles Chrome oder Edge verwenden.", "err");
   const ac = unlockAudio(); // im Klick-Handler entsperren
-  if (voiceOn && !ac) return setStatus("⚠️ Dieser Browser kann keinen Ton mit aufnehmen – bitte Chrome oder Edge verwenden.", "err");
-  if (voiceOn && !voiceReady?.ready) await checkVoice();
-  if (voiceOn && !voiceReady?.ready) return setStatus(voiceReady?.error
+  // Kurz-Reels ohne Voiceover-Schalter brauchen keine Sprecherin (und keine ElevenLabs-Credits)
+  const anyVoice = list.some(({ tpl }) => wantsVoice(tpl));
+  if (anyVoice && !ac) return setStatus("⚠️ Dieser Browser kann keinen Ton mit aufnehmen – bitte Chrome oder Edge verwenden.", "err");
+  if (anyVoice && !voiceReady?.ready) await checkVoice();
+  if (anyVoice && !voiceReady?.ready) return setStatus(voiceReady?.error
     ? `⚠️ Sprachdienst nicht erreichbar (${voiceReady.error}) – Start abgebrochen. Alternativ das Voiceover ausschalten.`
     : "⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt) – Start abgebrochen. Alternativ das Voiceover ausschalten.", "err");
-  if (voiceOn) {
+  if (anyVoice) {
     await checkVoice(); // aktuelle Credits holen
     const cr = voiceReady?.credits;
     // ElevenLabs berechnet ca. 1 Credit je Zeichen; jede Vorlage braucht mindestens einen kompletten Take
-    const need = list.map(({ tpl }) => proScript(tpl, 0).say.join(" ").length);
+    const need = list.filter(({ tpl }) => wantsVoice(tpl)).map(({ tpl }) => proScript(tpl, 0).say.join(" ").length);
     if (cr && need.length && cr.remaining < Math.min(...need)) {
       const reset = cr.resetAt ? ` Das Kontingent wird am ${fmtDate(cr.resetAt)} wieder aufgefüllt.` : "";
       return setStatus(`⚠️ ElevenLabs-Credits reichen nicht: noch ${cr.remaining} übrig, ein Pro-Video braucht ca. ${Math.min(...need)}.${reset} Bitte im ElevenLabs-Konto Credits aufladen bzw. den Tarif erhöhen – oder das Voiceover ausschalten (dann nur Musik).`, "err");
@@ -877,7 +893,7 @@ async function generatePro(list) {
     try {
       const script = proScript(tpl, variant);
       let voice = null, speed = 1, voiceFailed = null, voiceSec = 0, voiceFit = null;
-      if (voiceOn) {
+      if (wantsVoice(tpl)) {
         setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
         try { ({ take: voice, speed, seconds: voiceSec, fitted: voiceFit = null } = await loadProNarration(script.say, ac, tpl.tone || proCfg.tone, secondsFor(tpl), tpl.maxSpeed || 1.12, { format: tpl.voiceFormat || tpl.format || "", startSpeed: tpl.startSpeed || 0, fit: tpl.fitVoice || null })); }
         catch (e) {
@@ -933,9 +949,11 @@ async function generatePro(list) {
           speech_seconds: res.speech ? +res.speech.toFixed(2) : "", spec_json: JSON.stringify(res.spec), spec_ok: res.spec?.ok ? "1" : "0",
           ...(tpl.master ? { video_master: "1", voice_fit_json: voiceFit ? JSON.stringify(voiceFit) : "" } : {}),
         } : {}),
+        // Kurz-Reels: eigenes Format-Feld für Make.com-Filter (z. B. nur Kurz-Reels an TikTok/Reels), Ton = nur UI-SFX
+        ...(isShort(tpl) ? { video_format: "short", video_short: "1", audio_mode: res.speech ? "voiceover+sfx" : "sfx-only", loop: "1" } : {}),
       };
       if (res.spec && !res.spec.ok) {
-        const bad = Object.entries(res.spec.checks).filter(([, v]) => !v).map(([k]) => ({ duration: "Länge ≠ 29 s", fps: "nicht 60 FPS", bitrate: "Bitrate außerhalb 10–12 Mbit/s", size: "nicht 1080×1920" })[k]).join(", ");
+        const bad = Object.entries(res.spec.checks).filter(([, v]) => !v).map(([k]) => ({ duration: isShort(tpl) ? `Länge ≠ ${tpl.exact} s` : "Länge ≠ 29 s", fps: "nicht 60 FPS", bitrate: "Bitrate außerhalb 10–12 Mbit/s", size: "nicht 1080×1920" })[k]).join(", ");
         addNote(tpl.key, "warn", `Showcase-Spezifikation nicht ganz erfüllt (${bad}) – ${res.duration.toFixed(2).replace(".", ",")} s, ${res.fps} FPS, ${res.mbit} Mbit/s${res.exact ? "" : " (Browser ohne WebCodecs-MP4: bitte aktuelles Chrome/Edge nutzen)"}.`);
       }
       if (res.timing && !res.timing.ok) {
