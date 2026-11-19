@@ -102,6 +102,30 @@ export const FEATURED_CREATORS: FeaturedCreator[] = [
   { name: "Dario", platform: "youtube", channelUrl: "https://www.youtube.com/@DarioPokemon", category: "packopening" },
 ];
 
+/**
+ * Weitere deutsche Pokémon-TCG-TikTok-Creator (öffentlich auf TikToks eigenen Entdecken-Seiten zu
+ * #pokemonkarten / Pokémon-Openings auf Deutsch gelistet). Nur das öffentliche @handle – KEINE E-Mails:
+ * Ohne bestätigte Geschäfts-Adresse erscheinen sie als „Nur TikTok-DM (keine E-Mail)“; der Auto-Finder bzw.
+ * „+ Neuen Creator & E-Mail hinzufügen“ ergänzt eine echte Adresse, sobald sie öffentlich bestätigt ist.
+ * Follower-Zahlen werden nicht geraten (0 = bitte im Profil nachsehen und eintragen).
+ */
+export const TIKTOK_DE_CREATORS: FeaturedCreator[] = [
+  { name: "@poke.ning", platform: "tiktok", channelUrl: "https://www.tiktok.com/@poke.ning", category: "packopening" },
+  { name: "@kartenfieber", platform: "tiktok", channelUrl: "https://www.tiktok.com/@kartenfieber", category: "packopening" },
+  { name: "@stevouh7", platform: "tiktok", channelUrl: "https://www.tiktok.com/@stevouh7", category: "packopening" },
+  { name: "@sammel_surium", platform: "tiktok", channelUrl: "https://www.tiktok.com/@sammel_surium", category: "flohmarkt" },
+  { name: "@fullartlea", platform: "tiktok", channelUrl: "https://www.tiktok.com/@fullartlea", category: "micro" },
+  { name: "@tcg_sergioh_de", platform: "tiktok", channelUrl: "https://www.tiktok.com/@tcg_sergioh_de", category: "micro" },
+  { name: "@pokemunich", platform: "tiktok", channelUrl: "https://www.tiktok.com/@pokemunich", category: "flohmarkt" },
+  { name: "@pokemonkartenopenen", platform: "tiktok", channelUrl: "https://www.tiktok.com/@pokemonkartenopenen", category: "packopening" },
+  { name: "@pokemon_karten_sammler_", platform: "tiktok", channelUrl: "https://www.tiktok.com/@pokemon_karten_sammler_", category: "micro" },
+  { name: "@itsdyma", platform: "tiktok", channelUrl: "https://www.tiktok.com/@itsdyma", category: "micro" },
+  { name: "@david_goldstar", platform: "tiktok", channelUrl: "https://www.tiktok.com/@david_goldstar", category: "micro" },
+];
+
+/** Anzeige für Creator ohne bestätigte E-Mail auf TikTok. */
+export const NO_EMAIL_TIKTOK_LABEL = "Nur TikTok-DM (keine E-Mail)";
+
 /** 1-Klick-Suchen nach aktiven deutschen TikTok-Creatorn (1k–15k Follower) – öffnen nur die öffentliche TikTok-Suche. */
 export const TIKTOK_NICHE_SEARCHES: { label: string; url: string }[] = [
   { label: "TikTok: Pokemon Karten öffnen", url: "https://www.tiktok.com/search/user?q=pokemon%20karten%20oeffnen" },
@@ -508,6 +532,49 @@ export const COMMENT_RULES = [
 /** Mehr Mails pro Tag beim 1-Klick-Massenversand (Resend-Free-Tarif: 100/Tag). Abstand zwischen Mails dort ~500 ms. */
 export const OUTREACH_BULK_DAILY_CAP = 100;
 export const BULK_SEND_GAP_MS = 500;
+
+/** „📧 Mails an alle noch nicht kontaktierten Creator senden“: zufällige Pause 500–800 ms zwischen zwei Mails (Resend-Rate-Limit). */
+export const BULK_SEND_GAP_MIN_MS = 500;
+export const BULK_SEND_GAP_MAX_MS = 800;
+export const bulkSendGap = (r = Math.random()) => Math.round(BULK_SEND_GAP_MIN_MS + Math.min(1, Math.max(0, r)) * (BULK_SEND_GAP_MAX_MS - BULK_SEND_GAP_MIN_MS));
+
+/** Direkter Einstiegslink aus der Sammler-Mail (mit eigenem Code, damit Anmeldungen dem Creator zugeordnet werden). */
+export const sammlerLink = (site: string, code: string) => `${site.replace(/\/$/, "")}/?src=creator${code ? `&promo=${encodeURIComponent(code)}` : ""}`;
+
+/**
+ * Persönliche Sammler-Mail für den Batch-Versand „📧 Mails an alle noch nicht kontaktierten Creator senden“.
+ * Bewusst schlicht (kein Spam-Look): kurze Vorstellung, 60 Tage Pro + VIP-Creator-Code gratis, ein einziger Link.
+ * Platzhalter wie Vorlage E ({CREATOR_NAME}, {PROMO_CODE}, {PLATTFORM}) plus {LINK}.
+ */
+export const SAMMLER_TEMPLATE = {
+  label: "Sammler-Mail – 60 Tage Pro + VIP-Creator-Code",
+  subject: "Von Sammler zu Sammler: 60 Tage PokeSwipe Pro für dich, {CREATOR_NAME}",
+  body: `Hey {CREATOR_NAME},
+
+ich bin Kevin – selbst Pokémon-Sammler – und baue mit PokeSwipe Radar gerade eine deutsche App für uns Sammler: Live-Scanner mit aktuellen Cardmarket-Preisen, digitaler Set-Binder mit Lücken-Radar und ein Marktplatz mit Käuferschutz.
+
+Ich bin auf {PLATTFORM} über deine Videos gestolpert und finde deinen Content richtig sympathisch – deshalb schreibe ich dir persönlich.
+
+Mein Angebot an dich, ganz ohne Haken:
+• 60 Tage PokeSwipe Pro gratis für dich
+• Dein eigener VIP-Creator-Code {PROMO_CODE} – deine Community testet damit 30 Tage Pro kostenlos
+• Direkt ausprobieren: {LINK}
+
+Kein Vertrag, keine Pflicht-Posts. Wenn dir die App gefällt, freue ich mich über eine kurze Antwort – dann schalte ich dir alles sofort frei. Und wenn nicht, ist das völlig okay.
+
+Viele Grüße
+Kevin
+PokeSwipe Radar · https://pokeswipe-radar.de`,
+};
+export function fillSammlerMail(v: { name: string; code: string; site: string; platform?: string }) {
+  const link = sammlerLink(v.site, v.code);
+  const fill = (t: string) => t
+    .replace(/\{CREATOR_NAME\}/g, String(v.name || "du").replace(/^@/, ""))
+    .replace(/\{PROMO_CODE\}/g, v.code || "")
+    .replace(/\{PLATTFORM\}/g, PLATFORM_LABEL[String(v.platform || "")] || "TikTok")
+    .replace(/\{LINK\}/g, link);
+  return { subject: fill(SAMMLER_TEMPLATE.subject), body: fill(SAMMLER_TEMPLATE.body), link };
+}
 
 /** Link-in-Bio-Dienste: Seite abrufen, E-Mails + verlinkte eigene Website übernehmen – aber dort kein /impressum anhängen. */
 const LINK_HUB_HOSTS = /(^|\.)(linktr\.ee|beacons\.ai|beacons\.page|lnk\.bio|carrd\.co|bio\.link|linkin\.bio|campsite\.bio|taplink\.cc|solo\.to|msha\.ke|komi\.io|hoo\.be|allmylinks\.com|link\.me|stan\.store|ko-fi\.com|linkpop\.com)$/i;

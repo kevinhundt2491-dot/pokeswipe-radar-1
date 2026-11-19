@@ -39,6 +39,7 @@ import { registerShops } from "./shops.ts";
 import { registerNative } from "./native.ts";
 import { profileSlug } from "./community-logic.ts";
 import { sanitizeAvatarUrl, mergePrefs, sanitizePrefs } from "./profile-prefs-logic.ts";
+import { normalizeItemFields, ITEM_MAX_PHOTOS } from "./item-listing-logic.ts";
 import {
   itemUnitValue, availableVariants, normalizeVariant, normalizeCondition, parseVariant, VARIANT_LABELS, CONDITION_CODES, type VariantPrices,
 } from "./variant-logic.ts";
@@ -626,6 +627,7 @@ app.get("/api/listings", async (c) => {
   const list = rows(await db.execute(sql`
     SELECT l.id, l.card_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.created_at, l.user_id,
       l.status, l.sealed_product_id, l.print_id, l.portfolio_item_id, (l.boosted_until > now()) AS boosted, l.boosted_until,
+      l.listing_type, l.item_category, l.item_condition, l.description, l.extra_images,
       (l.buy_now AND p.stripe_account_ready) AS buy_now, l.shipping_cents, l.condition, l.variant, l.lang,
       p.display_name AS seller, p.public_profile AS seller_public,
       (SELECT b.badge FROM user_badges b WHERE b.user_id = l.user_id AND b.badge IN ('ref-vip', 'ref-community') ORDER BY (b.badge = 'ref-vip') DESC LIMIT 1) AS seller_badge,
@@ -639,7 +641,7 @@ app.get("/api/listings", async (c) => {
     JOIN profiles p ON p.user_id = l.user_id
     LEFT JOIN cards c ON c.id = l.card_id
     WHERE ${mine ? sql`l.status IN ('active','sold')` : sql`l.status = 'active' AND NOT p.banned`} ${userFilter} ${idFilter}
-      AND (${q}::text = '' OR lower(l.card_name) LIKE ${like} OR lower(l.city) LIKE ${like})
+      AND (${q}::text = '' OR lower(l.card_name) LIKE ${like} OR lower(l.city) LIKE ${like} OR (l.listing_type = 'item' AND lower(l.description) LIKE ${like}))
     ORDER BY (l.boosted_until > now()) DESC NULLS LAST, ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) DESC, l.created_at DESC
     LIMIT 80
   `));
@@ -674,11 +676,20 @@ app.post("/api/listings", auth, async (c) => {
   if (sellGate) return c.json({ error: sellGate }, 403);
   const created = [];
   for (const it of input.slice(0, room)) {
-    const cardName = str(it.card ?? it.cardName, 120);
+    const cardName = str(it.card ?? it.cardName ?? it.title, 120);
     const price = money(it.price);
     if (!cardName || price === null) continue;
+    // 📦 Pokémon-Artikel: eigene Felder, kein Katalog-Abgleich (Karten-Inserate bleiben exakt wie bisher)
+    const item = normalizeItemFields(it);
     let cardId: string | null = null, image = "", sealedProductId: number | null = null, printId: string | null = null, printLang = "";
-    if (it.printId) {
+    let extraImages: string[] = [];
+    if (item) {
+      const photos = (Array.isArray(it.imgs) ? it.imgs : [it.img]).filter((x: unknown) => typeof x === "string" && x.startsWith("data:")).slice(0, ITEM_MAX_PHOTOS);
+      const stored: string[] = [];
+      for (const ph of photos) { const u = await storeDataUrlImage(ph, user.id); if (u) stored.push(u); }
+      image = stored[0] || "";
+      extraImages = stored.slice(1);
+    } else if (it.printId) {
       // Englischer/japanischer Druck (z. B. aus dem Live-Scanner): Bild & Sprache vom Druck, Live-Preis über die deutsche Partnerkarte
       const print = await printForPortfolio(str(it.printId, 50));
       if (print) {
@@ -692,16 +703,17 @@ app.post("/api/listings", auth, async (c) => {
       const sp = await findSealed(int(it.sealedProductId, 1, 2 ** 31 - 1, 0));
       if (sp) { sealedProductId = sp.id; image = sp.image; }
     }
-    if (typeof it.img === "string" && it.img.startsWith("data:")) image = (await storeDataUrlImage(it.img, user.id)) || image;
+    if (item) { /* Fotos oben bereits gespeichert */ }
+    else if (typeof it.img === "string" && it.img.startsWith("data:")) image = (await storeDataUrlImage(it.img, user.id)) || image;
     else image = image || safeImage(it.img);
     // Sofort-Kauf mit Käuferschutz nur mit verifiziertem Stripe-Connect-Verkäuferkonto
     const buyNow = it.buyNow === true && profile.stripeAccountReady && Number(price) >= 1;
     const shippingCents = buyNow ? int(it.shippingCents, 0, MARKET_MAX_SHIPPING_CENTS, 0) : 0;
-    const condition = CONDITIONS[String(it.condition || "")] ? String(it.condition) : "";
+    const condition = item ? item.condition : CONDITIONS[String(it.condition || "")] ? String(it.condition) : "";
     // Phase 5: Sprache des Drucks für den DE/EN/JP-Filter in Händler-Shops
     const lang = printLang || (["de", "en", "ja"].includes(String(it.lang)) ? String(it.lang) : "de");
     // Phase 6: Kartenvariante und optionale Verknüpfung mit einem eigenen Portfolio-Eintrag (für strukturierte Tausche)
-    const variant = sealedProductId ? "normal" : parseVariant(it.variant);
+    const variant = sealedProductId || item ? "normal" : parseVariant(it.variant);
     if (!variant) return c.json({ error: `„${cardName}“: unbekannte Kartenvariante.` }, 400);
     let portfolioItemId: number | null = null;
     if (it.portfolioItemId !== undefined && it.portfolioItemId !== null && it.portfolioItemId !== "") {
@@ -713,6 +725,7 @@ app.post("/api/listings", auth, async (c) => {
     }
     const [row] = await db.insert(listings).values({
       userId: user.id, cardId, sealedProductId, printId, cardName, image, price, buyNow, shippingCents, condition, lang, variant, portfolioItemId,
+      ...(item ? { listingType: "item", itemCategory: item.itemCategory, itemCondition: item.itemCondition, description: item.description, extraImages } : {}),
       // Herkunft „scan“: aus dem Live-Scanner inseriert (Swipe-Radar zeigt sie als „Frisch gescannt“)
       ...(it.source === "scan" ? { source: "scan" } : {}),
       want: str(it.want, 120) || "Tausch / Gebot",

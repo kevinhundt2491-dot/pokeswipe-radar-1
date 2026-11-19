@@ -12,6 +12,7 @@ import {
   displayStatus, canSendNow, staggerSchedule, checkFetchUrl, isPlatformHost, isPrivateIp, extractContacts, type TemplateId,
   FEATURED_CREATORS, TIKTOK_NICHE_SEARCHES, TIKTOK_BUYER_SELLER_SEARCHES, CREATOR_VIDEO_URL, LAUNCH_TEMPLATE, tiktokProfileUrl, creatorPage,
   OUTREACH_BULK_DAILY_CAP, BULK_SEND_GAP_MS, parseCreatorImport, linkHubLabel, isLinkHub,
+  TIKTOK_DE_CREATORS, NO_EMAIL_TIKTOK_LABEL, BULK_SEND_GAP_MIN_MS, BULK_SEND_GAP_MAX_MS, fillSammlerMail, SAMMLER_TEMPLATE,
 } from "./creator-logic.ts";
 import { hasMx } from "./creator-email-finder.ts";
 import { PROMO_RE } from "./referral-logic.ts";
@@ -103,8 +104,9 @@ async function createLead(input: {
 async function ensureFeaturedCreators(createdBy: string) {
   const all = await db.select().from(creatorLeads);
   let changed = 0;
-  for (const f of FEATURED_CREATORS) {
-    const existing = all.find((l) => l.name.trim().toLowerCase() === f.name.toLowerCase());
+  const bare = (n: string) => n.trim().replace(/^@/, "").toLowerCase();
+  for (const f of [...FEATURED_CREATORS, ...TIKTOK_DE_CREATORS]) {
+    const existing = all.find((l) => bare(l.name) === bare(f.name));
     if (existing) {
       const u: Partial<Lead> = {};
       if (!existing.channelUrl) u.channelUrl = f.channelUrl;
@@ -129,6 +131,8 @@ async function ensureFeaturedCreators(createdBy: string) {
       const m = composeMail({ name: f.name, promoCode: p?.code || "", template, platform: f.platform });
       await db.update(creatorLeads).set({
         name: f.name, channelUrl: f.channelUrl, placeholder: false, promoId: p?.id ?? null, promoCode: p?.code || "", template,
+        // Neue TikTok-Creator: keine geschätzte Follower-Zahl aus dem Platzhalter übernehmen (nichts raten)
+        ...(TIKTOK_DE_CREATORS.includes(f) ? { followers: 0 } : {}),
         subject: m.subject, body: m.body, customBody: false, source: "featured", notes: "", updatedAt: new Date(),
       }).where(eq(creatorLeads.id, slot.id));
       all.splice(all.indexOf(slot), 1, { ...slot, name: f.name, placeholder: false });
@@ -205,7 +209,7 @@ async function resendSend(to: string, subject: string, text: string, unsubscribe
 }
 
 /** Sendet die Erst- oder Follow-up-Mail an einen Lead. Prüft alle Schutzregeln. */
-export async function sendLead(leadId: number, kind: "initial" | "followup", opts: { ignoreGap?: boolean; bulk?: boolean; template?: TemplateId } = {}) {
+export async function sendLead(leadId: number, kind: "initial" | "followup", opts: { ignoreGap?: boolean; bulk?: boolean; template?: TemplateId; sammler?: boolean } = {}): Promise<{ ok: boolean; error?: string; skip?: boolean; waitMs?: number; resendId?: string; sentAt?: Date }> {
   if (!mailConfigured()) return { ok: false, error: "E-Mail-Versand ist nicht eingerichtet (RESEND_API_KEY / MAIL_FROM)." };
   const [l] = await db.select().from(creatorLeads).where(eq(creatorLeads.id, leadId)).limit(1);
   if (!l) return { ok: false, error: "Creator nicht gefunden." };
@@ -240,7 +244,9 @@ export async function sendLead(leadId: number, kind: "initial" | "followup", opt
   const v = mailVars(l);
   // Launch-Massenversand: Vorlage (z. B. E) für alle Creator ohne eigenen Text – der Eintrag zeigt danach genau die gesendete Mail
   const override = kind === "initial" && opts.template && !l.customBody && l.template !== opts.template ? opts.template : null;
-  const cur = override ? composeMail({ ...l, template: override }) : currentMail(l);
+  // Sammler-Batch: persönliche Sammler-Mail (60 Tage Pro + VIP-Creator-Code, Link /?src=creator) – eigene Texte bleiben unangetastet
+  const sammler = kind === "initial" && opts.sammler && !l.customBody ? fillSammlerMail({ name: l.name, code: l.promoCode, site: site(), platform: l.platform }) : null;
+  const cur = sammler ? { subject: sammler.subject, body: sammler.body } : override ? composeMail({ ...l, template: override }) : currentMail(l);
   const subject = kind === "initial" ? (cur.subject || composeMail(l).subject) : fillTemplate(FOLLOWUP_TEMPLATE.subject, v);
   const text = (kind === "initial" ? (cur.body || composeMail(l).body) : fillTemplate(FOLLOWUP_TEMPLATE.body, v)) + legalFooter(site(), optoutUrl(l.optoutToken));
   try {
@@ -248,9 +254,9 @@ export async function sendLead(leadId: number, kind: "initial" | "followup", opt
     await db.insert(creatorOutreachLog).values({ leadId: l.id, kind, email: l.email, ok: true, resendId: id });
     const now = new Date();
     await db.update(creatorLeads).set(kind === "initial"
-      ? { status: "sent", sentAt: now, scheduledAt: null, lastError: "", updatedAt: now, ...(override ? { template: override, subject: cur.subject, body: cur.body } : {}) }
+      ? { status: "sent", sentAt: now, scheduledAt: null, lastError: "", updatedAt: now, ...(override ? { template: override, subject: cur.subject, body: cur.body } : {}), ...(sammler ? { subject: cur.subject, body: cur.body, customBody: true } : {}) }
       : { status: "sent", followupSentAt: now, lastError: "", updatedAt: now }).where(eq(creatorLeads.id, l.id));
-    return { ok: true };
+    return { ok: true, resendId: id, sentAt: now };
   } catch (e: any) {
     const msg = String(e?.message || e).slice(0, 200);
     await db.insert(creatorOutreachLog).values({ leadId: l.id, kind, email: l.email, ok: false, error: msg });
@@ -327,7 +333,7 @@ function tiktokTarget(l: Pick<Lead, "name" | "channelUrl" | "socials">) {
     || `https://www.tiktok.com/search/user?q=${encodeURIComponent(l.name.replace(/^@/, ""))}`;
 }
 
-function leadView(l: Lead & { redemptions?: number | null; promo_active?: boolean | null }) {
+function leadView(l: Lead & { redemptions?: number | null; promo_active?: boolean | null; last_resend_id?: string | null }) {
   const mail = composeMail(l);
   const cur = currentMail(l);
   const socials = Array.isArray(l.socials) ? (l.socials as string[]) : [];
@@ -339,7 +345,9 @@ function leadView(l: Lead & { redemptions?: number | null; promo_active?: boolea
     tier: tierOf(l.followers), tierLabel: TIER_LABEL[tierOf(l.followers)], score: responseScore(l),
     promoId: l.promoId, promoCode: l.promoCode, promoActive: l.promo_active ?? null, signups: Number(l.redemptions) || 0,
     link: l.promoCode ? creatorLink(site(), l.promoCode) : "", creatorPage: creatorPage(site()), template: l.template, subject: cur.subject, body: cur.body, customBody: l.customBody,
-    dm: mail.dm, comment: mail.comment, tiktokUrl: l.platform === "tiktok" ? tiktokTarget(l) : "", status: l.status, display: displayStatus(l), placeholder: l.placeholder, source: l.source, notes: l.notes,
+    dm: mail.dm, comment: mail.comment, tiktokUrl: l.platform === "tiktok" ? tiktokTarget(l) : "", status: l.status,
+    display: l.platform === "tiktok" && !l.email && l.status === "ready" && !l.placeholder ? { key: "no_email", label: NO_EMAIL_TIKTOK_LABEL } : displayStatus(l),
+    resendId: l.last_resend_id || "", dmOnly: l.platform === "tiktok" && !EMAIL_OK.test(l.email || ""), placeholder: l.placeholder, source: l.source, notes: l.notes,
     scheduledAt: l.scheduledAt, sentAt: l.sentAt, followupSentAt: l.followupSentAt, repliedAt: l.repliedAt, lastError: l.lastError,
     followupDueAt: l.sentAt ? new Date(new Date(l.sentAt).getTime() + FOLLOWUP_AFTER_DAYS * 86_400_000) : null,
     research: researchLinks(l),
@@ -348,7 +356,9 @@ function leadView(l: Lead & { redemptions?: number | null; promo_active?: boolea
 
 async function loadLeads() {
   const list = rows(await db.execute(sql`
-    SELECT l.*, p.redemptions, p.active AS promo_active FROM creator_leads l LEFT JOIN promo_codes p ON p.id = l.promo_id
+    SELECT l.*, p.redemptions, p.active AS promo_active,
+      (SELECT o.resend_id FROM creator_outreach_log o WHERE o.lead_id = l.id AND o.ok ORDER BY o.created_at DESC LIMIT 1) AS last_resend_id
+    FROM creator_leads l LEFT JOIN promo_codes p ON p.id = l.promo_id
     ORDER BY CASE l.status WHEN 'sending' THEN 0 WHEN 'queued' THEN 1 WHEN 'ready' THEN 2 WHEN 'sent' THEN 3 WHEN 'replied' THEN 4 WHEN 'active' THEN 5 ELSE 6 END, l.placeholder, l.id`));
   // rohe Zeilen → camelCase wie Drizzle
   return list.map((r: any) => leadView({
@@ -357,7 +367,7 @@ async function loadLeads() {
     socials: r.socials ?? [], promoId: r.promo_id, promoCode: r.promo_code, template: r.template, subject: r.subject, body: r.body, customBody: r.custom_body,
     status: r.status, placeholder: r.placeholder, source: r.source, notes: r.notes, scheduledAt: r.scheduled_at, sentAt: r.sent_at,
     followupSentAt: r.followup_sent_at, repliedAt: r.replied_at, lastError: r.last_error, optoutToken: r.optout_token, createdAt: r.created_at,
-    updatedAt: r.updated_at, redemptions: r.redemptions, promo_active: r.promo_active,
+    updatedAt: r.updated_at, redemptions: r.redemptions, promo_active: r.promo_active, last_resend_id: r.last_resend_id ?? "",
   } as any));
 }
 
@@ -460,7 +470,7 @@ export function registerCreator(app: any, hlp: Hlp) {
     return c.json({
       seeded, leads,
       applications: apps.map((a) => ({ ...a, promoCode: promos.find((p) => p.id === a.promoId)?.code || "", platformLabel: PLATFORM_LABEL[a.platform] || a.platform })),
-      sending: { configured: mailConfigured(), cap: OUTREACH_DAILY_CAP, sentToday: st.sentToday, lastSentAt: st.lastSentAt, canSend: gate.ok, reason: gate.reason, minGapMin: OUTREACH_MIN_GAP_MS / 60_000, senderName: senderName(), bulkCap: OUTREACH_BULK_DAILY_CAP, bulkGapMs: BULK_SEND_GAP_MS },
+      sending: { configured: mailConfigured(), cap: OUTREACH_DAILY_CAP, sentToday: st.sentToday, lastSentAt: st.lastSentAt, canSend: gate.ok, reason: gate.reason, minGapMin: OUTREACH_MIN_GAP_MS / 60_000, senderName: senderName(), bulkCap: OUTREACH_BULK_DAILY_CAP, bulkGapMs: BULK_SEND_GAP_MS, bulkGapMinMs: BULK_SEND_GAP_MIN_MS, bulkGapMaxMs: BULK_SEND_GAP_MAX_MS, senderOnDomain: /@pokeswipe-radar\.de>?\s*$/i.test(String(process.env.MAIL_FROM || "")), replyTo: adminEmails().length > 0 },
       templates: TEMPLATE_IDS.map((id) => ({ id, label: TEMPLATES[id].label, subject: TEMPLATES[id].subject, body: TEMPLATES[id].body, dm: TEMPLATES[id].dm, comment: TEMPLATES[id].comment || "" })),
       launchTemplate: LAUNCH_TEMPLATE, videoUrl: CREATOR_VIDEO_URL, buyerSellerSearches: TIKTOK_BUYER_SELLER_SEARCHES,
       categories: CREATOR_CATEGORIES.map((id) => ({ id, label: CATEGORY_LABEL[id] })),
@@ -552,10 +562,23 @@ export function registerCreator(app: any, hlp: Hlp) {
     const b = await body(c);
     const bulk = b.bulk === true && b.kind !== "followup";
     const template = bulk && (TEMPLATE_IDS as string[]).includes(String(b.template)) ? (b.template as TemplateId) : undefined;
-    const r = await sendLead(id, b.kind === "followup" ? "followup" : "initial", { bulk, template });
-    // Massenversand: schlanke Antwort (die Liste lädt der Browser einmal am Ende neu)
-    if (bulk) return r.ok ? c.json({ ok: true, id }) : c.json({ error: r.error, skip: Boolean((r as any).skip), stop: (r as any).waitMs !== undefined }, 409);
+    const sammler = bulk && b.sammler === true;
+    const r = await sendLead(id, b.kind === "followup" ? "followup" : "initial", { bulk, template, sammler });
+    // Massenversand: schlanke Antwort inkl. Resend-ID fürs Live-Versand-Protokoll (die Liste lädt der Browser einmal am Ende neu)
+    if (bulk) return r.ok ? c.json({ ok: true, id, resendId: r.resendId || "", sentAt: r.sentAt }) : c.json({ error: r.error, skip: Boolean(r.skip), stop: r.waitMs !== undefined }, 409);
     return r.ok ? c.json({ ok: true, lead: (await loadLeads()).find((x) => x.id === id) }) : c.json({ error: r.error }, 409);
+  });
+
+  // Versand-Protokoll: jede Resend-Antwort (Empfänger | Status | Resend-ID | Fehlermeldung), neueste zuerst
+  app.get("/api/admin/creators/outreach-log", auth, adminOnly, async (c: any) => {
+    const list = rows(await db.execute(sql`
+      SELECT o.id, o.kind, o.email, o.ok, o.error, o.resend_id, o.created_at, l.name
+      FROM creator_outreach_log o LEFT JOIN creator_leads l ON l.id = o.lead_id
+      ORDER BY o.created_at DESC LIMIT 150`));
+    return c.json({
+      log: list.map((r: any) => ({ id: r.id, kind: r.kind, email: r.email, name: r.name || "", ok: Boolean(r.ok), error: r.error || "", resendId: r.resend_id || "", at: r.created_at })),
+      sammlerTemplate: SAMMLER_TEMPLATE.label,
+    });
   });
 
   // „Ausgewählte nacheinander senden“ – gestaffelte Warteschlange (Job creator-outreach, alle 5 Min.)

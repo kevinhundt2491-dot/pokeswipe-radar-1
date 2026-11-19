@@ -132,9 +132,12 @@ function sellHtml() {
     </div>`;
   }
   const m = state.me || {};
+  // „🃏 Einzelkarten | 📦 Pokémon-Artikel“ – der Einzelkarten-Flow darunter bleibt 1:1 erhalten
+  if (state.sellType === "item") return `<div class="space-y-3">${sellTypeHtml()}${window.PS?.itemListingFormHtml?.() || ""}<div hidden><div id="ps-batch-slot"></div></div></div>`;
   const tile = (icon, label, sub, on, cls = "text-white") => `<button type="button" onclick="${on}" class="text-left bg-slate-950 border border-slate-800 hover:border-yellow-400 rounded-2xl p-3 min-h-[64px]">
     <span class="block text-sm font-black ${cls}">${icon} ${label}</span><span class="block text-[11px] text-slate-400">${sub}</span></button>`;
   return `<div class="space-y-3">
+    ${sellTypeHtml()}
     <div class="grid grid-cols-2 gap-2">
       ${tile("📷", "Scannen & inserieren", "Karte erkennen, Preis sehen, 1 Tap", "PS.openScanner()", "text-emerald-200")}
       ${tile("📒", "Aus dem Album", "Set-Ordner öffnen & „Inserieren“", "PS.collectionTab('binder')")}
@@ -144,6 +147,20 @@ function sellHtml() {
     ${listPickerHtml()}
     <div id="ps-batch-slot"></div>
   </div>`;
+}
+
+/** Umschalter im Unterreiter „Inserieren“: 🃏 Einzelkarten (bisheriger Flow) | 📦 Pokémon-Artikel (neu). */
+function sellTypeHtml() {
+  const t = state.sellType === "item" ? "item" : "card";
+  const b = (k, label, sub) => `<button type="button" onclick="PS.sellType('${k}')" aria-pressed="${t === k}" class="flex-1 text-left rounded-xl px-3 py-2 min-h-[48px] ${t === k ? "bg-yellow-400 text-slate-950" : "text-slate-200"}">
+    <span class="block text-sm font-black">${label}</span><span class="block text-[10px] ${t === k ? "text-slate-800" : "text-slate-400"}">${sub}</span></button>`;
+  return `<div class="flex gap-1 bg-slate-900 border border-slate-800 p-1 rounded-2xl" role="group" aria-label="Was möchtest du verkaufen?">
+    ${b("card", "🃏 Einzelkarten", "Scannen, Album, Doppelte")}${b("item", "📦 Pokémon-Artikel", "Displays, ETBs, Ordner, Plüsch …")}</div>`;
+}
+
+function setSellType(t) {
+  state.sellType = t === "item" ? "item" : "card";
+  applyMarketMode();
 }
 
 function mySalesHtml() {
@@ -453,6 +470,7 @@ export function initAppNav() {
 
 export const appNavApi = {
   navBack,
+  sellType: setSellType,
   marketMode: setMarketMode,
   marketTab,
   collectionTab,

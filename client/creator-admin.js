@@ -13,7 +13,11 @@ const ca = {
   finder: null, bulk: null, lastSummary: "",
   // Turbo: Auto-Finder + anschließender Launch-Massenversand in einem Klick; Showcase-Video für /creator#video
   turbo: false, video: undefined, videoUpload: null,
+  // Live-Versand-Protokoll (Empfänger | Status | Resend-ID | Fehler) des letzten Batch-Laufs + gespeicherte Historie vom Server
+  sendLog: [], history: null,
 };
+/** Zufällige Pause 500–800 ms zwischen zwei Mails (Resend-Rate-Limit). */
+const bulkGap = (s) => { const min = Number(s?.bulkGapMinMs) || 500, max = Math.max(min, Number(s?.bulkGapMaxMs) || 800); return Math.round(min + Math.random() * (max - min)); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Creator, die der Massenversand anschreibt: echte E-Mail, noch nicht angeschrieben, nicht abgemeldet/Platzhalter. */
 const bulkReady = (d) => d.leads.filter((l) => ["ready", "paused", "queued"].includes(l.status) && !l.placeholder && EMAIL_OK.test(String(l.email || "")) && !l.sentAt);
@@ -150,6 +154,7 @@ function bigActionsHtml(d) {
     ? (f ? `⏳ Schritt 1/2: E-Mails suchen … ${Number(f.done)} geprüft · ${Number(f.found)} gefunden` : b ? `⏳ Schritt 2/2: Launch-Mail … ${Number(b.sent)}/${Number(b.total)} versendet` : "⏳ Starte …")
     : `🔍 E-Mails automatisch suchen &amp; alle offenen Creator per Resend anschreiben <span class="font-bold text-xs opacity-80">(${open} ohne E-Mail · ${ready} bereit)</span>`;
   return `<div class="space-y-2">
+    ${sammlerBatchHtml(d, ready, busy)}
     <button type="button" onclick="PS.caTurbo()" ${busy || (!open && !ready) || !d.sending.configured ? "disabled" : ""} class="${big} bg-gradient-to-r from-fuchsia-500 via-pink-500 to-yellow-400 text-slate-950 ring-4 ring-fuchsia-300/60">${turboLabel}
       <span class="block text-[10px] font-bold opacity-80 mt-0.5">${d.sending.configured ? "1. Auto-Finder (Impressum · Linktree · Beacons · Website · MX-Prüfung) → 2. Launch-Mail (Vorlage E) inkl. Video-Link pokeswipe-radar.de/creator#video &amp; eigenem Code an alle noch nicht angeschriebenen Creator mit gültiger E-Mail" : "Resend nicht eingerichtet (RESEND_API_KEY / MAIL_FROM)"}</span></button>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -170,6 +175,48 @@ function bigActionsHtml(d) {
       <p class="text-[10px] text-slate-400 mt-1">Eine Zeile pro Creator: „Name - email@domain.de“ (auch „Name: …“, „Name &lt;…&gt;“, CSV) oder nur Adressen – dann wird der Name aus der Adresse abgeleitet. Jede Adresse wird per MX-Eintrag geprüft, Dubletten und abgemeldete Adressen werden übersprungen.</p>
     </details>
   </div>`;
+}
+
+// „📧 Mails an alle noch nicht kontaktierten Creator senden“ + „+ Neuen Creator & E-Mail hinzufügen“ + Live-Versand-Protokoll
+function sammlerBatchHtml(d, ready, busy) {
+  const s = d.sending, b = ca.bulk;
+  const withMail = d.leads.filter((l) => !l.placeholder && EMAIL_OK.test(String(l.email || ""))).length;
+  const dmOnly = d.leads.filter((l) => !l.placeholder && l.dmOnly).length;
+  const label = b && b.sammler
+    ? `⏳ Sende … ${Number(b.sent)}/${Number(b.total)} versendet${b.failed ? ` · ${Number(b.failed)} Fehler` : ""}${b.skipped ? ` · ${Number(b.skipped)} übersprungen` : ""}`
+    : `📧 Mails an alle noch nicht kontaktierten Creator senden <span class="font-bold text-xs opacity-80">(${ready} offen)</span>`;
+  const cfg = s.configured
+    ? `✓ Resend aktiv${s.senderOnDomain ? " · Absender @pokeswipe-radar.de" : " · ⚠ Absender nicht auf pokeswipe-radar.de"}${s.replyTo ? " · Antwort-Adresse gesetzt" : " · ⚠ keine Antwort-Adresse (ADMIN_EMAILS)"}`
+    : "✗ Resend nicht eingerichtet (RESEND_API_KEY / MAIL_FROM)";
+  return `<div class="bg-gradient-to-br from-emerald-500/15 to-sky-500/10 border border-emerald-400/40 rounded-2xl p-3 space-y-2 text-xs">
+    <button type="button" onclick="PS.caSammlerBatch()" ${busy || !ready || !s.configured ? "disabled" : ""} class="w-full text-left font-black text-sm sm:text-base px-4 py-3.5 rounded-2xl shadow-lg disabled:opacity-60 disabled:cursor-not-allowed bg-gradient-to-r from-emerald-300 to-sky-300 text-slate-950 ring-4 ring-emerald-300/60">${label}
+      <span class="block text-[10px] font-bold opacity-80 mt-0.5">Persönliche Sammler-Mail: 60 Tage Pro + eigener VIP-Creator-Code gratis · Link pokeswipe-radar.de/?src=creator · jeder Creator nur einmal · 500–800 ms Pause</span></button>
+    <p class="text-[10px] ${s.configured ? "text-emerald-200" : "text-rose-300"}">${esc(cfg)} · ${withMail} Creator mit E-Mail · ${dmOnly} nur TikTok-DM (keine E-Mail)</p>
+    <div class="grid grid-cols-2 sm:grid-cols-6 gap-1.5">
+      <input id="ca-q-name" placeholder="Name / @handle *" class="${inputCls} col-span-2 sm:col-span-2" onkeydown="if(event.key==='Enter')PS.caQuickAdd()" />
+      <input id="ca-q-email" type="email" placeholder="E-Mail (optional)" class="${inputCls} col-span-2 sm:col-span-2" onkeydown="if(event.key==='Enter')PS.caQuickAdd()" />
+      <select id="ca-q-platform" class="${inputCls}">${d.platforms.map((p) => `<option value="${esc(p.id)}" ${p.id === "tiktok" ? "selected" : ""}>${esc(p.label)}</option>`).join("")}</select>
+      ${btn("+ Neuen Creator & E-Mail hinzufügen", "PS.caQuickAdd()", "bg-emerald-500 text-slate-950 text-[11px]")}
+    </div>
+    ${sendLogHtml()}
+  </div>`;
+}
+
+function sendLogHtml() {
+  const live = ca.sendLog;
+  const hist = ca.history;
+  const rowsOf = (list) => list.map((r) => `<tr class="border-t border-slate-800">
+      <td class="py-1 pr-2 align-top"><span class="text-white font-bold">${esc(r.name || "")}</span><br><span class="text-slate-400 break-all">${esc(r.email || "")}</span></td>
+      <td class="py-1 pr-2 align-top whitespace-nowrap">${r.ok ? `<span class="text-emerald-300 font-black">✅ Gesendet</span><br><span class="text-slate-400">${esc(fmt(r.at))}</span>` : r.skip ? '<span class="text-slate-300 font-bold">⏭ übersprungen</span>' : r.pending ? '<span class="text-violet-300 font-bold">⏳ sendet …</span>' : '<span class="text-rose-300 font-black">❌ Fehler</span>'}</td>
+      <td class="py-1 pr-2 align-top font-mono text-[10px] text-slate-300 break-all">${esc(r.resendId || "–")}</td>
+      <td class="py-1 align-top text-[10px] ${r.ok ? "text-slate-500" : "text-rose-200"}">${esc(r.error || "")}</td></tr>`).join("");
+  const table = (list) => `<div class="overflow-x-auto"><table class="w-full text-[11px] text-left"><thead><tr class="text-[10px] uppercase text-slate-400"><th class="pr-2">Empfänger</th><th class="pr-2">Status</th><th class="pr-2">Resend-ID</th><th>Fehlermeldung</th></tr></thead><tbody>${rowsOf(list)}</tbody></table></div>`;
+  return `<details class="bg-slate-950/70 border border-slate-800 rounded-xl p-2" ${live.length ? "open" : ""}>
+    <summary class="cursor-pointer font-black text-white">📜 Live-Versand-Protokoll${live.length ? ` (${live.length})` : ""}</summary>
+    ${live.length ? table(live) : '<p class="text-[10px] text-slate-400 mt-1">Noch kein Versand in dieser Sitzung.</p>'}
+    <div class="mt-2">${btn(hist ? "↻ Gespeichertes Protokoll neu laden" : "📂 Gespeichertes Protokoll laden (alle bisherigen Mails)", "PS.caLoadLog()", "bg-slate-800 text-white text-[11px]")}</div>
+    ${hist ? (hist.length ? table(hist) : '<p class="text-[10px] text-slate-400 mt-1">Bisher keine Mails versendet.</p>') : ""}
+  </details>`;
 }
 
 // Schnellsuche: aktive deutsche TikTok-Creator (1k–15k) + 1-Klick-Anlage mit optionalem Linktree/Bio-Link
@@ -208,13 +255,15 @@ function leadCard(l, d) {
           <strong class="text-white text-sm">${esc(l.name)}</strong>
           <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-300">${esc(l.platformLabel)}</span>
           <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-300">${esc(l.categoryLabel)}</span>
-          <span class="text-[10px] font-black px-1.5 py-0.5 rounded-full ${STATUS_CLS[l.display.key] || STATUS_CLS.ready}">${esc(l.display.label)}${l.status === "sent" && l.sentAt ? ` am ${esc(fmtDay(l.sentAt))}` : ""}${l.status === "queued" && l.scheduledAt ? ` · ${esc(fmt(l.scheduledAt))}` : ""}</span>
+          <span class="text-[10px] font-black px-1.5 py-0.5 rounded-full ${STATUS_CLS[l.display.key] || STATUS_CLS.ready}">${esc(l.display.label)}${l.status === "sent" && l.sentAt ? ` am ${esc(fmt(l.sentAt))}` : ""}${l.status === "queued" && l.scheduledAt ? ` · ${esc(fmt(l.scheduledAt))}` : ""}</span>
         </div>
         <div class="flex items-center gap-2 mt-1"><span class="text-[10px] text-slate-400">${esc(l.tierLabel)}${l.followers ? ` · ${Number(l.followers).toLocaleString("de-DE")} Follower` : ""}</span>
           <span class="inline-flex items-center gap-1 text-[10px] text-slate-300" title="Antwort-Wahrscheinlichkeit"><span class="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden inline-block"><span class="block h-full ${scoreCls}" style="width:${Number(l.score)}%"></span></span>${Number(l.score)} %</span></div>
         ${l.promoCode ? `<p class="mt-1"><span class="font-mono font-black text-yellow-300">${esc(l.promoCode)}</span> <span class="text-slate-400">· ${Number(l.signups) || 0} Anmeldungen über den Code</span>${l.promoActive === false ? ' <span class="text-amber-300">(Code inaktiv)</span>' : ""} <button type="button" onclick="PS.caCopy(${jsArg(l.link)}, 'Link kopiert')" class="text-[10px] underline text-slate-300">Link kopieren</button></p>` : `<p class="mt-1 text-slate-500">Promo-Code entsteht, sobald der Platzhalter einen echten Namen bekommt.</p>`}
         ${l.email && l.emailSource ? `<p class="text-[10px] mt-0.5 ${l.emailVerifiedAt ? "text-emerald-300" : "text-amber-300"}">${l.emailVerifiedAt ? "✓" : "⚠"} ${esc(l.emailSource)}</p>` : ""}
         ${!l.email && l.emailSearchNote ? `<p class="text-[10px] text-slate-400 mt-0.5">🔍 Auto-Finder${l.emailSearchedAt ? ` (${esc(fmt(l.emailSearchedAt))})` : ""}: ${esc(l.emailSearchNote)}</p>` : ""}
+        ${l.sentAt && l.resendId ? `<p class="text-[10px] text-emerald-300 mt-0.5">✅ Gesendet · ${esc(fmt(l.sentAt))} · Resend-ID <span class="font-mono">${esc(l.resendId)}</span></p>` : ""}
+        ${l.dmOnly && !l.placeholder ? '<p class="text-[10px] text-cyan-300 mt-0.5">💬 Nur TikTok-DM (keine E-Mail)</p>' : ""}
         ${l.lastError ? `<p class="text-rose-300 text-[10px]">⚠ ${esc(l.lastError)}</p>` : ""}
       </div>
       <button type="button" onclick="PS.caToggle(${Number(l.id)})" class="text-slate-300 font-bold text-[11px] shrink-0">${open ? "▲ zu" : "▼ öffnen"}</button>
@@ -438,30 +487,35 @@ async function runAutoFind() {
 
 /** Massenversand: nacheinander (~500 ms Abstand) an alle bereiten Creator – der Server sperrt jeden Eintrag atomar (nie doppelt).
  *  `template` (z. B. „E“) = Launch-Vorlage für alle Creator ohne eigenen Text; `confirmed` = Rückfrage schon erfolgt (Turbo). */
-async function runBulkSend({ template = "", confirmed = false } = {}) {
+async function runBulkSend({ template = "", confirmed = false, sammler = false } = {}) {
   if (ca.bulk || ca.finder) return;
   const d = ca.data;
   if (!d?.sending?.configured) return toast("Resend nicht eingerichtet", "RESEND_API_KEY / MAIL_FROM fehlen.");
   const list = bulkReady(d);
   if (!list.length) return toast("Massenversand", "Keine bereiten Creator mit E-Mail – zuerst „🔍 E-Mails automatisch finden“ oder Liste einfügen.");
-  if (!confirmed && !confirm(`${list.length} personalisierte Kooperations-Mails jetzt über Resend senden?\n\nJeder Creator bekommt seinen eigenen 30-Tage-Code und den Link pokeswipe-radar.de/creator. Bereits angeschriebene Creator werden nie erneut angeschrieben.`)) return;
-  const gap = Number(d.sending.bulkGapMs) || 500;
-  ca.bulk = { total: list.length, sent: 0, failed: 0, skipped: 0, errors: [] };
-  ca.lastSummary = ""; render();
+  if (sammler && !confirmed && !confirm(`${list.length} persönliche Sammler-Mails jetzt über Resend senden?\n\nInhalt: kurze Vorstellung von PokeSwipe Radar, 60 Tage Pro + eigener VIP-Creator-Code gratis, Link pokeswipe-radar.de/?src=creator.\nJeder Creator wird nur einmal angeschrieben – bereits kontaktierte Creator werden übersprungen.`)) return;
+  if (!sammler && !confirmed && !confirm(`${list.length} personalisierte Kooperations-Mails jetzt über Resend senden?\n\nJeder Creator bekommt seinen eigenen 30-Tage-Code und den Link pokeswipe-radar.de/creator. Bereits angeschriebene Creator werden nie erneut angeschrieben.`)) return;
+  ca.bulk = { total: list.length, sent: 0, failed: 0, skipped: 0, errors: [], sammler };
+  ca.lastSummary = ""; ca.sendLog = []; render();
   try {
     for (const l of list) {
       let tries = 0;
+      const entry = { name: l.name, email: l.email, ok: false, pending: true, resendId: "", error: "", at: null };
+      ca.sendLog.unshift(entry); render();
       while (true) {
         try {
-          await api(`/api/admin/creators/${l.id}/send`, { method: "POST", body: { bulk: true, ...(template ? { template } : {}) } });
+          const r = await api(`/api/admin/creators/${l.id}/send`, { method: "POST", body: { bulk: true, ...(template ? { template } : {}), ...(sammler ? { sammler: true } : {}) } });
           ca.bulk.sent++;
+          Object.assign(entry, { ok: true, pending: false, resendId: r?.resendId || "", at: r?.sentAt || new Date().toISOString() });
           const x = leadById(l.id);
-          if (x) { x.status = "sent"; x.sentAt = new Date().toISOString(); x.display = { key: "sent", label: "E-Mail gesendet" }; }
+          if (x) { x.status = "sent"; x.sentAt = entry.at; x.resendId = entry.resendId; x.display = { key: "sent", label: "E-Mail gesendet" }; }
           break;
         } catch (e) {
           if ((e.status === 429 || e.transient) && tries++ < 3) { await sleep(6000); continue; }
-          if (e.status === 401 || e.status === 403) throw e;
-          if (e.data?.skip || /bereits gesendet|schon gesendet|abgemeldet/i.test(e.message)) ca.bulk.skipped++;
+          if (e.status === 401 || e.status === 403) { Object.assign(entry, { pending: false, error: e.message }); throw e; }
+          const skip = Boolean(e.data?.skip || /bereits gesendet|schon gesendet|abgemeldet/i.test(e.message));
+          Object.assign(entry, { pending: false, skip, error: e.message });
+          if (skip) ca.bulk.skipped++;
           else { ca.bulk.failed++; ca.bulk.errors.push(`${l.name}: ${e.message}`); }
           if (e.data?.stop) { ca.bulk.errors.push(`⛔ ${e.message}`); ca.bulk.stopped = true; }
           break;
@@ -469,7 +523,7 @@ async function runBulkSend({ template = "", confirmed = false } = {}) {
       }
       render();
       if (ca.bulk.stopped) break;
-      await sleep(gap);
+      await sleep(bulkGap(d.sending));
     }
     const b = ca.bulk;
     ca.lastSummary = `${b.sent ? `✅ ${b.sent} Kooperations-Mail${b.sent === 1 ? "" : "s"} erfolgreich über Resend versendet` : "⚠️ Keine Mail versendet"}${b.skipped ? ` · ${b.skipped} übersprungen` : ""}${b.failed ? ` · ${b.failed} fehlgeschlagen` : ""}${b.errors.length ? `\n${b.errors.slice(0, 8).join("\n")}` : ""}`;
@@ -503,6 +557,27 @@ export const creatorAdminApi = {
   openCreatorAdmin,
   caAutoFind: () => runAutoFind(),
   caBulkSend: () => runBulkSend(),
+  caSammlerBatch: () => runBulkSend({ sammler: true }),
+  async caLoadLog() {
+    try { const r = await api("/api/admin/creators/outreach-log"); ca.history = r.log || []; render(); }
+    catch (e) { handleError(e); }
+  },
+  /** „+ Neuen Creator & E-Mail hinzufügen“ – Name/@handle + optionale E-Mail, Promo-Code entsteht automatisch. */
+  async caQuickAdd() {
+    const name = $("ca-q-name")?.value.trim() || "";
+    const email = $("ca-q-email")?.value.trim() || "";
+    const platform = $("ca-q-platform")?.value || "tiktok";
+    if (name.length < 2) return toast("Neuer Creator", "Bitte Namen oder @handle eingeben.");
+    if (email && !EMAIL_OK.test(email)) return toast("Neuer Creator", "Diese E-Mail-Adresse ist ungültig.");
+    const dup = ca.data?.leads.find((l) => l.name.replace(/^@/, "").toLowerCase() === name.replace(/^@/, "").toLowerCase() || (email && String(l.email).toLowerCase() === email.toLowerCase()));
+    if (dup) return toast("Schon vorhanden", `${dup.name} steht bereits in der Liste.`);
+    try {
+      const r = await api("/api/admin/creators", { method: "POST", body: { name, email, platform, category: platform === "discord" ? "community" : "micro", quick: platform === "tiktok" } });
+      if (r.lead) ca.data.leads.unshift(r.lead);
+      toast("✅ Creator angelegt", `${r.lead?.name || name}${email ? ` · ${email}` : " · Nur DM (keine E-Mail)"}${r.lead?.promoCode ? ` · Code ${r.lead.promoCode}` : ""}`);
+      render();
+    } catch (e) { handleError(e); }
+  },
   caTurbo: () => runTurbo(),
   /** ⚡ DM in die Zwischenablage, Status „DM gesendet“ und TikTok-Profil im neuen Tab – alles in einem Klick. */
   caTurboDm(id) {
