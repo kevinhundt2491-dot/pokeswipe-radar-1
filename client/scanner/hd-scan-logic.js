@@ -453,7 +453,9 @@ const overlap = (a, b) => a.some((k) => b.includes(k));
  *  • nextPage(): Knopf „Nächste Seite“ – alles leeren, ohne „gleiche Seite“-Schutz.
  */
 export function createSlotGate(opts = {}) {
-  const cfg = { MIN_MATCH: SWEEP.MIN_MATCH, MARGIN_MIN: SWEEP.MARGIN_MIN, ...HD, ...opts };
+  // Ordner-Seite: realistische Handy-Schwelle 66 % (wie der Direkt-Treffer im Stapel-Modus) + klarer Abstand, je Fach
+  // zwei Auswertungen – 9 Fächer auf einmal, die Fach-Lage stammt aus dem Raster und ist ungenauer als eine Einzelkarte
+  const cfg = { MIN_MATCH: SWEEP.DIRECT_MATCH, MARGIN_MIN: SWEEP.MARGIN_MIN, ...HD, ...opts };
   let pending = new Map(); // slot → { keys, n }
   let locks = new Map(); // slot → keys
   let held = new Map(); // slot → keys (wie vor dem Umblättern – still gesperrt, bis die Seite als neu gilt)

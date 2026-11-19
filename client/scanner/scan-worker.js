@@ -266,11 +266,7 @@ self.onmessage = async (e) => {
     const langs = Array.isArray(msg.langs) && msg.langs.length ? msg.langs : ["de"];
     langsOrder = langs;
     const [r, textCount] = await Promise.all([loadIndex(langs), loadTextIndex(langs)]);
-    // Stufe 1 des Live-Scanners: Kartentyp je Index-Zeile (aus dem Text-Index; 255 = unbekannt → immer mit durchsucht)
-    const cls = new Uint8Array(idx.count).fill(255);
-    if (textIdx) for (let i = 0; i < idx.count; i++) { const t = textIdx.byKey.get(idx.keys[i]); if (t !== undefined) cls[i] = textIdx.rows[t].cls ?? 255; }
-    idx.cls = cls;
-    idxVersion++;
+    // Kein Typ-/Rahmenfarben-Vorfilter mehr: der Live-Scanner durchsucht immer den kompletten Katalog
     postMessage({ type: "ready", ...r, textCount, offscreen: sweep.offscreen, ocr: glyphs.length ? (textDetector ? "text-detector" : "templates") : textDetector ? "text-detector" : "none" });
     return;
   }

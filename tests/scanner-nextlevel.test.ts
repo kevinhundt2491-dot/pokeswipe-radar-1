@@ -19,22 +19,19 @@ test("Multi-Card-Fix: nach Karte #1 wird Karte #2, #3, #4 sofort erkannt (0 ms W
   const gate = createSweepGate();
   let t = 1000;
   const push = (dets: any[], motion = 0.02) => gate.push({ dets, found: true, motion }, t);
-  push([det(A)]); t += 40;
-  assert.equal(push([det(A)]).hits.length, 1, "Karte #1");
-  // Karte #1 bleibt liegen, Karte #2 kommt dazu → sofort (nach eigenem 2-Frame-Konsens), keine globale Wartezeit
-  t += 40; push([det(A), det(B, 0.9, { quad: quadAt(0.2, 0.3) })]);
+  assert.equal(push([det(A)]).hits.length, 1, "Karte #1 im ersten Bild");
+  // Karte #1 bleibt liegen, Karte #2 kommt dazu → sofort, keine globale Wartezeit
   t += 40;
   const r2 = push([det(A), det(B, 0.9, { quad: quadAt(0.2, 0.3) })]);
   assert.deepEqual(r2.hits, [B], "Karte #2 ohne Wartezeit");
   assert.deepEqual(r2.locked, [A], "Karte #1 weiter gesperrt (liegt noch im Bild)");
-  // Karte #3 und #4: neue Karten → je 2 Bilder
-  t += 40; push([det(C)]); t += 40; assert.deepEqual(push([det(C)]).hits, [C], "Karte #3");
+  t += 40; assert.deepEqual(push([det(C)]).hits, [C], "Karte #3");
   const D = ["card:me01-010"];
-  t += 40; push([det(D)]); t += 40; assert.deepEqual(push([det(D)]).hits, [D], "Karte #4");
+  t += 40; assert.deepEqual(push([det(D)]).hits, [D], "Karte #4");
   // Dieselbe Karte bleibt im Bild → kein zweiter Treffer, egal wie lange
   for (let i = 0; i < 100; i++) { t += 40; assert.equal(push([det(D)]).hits.length, 0); }
   // Dieselbe Karte an deutlich anderer Stelle = zweites Exemplar → zählt eigenständig
-  t += 40; push([det(D), det(D, 0.9, { quad: quadAt(0.85, 0.2, 0.2) })]); t += 40;
+  t += 40;
   assert.equal(push([det(D), det(D, 0.9, { quad: quadAt(0.85, 0.2, 0.2) })]).hits.length, 1, "zweites Exemplar daneben");
 });
 
@@ -63,8 +60,7 @@ test("Sweep-Modus: dieselbe Karte an deutlich anderer Position = zweites Exempla
   // Modus umschalten → Turbo-Schwellen gelten wieder
   gate.setMode("turbo");
   assert.equal(gate.mode, "turbo");
-  assert.equal(gate.push({ dets: [det(C, 0.9)], found: true, motion: 0 }, 9000).hits.length, 0);
-  assert.equal(gate.push({ dets: [det(C, 0.9)], found: true, motion: 0 }, 9040).hits.length, 1);
+  assert.equal(gate.push({ dets: [det(C, 0.9)], found: true, motion: 0 }, 9000).hits.length, 1, "Turbo: erstes klares Bild");
 });
 
 test("Konfidenz-Skala: 99 % = klarer Treffer mit Abstand, 100 % = Nummer bestätigt, falsche Nummer ≤ 60 %, knapper Abstand ≤ 85 %", () => {
@@ -86,11 +82,11 @@ test("Live-Preisschild: Set-Kürzel + Nummer, Status-Badges, Tages-Zähler und G
   assert.equal(tagCode({ setCode: "", number: "" }, "card:sv08-238"), "SV08");
   assert.equal(tagCode({ number: "TG12" }, "print:en:swsh12.5-TG12"), "SWSH12.5 TG12");
   const a = tagLines({ price: 14.9, filed: true, ownedBefore: false });
-  assert.equal(a.status, "✅ Im Binder gespeichert");
+  assert.equal(a.status, "✅ Im Set-Binder");
   assert.equal(a.flag, "🔥 Hit > 10 €");
   assert.equal(a.hot, true);
   const b = tagLines({ price: 2.5, filed: false, saving: true, ownedBefore: false });
-  assert.equal(b.status, "📒 Speichere im Binder …");
+  assert.equal(b.status, "📒 Sortiere in den Set-Binder …");
   assert.equal(b.flag, "⚡ Fehlt dir noch!");
   assert.equal(tagLines({ price: 2.5, filed: true, ownedBefore: true, qty: 2 }).flag, "×2 · Doppelte");
   assert.equal(tagLines({ price: 2.5, filed: true, ownedBefore: true, qty: 1 }).flag, "");
@@ -121,7 +117,7 @@ test("Scanner-Quelltext: kein Zielrahmen, Modus-Umschalter, Session-Dock mit +1,
   assert.ok(!/AUTO_NEXT_MS|ps-sw-auto|animation-duration/.test(ui), "keine ablaufende Aktionsleiste mehr – das Dock bleibt stehen");
   assert.match(ui, /🏷️ Inserieren/); assert.match(ui, /⚡ Schnell-Inserieren/);
   assert.match(ui, /strategy: "quick"/, "Schnell-Inserieren = Deal-Preis unter Cardmarket");
-  assert.match(ui, /⚡ Stapel \/ Einzelkarte/); assert.match(ui, /📒 Ordner-Seite/); assert.match(ui, /✨ Auto/);
+  assert.match(ui, /⚡ Stapel \/ Einzelkarte/); assert.match(ui, /📒 Ordner-Seite/); assert.ok(!/✨ Auto/.test(ui), "keine Modus-Automatik mehr");
   assert.match(ui, /if \(sw\.prefs\.autoFile\) autoFile\(r\.uid, key\)/, "jeder Treffer wird sofort ohne Klick gespeichert (abschaltbar)");
   assert.match(ui, /dailyLabel\(sw\.daily\)/);
   assert.match(ui, /navigator\.vibrate\(35\)/); assert.match(ui, /createOscillator/);

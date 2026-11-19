@@ -20,12 +20,19 @@ export const SWEEP = {
   FRAME_W: 480,
   /** Höchstens ~30 Bilder/s an den Worker */
   MIN_FRAME_MS: 33,
-  /** Mindest-Übereinstimmung für einen Treffer (≥ 85 % UND klarer Abstand zum zweitbesten Motiv, siehe MARGIN_MIN) */
-  MIN_MATCH: 0.85,
-  /** Ab dieser Übereinstimmung wird die Karte im Live-Bild dezent markiert (noch kein Treffer) */
-  TRACK_MATCH: 0.72,
-  /** Aufeinanderfolgende Bilder mit derselben Karte, bis ausgelöst wird */
-  CONSENSUS_FRAMES: 2,
+  /**
+   * Realistische Smartphone-Schwellen (echte Kamera, Hülle, Raumlicht): Treffer schon im ERSTEN klaren Bild ab ≥ 60 %
+   * Übereinstimmung, wenn der Abstand zum zweitbesten Motiv ≥ 5 % (MARGIN_PCT) beträgt (siehe quickOk).
+   * DIRECT_MATCH (66 %): Schwelle je Fach im Ordner-Modus und „sicher genug, weitere Ausschnitte sparen“ im Stapel-Modus.
+   */
+  MIN_MATCH: 0.6,
+  DIRECT_MATCH: 0.66,
+  /** Abstand zum zweitbesten Motiv als Anteil der Ähnlichkeit (margin / HASH_SCALE) */
+  MARGIN_PCT: 0.05,
+  /** Ab dieser Übereinstimmung gilt eine Karte als „im Bild gesehen“ (hält die Sperre, Etikett folgt der Karte) */
+  TRACK_MATCH: 0.55,
+  /** Bilder mit derselben Karte, bis ausgelöst wird – 1 = sofort im ersten klaren Bild (kein Stillhalten nötig) */
+  CONSENSUS_FRAMES: 1,
   /** Zeitfenster zwischen den beiden Bildern (langsame Geräte: bis 2,2 Bildzeiten, höchstens CONSENSUS_MAX_MS) */
   CONSENSUS_MS: 150,
   CONSENSUS_MAX_MS: 400,
@@ -41,7 +48,10 @@ export const SWEEP = {
   CENTER_RESET: 0.2,
   /** „Dieselbe Stelle“ für die Aufdeck-Erkennung (Mittelpunkt-Abstand, relativ zum Bild) */
   STATIC_POS: 0.04,
-  /** Ruhiges Bild: so viele Bilder ohne Sichtkontakt, bis die Sperre eines Exemplars fällt */
+  /**
+   * Nach Bewegung im Bild: so viele Bilder ohne Sichtkontakt, bis die Sperre eines Exemplars fällt. Bei völlig ruhigem
+   * Bild fällt die Sperre NIE (dieselbe Karte liegt still vor der Kamera → wird nicht doppelt gezählt).
+   */
   LOCK_MISS_FRAMES: 3,
   /** Dieselbe Karte an einer deutlich anderen Stelle (Mittelpunkt-Abstand, relativ) = zweites Exemplar */
   SAME_POS: 0.28,
@@ -369,6 +379,19 @@ export function confidencePercent(d) {
   return Math.max(0, Math.min(100, pct));
 }
 
+/**
+ * Schnell-Treffer (Stapel / Einzelkarte) schon im ERSTEN Bild: ≥ MIN_MATCH (60 %) UND Abstand zum zweitbesten Motiv
+ * ≥ MARGIN_PCT (5 %). margin = Hash-Abstand (Punkte) zum nächsten anderen Motiv; fehlt er → klar.
+ * Bewusst KEIN Treffer allein über die Höhe der Übereinstimmung: Gemessen an 20.000 Katalog-Fingerabdrücken erreicht ein
+ * leeres Bild (Tisch, Hand, Hintergrund) in ~15 % der Bilder schon ≥ 66 % – aber nie mit 5 % Abstand. Der Abstand ist das
+ * Merkmal, das eine echte Karte vom Bildrauschen trennt (sonst landen Zufallskarten automatisch im Set-Binder).
+ */
+export function quickOk(d, cfg = SWEEP) {
+  const match = Number(d?.match) || 0;
+  const margin = Number.isFinite(d?.margin) ? d.margin : 99;
+  return match >= cfg.MIN_MATCH && margin / cfg.HASH_SCALE >= cfg.MARGIN_PCT;
+}
+
 /** Strikte Prüfung für den Binder- & Tisch-Sweep: 99–100 % Konfidenz, keine widersprüchliche Nummer. */
 export const strictOk = (d) => confidencePercent(d) >= SWEEP.STRICT_CONF && d?.numOk !== false;
 
@@ -389,7 +412,7 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 /**
  * Entscheidet je Live-Bild, ob eine erkannte Karte als Scan zählt (Modus „Stapel / Einzelkarte“).
  * push({ dets: [{ keys, match, margin?, numOk?, quad?, carried? }], found, motion, center? }, now, avgFrameMs) → { hits: [keys[]], locked: [keys[]], view: dets[] }
- *  • Treffer, wenn CONSENSUS_FRAMES aufeinanderfolgende Bilder (je innerhalb windowMs) dieselbe Karte mit ≥ MIN_MATCH zeigen
+ *  • Treffer im ersten klaren Bild (CONSENSUS_FRAMES = 1): ≥ 60 % mit ≥ 5 % Abstand zum zweitbesten Motiv (quickOk)
  *  • KEIN Zeit-Cooldown. Gesperrt ist nur das EXEMPLAR, das gerade im Bild liegt: Die Sperre folgt der Karte (ID + Position)
  *    von Bild zu Bild und fällt
  *      – sofort, wenn das Exemplar bei Bewegung im Bildzentrum (center ≥ CENTER_MOVE) nicht mehr zu sehen ist (weggezogen),
@@ -405,20 +428,21 @@ export function createSweepGate(opts = {}) {
   let cfg = { mode: "turbo", ...SWEEP, ...opts };
   let prev = []; // qualifizierte Karten der letzten Bilder: [{ keys, at, n, center }]
   let locks = []; // [{ keys, center, miss }]
-  let gone = 0;
+  let gone = 0, goneMoved = false;
   let lastHitAt = 0;
   const strict = () => cfg.mode === "sweep";
   const near = (a, b, max = cfg.SAME_POS) => !a || !b || dist(a, b) < max;
-  const qualifies = (d) => Array.isArray(d.keys) && d.keys.length && Number(d.match) >= (strict() ? cfg.STRICT_MATCH : cfg.MIN_MATCH) && (!strict() || strictOk(d));
+  const qualifies = (d) => Array.isArray(d.keys) && d.keys.length && (strict() ? Number(d.match) >= cfg.STRICT_MATCH && strictOk(d) : quickOk(d, cfg));
   return {
     push(frame, now = Date.now(), avgFrameMs = 0) {
       const dets = Array.isArray(frame?.dets) ? frame.dets : [];
       const motion = Number(frame?.motion);
       const hasPrev = Number.isFinite(motion) && motion < 1;
       const center = Number.isFinite(Number(frame?.center)) && frame?.center !== undefined && frame?.center !== null ? Number(frame.center) : hasPrev ? motion : 0;
-      if (frame?.found === false && !dets.some((d) => d.match >= cfg.TRACK_MATCH)) gone++; else gone = 0;
-      if (gone >= cfg.GONE_RESET_FRAMES) locks = [];
       const moving = hasPrev && (center >= cfg.CENTER_MOVE || motion >= cfg.MOTION_RESET);
+      if (frame?.found === false && !dets.some((d) => d.match >= cfg.TRACK_MATCH)) { gone++; if (moving) goneMoved = true; } else { gone = 0; goneMoved = false; }
+      // Karte weg UND es hat sich etwas bewegt → alle Sperren frei (ruhiges Bild ohne Treffer hebt nichts auf)
+      if (gone >= cfg.GONE_RESET_FRAMES && goneMoved) locks = [];
       const swapped = hasPrev && center >= cfg.CENTER_RESET;
       // Sperren den Exemplaren im Bild zuordnen (jede Erkennung höchstens einer Sperre) und fortschreiben
       const visible = dets.filter((d) => Array.isArray(d.keys) && d.keys.length && Number(d.match) >= cfg.TRACK_MATCH);
@@ -431,10 +455,11 @@ export function createSweepGate(opts = {}) {
           const dd = c && l.center ? dist(c, l.center) : 0;
           if (dd < cfg.SAME_POS && dd < hitD) { hit = d; hitD = dd; }
         }
-        if (!hit) { l.miss++; return !(moving || l.miss >= cfg.LOCK_MISS_FRAMES); }
+        // Nicht mehr zu sehen: bei Bewegung sofort frei (weggezogen); ruhiges Bild hält die Sperre (kein Doppel-Zählen)
+        if (!hit) { l.miss++; if (moving) l.moved = true; return !(moving || (l.moved && l.miss >= cfg.LOCK_MISS_FRAMES)); }
         // An derselben Stelle, aber das Zentrum hat sich stark geändert → Karte wurde gewechselt/aufgedeckt
         if (swapped && !hit.carried && hitD < cfg.STATIC_POS) return false;
-        taken.add(hit); hit._lock = l; l.miss = 0;
+        taken.add(hit); hit._lock = l; l.miss = 0; l.moved = false;
         const c = quadCenter(hit.quad);
         if (c) l.center = c;
         return true;
@@ -463,7 +488,7 @@ export function createSweepGate(opts = {}) {
     },
     /** Sperre aufheben (z. B. nach „Rückgängig“: dieselbe Karte darf sofort neu erkannt werden) */
     unlock(keys) { locks = keys ? locks.filter((l) => !overlap(l.keys, keys)) : []; },
-    reset() { prev = []; locks = []; gone = 0; lastHitAt = 0; },
+    reset() { prev = []; locks = []; gone = 0; goneMoved = false; lastHitAt = 0; },
     /** „turbo“ (Stapel/Einzelkarten, 2-Frame-Konsens) oder „sweep“ (strikt: ≥ 99 % Konfidenz, 3 Bilder) */
     setMode(mode) { cfg = { ...cfg, mode: mode === "sweep" ? "sweep" : "turbo" }; prev = []; },
     get mode() { return cfg.mode; },
@@ -492,7 +517,7 @@ export function tagCode(info, key = "") {
  *  flag:   „🔥 Hit > 10 €“ (ab HIT_EUR) · „⚡ Fehlt dir noch!“ (Lücke im Binder geschlossen) · „×2“ (Doppelte)
  */
 export function tagLines({ price = 0, filed = false, saving = false, ownedBefore = false, qty = 1, hitEur = SWEEP.HIT_EUR } = {}) {
-  const status = filed ? "✅ Im Binder gespeichert" : saving ? "📒 Speichere im Binder …" : "📒 In der Scan-Liste";
+  const status = filed ? "✅ Im Set-Binder" : saving ? "📒 Sortiere in den Set-Binder …" : "📒 In der Scan-Liste";
   const p = Number(price) || 0;
   const flag = p >= hitEur ? `🔥 Hit > ${hitEur} €` : !ownedBefore && qty <= 1 ? "⚡ Fehlt dir noch!" : qty > 1 ? `×${qty} · Doppelte` : "";
   return { status, flag, hot: p >= hitEur };

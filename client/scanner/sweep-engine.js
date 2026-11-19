@@ -12,26 +12,45 @@
 // Kein Bild verlässt das Gerät; keine KI.
 import {
   sobel, detectCard, cardHashes, suppressGlare, glareMask, decide, wordsToHex, GLARE_HIGH, NORM_W, NORM_H,
-  NUMBER_STRIPS, homography, project, prepareStrip, readNumber, SCORE_STRONG,
+  NUMBER_STRIPS, homography, project, prepareStrip, readNumber, rotateQuad,
 } from "../../server/scan-logic.ts";
 import {
   SWEEP, findCardRects, edgeLines, rectQuad, quadBox, rectIou, frameThumb, motionStats, layoutFromRgba, layoutSimilarity,
-  hashSimilarity, topMatchesIn, setIdOfKey, grayDown, warpGrayRgba, LAYOUT_LEN, confidencePercent,
+  hashSimilarity, topMatchesIn, grayDown, warpGrayRgba, LAYOUT_LEN, confidencePercent,
 } from "./sweep-logic.js";
 import {
-  HD, warpCardRgba, glareGray, zmuv, artVector, artSimilarity, fuseMatch, frameColor, probeClasses, classRows, ART_LEN,
+  HD, warpCardRgba, glareGray, zmuv, artVector, artSimilarity, fuseMatch, ART_LEN,
   GRID_LAYOUTS, defaultGrid, fitGrid, gridSlots, smoothGrid, polishRect, cropRgba,
 } from "./hd-scan-logic.js";
 import { idbGetMany, idbSetMany } from "./idb-cache.js";
 
 /** Modus-Profile: Stapel / Einzelkarte (schnellstmöglich) · Ordner-Seite (bis zu 9 Fächer je Bild, Zeitbudget < 50 ms) */
 const PROFILE = {
-  turbo: { maxEval: 3, maxRects: 4, budgetMs: 30, globalEvery: 2, trackMs: 500, minEval: 2 },
+  turbo: { maxEval: 2, maxRects: 3, budgetMs: 22, globalEvery: 2, trackMs: 500, minEval: 1 },
   binder: { maxEval: SWEEP.MAX_CARDS, budgetMs: 44, minEval: 3 },
 };
 /** Schlüssel-Präfix der Mehrfach-Fingerabdrücke im IndexedDB-Store „layout“ (Farb-Layout + HSV-Matrix + Kantengradient) */
 const FP_PREFIX = "v2:";
 const FP_LEN = LAYOUT_LEN + ART_LEN;
+/**
+ * Multi-Crop (Stapel / Einzelkarte): je Bild drei überlappende, mittige Ausschnitte im Kartenformat (88 %, 72 %, 55 % der
+ * größtmöglichen Kartenhöhe) – Karte nah, mittel oder weiter weg. Reihum kommt je Bild eine leichte Verschiebung bzw.
+ * Neigung dazu (Handzittern, nicht exakt mittig, leicht schräg): nach wenigen Bildern ist jede Lage einmal geprüft.
+ */
+const CROP_SCALES = [0.88, 0.72, 0.55];
+const CROP_JITTER = [[0, 0, 0], [-0.07, 0, 0], [0.07, 0, 0], [0, -0.06, 0], [0, 0.06, 0], [0, 0, -5], [0, 0, 5], [-0.05, -0.04, 3], [0.05, 0.04, -3]];
+export function cropQuads(w, h, n = 0, ratio = SWEEP.CARD_RATIO) {
+  const maxH = Math.min(h * 0.98, (w * 0.98) / ratio);
+  const [jx, jy, deg] = CROP_JITTER[((n % CROP_JITTER.length) + CROP_JITTER.length) % CROP_JITTER.length];
+  return CROP_SCALES.map((k) => {
+    const ch = maxH * k, cw = ch * ratio;
+    const cx = Math.max(cw / 2, Math.min(w - cw / 2, w / 2 + jx * w)), cy = Math.max(ch / 2, Math.min(h - ch / 2, h / 2 + jy * h));
+    const base = rectQuad({ x0: cx - cw / 2, y0: cy - ch / 2, x1: cx + cw / 2, y1: cy + ch / 2 });
+    return { quad: deg ? rotateQuad(base, deg) : base, box: { x0: cx - cw / 2, y0: cy - ch / 2, x1: cx + cw / 2, y1: cy + ch / 2 }, scale: k };
+  });
+}
+const keyOverlap = (a, b) => a.some((k) => b.includes(k));
+
 /** Nummern-Fenster: so breit (Pixel im Kamerabild) muss der Streifen mindestens sein, damit Ziffern lesbar sind */
 const NUMBER_MIN_PX = 105;
 const STRIP_W = 252, STRIP_H = 72;
@@ -42,37 +61,14 @@ const STRIP_W = 252, STRIP_H = 72;
  */
 export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs = () => null }) {
   const st = {
-    setId: "", mode: "turbo", rows: null, rowsFor: "", layouts: new Map(), layoutLoading: new Set(), asked: new Set(),
+    mode: "turbo", layouts: new Map(), layoutLoading: new Set(), asked: new Set(),
     prevThumb: null, tracks: [], frameNo: 0, canvas: null, ctx: null, needAt: 0, busy: false,
-    classCache: new Map(), grid: null, gridAt: 0, gridFor: "", slotCursor: 0, slotLast: new Map(), small: null, slotCv: null,
+    grid: null, gridAt: 0, gridFor: "", slotCursor: 0, slotLast: new Map(), small: null, slotCv: null,
   };
   const offscreen = (() => { try { return typeof OffscreenCanvas !== "undefined" && !!new OffscreenCanvas(1, 1).getContext("2d"); } catch { return false; } })();
 
-  /** Stufe 1: Zeilen, deren Kartentyp zur Farbe der Karte passt (je Farb-Familie + Set einmal je Index-Version). */
-  function rowsForClasses(classes, rows) {
-    const idx = getIdx();
-    if (!classes || !idx.cls || idx.cls.length < idx.count) return null;
-    const tag = `${classes.join(",")}|${st.setId}|${getVersion()}`;
-    let hit = st.classCache.get(tag);
-    if (!hit) {
-      if (st.classCache.size > 24) st.classCache.clear();
-      hit = classRows(idx.cls, classes, rows, idx.count);
-      st.classCache.set(tag, hit);
-    }
-    return hit;
-  }
-
-  /** Zeilen des gesperrten Sets (DE-Karten + EN-Drucke mit derselben Set-ID) – einmal je Index-Version. */
-  function rowsForSet() {
-    if (!st.setId) return null;
-    const tag = `${st.setId}|${getVersion()}`;
-    if (st.rowsFor === tag) return st.rows;
-    const idx = getIdx();
-    const out = [];
-    for (let i = 0; i < idx.count; i++) if (setIdOfKey(idx.keys[i]) === st.setId) out.push(i);
-    st.rows = new Int32Array(out); st.rowsFor = tag;
-    return st.rows;
-  }
+  /** Kein Set-Lock und kein Farb-Vorfilter mehr: es wird IMMER der komplette Katalog durchsucht. */
+  const rowsForSet = () => null;
 
   // ------------------------------------------------------------------ Mehrfach-Fingerabdrücke (dauerhaft in IndexedDB)
   /**
@@ -178,9 +174,9 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
   /**
    * Eine Kandidaten-Lage auswerten:
    *   begradigen → Folien-Reflexe (Luminanz > 238, kaum Sättigung) maskieren & herausrechnen → Helligkeit/Kontrast normalisieren
-   *   → Stufe 1: Vorfilter nach Kartentyp/Rahmenfarbe (nur passende Zeilen; ohne klaren Treffer dort: ganzer Index bzw. Set)
-   *   → Stufe 2: 64-Bit pHash + 64-Bit dHash des inneren Artworks (+ Karten-pHash), Farb-Layout, HSV-Matrix, Kantengradient
-   *   → Übereinstimmung + Abstand zum zweitbesten Motiv.
+   *   → 64-Bit pHash + 64-Bit dHash des inneren Artworks (+ Karten-pHash) per XOR-Popcount gegen den KOMPLETTEN Katalog
+   *     (kein Farb-Vorfilter, kein Set-Lock) → Farb-Layout/HSV/Kanten nur als Bonus, wenn sie schon im Cache liegen
+   *   → Übereinstimmung + Abstand zum zweitbesten Motiv (die Schwelle entscheidet der Stapel-Gate, siehe quickOk).
    */
   function evaluate(rgba, w, h, quad, idx, rows, withNumber) {
     const card = warpCardRgba(rgba, w, h, quad, NORM_W, NORM_H);
@@ -190,36 +186,26 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
     const norm = zmuv(gg ? suppressGlare(gg) : card);
     const probe = cardHashes(norm);
     const meta = { localNum: (i) => idx.localNum[i], total: (i) => idx.total[i] };
-    let matches = null, d = null, pre = false;
-    const cr = rowsForClasses(probeClasses(frameColor(card)), rows);
-    if (cr && cr.length && cr.length < 0.7 * (rows ? rows.length : idx.count)) {
-      const m = topMatchesIn(probe, idx.words, cr, idx.count, 10, mask);
-      const dd = m.length ? decide(m, idx.words, meta, null) : null;
-      if (dd && dd.score <= SCORE_STRONG && dd.margin >= SWEEP.MARGIN_MIN) { matches = m; d = dd; pre = true; }
-    }
-    if (!matches) {
-      matches = topMatchesIn(probe, idx.words, rows, idx.count, 10, mask);
-      if (!matches.length) return null;
-      d = decide(matches, idx.words, meta, null);
-    }
+    const matches = topMatchesIn(probe, idx.words, rows, idx.count, 10, mask);
+    if (!matches.length) return null;
+    const d = decide(matches, idx.words, meta, null);
     const seen = new Set();
     const keys = d.group.map((i) => idx.keys[i]).filter((k) => (seen.has(k) ? false : seen.add(k)));
     const lead = idx.keys[d.best];
     const ref = layoutOf(keys);
     const ls = ref ? layoutSimilarity(layoutFromRgba(rgba, w, h, quad), ref.layout) : null;
     const as = ref ? artSimilarity(artVector(card, norm), ref.art) : null;
-    let match = fuseMatch(d.score, { layout: ls, hsv: as?.hsv, edge: as?.edge });
-    // Nur mit klarem Abstand zum nächsten anderen Motiv zählt die Übereinstimmung voll (Reprints, ähnliche Artworks)
-    if (d.margin < SWEEP.MARGIN_MIN) match = Math.min(match, SWEEP.MIN_MATCH - 0.01);
-    // Knapp unter der Schwelle, Vektoren fehlen → Referenzbilder der Top-Kandidaten nachladen (nächste Bilder sind genauer)
-    if (!ref && hashSimilarity(d.score) > 0.7) askLayouts([lead, ...matches.slice(1, 3).map((m) => idx.keys[m.i])]);
+    // Zusatz-Vektoren sind nur Bonus: fehlen sie (oder passen sie schlechter), zählt zu 100 % der Hash-Index – keine Strafe
+    const match = Math.max(hashSimilarity(d.score), fuseMatch(d.score, { layout: ls, hsv: as?.hsv, edge: as?.edge }));
+    // Vektoren fehlen → Referenzbilder der Top-Kandidaten im Hintergrund nachladen (Bonus für die nächsten Bilder)
+    if (!ref && hashSimilarity(d.score) > 0.55) askLayouts([lead, ...matches.slice(1, 3).map((m) => idx.keys[m.i])]);
     // Nummern-ROI nur für aussichtsreiche Kandidaten (spart Zeit bei klaren Nicht-Treffern)
     let numOk = null;
     if (withNumber && match >= SWEEP.MIN_MATCH - 0.06) { try { numOk = verifyNumber(rgba, w, h, quad, idx, d.best); } catch { numOk = null; } }
     const det = {
       quad, keys, lead, match: Math.round(match * 1000) / 1000, hash: Math.round(hashSimilarity(d.score) * 1000) / 1000,
       layout: ls === null ? null : Math.round(ls * 1000) / 1000, hsv: as ? Math.round(as.hsv * 1000) / 1000 : null, edge: as ? Math.round(as.edge * 1000) / 1000 : null,
-      score: d.score, margin: d.margin, glare: glare > GLARE_HIGH, glareRatio: Math.round(glare * 1000) / 1000, numOk, pre,
+      score: d.score, margin: d.margin, glare: glare > GLARE_HIGH, glareRatio: Math.round(glare * 1000) / 1000, numOk,
       label: labelOf(keys[0]) || "",
       probe: { artP: wordsToHex(probe[0], probe[1]), artD: wordsToHex(probe[2], probe[3]), fullP: wordsToHex(probe[4], probe[5]) },
     };
@@ -349,6 +335,14 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
     } finally { src.close(); }
   }
 
+  /**
+   * Stapel / Einzelkarte – ein Live-Bild (Ziel < 25 ms):
+   *   1) Karten-Silhouetten (Kanten) suchen bzw. zuletzt gefundene Karten verfolgen – höchstens 2 Kandidaten
+   *   2) Multi-Crop: drei mittige Ausschnitte (88 / 72 / 55 %) + reihum leichte Verschiebung/Neigung. Jeder Ausschnitt
+   *      wird, wenn möglich, an die Kartenkanten angelegt (detectCard), sonst direkt gehasht – so wird eine Karte auch
+   *      in der Hülle, vor unruhigem Hintergrund oder in der Hand erkannt, wenn keine saubere Kontur zu finden ist.
+   *   3) Ergebnisse derselben Karte zusammenführen (eine Karte = eine Erkennung → nie doppelt gezählt).
+   */
   function frame(msg) {
     const t0 = performance.now();
     const pr = PROFILE.turbo;
@@ -363,11 +357,7 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
     st.prevThumb = thumb;
     st.frameNo++;
     const now = Date.now();
-    const lines = edgeLines(grad, small.w, small.h);
-    // Automatik: liegt eine Ordnerseite im Bild? (regelmäßiges 3 × 3- bzw. 2 × 2-Linienmuster)
-    let gridSeen = null;
-    if (msg.probeGrid) { const lay = GRID_LAYOUTS[msg.grid] || GRID_LAYOUTS["3x3"]; gridSeen = Boolean(fitGrid(lines, small.w, small.h, lay.cols, lay.rows, { minScore: HD.GRID_MIN_SCORE + 0.15 })); }
-    // 1) Verfolgen: zuletzt gefundene Karten an ihrer alten Position verfeinern (reihum sortiert → jede kommt dran)
+    // 1) Verfolgen: zuletzt gefundene Karten an ihrer alten Position verfeinern
     st.tracks = st.tracks.filter((t) => now - t.at < pr.trackMs);
     const rot = st.tracks.length ? st.frameNo % st.tracks.length : 0;
     const tracked = [];
@@ -376,59 +366,74 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
       if (det.found) tracked.push({ quad: det.corners, conf: det.confidence, tracked: true, order: (i - rot + st.tracks.length) % st.tracks.length, track: t });
     });
     tracked.sort((a, b) => a.order - b.order);
-    // 2) Globale Suche: immer ohne verfolgte Karte, im Sweep-Modus jedes Bild, sonst jedes 2. Bild (weitere Karten im Bild finden)
+    // Globale Silhouetten-Suche (ohne verfolgte Karte jedes Bild, sonst jedes 2.)
     const fresh = [];
     if (!tracked.length || st.frameNo % pr.globalEvery === 0) {
-      const rects = findCardRects(grad, small.w, small.h, { max: pr.maxRects, lines });
+      const rects = findCardRects(grad, small.w, small.h, { max: pr.maxRects });
       for (const r of rects) {
         if (tracked.some((c) => rectIou(quadBox(c.quad), r) > 0.4) || fresh.some((c) => rectIou(quadBox(c.quad), r) > 0.4)) continue;
         const det = detectCard(small, r, grad);
-        fresh.push(det.found ? { quad: det.corners, conf: det.confidence } : { quad: rectQuad(r), conf: r.score, coarse: true });
-        if (fresh.length >= pr.maxEval || performance.now() - t0 > pr.budgetMs * 0.5) break;
+        if (det.found) fresh.push({ quad: det.corners, conf: det.confidence });
+        if (fresh.length >= pr.maxEval || performance.now() - t0 > 7) break;
       }
     }
-    // NEUE Karten zuerst, dann die verfolgten – so bekommt Karte #2 ihr Zeitbudget, auch wenn Karte #1 liegen bleibt
-    const cands = [...fresh, ...tracked];
+    const cands = [...fresh, ...tracked].slice(0, pr.maxEval);
     const tDetect = performance.now();
     const dets = [];
     const ready = idx.count > 0;
-    const rows = ready ? rowsForSet() : null;
-    const withNumber = Boolean(getGlyphs()?.length);
+    const rows = null; // immer der komplette Katalog
     const evaluated = new Set();
-    if (ready && !(rows && !rows.length)) {
-      let n = 0;
+    let best = 0;
+    if (ready) {
       for (const c of cands) {
-        if (n >= pr.maxEval) break;
-        // Mindestens minEval Kandidaten je Bild, danach gilt das Zeitbudget
-        if (n >= pr.minEval && performance.now() - t0 > pr.budgetMs) break;
-        n++;
-        const r = evaluate(rgba, w, h, c.quad.map(([x, y]) => [x * k, y * k]), idx, rows, withNumber);
+        if (dets.length >= pr.minEval && performance.now() - t0 > pr.budgetMs) break;
+        const r = evaluate(rgba, w, h, c.quad.map(([x, y]) => [x * k, y * k]), idx, rows, false);
         evaluated.add(c);
-        if (r) dets.push({ ...r, small: c.quad, coarse: Boolean(c.coarse) });
+        if (r) { dets.push({ ...r, small: c.quad }); best = Math.max(best, r.match); }
+      }
+      // 2) Multi-Crop – auch wenn eine Kontur gefunden wurde (sie kann ein Teil der Hülle/des Tischs sein)
+      let cropBest = null;
+      for (const cr of cropQuads(sw, sh, st.frameNo)) {
+        if (best >= SWEEP.DIRECT_MATCH + 0.06 || (cropBest && performance.now() - t0 > pr.budgetMs)) break;
+        // An die Kartenkanten anlegen, wenn sie im Ausschnitt zu sehen sind – sonst den Ausschnitt selbst hashen
+        const det = detectCard(small, cr.box, grad);
+        for (const q of det.found ? [det.corners, cr.quad] : [cr.quad]) {
+          const r = evaluate(rgba, w, h, q.map(([x, y]) => [x * k, y * k]), idx, rows, false);
+          if (r && (!cropBest || r.match > cropBest.match)) cropBest = { ...r, small: q, crop: true };
+          if (r) best = Math.max(best, r.match);
+          if (cropBest && cropBest.match >= SWEEP.DIRECT_MATCH) break;
+          if (performance.now() - t0 > pr.budgetMs) break;
+        }
+      }
+      // 3) Zusammenführen: dieselbe Karte aus Kontur und Ausschnitt = EINE Erkennung (bessere Übereinstimmung, Kontur-Lage)
+      if (cropBest) {
+        const same = dets.find((d) => keyOverlap(d.keys, cropBest.keys));
+        if (!same) dets.push(cropBest);
+        else if (cropBest.match > same.match) Object.assign(same, { ...cropBest, quad: same.quad, small: same.small, crop: false });
       }
     }
-    // Verfolgte Karten, die in diesem Bild nicht neu ausgewertet wurden, werden mit ihrem letzten Ergebnis weitergetragen
-    // (Etikett + Gesamtwert bleiben stabil; für den Treffer-Konsens zählen sie nicht)
+    // Verfolgte Karten, die in diesem Bild nicht neu ausgewertet wurden, mit ihrem letzten Ergebnis weitertragen
     for (const c of tracked) {
       if (evaluated.has(c) || !c.track.last) continue;
+      if (dets.some((d) => keyOverlap(d.keys, c.track.last.keys))) continue;
       const q = c.quad.map(([x, y]) => [x * k, y * k]);
       dets.push({ ...c.track.last, quad: q, small: c.quad, carried: true });
     }
-    // Verfolgung nur für sichere Kanten bzw. erkannte Karten weiterführen (mit letztem Ergebnis für das Weitertragen)
-    const keep = (d) => !d.coarse || d.match >= SWEEP.TRACK_MATCH;
-    st.tracks = dets.filter(keep).map((d) => ({ quad: d.small, at: d.carried ? d.at || now : now, last: d.match >= SWEEP.TRACK_MATCH ? { ...d, small: undefined, carried: undefined, at: now } : null }))
-      .concat(cands.filter((c) => !c.coarse && !dets.some((d) => d.small === c.quad)).map((c) => ({ quad: c.quad, at: now, last: null })))
+    // Verfolgung nur für sichere Kanten (keine reinen Ausschnitte)
+    st.tracks = dets.filter((d) => !d.crop).map((d) => ({ quad: d.small, at: d.carried ? d.at || now : now, last: d.match >= SWEEP.TRACK_MATCH ? { ...d, small: undefined, carried: undefined, at: now } : null }))
+      .concat(cands.filter((c) => !dets.some((d) => d.small === c.quad)).map((c) => ({ quad: c.quad, at: now, last: null })))
       .slice(0, pr.maxRects);
     dets.sort((a, b) => b.match - a.match);
-    const found = cands.some((c) => !c.coarse) || dets.some((d) => d.match >= SWEEP.TRACK_MATCH);
+    const found = cands.length > 0 || dets.some((d) => d.match >= SWEEP.TRACK_MATCH);
     return {
       type: "sweep-result", seq: msg.seq, w, h, ms: Math.round((performance.now() - t0) * 10) / 10, msDetect: Math.round((tDetect - t0) * 10) / 10,
       motion: Math.round(motion * 1000) / 1000, center: Math.round(mo.center * 1000) / 1000, changed: Math.round(mo.changed * 1000) / 1000,
-      light: Math.round(thumb.mean), found, ready, setRows: rows ? rows.length : -1, mode: "turbo", gridSeen,
+      light: Math.round(thumb.mean), found, ready, setRows: -1, mode: "turbo",
+      // Live-Diagnose: beste Übereinstimmung dieses Bilds (auch unter der Schwelle)
+      top: Math.round(best * 1000) / 1000,
       glare: dets.length ? Math.round((dets.reduce((s, d) => s + (d.glareRatio || 0), 0) / dets.length) * 1000) / 1000 : 0,
-      // Ecken relativ zum Bild (0…1) – der Haupt-Thread zeichnet daraus die Preisschild-Etiketten
       dets: dets.map((d) => ({ ...d, small: undefined, at: undefined, quad: d.quad.map(([x, y]) => [x / w, y / h]) })),
-      boxes: cands.filter((c) => !c.coarse).map((c) => c.quad.map(([x, y]) => [(x * k) / w, (y * k) / h])),
+      boxes: cands.map((c) => c.quad.map(([x, y]) => [(x * k) / w, (y * k) / h])),
     };
   }
 
@@ -438,11 +443,10 @@ export function createSweepEngine({ getIdx, getVersion, labelOf, post, getGlyphs
     async handle(msg) {
       if (msg.type === "sweep-config") {
         const t0 = performance.now();
-        st.setId = typeof msg.setId === "string" ? msg.setId.slice(0, 40) : "";
+        // Set-Lock gibt es nicht mehr – es wird immer der ganze Katalog durchsucht (setId wird ignoriert)
         if (typeof msg.mode === "string") st.mode = msg.mode === "binder" ? "binder" : "turbo";
-        st.rowsFor = ""; st.tracks = []; st.classCache.clear(); st.slotLast.clear();
-        const rows = rowsForSet();
-        post({ type: "sweep-config-done", setId: st.setId, mode: st.mode, rows: rows ? rows.length : getIdx().count, ms: Math.round(performance.now() - t0) });
+        st.tracks = []; st.slotLast.clear();
+        post({ type: "sweep-config-done", setId: "", mode: st.mode, rows: getIdx().count, ms: Math.round(performance.now() - t0) });
         return true;
       }
       if (msg.type === "sweep-layouts") {

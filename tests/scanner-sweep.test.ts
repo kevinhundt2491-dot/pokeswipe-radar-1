@@ -91,7 +91,7 @@ test("Leeres Bild (nur Hintergrund) liefert keinen starken Karten-Kandidaten", (
   assert.equal(findCardRects(sobel(g), W, H).length, 0);
 });
 
-test("Fingerabdruck + Farb-Layout: richtige Karte ≥ 85 %, fremde deutlich darunter; Set-Lock sucht nur im Set", () => {
+test("Fingerabdruck + Farb-Layout: richtige Karte klar vorn, fremde deutlich darunter; Zeilen-Suche", () => {
   const seeds = [3, 4, 5, 6, 8, 9, 11, 12];
   const words = new Uint32Array(seeds.length * WORDS);
   const layouts = seeds.map((s, i) => { const r = refHashes(s); words.set(r.hashes, i * WORDS); return r.layout; });
@@ -116,7 +116,7 @@ test("Fingerabdruck + Farb-Layout: richtige Karte ≥ 85 %, fremde deutlich daru
   const pct = matchPercent(all[0].score, simOk);
   assert.ok(pct >= SWEEP.MIN_MATCH, `Übereinstimmung ${pct}`);
   const other = matchPercent(all[1].score, layoutSimilarity(lay, layouts[all[1].i]));
-  assert.ok(other < SWEEP.MIN_MATCH && pct - other > 0.1, `fremde Karte ${other}`);
+  assert.ok(pct - other > 0.1, `fremde Karte ${other}`);
   // Set-Lock: nur Zeilen 2..4 durchsuchen → Zeile 0 taucht nicht auf
   const sub = topMatchesIn(probe, words, new Int32Array([2, 3, 4]), seeds.length, 3);
   assert.ok(sub.every((m) => [2, 3, 4].includes(m.i)));
@@ -135,51 +135,49 @@ test("Bewegung: ruhiges Bild ≈ 0, Belichtungs-Sprung zählt nicht, neue Karte 
   assert.equal(thumbMotion(null, ta), 1);
 });
 
-test("Gate: 2 aufeinanderfolgende Bilder ≥ 85 % lösen aus; KEIN Zeit-Cooldown – gesperrt ist nur das Exemplar im Bild, Wegziehen/Aufdecken hebt die Sperre sofort auf", () => {
+test("Gate: Treffer im ERSTEN klaren Bild (≥ 60 % mit ≥ 5 % Abstand); ruhig liegende Karte zählt nie doppelt; Wegziehen/Aufdecken gibt sofort frei", () => {
   const gate = createSweepGate();
   const A = ["card:sv08-238", "print:en:sv08-238"];
-  const f = (match: number, motion = 0.01, keys = A) => ({ dets: [{ keys, match }], found: true, motion });
+  const f = (match: number, motion = 0.01, keys = A, margin?: number) => ({ dets: [{ keys, match, margin }], found: true, motion });
   let t = 1000;
-  assert.deepEqual(gate.push(f(0.9), t).hits, [], "ein Bild allein löst nicht aus");
-  assert.equal(gate.push(f(0.9), (t += 40)).hits.length, 1, "zweites Bild in 40 ms → Treffer");
-  // Karte bleibt ruhig liegen → gesperrt, egal wie lange (die Sperre hängt am Exemplar, nicht an einer Uhr)
-  for (let i = 0; i < 100; i++) assert.equal(gate.push(f(0.92), (t += 40)).hits.length, 0);
-  assert.ok(gate.push(f(0.92), (t += 40)).locked.length === 1);
-  assert.equal(gate.push(f(0.92), (t += 60_000)).hits.length, 0, "auch nach einer Minute kein zweiter Treffer");
-  // Karte weggezogen (2 Bilder ohne Karte) → Sperre weg, gleiche Karte zählt erneut (nach neuem Konsens)
+  assert.equal(gate.push(f(0.7), t).hits.length, 1, "erstes klares Bild → sofort Treffer");
+  // Karte bleibt ruhig liegen → gesperrt, egal wie lange
+  for (let i = 0; i < 100; i++) assert.equal(gate.push(f(0.72), (t += 40)).hits.length, 0);
+  assert.ok(gate.push(f(0.72), (t += 40)).locked.length === 1);
+  assert.equal(gate.push(f(0.72), (t += 60_000)).hits.length, 0, "auch nach einer Minute kein zweiter Treffer");
+  // Ruhiges Bild, Erkennung flackert kurz weg (Licht) → Sperre bleibt, kein Doppel-Zählen
+  for (let i = 0; i < 6; i++) gate.push({ dets: [], found: false, motion: 0.005 }, (t += 40));
+  assert.equal(gate.push(f(0.7), (t += 40)).hits.length, 0, "flackernde, ruhig liegende Karte zählt nicht doppelt");
+  // Karte weggezogen (Bewegung, Karte nicht zu sehen) → Sperre sofort weg, gleiche Karte zählt im nächsten Bild erneut
   gate.push({ dets: [], found: false, motion: 0.05 }, (t += 40));
-  gate.push({ dets: [], found: false, motion: 0.05 }, (t += 40));
-  assert.equal(gate.push(f(0.9), (t += 40)).hits.length, 0);
-  assert.equal(gate.push(f(0.9), (t += 40)).hits.length, 1, "nächste identische Karte");
-  // Bewegung im Bild und das Exemplar ist in EINEM Bild nicht zu sehen (Hand greift die Karte) → Sperre sofort weg
-  gate.push({ dets: [], found: true, motion: 0.08 }, (t += 40));
-  gate.push(f(0.9), (t += 40));
-  assert.equal(gate.push(f(0.9), (t += 40)).hits.length, 1, "Duplikat direkt danach zählt");
-  // Mindest-Übereinstimmung 85 %: darunter kein Treffer; zu große Lücke zwischen den Bildern → kein Treffer
-  assert.equal(SWEEP.MIN_MATCH, 0.85);
+  assert.equal(gate.push(f(0.7), (t += 40)).hits.length, 1, "nächste identische Karte nach ~80 ms");
+  // Nächste Karte direkt darübergelegt (andere Karte) → zählt sofort
+  assert.equal(gate.push(f(0.68, 0.2, ["card:sv08-100"]), (t += 40)).hits.length, 1, "andere Karte sofort");
+  // Schwellen
+  assert.equal(SWEEP.MIN_MATCH, 0.6);
+  assert.equal(SWEEP.DIRECT_MATCH, 0.66);
   const g2 = createSweepGate();
-  g2.push(f(0.84, 0.01, ["card:x-1"]), 0); assert.equal(g2.push(f(0.84, 0.01, ["card:x-1"]), 40).hits.length, 0);
-  g2.push(f(0.85, 0.01, ["card:x-5"]), 500); assert.equal(g2.push(f(0.85, 0.01, ["card:x-5"]), 540).hits.length, 1, "genau 85 % zählt");
-  g2.push(f(0.9, 0.01, ["card:x-2"]), 1000); assert.equal(g2.push(f(0.9, 0.01, ["card:x-2"]), 1300).hits.length, 0, "300 ms Lücke bei schnellem Gerät");
-  // Langsames Gerät (Ø 160 ms je Bild): Fenster wächst auf bis zu 400 ms
-  g2.push(f(0.9, 0.01, ["card:x-3"]), 5000); assert.equal(g2.push(f(0.9, 0.01, ["card:x-3"]), 5300, 160).hits.length, 1);
-  // Kamera wackelt, die Karte bleibt durchgehend erkannt → KEIN zweiter Treffer (früher lief die Sperre nach 2,5 s ab)
+  assert.equal(g2.push(f(0.59, 0.01, ["card:x-1"], 40), 0).hits.length, 0, "unter 60 % nie");
+  assert.equal(g2.push(f(0.62, 0.01, ["card:x-2"], 4), 40).hits.length, 0, "60–66 % mit zu knappem Abstand (< 5 %)");
+  assert.equal(g2.push(f(0.62, 0.01, ["card:x-3"], 8), 80).hits.length, 1, "60–66 % mit ≥ 5 % Abstand (8 / 160)");
+  assert.equal(g2.push(f(0.75, 0.01, ["card:x-4"], 3), 120).hits.length, 0, "hohe Übereinstimmung ohne Abstand = Bildrauschen → kein Treffer");
+  assert.equal(g2.push(f(0.75, 0.01, ["card:x-4"], 3), 160).hits.length, 0, "auch nicht im Folgebild");
+  // Kamera wackelt, die Karte bleibt durchgehend erkannt → KEIN zweiter Treffer
   const g3 = createSweepGate();
-  g3.push(f(0.9, 0.01), 0); g3.push(f(0.9, 0.01), 40);
-  g3.push(f(0.9, 0.15), 2700);
-  assert.equal(g3.push(f(0.9, 0.15), 2740).hits.length, 0);
+  g3.push(f(0.8, 0.01), 0);
+  g3.push(f(0.8, 0.15), 2700);
+  assert.equal(g3.push(f(0.8, 0.15), 2740).hits.length, 0);
   // unlock
   const g4 = createSweepGate();
-  g4.push(f(0.9), 0); g4.push(f(0.9), 40); g4.unlock(A);
+  g4.push(f(0.9), 0); g4.unlock(A);
   assert.equal(g4.locks.length, 0);
 });
 
-test("Mehrere Karten im Bild (Ordnerseite): jede eigene Karte löst einzeln aus", () => {
+test("Mehrere Karten im Bild: jede eigene Karte löst einzeln aus", () => {
   const gate = createSweepGate();
   const fr = { dets: [{ keys: ["card:a-1"], match: 0.9 }, { keys: ["card:b-2"], match: 0.88 }], found: true, motion: 0.02 };
-  gate.push(fr, 0);
-  assert.equal(gate.push(fr, 40).hits.length, 2);
-  assert.equal(gate.push(fr, 80).hits.length, 0);
+  assert.equal(gate.push(fr, 0).hits.length, 2);
+  assert.equal(gate.push(fr, 40).hits.length, 0);
 });
 
 test("Schlüssel-Helfer: Set, Sprache, Reihenfolge nach Session-Sprache", () => {
@@ -230,6 +228,8 @@ test("Sweep-Scanner: kein Zielrahmen/Countdown, Kamera-Vorgaben, Torch, Vibratio
   assert.match(ui, /exposureMode: "continuous"/);
   assert.match(ui, /frameRate: \{ ideal: 30 \}/);
   assert.ok(!/ps-ls-guide|countdown/i.test(ui), "kein Rahmen, kein Countdown");
+  assert.ok(!/ps-sw-sets|selectSet|Alle Sets|PS\.sweep\('set'/.test(ui), "keine Set-Auswahl / kein Set-Lock im Scanner");
+  assert.ok(!/probeGrid|AUTO_BINDER/.test(ui), "keine Modus-Automatik");
   const worker = readFileSync(new URL("../client/scanner/scan-worker.js", import.meta.url), "utf8");
   assert.match(worker, /sweep-engine\.js/);
   const engine = readFileSync(new URL("../client/scanner/sweep-engine.js", import.meta.url), "utf8");
