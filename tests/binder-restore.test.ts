@@ -30,9 +30,12 @@ test("Scanner: Treffer wird sofort gespeichert (presentHit → autoFileCurrent +
   assert.match(s, /pq\.filedKey = infos\[0\]\.key;/);
 });
 
-test("Binder: fehlende Karten grau, Lücke mit Angebot → Preis + „Zum Angebot im Marktplatz“, sonst Suchauftrag/Marktplatz", () => {
+test("Binder: leere Taschen im Sammler-Folien-Look (kein Grau, kein „Fehlt“), Lücke mit Angebot → Preis + „Zum Angebot im Marktplatz“, sonst Suchauftrag/Marktplatz", () => {
   const css = src("public/theme.css");
-  assert.match(css, /\.ps-bslot\.missing \.ps-bslot-art img \{[^}]*grayscale\(1\)/);
+  assert.ok(!/\.ps-bslot[^\n]*grayscale/.test(css), "kein grayscale-Filter mehr auf Binder-Taschen");
+  assert.match(css, /\.ps-bslot\.missing \{[^}]*linear-gradient/, "Obsidian-Glas-Look der leeren Tasche");
+  assert.match(css, /\.ps-pocket-tag \{/, "Marktplatz-Preisschild-Etikett");
+  assert.match(css, /\.ps-bslot-emboss \{/, "eingeprägte Set-Nummer");
   const b = src("client/binder.js");
   assert.match(b, /Zum Angebot im Marktplatz/);
   assert.match(b, /Suchauftrag aktivieren/);

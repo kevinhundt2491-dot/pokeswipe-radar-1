@@ -18,7 +18,7 @@ import { createSweep } from "./sweep-scanner.js";
 
 // Turbo-Upgrade (ohne KI): zusätzlich zur Bild-Erkennung liest der Scanner alle ~280 ms Kartenname und Sammlernummer
 // (TextDetector bzw. Tesseract.js, beides auf dem Gerät) und sucht sie unscharf im Katalog (~20.000 Karten, Text-Index im
-// Worker). Der Rahmen ist nur noch eine Orientierung: die Karte darf schief, kleiner oder neben der Mitte liegen.
+// Worker). Es gibt keinen Rahmen mehr: die Karte darf irgendwo im Bild liegen, schief, kleiner oder neben der Mitte.
 // Die KI ist nur noch ein optionaler Knopf („KI-Tiefenscan“) – nie mehr der Standardweg.
 //
 // Hybrid-Scanner (Phase 9 + Profi-Upgrade):
@@ -123,22 +123,8 @@ function readLangs() {
 // ---------------------------------------------------------------------------
 // Oberfläche
 // ---------------------------------------------------------------------------
-/** Animationen des Suchers (Laser, Ecken-Puls, Auslöse-Blitz, Fokus-Ring) – eigene Keyframes, unabhängig von Tailwind. */
+/** Animationen der Foto-Bühne (Auslöse-Blitz, Fokus-Ring, Auslöser) – 100 % rahmenlos: kein Zielkasten, kein Laser, kein grüner Rahmen. */
 const SCANNER_CSS = `
-#ps-ls-guide{transition:border-color .2s,box-shadow .2s}
-#ps-ls-guide .ps-ls-corner{position:absolute;width:26px;height:26px;border-color:#fff;border-style:solid;border-width:0;transition:border-color .2s}
-#ps-ls-guide .ps-ls-corner.tl{top:-3px;left:-3px;border-top-width:5px;border-left-width:5px;border-top-left-radius:14px}
-#ps-ls-guide .ps-ls-corner.tr{top:-3px;right:-3px;border-top-width:5px;border-right-width:5px;border-top-right-radius:14px}
-#ps-ls-guide .ps-ls-corner.bl{bottom:-3px;left:-3px;border-bottom-width:5px;border-left-width:5px;border-bottom-left-radius:14px}
-#ps-ls-guide .ps-ls-corner.br{bottom:-3px;right:-3px;border-bottom-width:5px;border-right-width:5px;border-bottom-right-radius:14px}
-#ps-ls-guide[data-state="ready"] .ps-ls-corner{border-color:#fbbf24}
-#ps-ls-guide[data-state="ready"]{box-shadow:0 0 22px 2px rgba(251,191,36,.45)}
-#ps-ls-guide[data-state="hit"] .ps-ls-corner{border-color:#34d399}
-#ps-ls-guide[data-state="hit"]{box-shadow:0 0 28px 4px rgba(52,211,153,.75)}
-#ps-ls-guide[data-state="search"] .ps-ls-corner{animation:psLsBreath 1.6s ease-in-out infinite}
-#ps-ls-laser{position:absolute;left:4%;right:4%;height:3px;border-radius:3px;background:#22d3ee;box-shadow:0 0 14px 4px rgba(34,211,238,.7);animation:psLsLaser 2.2s ease-in-out infinite}
-#ps-ls-guide:not([data-state="search"]) #ps-ls-laser{display:none}
-#ps-ls-progress{position:absolute;left:0;bottom:-10px;height:4px;border-radius:4px;background:#fbbf24;width:0;transition:width .12s linear}
 #ps-ls-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
 #ps-ls-flash.on{animation:psLsFlash .45s ease-out}
 .ps-ls-focus{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid #fbbf24;border-radius:12px;pointer-events:none;animation:psLsFocus .9s ease-out forwards}
@@ -149,7 +135,7 @@ const SCANNER_CSS = `
 @keyframes psLsBreath{0%,100%{opacity:1}50%{opacity:.45}}
 @keyframes psLsFlash{0%{opacity:.85}100%{opacity:0}}
 @keyframes psLsFocus{0%{transform:scale(1.5);opacity:1}60%{transform:scale(1);opacity:1}100%{transform:scale(1);opacity:0}}
-@media (prefers-reduced-motion:reduce){#ps-ls-laser,#ps-ls-guide .ps-ls-corner,#ps-ls-flash.on{animation:none!important}}
+@media (prefers-reduced-motion:reduce){#ps-ls-flash.on{animation:none!important}}
 `;
 
 const chip = (on) => `text-[11px] font-black px-2.5 py-1.5 rounded-lg ${on ? "bg-yellow-400 text-slate-950" : "bg-slate-800 text-slate-300"}`;
@@ -159,9 +145,9 @@ export function liveScanPanelHtml() {
     <style>${SCANNER_CSS}</style>
     <div class="flex flex-wrap items-start justify-between gap-2">
       <div>
-        <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚡ Zero-Latency Sweep-Modus · auf dem Gerät</span>
-        <h2 class="text-base sm:text-lg font-black text-white mt-1">Einfach über die Karten ziehen – Pling!</h2>
-        <p class="text-xs text-slate-300">Kein Rahmen, kein Countdown, kein Warten: Jede Karte im Bild landet sofort in deiner Scan-Liste.</p>
+        <span class="text-[10px] font-black uppercase bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full">⚡ 100 % rahmenloser High-Speed-Scanner · auf dem Gerät</span>
+        <h2 class="text-base sm:text-lg font-black text-white mt-1">Karte ins Bild – Preisschild drauf – ab in den Binder</h2>
+        <p class="text-xs text-slate-300">Kein Rahmen, kein Warten: Jede Karte bekommt direkt im Kamerabild ihr Live-Preisschild und landet sofort in deinem Set-Binder. Stapel-Turbo für Einzelkarten, Binder- &amp; Tisch-Sweep für ganze Ordnerseiten.</p>
       </div>
     </div>
     ${sweepUi().html()}
@@ -184,12 +170,7 @@ export function liveScanPanelHtml() {
           <label class="cursor-pointer text-xs font-black bg-slate-800 text-white px-3 py-2 rounded-xl">🖼️ Bild hochladen<input id="ps-ls-file-idle" data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
         </div>
       </div>
-      <div id="ps-ls-mask" class="absolute pointer-events-none hidden" style="box-shadow:0 0 0 9999px rgba(2,6,23,.55);border-radius:14px"></div>
-      <div id="ps-ls-guide" data-state="search" class="absolute pointer-events-none hidden rounded-[14px] border-2 border-white/40">
-        <span class="ps-ls-corner tl"></span><span class="ps-ls-corner tr"></span><span class="ps-ls-corner bl"></span><span class="ps-ls-corner br"></span>
-        <div id="ps-ls-laser"></div><div id="ps-ls-progress"></div>
-      </div>
-      <svg id="ps-ls-quad" class="absolute inset-0 w-full h-full pointer-events-none hidden" aria-hidden="true"><polygon points="" fill="rgba(52,211,153,.12)" stroke="#34d399" stroke-width="3" stroke-linejoin="round"/></svg>
+      <!-- 100 % rahmenlos: keine Maske, kein Zielrahmen, kein grünes Kanten-Polygon – das Kamerabild bleibt komplett frei -->
       <div id="ps-ls-flash"></div>
       <p id="ps-ls-hint" role="status" class="absolute top-2 left-1/2 -translate-x-1/2 max-w-[78%] text-center text-[12px] font-black text-white bg-slate-950/75 backdrop-blur px-3 py-1 rounded-full shadow hidden"></p>
       <div id="ps-ls-tools" class="absolute top-2 right-2 flex flex-col gap-1.5 hidden">
@@ -436,7 +417,7 @@ async function start() {
   if (t2) { t2.disabled = !caps.torch; t2.classList.toggle("opacity-40", !caps.torch); t2.title = caps.torch ? "Taschenlampe" : "Diese Kamera/dieser Browser unterstützt keine Taschenlampe"; }
   sc.torch = false;
   $("ps-ls-still")?.classList.add("hidden");
-  ["ps-ls-video", "ps-ls-mask", "ps-ls-guide", "ps-ls-quad", "ps-ls-hint", "ps-ls-tools", "ps-ls-perf"].forEach((id) => $(id)?.classList.remove("hidden"));
+  ["ps-ls-video", "ps-ls-hint", "ps-ls-tools", "ps-ls-perf"].forEach((id) => $(id)?.classList.remove("hidden"));
   $("ps-ls-idle")?.classList.add("hidden");
   sc.running = true; sc.frames = 0; sc.msSum = 0; sc.streak = 0; sc.streakKey = null;
   sc.stable = 0; sc.focusMax = 0; sc.gone = 0; sc.prevCorners = null; sc.autoAiUsed = false; sc.nearKey = null; sc.nearCount = 0;
@@ -444,7 +425,7 @@ async function start() {
   if (!sc.ready && !sc.loadingIndex) loadIndex();
   warmupOcr();
   layout();
-  setUi("search", sc.ready ? "📇 Karte in den Rahmen halten" : "⏳ Lade Karten-Index …");
+  setUi("search", sc.ready ? "📇 Karte frei ins Bild halten" : "⏳ Lade Karten-Index …");
   tick();
 }
 
@@ -459,7 +440,7 @@ function stop() {
   sc.stream = null; sc.track = null; sc.caps = null; sc.torch = false;
   const video = $("ps-ls-video");
   if (video) video.srcObject = null;
-  ["ps-ls-video", "ps-ls-mask", "ps-ls-guide", "ps-ls-quad", "ps-ls-hint", "ps-ls-tools", "ps-ls-perf", "ps-ls-hud", "ps-ls-still"].forEach((id) => $(id)?.classList.add("hidden"));
+  ["ps-ls-video", "ps-ls-hint", "ps-ls-tools", "ps-ls-perf", "ps-ls-hud", "ps-ls-still"].forEach((id) => $(id)?.classList.add("hidden"));
   $("ps-ls-idle")?.classList.remove("hidden");
 }
 
@@ -476,7 +457,7 @@ async function toggleTorch() {
   } catch { toast("🔦 Nicht möglich", "Diese Kamera unterstützt keine Taschenlampe. Tipp: Karte näher ans Licht halten."); }
 }
 
-/** Rahmen im Anzeigebereich und passender Ausschnitt im Videobild (object-fit: cover beachtet). */
+/** Unsichtbarer Suchbereich im Anzeigebereich und passender Ausschnitt im Videobild (object-fit: cover beachtet) – es wird kein Rahmen angezeigt. */
 function layout() {
   const stage = $("ps-ls-stage"), video = $("ps-ls-video");
   if (!stage || !video) return null;
@@ -484,10 +465,7 @@ function layout() {
   const vw = video.videoWidth, vh = video.videoHeight;
   const gw = Math.min(ew * 0.72, eh * 0.78 * CARD_RATIO), gh = gw / CARD_RATIO;
   const gx0 = (ew - gw) / 2, gy0 = (eh - gh) / 2 - eh * 0.04;
-  for (const id of ["ps-ls-guide", "ps-ls-mask"]) {
-    const el = $(id);
-    if (el) Object.assign(el.style, { left: `${gx0}px`, top: `${gy0}px`, width: `${gw}px`, height: `${gh}px` });
-  }
+  // Der frühere Zielrahmen wird nicht mehr gezeichnet – die Geometrie dient nur noch als unsichtbarer Suchbereich der Erkennung
   if (!vw || !vh) return (sc.geometry = null);
   const s = Math.max(ew / vw, eh / vh), offX = (ew - vw * s) / 2, offY = (eh - vh * s) / 2;
   const toV = (x, y) => [(x - offX) / s, (y - offY) / s];
@@ -511,12 +489,10 @@ function hint(text) {
   if (el) el.textContent = text || "";
 }
 
-/** Sucher-Zustand: search (weiß, Laser) → ready (gelb, „ruhig halten“) → hit (grün, „Erkannt!“) */
+/** Scanner-Zustand (nur noch Hinweistext – es gibt keinen Rahmen mehr, der eingefärbt würde): search → ready → hit */
 function setUi(stateName, text, progress = 0) {
-  const g = $("ps-ls-guide");
-  if (g && sc.uiState !== stateName) { g.dataset.state = stateName; sc.uiState = stateName; }
-  const bar = $("ps-ls-progress");
-  if (bar) bar.style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+  sc.uiState = stateName;
+  sc.uiProgress = Math.max(0, Math.min(1, progress));
   if (text !== undefined) hint(text);
 }
 
@@ -592,13 +568,9 @@ function tick() {
 // ---------------------------------------------------------------------------
 // Ergebnisse
 // ---------------------------------------------------------------------------
+/** 100 % rahmenlos: erkannte Kartenkanten werden nicht mehr als grünes Polygon eingezeichnet – nur die Geometrie wird gemerkt. */
 function drawQuad(r) {
-  const g = sc.geometry, poly = document.querySelector("#ps-ls-quad polygon");
-  if (!g || !poly) return;
-  if (r.found && r.corners) {
-    const pts = r.corners.map(([x, y]) => `${(x / g.k + g.sx0) * g.s + g.offX},${(y / g.k + g.sy0) * g.s + g.offY}`).join(" ");
-    poly.setAttribute("points", pts);
-  } else poly.setAttribute("points", "");
+  if (r?.found && r.corners) sc.lastQuadAt = Date.now();
 }
 
 /** Bevorzugte Sprachvariante: Reihenfolge der gewählten Sprachen. */
@@ -652,7 +624,7 @@ function onWorker(m) {
     sc.readyWaiters?.splice(0).forEach((r) => r());
     renderIndexLine();
     sweepUi().onIndex();
-    if (sc.running) setUi("search", sc.indexCount ? "📇 Karte in den Rahmen halten" : "Noch keine Karten im Index – Auslöser nutzt die KI.");
+    if (sc.running) setUi("search", sc.indexCount ? "📇 Karte frei ins Bild halten" : "Noch keine Karten im Index – Auslöser nutzt die KI.");
     return;
   }
   if (m.type === "result" && !m.reqId) sc.frameAt = 0;
@@ -680,7 +652,7 @@ function onWorker(m) {
     // aufeinanderfolgender Bilder innerhalb ~250 ms (verhindert Fehlauslösungen beim Hinlegen der Karte)
     const vote = sc.voter.push(keys, Date.now(), voteWindow(sc.frames ? sc.msSum / sc.frames : 0));
     if (lockDecision(m, vote) === "hit") {
-      if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte in den Rahmen legen"); return; }
+      if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte ins Bild"); return; }
       if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); setUi("hit", "✅ Erkannt!"); return; }
       if (sc.cooldown.blocked(keys)) return;
       if (!sc.capturing) showHit(group, m, capturePhoto(m.corners));
@@ -694,7 +666,7 @@ function onWorker(m) {
   if (m.found && !sc.unsureSince) sc.unsureSince = Date.now();
   offerAi(m.found && (sc.glare || Date.now() - sc.unsureSince > AI_OFFER_AFTER_MS));
   if (!sc.capturing && !hitFresh) {
-    if (!m.found) setUi("search", sc.glare ? "✨ Spiegelung – Karte leicht kippen oder Sleeve abnehmen" : "📇 Karte in den Rahmen halten");
+    if (!m.found) setUi("search", sc.glare ? "✨ Spiegelung – Karte leicht kippen oder Sleeve abnehmen" : "📇 Karte frei ins Bild halten");
     else if (sc.glare) setUi("ready", "✨ Spiegelung erkannt – Karte leicht kippen", sc.stable / STABLE_FRAMES);
     else if ((m.sharpness ?? 99) < 5) setUi("ready", sc.caps?.torch && !sc.torch ? "💡 Zu dunkel – Taschenlampe 🔦 antippen" : "💡 Etwas mehr Licht oder ruhiger halten", 0);
     else setUi("ready", "✋ Perfekt, ruhig halten …", sc.stable / STABLE_FRAMES);
@@ -986,7 +958,7 @@ async function capture({ auto = false } = {}) {
     if (m.accepted) {
       const group = orderGroup(m.group || []);
       const keys = group.map((x) => x.key);
-      if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte in den Rahmen legen"); return; }
+      if (sc.suppress && keys.some((k) => sc.suppress.includes(k))) { setUi("ready", "🔁 Schon gescannt – nächste Karte ins Bild"); return; }
       if (sc.current && keys.includes(sc.current.key)) { sc.currentAt = Date.now(); setUi("hit", "✅ Erkannt!"); return; }
       await showHit(group, m, photo);
       return;
@@ -1055,7 +1027,7 @@ async function runVision(dataUrl, { probe = null, photo = null } = {}) {
     r = await api("/api/scan/vision", { method: "POST", body: { image: dataUrl } });
   } catch (e) {
     renderHud(prev?.info ? prev : null);
-    setUi("search", "📇 Karte in den Rahmen halten");
+    setUi("search", "📇 Karte frei ins Bild halten");
     handleError(e);
     return false;
   }
@@ -1295,7 +1267,7 @@ function renderSeries() {
         <span class="block text-[9px] text-slate-400">${esc(s.scanCondition || "NM")}${s.scanVariant && s.scanVariant !== "normal" ? ` · ${s.scanVariant === "reverse_holo" ? "Rev. Holo" : "Holo"}` : ""}</span>
       </button>`;
     }).join("")}</div>
-    <p class="text-[10px] text-slate-500">Tipp: Mit 🔁 Serien-Scan einfach Karte für Karte in den Rahmen legen – jede erkannte Karte landet hier mit Zustand, Preis-Etikett und echtem Scan-Foto. Mit „Alle inserieren“ (oder ⚡ 1-Tap: faire Preise, geht nach kurzem Countdown von selbst live) erscheinen sie im Swipe-Radar, wo Käufer mit ❌, 🛒 Kaufen oder ❤️ reagieren.</p>`;
+    <p class="text-[10px] text-slate-500">Tipp: Mit 🔁 Serien-Scan einfach Karte für Karte ins Bild halten – jede erkannte Karte landet hier mit Zustand, Preis-Etikett und echtem Scan-Foto. Mit „Alle inserieren“ (oder ⚡ 1-Tap: faire Preise, geht nach kurzem Countdown von selbst live) erscheinen sie im Swipe-Radar, wo Käufer mit ❌, 🛒 Kaufen oder ❤️ reagieren.</p>`;
 }
 
 /** KI-Knopf hervorheben, wenn die Erkennung auf dem Gerät unsicher ist (Stufe 3 nur bei Bedarf). */
@@ -1536,7 +1508,7 @@ async function addToCollection(key) {
     confirmCurrent(key);
     haptic("success");
     window.dispatchEvent(new CustomEvent("ps:quickstart", { detail: "scan" }));
-    toast("💼 In deiner Sammlung", `${i.name} ${i.number || ""} (${choice.condition}) – mit Live-Preis.${sc.prefs.series ? " Nächste Karte in den Rahmen!" : ""}`); window.PS?.loadPortfolio?.();
+    toast("💼 In deiner Sammlung", `${i.name} ${i.number || ""} (${choice.condition}) – mit Live-Preis.${sc.prefs.series ? " Nächste Karte ins Bild!" : ""}`); window.PS?.loadPortfolio?.();
   } catch (e) { handleError(e); }
 }
 
@@ -1675,7 +1647,7 @@ function nextCard() {
     startSweep();
     return;
   }
-  setUi("search", "🔁 Nächste Karte in den Rahmen halten");
+  setUi("search", "🔁 Nächste Karte ins Bild halten");
 }
 
 const runHitAction = createActionRunner({
@@ -1806,7 +1778,7 @@ async function demoPrepare(opts = {}) {
     <div id="ps-ls-demo-frame" style="position:absolute;left:50%;top:45%;width:62%;aspect-ratio:63/88;transform:translate(-50%,-50%);border:3px solid rgba(255,255,255,.85);border-radius:16px;box-shadow:0 0 0 9999px rgba(2,6,23,.45)">
       <div id="ps-ls-demo-laser" style="position:absolute;left:-4%;right:-4%;top:0;height:4px;border-radius:4px;background:#22d3ee;box-shadow:0 0 18px 6px rgba(34,211,238,.75)"></div>
     </div>
-    <p id="ps-ls-demo-hint" style="position:absolute;top:10px;left:0;right:0;text-align:center;font-size:12px;font-weight:900;color:#fff;text-shadow:0 1px 4px #000">📸 Karte in den Rahmen halten</p>`;
+    <p id="ps-ls-demo-hint" style="position:absolute;top:10px;left:0;right:0;text-align:center;font-size:12px;font-weight:900;color:#fff;text-shadow:0 1px 4px #000">📸 Karte frei ins Bild halten</p>`;
   if (sc.demo.sleeve) {
     // Karte steckt in einer glänzenden Schutzhülle (Penny-Sleeve): transparente Folie mit Kante und Lichtkante
     const sleeve = document.createElement("div");
@@ -2073,7 +2045,7 @@ export const liveScanApi = {
   liveScanDismiss: () => {
     sc.current = null; sc.currentAt = 0; renderHud(null);
     if (!sc.running) { $("ps-ls-still")?.classList.add("hidden"); $("ps-ls-hint")?.classList.add("hidden"); $("ps-ls-idle")?.classList.remove("hidden"); if (!IS_STAGE) showClassic(false); }
-    setUi("search", "📇 Karte in den Rahmen halten");
+    setUi("search", "📇 Karte frei ins Bild halten");
   },
   /** Auslöser: Einzelbild in voller Schärfe (zusätzlich zur Auto-Erkennung); bei aus­geschalteter Kamera startet er sie */
   liveScanShutter: () => capture({ auto: false }),
@@ -2121,7 +2093,7 @@ export const liveScanApi = {
   liveScanNext: () => { autoFileCurrent(); nextCard(); },
   liveScanSeriesMode: () => {
     sc.prefs.series = !sc.prefs.series; savePrefs(); renderToggles();
-    toast(sc.prefs.series ? "🔁 Serien-Scan an" : "🔁 Serien-Scan aus", sc.prefs.series ? "Lege Karte für Karte in den Rahmen – jede erkannte Karte landet sofort in der Liste, doppelte werden übersprungen." : "Der Scanner zeigt wieder jede Karte einzeln.");
+    toast(sc.prefs.series ? "🔁 Serien-Scan an" : "🔁 Serien-Scan aus", sc.prefs.series ? "Halte Karte für Karte ins Bild – jede erkannte Karte landet sofort in der Liste, doppelte werden übersprungen." : "Der Scanner zeigt wieder jede Karte einzeln.");
     if (sc.current) renderHud(sc.current);
   },
   liveScanAutoAi: () => {

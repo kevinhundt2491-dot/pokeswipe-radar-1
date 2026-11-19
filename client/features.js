@@ -835,6 +835,7 @@ const SUBTABS = {
   ],
   portfolio: [
     { key: "overview", label: "Übersicht", fallback: true, match: () => false },
+    { key: "gaps", label: "🎯 Lücken-Radar", match: (el) => el.id === "ps-gap-radar" },
     { key: "wishlist", label: "Wunschliste", match: (el) => el.id === "ps-wishlist" },
     { key: "graded", label: "🏅 Graded", match: (el) => el.id === "ps-graded" },
     { key: "sets", label: "Sets", match: (el) => el.id === "ps-sets" },
@@ -852,6 +853,7 @@ const subLoaders = {
   "portfolio:graded": () => loadGraded(),
   "flip:drops": () => loadDrops(),
   "portfolio:wishlist": () => loadWishlist(),
+  "portfolio:gaps": () => window.PS?.gapRadarShow?.(),
   "community:calendar": () => loadCalendar(),
   "community:ranks": () => loadRanks(),
 };

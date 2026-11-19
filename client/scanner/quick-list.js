@@ -59,6 +59,7 @@ function suggested(r) {
  * infos: Treffer aus /api/scan/lookup (key, kind, id, lang, name, number, setName, image, price) – oder Karten aus
  * Sammlung, Kartendetails und Swipe-Radar (optional mit condition, variant, portfolioItemId, maxQty).
  * opts.instant: 1-Tap-Verkauf – sobald der faire Preis da ist, läuft ein kurzer Countdown und das Inserat geht live.
+ * opts.strategy: „fair“ (Cardmarket-Niveau) oder „quick“ (Deal-Preis unter Cardmarket) nur für diese Liste.
  * Jede Berührung (Preis, Zustand, Variante) stoppt den Countdown, damit man an gleicher Stelle noch ändern kann.
  */
 export function openQuickList(infos, opts = {}) {
@@ -67,6 +68,8 @@ export function openQuickList(infos, opts = {}) {
   if (!list.length) { toast("Keine Karte", "Scanne zuerst eine Karte."); return; }
   readPrefs();
   stopCountdown();
+  // opts.strategy: Preisvorschlag nur für diese Liste vorgeben („quick“ = Schnell-Inserieren unter Cardmarket), ohne die gespeicherte Vorliebe zu ändern
+  if (opts.strategy === "quick" || opts.strategy === "fair") ql.strategy = opts.strategy;
   ql.instant = Boolean(opts.instant);
   ql.lastIds = [];
   ql.rows = list.map((info) => ({

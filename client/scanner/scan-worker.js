@@ -30,7 +30,7 @@ let fbCursor = 0;
 /** Zählt jedes Neuladen des Index (Sweep-Set-Lock baut seine Zeilenliste dann neu) */
 let idxVersion = 0;
 /** Zero-Latency Sweep-Modus (rahmenlose Live-Erkennung) – nutzt denselben Index wie die Foto-Erkennung */
-const sweep = createSweepEngine({ getIdx: () => idx, getVersion: () => idxVersion, labelOf: (k) => labelOf(k), post: (m, t) => postMessage(m, t || []) });
+const sweep = createSweepEngine({ getIdx: () => idx, getVersion: () => idxVersion, labelOf: (k) => labelOf(k), post: (m, t) => postMessage(m, t || []), getGlyphs: () => glyphs });
 
 /** Ersatz-Zuschnitte in sinnvoller Reihenfolge: kleiner gehalten, schief (±5°/±9°), neben der Mitte (± leicht gedreht). */
 function fallbackQuads(base0) {
