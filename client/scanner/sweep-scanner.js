@@ -3,10 +3,16 @@
 //
 //  • Zero-Setup: keine Set-Auswahl, kein Set-Lock, kein Zielrahmen – jede Karte wird gegen den kompletten Katalog
 //    abgeglichen und automatisch in ihren Set-Ordner im Set-Binder einsortiert („✅ Einsortiert in: [Set-Name]“).
-//  • Stapel / Einzelkarte (Ruckzuck-Serienscan, Standard bei jedem Start): Karte irgendwo ins Bild halten → Treffer, sobald
-//    ein ruhiges Bild eine Karte mit ≥ 58 % Übereinstimmung und ≥ 4 % Vorsprung zeigt (kalibriert auf echte Handykamera-Werte,
-//    keine Farb-Sperre – Farbe höchstens +3-%-Tie-Breaker) → Vibration + Pling. Diese Karte (cardId) bleibt 1,2 s bzw. bis
-//    zum Wegziehen gesperrt; die nächste Karte löst sofort ohne Wartezeit aus. Weitere gleiche Exemplare: „+1“ im Dock.
+//  • Stapel / Einzelkarte (Ruckzuck-Serienscan, Standard bei jedem Start) – 4-Stufen-Pipeline ohne Geister-Scans:
+//      1) Präsenz-Gate im Worker: nur wenn GENAU EINE Karte (Rechteck 1 : 1,25 … 1 : 1,55, 20 … 88 % des Bilds) scharf im
+//         Bild ist, wird überhaupt abgeglichen – sonst ruhig „Bereit – einzelne Karte ins Bild halten“ (Tisch, Sofa, 4 Karten,
+//         abgelegtes Handy = 0 Scans)
+//      2) unsichtbare Perspektiv-Begradigung (300 × 420 px, 3 % Rand ab – Sleeve/Ordner/Tisch weg, Reflexe maskiert)
+//      3) Nummer + Artwork → sofort; reines Artwork nur ≥ 82 % mit ≥ 10 % Vorsprung in 2 Bildern in Folge (keine
+//         58-%-Schwelle mehr); klare Karte im Bereich 65–81 %: Name + Nummer per Texterkennung im Text-Index (41.962
+//         Datensätze), sonst einmalig der Vision-Rückfall (/api über deps.vision) mit dem begradigten Ausschnitt < 25 KB
+//      4) physische Karten-Sperre: nach einem Treffer friert der Auslöser ein, bis die Karte weg/ausgetauscht ist
+//    → Vibration + Pling. Weitere gleiche Exemplare: „+1“ im Dock.
 //  • 100 % freies Kamerafenster: im Kamerabild liegen keine Buttons, Pillen, Rahmen oder Etiketten mehr – Status- & Tool-
 //    Leiste, Karten- & Aktionsbereich und Session-Drawer sitzen unter der Kamera.
 //  • Jeder Treffer landet ohne Klick automatisch (+1) im passenden Set-Ordner („✅ Automatisch im Ordner: [Set-Name] (1×)“);
@@ -52,6 +58,10 @@ const MAX_LIST = 40;
 const TAG_HOLD_MS = 900, TAG_FADE_MS = 400;
 /** Taschenlampe an + so viele Bilder mit starkem Reflex auf der Folie → Warnung */
 const GLARE_WARN = 0.05, GLARE_WARN_FRAMES = 8;
+/** Ruhige Standby-Anzeige: kein (oder kein eindeutiges) Karten-Rechteck im Bild → kein Abgleich, kein Scan */
+const STANDBY_TEXT = "⚡ Bereit – einzelne Karte ins Bild halten";
+/** Vision-Rückfall: begradigter Karten-Ausschnitt als JPEG höchstens so groß */
+const VISION_MAX_BYTES = 25_000;
 /** „✅ Automatisch im Ordner: [Set-Name] (1×)“ bleibt so lange in der Status-Pille stehen */
 const FILED_MSG_MS = 2200;
 /** Scan-Modi (Sofort-Umschalter oben im Kamerabild) */
@@ -82,6 +92,9 @@ const SWEEP_CSS = `
  *   unfileItem(record, info, choice) → Promise<{ quantity } | false> (ein Exemplar wieder aus dem Set-Ordner nehmen)
  *   listNow(info, price) → Promise<{ id } | null> (1-Klick-Inserat ohne Formular)
  *   openQuickList(infos, opts) · beforeStart() (Foto-Ansicht schließen) · isStage
+ *   readText(canvas, rect, ms) → Promise<{ text } | null> (Name + Nummer lesen, optional)
+ *   decideText(text, hash) → Promise<{ accepted, strength, keys, label } | null> (Text-Index im Worker, optional)
+ *   vision(jpegDataUrl) → Promise<{ clear, items } | null> (Vision-Rückfall, optional – nur angemeldet)
  * }
  */
 export function createSweep(deps) {
@@ -98,6 +111,8 @@ export function createSweep(deps) {
     slotGate: createSlotGate(), grid: null, cells: [], slotTags: new Map(), slotSeen: new Map(), flipAt: 0,
     // Tatsächlich laufender Modus („turbo“ = Stapel, „binder“ = Ordner-Seite – nur per Knopf)
     eff: "turbo", glareFrames: 0, glareWarned: false, fp: null, pingAt: 0,
+    // Präsenz-Gate (Stufe 1), physische Karte (Epoche der Sperre) und Name+Nummer-/Vision-Rückfall (Stufe 3 C)
+    standby: "", epoch: 0, verify: null, wantCrop: false,
   };
   sw.gate = createSweepGate();
   sw.eff = "turbo";
@@ -170,7 +185,7 @@ export function createSweep(deps) {
           <p class="text-base font-black text-white">${esc(MODES[sw.prefs.mode].label)}</p>
           <p class="text-xs text-slate-300 max-w-xs">${esc(modeIntro())}</p>
           <button type="button" onclick="PS.sweep('start')" class="bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 font-black text-sm px-6 py-3 rounded-2xl shadow-lg">📷 Kamera starten</button>
-          <p class="text-[10px] text-slate-500 max-w-xs">Erkennung komplett auf deinem Gerät. Es werden keine Kamerabilder hochgeladen.</p>
+          <p class="text-[10px] text-slate-500 max-w-xs">Erkennung auf deinem Gerät. Nur bei einer unsicheren Karte geht – wenn du angemeldet bist – einmalig ein kleiner Karten-Ausschnitt (kein Kamerabild) zur KI-Prüfung.</p>
         </div>
       </div>
       <div id="ps-sw-bar" class="ps-sw-below shrink-0 bg-slate-950 border border-white/10 rounded-2xl p-1.5 space-y-1.5">
@@ -260,7 +275,11 @@ export function createSweep(deps) {
     if (!ix.ready) return ix.loading ? "⏳ Lade Karten-Index (einmalig, danach offline auf dem Gerät) …" : "";
     if (sw.filedMsg && Date.now() - sw.filedMsg.at < FILED_MSG_MS) return sw.filedMsg.text;
     if (!sw.running) return `⚡ Bereit (${Number(ix.count || 0).toLocaleString("de-DE")} Karten)`;
-    const parts = ["⚡ Bereit", `Match: ${Math.round((sw.top || 0) * 100)} %`];
+    // Stapel: ohne eindeutiges Karten-Rechteck ruhiger Standby (keine Match-Werte, kein Auslösen)
+    if (!isBinder() && sw.standby) return STANDBY_TEXT;
+    if (!isBinder() && sw.gateInfo?.frozen) return "🔒 Karte erfasst – Karte wegziehen oder nächste Karte ins Bild";
+    const parts = [isBinder() ? "⚡ Bereit" : "🔍 Karte erkannt", `Match: ${Math.round((sw.top || 0) * 100)} %`];
+    if (!isBinder() && sw.verify && (sw.verify.state === "crop" || sw.verify.state === "busy")) parts.push("Prüfe Name + Nummer …");
     if (sw.frameTimes.length > 4) {
       const span = sw.frameTimes[sw.frameTimes.length - 1] - sw.frameTimes[0];
       const fps = span > 0 ? Math.round(((sw.frameTimes.length - 1) * 1000) / span) : 0;
@@ -454,7 +473,7 @@ export function createSweep(deps) {
     $("ps-sw-idle")?.classList.add("hidden");
     $("ps-sw-stop")?.classList.remove("hidden");
     sw.running = true; sw.torch = false; sw.dark = 0; sw.frameTimes = []; sw.inFlight = 0; sw.tags = [];
-    sw.gate.reset(); resetBinder();
+    sw.gate.reset(); resetBinder(); sw.verify = null; sw.wantCrop = false; sw.standby = "";
     sw.eff = sw.prefs.mode === "binder" ? "binder" : "turbo"; sw.top = 0; sw.glareFrames = 0; sw.glareWarned = false;
     deps.worker().postMessage({ type: "sweep-reset" });
     renderToggles(); renderAll();
@@ -546,8 +565,10 @@ export function createSweep(deps) {
       w.postMessage({ type: "sweep-frame", seq, data: img.data.buffer, w: W, h: H, ...extra }, [img.data.buffer]);
       return;
     }
-    // Stapel / Einzelkarte (Standard): offenes Kamerabild, Multi-Crop-Erkennung im Worker
-    const extra = { mode: "turbo" };
+    // Stapel / Einzelkarte (Standard): offenes Kamerabild, Präsenz-Gate + Begradigung im Worker. crop = begradigtes
+    // Standardbild (300 × 420) für den Name+Nummer-/Vision-Rückfall mitschicken lassen
+    const extra = { mode: "turbo", crop: sw.wantCrop };
+    sw.wantCrop = false;
     // Bevorzugt: ImageBitmap an den Worker übergeben – Verkleinern und Pixel-Auslesen passieren dort, nicht im UI-Thread
     if (useBitmap) {
       createImageBitmap(video, g.sx, g.sy, g.sw, g.sh, { resizeWidth: g.W, resizeHeight: g.H, resizeQuality: "low" })
@@ -606,13 +627,19 @@ export function createSweep(deps) {
     }
   }
 
-  /** Stapel / Einzelkarte: Sperre folgt dem Exemplar im Bild (Bewegungsdifferenz im Zentrum), kein Zeit-Cooldown */
+  /**
+   * Stapel / Einzelkarte: Präsenz-Gate (Standby), Treffer-Entscheidung und physische Karten-Sperre im Gate. Nach einem
+   * Treffer ist der Auslöser eingefroren, bis die Karte weg bzw. ausgetauscht ist – kein zweiter Name über derselben Karte.
+   */
   function onStackResult(m, interval) {
     const dets = Array.isArray(m.dets) ? m.dets : [];
-    sw.top = Number(m.top) || dets.reduce((x, d) => Math.max(x, Number(d.match) || 0), 0);
-    const g = sw.gate.push({ dets, found: m.found, motion: m.motion, center: m.center, changed: m.changed, thumb: m.thumb }, Date.now(), interval);
+    sw.standby = m.card === false ? m.standby || "none" : "";
+    sw.top = sw.standby ? 0 : Number(m.top) || dets.reduce((x, d) => Math.max(x, Number(d.match) || 0), 0);
+    const g = sw.gate.push({ dets, card: m.card !== false, found: m.found, motion: m.motion, center: m.center, changed: m.changed, thumb: m.thumb }, Date.now(), interval);
     const { hits } = g;
-    sw.gateInfo = { paused: g.paused, blurry: g.blurry && dets.length > 0 };
+    sw.gateInfo = { paused: g.paused, blurry: g.blurry && dets.length > 0, frozen: Boolean(g.frozen) };
+    // Neue physische Karte → Rückfall (OCR/Vision) darf für sie erneut laufen
+    if (g.epoch !== sw.epoch) { sw.epoch = g.epoch; sw.verify = null; sw.wantCrop = false; }
     const t = Date.now();
     // Preisschilder der schon erkannten Karten an die aktuelle Lage anheften
     for (const d of dets) {
@@ -624,7 +651,67 @@ export function createSweep(deps) {
       const d = dets.find((x) => x.keys === keys);
       if (d) onHit(d);
     }
+    if (!hits.length && !g.frozen) maybeVerify(dets[0] || null, m, g);
   }
+
+  /**
+   * Stufe 3 C – klare, scharfe Karte, lokal aber unsicher (65–81 % bzw. zu knapper Vorsprung): nach FALLBACK_HOLD_MS ruhiger
+   * Sicht einmal je physischer Karte das begradigte 300 × 420-Bild holen → Name + Nummer lesen (Text-Index) → sonst Vision.
+   * Lieber 0,3 s länger fokussieren als eine falsche Karte einsortieren: ohne sicheres Ergebnis wird nichts gespeichert.
+   */
+  function maybeVerify(d, m, g) {
+    const now = Date.now();
+    const unsure = Boolean(d && m.card !== false && !d.verified && Number(d.match) >= SWEEP.FALLBACK_MIN && d.numOk !== false && !g.blurry);
+    const v = sw.verify;
+    if (!unsure) { if (v && v.state === "watch") sw.verify = null; return; }
+    if (!v) { sw.verify = { epoch: sw.epoch, since: now, state: "watch", det: d }; return; }
+    v.det = d;
+    if (v.state === "watch" && now - v.since >= SWEEP.FALLBACK_HOLD_MS && (deps.readText || deps.vision)) { v.state = "crop"; sw.wantCrop = true; return; }
+    if (v.state === "crop" && m.crop?.data) { v.state = "busy"; runVerify(v, m.crop, d); }
+  }
+
+  /** Begradigten Ausschnitt als JPEG unter maxBytes (Qualität schrittweise senken). */
+  function jpegUnder(cv, maxBytes) {
+    let url = "";
+    for (const q of [0.72, 0.6, 0.5, 0.4, 0.3, 0.22]) {
+      url = cv.toDataURL("image/jpeg", q);
+      if (Math.floor(((url.length - url.indexOf(",") - 1) * 3) / 4) <= maxBytes) return url;
+    }
+    return url;
+  }
+
+  async function runVerify(v, crop, d) {
+    let keys = null, label = "", via = "";
+    try {
+      const cv = document.createElement("canvas");
+      cv.width = crop.w; cv.height = crop.h;
+      cv.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(crop.data), crop.w, crop.h), 0, 0);
+      const full = [[0, 0], [crop.w, 0], [crop.w, crop.h], [0, crop.h]];
+      // A) Name (Titelzeile oben) + Sammlernummer (unten) auf der begradigten Karte lesen → Text-Index (41.962 Datensätze),
+      //    bestätigt durch die Bild-Kandidaten dieses Bilds
+      if (deps.readText && deps.decideText) {
+        const r = await deps.readText(cv, { x: 0, y: 0, w: crop.w, h: crop.h, quad: full }, 1500);
+        if (r?.text?.trim() && stillSame(v)) {
+          const t = await deps.decideText(r.text, Array.isArray(d.cands) ? d.cands : []);
+          if (t?.accepted && t.strength === "strong" && t.keys?.length) { keys = t.keys; label = t.label || ""; via = "text"; }
+        }
+      }
+      // C) Vision-Rückfall (einmal je physischer Karte, nur der begradigte Ausschnitt < 25 KB)
+      if (!keys && deps.vision && stillSame(v)) {
+        const r = await deps.vision(jpegUnder(cv, VISION_MAX_BYTES));
+        const top = r?.clear ? r.items?.[0] : null;
+        if (top?.key) { keys = [top.key]; label = top.name ? `${top.name}${top.number ? ` ${top.number}` : ""}` : ""; via = "vision"; }
+      }
+    } catch (e) {
+      try { console.warn("sweep verify", e); } catch {}
+    }
+    if (!stillSame(v)) return;
+    v.state = "done";
+    if (keys && sw.gate.external(keys, Date.now())) onHit({ ...d, keys, label: label || d.label, via, conf: 100 });
+    setStatus(statusLine());
+  }
+  /** Liegt noch dieselbe physische Karte im Bild (keine neue Epoche, Scanner läuft, Stapel-Modus)? */
+  const stillSame = (v) => sw.running && !isBinder() && sw.verify === v && v.epoch === sw.epoch;
 
   /** Ordner-Seite: jedes Fach hat seine eigene Positions-Sperre – einmal erkannt, bis zum Umblättern nie wieder gezählt */
   function onBinderResult(m) {
@@ -1072,7 +1159,7 @@ export function createSweep(deps) {
     if (!MODES[m] || sw.prefs.mode === m) return;
     sw.prefs.mode = m; savePrefs();
     sw.eff = m === "binder" ? "binder" : "turbo"; sw.top = 0;
-    sw.gate.reset(); resetBinder(); sw.tags = [];
+    sw.gate.reset(); resetBinder(); sw.tags = []; sw.verify = null; sw.wantCrop = false; sw.standby = "";
     haptic("select");
     renderToggles(); renderAll(); drawOverlay();
     const idle = $("ps-sw-idle");

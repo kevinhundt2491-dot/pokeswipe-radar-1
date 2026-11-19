@@ -284,7 +284,9 @@ self.onmessage = async (e) => {
     const t0 = performance.now();
     let d = null;
     try {
-      const hash = msg.useHash !== false && Date.now() - lastHash.at < 1500 ? lastHash.cands : [];
+      // Bild-Kandidaten: vom Stapel-Scanner mitgeschickt (begradigte Karte) bzw. die der letzten 1,5 s (Foto-Erkennung)
+      const hash = Array.isArray(msg.hash) ? msg.hash.filter((h) => h && typeof h.key === "string").slice(0, 24).map((h) => ({ key: h.key, score: Number(h.score) || 0 }))
+        : msg.useHash !== false && Date.now() - lastHash.at < 1500 ? lastHash.cands : [];
       d = textIdx ? decideText(textIdx, String(msg.text || ""), hash, langsOrder) : null;
     } catch (err) { d = null; }
     postMessage({ type: "text-result", reqId: msg.reqId, ms: performance.now() - t0, ...(d || { accepted: false, strength: "none", keys: [], candidates: [] }), label: d?.keys?.length ? labelOf(d.keys[0]) : "" });

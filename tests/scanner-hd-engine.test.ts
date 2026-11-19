@@ -1,4 +1,4 @@
-// High-End-Scanner-Engine: Ruckzuck-Sweep (2-Frame-Stabilität, 0,8-s-Pause, Karten-Sperre, Pflicht-Farbabgleich) und 9er-Ordner-Scan
+// High-End-Scanner-Engine: Ruckzuck-Sweep (Präsenz-Gate, 2-Frame-Stabilität, physische Karten-Sperre) und 9er-Ordner-Scan
 // (Raster passt sich der Seite an, Slot-Sperre je Fach, Seitenwechsel-Reset), Anti-Glare, Normalisierung,
 // Typ-Vorfilter, HSV-/Kanten-Vektor – inkl. Ende-zu-Ende-Lauf der Worker-Engine auf einer gerenderten Ordnerseite.
 import { test } from "node:test";
@@ -66,33 +66,31 @@ function testEngine() {
   return { engine, posts, last: () => posts[posts.length - 1] };
 }
 
-test("ABNAHME Stapel: keine 5-fach-Auslösung – Handzittern/Flackern hält die Sperre, erst Wegziehen gibt sie frei; Duplikat zählt danach", () => {
-  const A = ["card:sv08-238"];
+test("ABNAHME Stapel: physische Karten-Sperre – Handzittern/Flackern hält den Auslöser eingefroren, erst Wegziehen (≥ 200 ms) gibt frei", () => {
+  const A = ["card:sv08-238"], B = ["card:sv08-100"];
   const quad: [number, number][] = [[0.3, 0.25], [0.7, 0.25], [0.7, 0.8], [0.3, 0.8]];
-  const see = (center: number, changed = 0.02, carried = false) => ({ dets: [{ keys: A, match: 0.93, margin: 14, quad, carried }], found: true, motion: center * 0.6, center, changed });
+  const thumb = (shift = 0) => { const d = new Float32Array(16 * 24); let s = 0; for (let i = 0; i < d.length; i++) { d[i] = 40 + ((i * 37 + shift) % 160); s += d[i]; } return { w: 16, h: 24, d, mean: s / d.length }; };
+  const see = (keys = A, center = 0.01, th = thumb()) => ({ dets: [{ keys, match: 0.93, margin: 20, quad }], card: true, found: true, motion: center * 0.6, center, changed: 0.02, thumb: th });
   const gate = createSweepGate();
   let t = 0, hits = 0;
   const push = (f: any, dt = 33) => { hits += gate.push(f, (t += dt), 33).hits.length; };
-  push(see(0.01)); push(see(0.01));
-  assert.equal(hits, 1, "Exemplar 1 nach 2 Bildern (≈ 66 ms bei 30 FPS)");
-  for (let i = 0; i < 30; i++) push(see(0.01));
-  assert.equal(hits, 1, "liegt ruhig → nicht doppelt");
-  // a) Handzittern mit kurzen Erkennungs-Aussetzern (< 18 % Bildveränderung) → Sperre bleibt → KEIN Doppel-Scan
-  for (let i = 0; i < 40; i++) push(i % 4 === 1 ? { dets: [], found: true, motion: 0.05, center: 0.07, changed: 0.12 } : see(0.05, 0.1));
-  assert.equal(hits, 1, "Zittern löst nie erneut aus");
-  // b) Karte wird aus dem Bild gezogen: verwackelt (keine Treffer unterwegs), dann weg mit großer Bildveränderung → frei
-  for (let i = 1; i <= 4; i++) push({ dets: [{ keys: A, match: 0.9, margin: 12, quad: quad.map(([x, y]) => [x + i * 0.08, y]) }], found: true, motion: 0.12, center: 0.15, changed: 0.25 });
-  assert.equal(hits, 1, "unterwegs kein Fehlschuss");
-  push({ dets: [], found: false, motion: 0.12, center: 0.2, changed: 0.5 });
-  assert.equal(gate.locks.length, 0, "weggezogen → Sperre frei");
-  // c) Nächste identische Karte vom Stapel: erst 2 ruhige Bilder
-  push(see(0.3, 0.5)); assert.equal(hits, 1, "Heranführen ist verwackelt");
-  push(see(0.01)); push(see(0.01));
-  assert.equal(hits, 2, "Exemplar 2 (identische Karte)");
-  // d) Kamera wackelt leicht, Karte durchgehend erkannt → KEIN Doppel-Scan
-  for (let i = 0; i < 20; i++) push(see(0.08, 0.1));
-  assert.equal(hits, 2);
-  assert.ok(!/COOLDOWN_MS/.test(src("client/scanner/sweep-logic.js")), "Pause heißt HIT_PAUSE_MS (feste 0,8 s), kein Karten-Cooldown");
+  push(see()); assert.equal(hits, 0, "reines Artwork braucht 2 Bilder in Folge");
+  push(see()); assert.equal(hits, 1, "Exemplar 1 nach 2 Bildern (≈ 66 ms bei 30 FPS)");
+  assert.equal(gate.frozen, true, "Auslöser eingefroren");
+  // a) Handzittern + Erkennung springt auf ANDERE Namen (Bildrauschen) → nie ein zweiter Treffer
+  for (let i = 0; i < 60; i++) push(i % 3 === 0 ? see(["card:x-" + i], 0.05) : see(A, 0.05));
+  assert.equal(hits, 1, "kein zweiter oder dritter Name über derselben Karte");
+  // b) Rechteck flackert kurz weg (< 200 ms), ohne dass sich das Bildzentrum ändert → bleibt gesperrt
+  push({ dets: [], card: false, found: false, motion: 0.01, center: 0.01, thumb: thumb() });
+  push(see(B));  push(see(B));
+  assert.equal(hits, 1, "kurzes Flackern gibt die Sperre nicht frei");
+  // c) Karte weggezogen: Rechteck weg + Bildzentrum verändert, ≥ 200 ms → frei
+  for (let i = 0; i < 8; i++) push({ dets: [], card: false, found: false, motion: 0.2, center: 0.3, thumb: thumb(57) });
+  assert.equal(gate.frozen, false, "weggezogen → frei");
+  // d) Nächste Karte: 2 ruhige Bilder → Treffer
+  push(see(B, 0.01, thumb(91))); push(see(B, 0.01, thumb(91)));
+  assert.equal(hits, 2, "nächste Karte blitzschnell");
+  assert.ok(!/COOLDOWN_MS/.test(src("client/scanner/sweep-logic.js")), "kein Karten-Cooldown");
 });
 
 test("Farbsignatur bleibt messbar (Feuer ≠ Pflanze ≠ Wasser), sperrt im Live-Scanner aber nie – nur +3-%-Tie-Breaker", () => {
@@ -327,10 +325,10 @@ test("ABNAHME Ordner: Worker-Engine erkennt alle 9 Fächer einer Seite (auch mit
   assert.ok(maxSlots >= 3, "mehrere Fächer je Bild");
 });
 
-test("Stapel-Engine: Sofort-Treffer im 1. ruhigen Bild, ruhige Karte nicht doppelt, Wegziehen → Duplikat zählt; Multi-Crop findet Karten ohne Kontur", async () => {
+test("Stapel-Engine: Präsenz-Gate (Standby ohne Karte), begradigte Karte ≥ 82 % in 2 Bildern, Sperre bis zum Wegziehen", async () => {
   const { engine, last } = testEngine();
   const W = 480, H = 760;
-  /** Karte bei (x0, y0) mit Breite cw; edge = false → kein Kontrast zum Hintergrund (Hand/Hülle/heller Tisch) */
+  /** Karte bei (x0, y0) mit Breite cw; bg = einfarbiger Hintergrund */
   const scene = (seed: number | null, { x0 = 110, y0 = 190, cw = 260, bg = null as null | number } = {}) => {
     const ch = cw / (63 / 88);
     const out = new Uint8ClampedArray(W * H * 4), card = seed === null ? null : cardRgba(seed);
@@ -349,42 +347,41 @@ test("Stapel-Engine: Sofort-Treffer im 1. ruhigen Bild, ruhige Karte nicht doppe
     await engine.handle({ type: "sweep-frame", seq: ++seq, data: px.slice().buffer, w: W, h: H, mode: "turbo", ...extra });
     const m = last();
     assert.equal(m.error, undefined);
-    hits += gate.push({ dets: m.dets, found: m.found, motion: m.motion, center: m.center, changed: m.changed, thumb: m.thumb }, (t += 40), 40).hits.length;
+    hits += gate.push({ dets: m.dets, card: m.card, found: m.found, motion: m.motion, center: m.center, changed: m.changed, thumb: m.thumb }, (t += 40), 40).hits.length;
     return m;
   };
-  let m = await frame(scene(5));
-  assert.equal(m.dets[0].lead, "card:t-5");
-  assert.ok(m.dets[0].match >= SWEEP.MIN_MATCH + SWEEP.NO_COLOR_EXTRA, `Übereinstimmung ${m.dets[0].match}`);
-  assert.equal(m.dets[0].color, null, "Test ohne OffscreenCanvas: keine Farb-Referenz – kein Warten, keine Sperre");
-  assert.equal(m.dets[0].colorReject, undefined);
-  assert.equal(m.dets[0].colorPending, undefined);
+  // Index-Karte 5 hat nur 9 Punkte Vorsprung (< 10 %) → würde korrekt NICHT als reiner Artwork-Treffer zählen
+  let m = await frame(scene(15));
+  assert.equal(m.card, true, "genau ein Karten-Rechteck");
+  assert.equal(m.dets[0].lead, "card:t-15");
+  assert.ok(m.dets[0].match >= SWEEP.MIN_MATCH, `Übereinstimmung ${m.dets[0].match}`);
+  assert.ok(m.presence.ratio >= SWEEP.RECT_RATIO_MIN && m.presence.ratio <= SWEEP.RECT_RATIO_MAX);
   assert.ok(Number.isFinite(m.dets[0].sharp) && m.dets[0].sharp > 0, "Schärfe je Karte");
   assert.ok(m.thumb && m.thumb.w === 16, "Anker-Miniatur für die Karten-Sperre");
-  assert.equal(hits, 1, "Treffer schon im 1. ruhigen Bild");
-  m = await frame(scene(5));
-  assert.equal(hits, 1, "2. Bild: gesperrt");
-  assert.ok(typeof m.top === "number" && m.top >= m.dets[0].match - 1e-9, "Top-Match für die Live-Diagnose");
-  assert.equal(m.gridSeen, undefined, "keine Modus-Automatik");
-  for (let i = 0; i < 6; i++) await frame(scene(5));
-  assert.equal(hits, 1, "ruhig liegende Karte zählt nicht doppelt");
-  // Karte weg (leerer Tisch) → Sperre frei; dieselbe Karte wieder → zählt sofort erneut
-  m = await frame(scene(null));
-  assert.ok(m.center >= SWEEP.CENTER_MOVE, `Zentrum ${m.center}`);
-  assert.equal(gate.locks.length, 0, "weggezogen → frei");
-  await frame(scene(5)); await frame(scene(5)); await frame(scene(5));
-  assert.equal(hits, 2, "Duplikat vom Stapel");
-  // Nächste (andere) Karte direkt darübergelegt → ohne Wartezeit
-  await frame(scene(8)); await frame(scene(8)); await frame(scene(8));
-  assert.equal(hits, 3, "nächste Karte vom Stapel");
-  // Multi-Crop: Karte füllt das Bild fast (sehr nah, keine Kontur) bzw. liegt weiter weg und leicht neben der Mitte
-  const near = createTestEngineRun(testEngine);
-  for (const [seed, opt] of [[11, { x0: 30, y0: 60, cw: 420 }], [12, { x0: 140, y0: 230, cw: 220, bg: 128 }]] as const) {
-    let found = null as any;
-    for (let i = 0; i < 9 && !found; i++) {
-      const r = await near(scene(seed, opt));
-      found = r.dets.find((d: any) => d.lead === `card:t-${seed}` && d.match >= SWEEP.MIN_MATCH) || null;
-    }
-    assert.ok(found, `Karte ${seed} per Multi-Crop erkannt`);
+  assert.equal(hits, 0, "1. Bild: noch kein reiner Artwork-Treffer");
+  m = await frame(scene(15));
+  assert.equal(hits, 1, "2. Bild in Folge → Treffer");
+  for (let i = 0; i < 6; i++) await frame(scene(15));
+  assert.equal(hits, 1, "ruhig liegende Karte zählt nie doppelt");
+  // Begradigtes Standardbild 300 × 420 auf Anfrage (OCR-/Vision-Rückfall)
+  m = await frame(scene(15), { crop: true });
+  assert.equal(m.crop.w, 300); assert.equal(m.crop.h, 420);
+  // Karte weg (leerer Tisch) → Standby, keine Erkennung, Sperre löst nach ≥ 200 ms
+  for (let i = 0; i < 7; i++) m = await frame(scene(null));
+  assert.equal(m.card, false); assert.equal(m.dets.length, 0, "ohne Karte kein Abgleich");
+  assert.equal(gate.frozen, false, "weggezogen → frei");
+  // 1. Bild nach dem leeren Tisch ist „Bewegung“, danach 2 ruhige Bilder
+  await frame(scene(14)); await frame(scene(14)); await frame(scene(14));
+  assert.equal(hits, 2, "nächste Karte vom Stapel");
+  // Karte sehr nah (67 % des Bilds) → wird gefunden und richtig erkannt
+  const run = createTestEngineRun(testEngine);
+  const near = await run(scene(11, { x0: 30, y0: 60, cw: 420 }));
+  assert.equal(near.dets[0]?.lead, "card:t-11");
+  // Standby: dunkel, einfarbig, zu klein (< 20 %), mehrere Karten → kein Abgleich
+  for (const px of [scene(null, { bg: 8 }), scene(null, { bg: 128 }), scene(12, { x0: 140, y0: 230, cw: 200, bg: 128 })]) {
+    const r = await run(px);
+    assert.equal(r.card, false, `Standby (${r.standby})`);
+    assert.equal(r.dets.length, 0);
   }
 });
 
