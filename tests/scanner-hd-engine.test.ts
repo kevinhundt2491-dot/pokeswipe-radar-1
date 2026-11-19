@@ -107,7 +107,7 @@ test("Slot-Sperre: jedes Fach zählt genau einmal; Umblättern (> 65 % Bildände
   assert.equal(gate.locked.size, 9);
   // Zu schwach / kein klarer Abstand → Fach bleibt offen
   const weak = createSlotGate();
-  for (let i = 0; i < 4; i++) assert.equal(weak.push({ changed: 0, slots: [{ slot: 0, keys: ["card:x"], match: 0.84, margin: 12 }, { slot: 1, keys: ["card:y"], match: 0.95, margin: 2 }] }).hits.length, 0);
+  for (let i = 0; i < 4; i++) assert.equal(weak.push({ changed: 0, slots: [{ slot: 0, keys: ["card:x"], match: 0.64, margin: 12 }, { slot: 1, keys: ["card:y"], match: 0.95, margin: 2 }] }).hits.length, 0);
   // Umblättern: Sperren sofort leer, während der Bewegung zählt nichts, danach die neue Seite komplett
   const flip = push(page(P1, 0.8));
   assert.equal(flip.flipped, true); assert.equal(flip.locked.length, 0);
@@ -200,7 +200,7 @@ test("Anti-Glare + Normalisierung: Reflexe (Luminanz > 238, kaum Sättigung) wer
   assert.ok(dist <= 6, `Hash-Abstand hell/dunkel ${dist}`);
 });
 
-test("Stufe 2: HSV-Farbmatrix + Kantengradient des Artworks trennen Karten; Übereinstimmung ≥ 85 % nur für die richtige", () => {
+test("Stufe 2: HSV-Farbmatrix + Kantengradient des Artworks trennen Karten; fehlende Vektoren werden nie bestraft", () => {
   const vec = (seed: number, scale = 1) => {
     const px = cardRgba(seed);
     if (scale !== 1) for (let i = 0; i < px.length; i++) if (i % 4 !== 3) px[i] = Math.min(255, px[i] * scale);
@@ -214,11 +214,13 @@ test("Stufe 2: HSV-Farbmatrix + Kantengradient des Artworks trennen Karten; Übe
   assert.ok(same.hsv - other.hsv > 0.15 && same.edge - other.edge > 0.1, `${JSON.stringify(same)} vs ${JSON.stringify(other)}`);
   assert.equal(artSimilarity(ref, null), null);
   assert.equal(fuseMatch(16), 0.9, "ohne Referenz-Vektoren zählt der Bild-Fingerabdruck allein");
-  assert.ok(fuseMatch(16, { layout: 0.95, hsv: same.hsv, edge: same.edge }) >= SWEEP.MIN_MATCH);
-  assert.ok(fuseMatch(16, { layout: 0.5, hsv: other.hsv, edge: other.edge }) < SWEEP.MIN_MATCH, "gleicher Hash-Abstand, falsche Farben/Kanten → kein Treffer");
+  assert.ok(fuseMatch(16, { layout: 0.95, hsv: same.hsv, edge: same.edge }) >= SWEEP.DIRECT_MATCH);
+  assert.ok(fuseMatch(16, { layout: 0.95, hsv: same.hsv, edge: same.edge }) - fuseMatch(16, { layout: 0.5, hsv: other.hsv, edge: other.edge }) > 0.1, "falsche Farben/Kanten liegen klar darunter");
+  // Live-Engine: Vektoren sind nur Bonus – die Übereinstimmung ist nie schlechter als der reine Hash-Wert
+  assert.match(src("client/scanner/sweep-engine.js"), /Math\.max\(hashSimilarity\(d\.score\), fuseMatch\(/);
 });
 
-test("Stufe 1: Typ-/Rahmenfarben-Vorfilter (12 Klassen) – grenzt die Suche ein, unbekannte Karten bleiben immer dabei", () => {
+test("Typ-/Rahmenfarben-Klassen (12) bleiben als Katalog-Metadaten erhalten; die Live-Engine filtert damit nicht mehr", () => {
   assert.equal(TYPE_CLASSES.length, 12);
   assert.equal(typeClassOf("Pokémon", "Feuer"), 0); assert.equal(typeClassOf("Pokémon", "Wasser,Metall"), 1);
   assert.equal(typeClassOf("Trainer", ""), 10); assert.equal(typeClassOf("Energie", "Feuer"), 11); assert.equal(typeClassOf("Energy", ""), 11);
@@ -237,12 +239,15 @@ test("Stufe 1: Typ-/Rahmenfarben-Vorfilter (12 Klassen) – grenzt die Suche ein
   const rows = classRows(cls, probeClasses(col([225, 70, 40])), null, cls.length)!;
   assert.ok(rows.length < 0.45 * cls.length, `${rows.length} von ${cls.length}`);
   assert.ok([...rows].some((i) => cls[i] === CLASS_UNKNOWN) && [...rows].some((i) => cls[i] === 11), "unbekannt + Energie immer dabei");
-  assert.deepEqual([...classRows(cls, [0], new Int32Array([0, 1, 12, 1250]), cls.length)!], [0, 12, 1250], "kombinierbar mit Set-Lock");
+  assert.deepEqual([...classRows(cls, [0], new Int32Array([0, 1, 12, 1250]), cls.length)!], [0, 12, 1250], "Zeilen-Liste");
   // Text-Index trägt die Klasse als 7. Spalte; alte Index-Stände ohne Spalte → unbekannt
   const ti = buildTextIndex([{ lang: "de", t: "card:a-1\tGlurak\t1\t100\tA\t330\t0\ncard:a-2\tAlt\t2\t100\tA\t0" }]);
   assert.equal(ti.rows[0].cls, 0); assert.equal(ti.rows[1].cls, CLASS_UNKNOWN);
   assert.match(src("server/scan-index.ts"), /typeClassOf\(r\.category, r\.types\)/);
-  assert.match(src("client/scanner/scan-worker.js"), /idx\.cls = cls/);
+  // Der Live-Scanner nutzt den Vorfilter NICHT mehr (auf echten Handy-Kameras schloss er die richtige Karte aus):
+  // es wird immer der komplette Katalog durchsucht
+  const eng = src("client/scanner/sweep-engine.js");
+  assert.ok(!/classRows|probeClasses|frameColor/.test(eng), "kein Rahmenfarben-Vorfilter in der Live-Engine");
 });
 
 test("ABNAHME Ordner: Worker-Engine erkennt alle 9 Fächer einer Seite (auch mit Folien-Reflexen), jedes genau einmal; nächste Seite nach dem Umblättern", async () => {
@@ -282,15 +287,17 @@ test("ABNAHME Ordner: Worker-Engine erkennt alle 9 Fächer einer Seite (auch mit
   assert.ok(maxSlots >= 3, "mehrere Fächer je Bild");
 });
 
-test("Stapel-Engine: Karte frei im Bild wird erkannt; Ergebnis trägt Bewegungsdifferenz im Zentrum; Automatik sieht das Ordner-Raster", async () => {
+test("Stapel-Engine: Treffer im ersten Bild, ruhige Karte nicht doppelt, Wegziehen → Duplikat zählt; Multi-Crop findet Karten ohne Kontur", async () => {
   const { engine, last } = testEngine();
   const W = 480, H = 760;
-  const scene = (seed: number | null) => {
+  /** Karte bei (x0, y0) mit Breite cw; edge = false → kein Kontrast zum Hintergrund (Hand/Hülle/heller Tisch) */
+  const scene = (seed: number | null, { x0 = 110, y0 = 190, cw = 260, bg = null as null | number } = {}) => {
+    const ch = cw / (63 / 88);
     const out = new Uint8ClampedArray(W * H * 4), card = seed === null ? null : cardRgba(seed);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const o = (y * W + x) * 4, n = 40 + 12 * Math.sin(x * 0.05 + 7) + 8 * Math.sin(y * 0.21 + 21);
-      let rgb = [n + 18, n + 8, n];
-      const u = (x - 110) / 260, v = (y - 190) / 363;
+      let rgb = bg === null ? [n + 18, n + 8, n] : [bg, bg, bg];
+      const u = (x - x0) / cw, v = (y - y0) / ch;
       if (card && u >= 0 && u < 1 && v >= 0 && v < 1) { const ao = (Math.floor(v * NORM_H) * NORM_W + Math.floor(u * NORM_W)) * 4; rgb = [card[ao], card[ao + 1], card[ao + 2]]; }
       out[o] = rgb[0]; out[o + 1] = rgb[1]; out[o + 2] = rgb[2]; out[o + 3] = 255;
     }
@@ -305,21 +312,40 @@ test("Stapel-Engine: Karte frei im Bild wird erkannt; Ergebnis trägt Bewegungsd
     hits += gate.push({ dets: m.dets, found: m.found, motion: m.motion, center: m.center }, seq * 40).hits.length;
     return m;
   };
-  let m = await frame(scene(5)); m = await frame(scene(5));
+  let m = await frame(scene(5));
   assert.equal(m.dets[0].lead, "card:t-5");
-  assert.ok(m.dets[0].match >= SWEEP.MIN_MATCH, `Übereinstimmung ${m.dets[0].match}`);
-  assert.equal(hits, 1);
+  assert.ok(m.dets[0].match >= SWEEP.DIRECT_MATCH, `Übereinstimmung ${m.dets[0].match}`);
+  assert.equal(hits, 1, "Treffer im ersten Bild – kein Stillhalten über 2 Bilder");
+  assert.ok(typeof m.top === "number" && m.top >= m.dets[0].match - 1e-9, "Top-Match für die Live-Diagnose");
+  assert.equal(m.gridSeen, undefined, "keine Modus-Automatik");
   for (let i = 0; i < 6; i++) await frame(scene(5));
-  assert.equal(hits, 1);
-  // Karte weg (leerer Tisch), dann dieselbe Karte wieder → zählt erneut
+  assert.equal(hits, 1, "ruhig liegende Karte zählt nicht doppelt");
+  // Karte weg (leerer Tisch), dann dieselbe Karte wieder → zählt erneut, sofort im nächsten Bild
   m = await frame(scene(null));
   assert.ok(m.center >= SWEEP.CENTER_MOVE, `Zentrum ${m.center}`);
-  await frame(scene(5)); await frame(scene(5));
+  await frame(scene(5));
   assert.equal(hits, 2, "Duplikat vom Stapel");
-  assert.equal((await frame(scene(5), { probeGrid: true, grid: "3x3" })).gridSeen, false);
-  const page = pageRgba(SEEDS.slice(0, 9), W, H, { x0: 40, y0: 100, x1: 440, y1: 659 });
-  assert.equal((await frame(page, { probeGrid: true, grid: "3x3" })).gridSeen, true);
+  // Nächste (andere) Karte direkt darübergelegt → sofort
+  await frame(scene(8));
+  assert.equal(hits, 3, "nächste Karte vom Stapel");
+  // Multi-Crop: Karte füllt das Bild fast (sehr nah, keine Kontur) bzw. liegt weiter weg und leicht neben der Mitte
+  const near = createTestEngineRun(testEngine);
+  for (const [seed, opt] of [[11, { x0: 30, y0: 60, cw: 420 }], [12, { x0: 140, y0: 230, cw: 220, bg: 128 }]] as const) {
+    let found = null as any;
+    for (let i = 0; i < 9 && !found; i++) {
+      const r = await near(scene(seed, opt));
+      found = r.dets.find((d: any) => d.lead === `card:t-${seed}` && d.match >= SWEEP.MIN_MATCH) || null;
+    }
+    assert.ok(found, `Karte ${seed} per Multi-Crop erkannt`);
+  }
 });
+
+/** Eigene Engine-Instanz für Einzelbilder (W × H = 480 × 760, Stapel-Modus) */
+function createTestEngineRun(make: typeof testEngine) {
+  const { engine, last } = make();
+  let seq = 0;
+  return async (px: Uint8ClampedArray) => { await engine.handle({ type: "sweep-frame", seq: ++seq, data: px.slice().buffer, w: 480, h: 760, mode: "turbo" }); return last(); };
+}
 
 test("Oberfläche: Modi, Raster-Overlay, Slot-Haken, Dock (+1, Variante, DE/EN/JP, Rückgängig), Summe, Drawer-Aktionen, Kamera, Torch-Warnung, Foto-Upload", () => {
   const ui = src("client/scanner/sweep-scanner.js");

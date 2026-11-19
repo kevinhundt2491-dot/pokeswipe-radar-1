@@ -1,15 +1,17 @@
 // PokeSwipe & Radar – High-End-Live-Scanner („Ruckzuck-Sweep“ & „9er-Ordner-Scan“): ohne Zielrahmen, ohne Wartezeit-Zähler,
 // ohne Server-Wartezeit. Alles läuft lokal im Web Worker – es verlässt kein Kamerabild das Gerät.
 //
-//  • Stapel / Einzelkarte (Ruckzuck-Sweep): Karte irgendwo ins Bild schieben → 2-Frame-Konsens ≥ 85 % mit klarem Abstand →
-//    Vibration + Pling. KEIN Zeit-Cooldown: gesperrt ist nur das Exemplar, das gerade im Bild liegt. Wird es weggezogen
+//  • Zero-Setup: keine Set-Auswahl, kein Set-Lock, kein Zielrahmen – jede Karte wird gegen den kompletten Katalog
+//    abgeglichen und automatisch in ihren Set-Ordner im Set-Binder einsortiert („✅ Einsortiert in: [Set-Name]“).
+//  • Stapel / Einzelkarte (Ruckzuck-Serienscan, Standard bei jedem Start): Karte irgendwo ins Bild halten → Treffer im ersten
+//    klaren Bild (≥ 66 % direkt bzw. ≥ 60 % mit ≥ 5 % Abstand zum zweitbesten Motiv) → Vibration + Pling. KEIN Zeit-Cooldown: gesperrt ist nur das Exemplar, das gerade im Bild liegt. Wird es weggezogen
 //    oder die nächste Karte aufgedeckt (Bewegungsdifferenz im Bildzentrum), zählt die nächste Karte sofort – auch wenn
 //    sie exakt dieselbe ist. Dazu der große „+1“-Knopf im Dock.
 //  • Ordner-Seite (9er-Binder-Scan): dezentes 3 × 3- bzw. 2 × 2-Raster passt sich der aufgeschlagenen Seite an, jedes Fach
 //    wird hochauflösend aus dem nativen HD-Bild geschnitten. Jedes Fach hat seine eigene Positions-Sperre: grüner Haken +
 //    Name + Cardmarket-Preis direkt auf dem Fach, nichts wird doppelt gezählt. Umblättern (> 65 % Bildänderung) oder der
 //    Knopf „Nächste Seite“ leert alle Sperren.
-//  • Auto: erkennt selbst, ob eine Ordnerseite oder einzelne Karten im Bild liegen.
+//  • Die Ordner-Seite ist nur noch ein manueller Umschalter – es gibt keine Modus-Automatik mehr.
 //  • Treffer landen im Session-Dock (Miniatur, Name, Set, Cardmarket-Trend, +1, Normal/Holo/Reverse, DE/EN/JP, Rückgängig) und
 //    – asynchron im Hintergrund, die Kamera-Schleife hält nie an – im Set-Binder. Im Session-Drawer: „In Set-Binder
 //    einsortieren“ und „Direkt auf Marktplatz inserieren“.
@@ -17,7 +19,7 @@
 // Diese Datei ist nur Oberfläche + Steuerung. Die Bildverarbeitung steckt in sweep-engine.js (Worker), die reine Logik
 // in sweep-logic.js (Stapel-Sperre, Session) und hd-scan-logic.js (Raster, Slot-Sperre, Anti-Glare, Fingerabdruck).
 // Worker, Index und Kartendaten kommen über deps aus live-scanner.js.
-import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, api, handleError } from "../core.js";
+import { $, esc, jsArg, eur, toast, cdn, FALLBACK_IMG, state, handleError } from "../core.js";
 import { haptic, isNative } from "../native.js";
 import { conditionPrice } from "./scan-ui-logic.js";
 import {
@@ -45,16 +47,15 @@ const MAX_LIST = 40;
 const TAG_HOLD_MS = 900, TAG_FADE_MS = 400;
 /** Taschenlampe an + so viele Bilder mit starkem Reflex auf der Folie → Warnung */
 const GLARE_WARN = 0.05, GLARE_WARN_FRAMES = 8;
-/** Automatik: so viele Bilder in Folge mit/ohne Ordner-Raster, bis der Modus wechselt */
-const AUTO_BINDER_FRAMES = 3, AUTO_STACK_FRAMES = 12;
+/** „✅ Einsortiert in: [Set-Name]“ bleibt so lange in der Status-Pille stehen */
+const FILED_MSG_MS = 1800;
 /** Scan-Modi (Sofort-Umschalter oben im Kamerabild) */
 export const MODES = {
   stack: { label: "⚡ Stapel / Einzelkarte", sub: "Ruckzuck-Sweep", icon: "⚡", hint: "Karte für Karte ins Bild schieben – jede zählt sofort, auch Doppelte direkt nacheinander." },
   binder: { label: "📒 Ordner-Seite", sub: "9er-Binder-Scan", icon: "📒", hint: "Handy über die aufgeschlagene Ordnerseite halten – jedes Fach zählt genau einmal, umblättern und weiter." },
-  auto: { label: "✨ Auto", sub: "erkennt Ordner", icon: "✨", hint: "Erkennt selbst, ob eine Ordnerseite oder einzelne Karten im Bild liegen." },
 };
-/** Frühere Modus-Namen (gespeicherte Einstellungen) */
-const MODE_ALIAS = { turbo: "stack", sweep: "binder" };
+/** Frühere Modus-Namen (gespeicherte Einstellungen); die frühere Automatik startet jetzt im Stapel-Modus */
+const MODE_ALIAS = { turbo: "stack", sweep: "binder", auto: "stack" };
 
 const SWEEP_CSS = `
 #ps-sw .ps-sw-scroll{scrollbar-width:none}#ps-sw .ps-sw-scroll::-webkit-scrollbar{display:none}
@@ -82,26 +83,26 @@ export function createSweep(deps) {
     cv: null, ctx: null, inFlight: 0, sentAt: 0, seq: 0, bitmapOk: typeof createImageBitmap === "function",
     frameTimes: [], avgMs: 0, procMs: 0, dark: 0, gate: null, tags: [], raf: 0, tagRaf: 0, view: { count: 0, value: 0 },
     items: [], history: [], lastUid: null, uidSeq: Date.now(), info: new Map(), probes: new Map(),
-    sets: [], setsLoaded: false, setName: "", setRows: -1, layoutsReady: 0, drawer: false, full: false, audio: null,
+    layoutsReady: 0, top: 0, filedMsg: null, drawer: false, full: false, audio: null,
     prefs: readPrefs(), configSent: false, statusText: "", daily: readDaily(), saving: new Set(), portfolioTimer: 0,
     // Ordner-Seite: Slot-Sperren, Raster/Fächer aus dem letzten Bild, Etikett je Fach, zuletzt gesehene Erkennung je Fach
     slotGate: createSlotGate(), grid: null, cells: [], slotTags: new Map(), slotSeen: new Map(), flipAt: 0,
-    // Automatik: tatsächlich laufender Modus („turbo“ = Stapel, „binder“ = Ordner-Seite)
-    eff: "turbo", autoHit: 0, autoMiss: 0, glareFrames: 0, glareWarned: false, fp: null, pingAt: 0,
+    // Tatsächlich laufender Modus („turbo“ = Stapel, „binder“ = Ordner-Seite – nur per Knopf)
+    eff: "turbo", glareFrames: 0, glareWarned: false, fp: null, pingAt: 0,
   };
   sw.gate = createSweepGate();
-  sw.eff = sw.prefs.mode === "binder" ? "binder" : "turbo";
+  sw.eff = "turbo";
   restoreSession();
 
   function readPrefs() {
-    const def = { muted: false, lang: "de", finish: "normal", setId: "", mode: "stack", grid: "3x3", autoFile: true, dock: true };
+    const def = { muted: false, lang: "de", finish: "normal", mode: "stack", grid: "3x3", autoFile: true, dock: true };
     try {
       const p = { ...def, ...(JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}) };
       if (!FLAG[p.lang]) p.lang = "de";
       if (!FINISH_KEYS.includes(p.finish)) p.finish = "normal";
-      if (typeof p.setId !== "string" || !/^[\w.\-]{0,40}$/.test(p.setId)) p.setId = "";
-      p.mode = MODE_ALIAS[p.mode] || p.mode;
-      if (!MODES[p.mode]) p.mode = "stack";
+      // Kein Set-Lock mehr (frühere Einstellung wird verworfen); jeder Start beginnt im schnellen Stapel-Modus
+      delete p.setId;
+      p.mode = "stack";
       if (!GRID_LAYOUTS[p.grid]) p.grid = "3x3";
       p.autoFile = p.autoFile !== false; p.dock = p.dock !== false;
       return p;
@@ -158,14 +159,13 @@ export function createSweep(deps) {
           <button id="ps-sw-stop" type="button" onclick="PS.sweep('stop')" class="${iconBtn} hidden" aria-label="Kamera beenden">✕</button>
           <label class="${iconBtn} cursor-pointer" title="Foto hochladen" aria-label="Foto aufnehmen oder hochladen">🖼️<input data-ls-upload="1" type="file" accept="image/*" class="hidden" /></label>
         </div>
-        <div id="ps-sw-modes" class="grid grid-cols-[1fr_1fr_auto] gap-1 bg-slate-900/80 border border-white/10 rounded-xl p-0.5" role="group" aria-label="Scan-Modus"></div>
+        <div id="ps-sw-modes" class="grid grid-cols-2 gap-1 bg-slate-900/80 border border-white/10 rounded-xl p-0.5" role="group" aria-label="Scan-Modus"></div>
         <div class="flex items-center gap-1.5">
-          <span id="ps-sw-status" role="status" class="min-w-0 flex-1 text-[10px] font-bold text-cyan-200 truncate"></span>
+          <span id="ps-sw-status" role="status" class="min-w-0 max-w-full truncate text-[10px] font-black text-cyan-100 bg-slate-900/80 border border-cyan-400/30 px-2 py-1 rounded-full" title="Live-Diagnose des Scanners"></span><span class="flex-1"></span>
           <span id="ps-sw-view" class="shrink-0 hidden text-[11px] font-black bg-emerald-400 text-slate-950 px-2 py-1 rounded-lg" title="Erkannte Fächer dieser Ordnerseite"></span>
           <button id="ps-sw-grid" type="button" onclick="PS.sweep('grid')" class="shrink-0 hidden text-[11px] font-black bg-slate-900/85 border border-white/10 text-white px-2 py-1 rounded-lg" aria-label="Ordner-Raster umschalten (3 × 3 oder 2 × 2)">3×3</button>
           <button id="ps-sw-next" type="button" onclick="PS.sweep('nextPage')" class="shrink-0 hidden text-[11px] font-black bg-cyan-400 text-slate-950 px-2.5 py-1 rounded-lg" title="Alle Fach-Sperren leeren und die nächste Seite scannen">📖 Nächste Seite</button>
         </div>
-        <div id="ps-sw-sets" class="ps-sw-scroll flex items-center gap-1.5 overflow-x-auto" role="group" aria-label="Set-Lock: Suche auf ein Set beschränken"></div>
       </div>
       <div id="ps-sw-idle" class="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 pt-32 text-center bg-slate-950/85">
         <p class="text-4xl" aria-hidden="true">${MODES[sw.prefs.mode].icon}</p>
@@ -183,23 +183,9 @@ export function createSweep(deps) {
     const box = $("ps-sw-modes");
     if (!box) return;
     box.innerHTML = Object.entries(MODES).map(([k, m]) => `<button type="button" onclick="PS.sweep('mode', '${k}')" aria-pressed="${sw.prefs.mode === k}" class="ps-sw-mode text-left rounded-lg px-2 py-1 ${sw.prefs.mode === k ? "" : "text-slate-200"}" title="${esc(m.hint)}">
-        <span class="block text-[11px] font-black leading-tight truncate">${esc(m.label)}</span><span class="block text-[9px] font-bold opacity-80 leading-tight truncate">${esc(k === "auto" && sw.running ? (isBinder() ? "→ Ordner-Seite" : "→ Stapel") : m.sub)}</span></button>`).join("");
+        <span class="block text-[11px] font-black leading-tight truncate">${esc(m.label)}</span><span class="block text-[9px] font-bold opacity-80 leading-tight truncate">${esc(m.sub)}</span></button>`).join("");
     $("ps-sw")?.setAttribute("data-mode", sw.prefs.mode);
     renderView();
-  }
-
-  function renderSets() {
-    const box = $("ps-sw-sets");
-    if (!box) return;
-    const cur = sw.prefs.setId;
-    const quick = sw.sets.slice(0, 14);
-    const curSet = sw.sets.find((s) => s.id === cur);
-    if (cur && !quick.some((s) => s.id === cur)) quick.unshift(curSet || { id: cur, name: sw.setName || cur });
-    box.innerHTML = `<button type="button" onclick="PS.sweep('set', '')" aria-pressed="${!cur}" class="${chip(!cur)}">🌐 Alle Sets</button>
-      ${quick.map((s) => `<button type="button" onclick="PS.sweep('set', ${jsArg(s.id)})" aria-pressed="${s.id === cur}" class="${chip(s.id === cur)}">${s.id === cur ? "🔒 " : ""}${esc(s.name)}</button>`).join("")}
-      ${sw.sets.length > quick.length ? `<select onchange="PS.sweep('set', this.value)" aria-label="Weitere Sets" class="shrink-0 text-[11px] font-black bg-slate-900/80 border border-white/10 text-slate-200 rounded-lg px-1.5 py-1 max-w-[9rem]">
-        <option value="">Weitere Sets …</option>${sw.sets.slice(quick.length).map((s) => `<option value="${esc(s.id)}"${s.id === cur ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select>` : ""}
-      ${!sw.setsLoaded ? `<span class="text-[10px] text-slate-400 shrink-0">Lade Sets …</span>` : ""}`;
   }
 
   function renderToggles() {
@@ -242,22 +228,21 @@ export function createSweep(deps) {
     if (el) el.textContent = text;
   }
 
+  /** Live-Diagnose-Pille oben: „⚡ Bereit (19.840 Karten) • Top-Match: 69 %“ – zeigt bei jedem Bild, wie die Kamera reagiert */
   function statusLine() {
     const ix = deps.index();
-    if (!ix.ready) return ix.loading ? "⏳ Lade Fingerabdruck-Index (einmalig, danach offline auf dem Gerät) …" : "";
-    const parts = [];
-    // Sichtbarer Status beim ersten Laden der Mehrfach-Fingerabdrücke eines Sets (danach dauerhaft in IndexedDB)
-    if (sw.fp && !sw.fp.final) parts.push(`🧬 Fingerabdrücke ${sw.fp.done}/${sw.fp.total}`);
-    if (sw.running && isBinder() && Date.now() - sw.flipAt < 1200) parts.push("📖 Neue Seite");
-    if (sw.prefs.setId) parts.push(`🔒 ${sw.setName || sw.prefs.setId}${sw.setRows >= 0 ? ` · ${sw.setRows} Karten` : ""}`);
-    else parts.push(`🌐 ${Number(ix.count || 0).toLocaleString("de-DE")} Karten`);
+    if (!ix.ready) return ix.loading ? "⏳ Lade Karten-Index (einmalig, danach offline auf dem Gerät) …" : "";
+    if (sw.filedMsg && Date.now() - sw.filedMsg.at < FILED_MSG_MS) return sw.filedMsg.text;
+    const parts = [`⚡ Bereit (${Number(ix.count || 0).toLocaleString("de-DE")} Karten)`];
+    if (sw.running) parts.push(`Top-Match: ${Math.round((sw.top || 0) * 100)} %`);
     if (sw.running && sw.frameTimes.length > 4) {
       const span = sw.frameTimes[sw.frameTimes.length - 1] - sw.frameTimes[0];
       const fps = span > 0 ? Math.round(((sw.frameTimes.length - 1) * 1000) / span) : 0;
-      parts.push(`⚡ ${fps} FPS · ${Math.round(sw.procMs)} ms`);
+      parts.push(`${fps} FPS · ${Math.round(sw.procMs)} ms`);
     }
+    if (sw.running && isBinder() && Date.now() - sw.flipAt < 1200) parts.push("📖 Neue Seite");
     if (sw.running && isBinder() && sw.grid && !sw.grid.fitted) parts.push("Raster über die Ordnerseite halten");
-    return parts.join(" · ");
+    return parts.join(" • ");
   }
 
   function itemName(it) {
@@ -302,7 +287,7 @@ export function createSweep(deps) {
         <div class="min-w-0 flex-1">
           <p data-sw-name class="text-sm font-black text-white leading-tight truncate">${FLAG[it.lang] || ""} ${esc(itemName(it))}${it.qty > 1 ? ` <span class="text-emerald-300">×${it.qty}</span>` : ""}</p>
           <p class="text-[11px] text-slate-400 truncate">${esc(itemSet(it))}${it.finish !== "normal" ? ` · ${esc(FIN_SHORT[it.finish])}` : ""} · <span data-sw-price class="font-black text-emerald-400" title="Cardmarket-Trend">${price ? eur(price) : i ? "–" : "…"}</span></p>
-          ${open ? `<p data-sw-filed class="text-[10px] font-black ${it.filed ? "text-emerald-300" : "text-slate-300"} truncate">${esc(lines.status)}${lines.flag ? ` · ${esc(lines.flag)}` : ""}</p>` : ""}
+          ${open ? `<p data-sw-filed class="text-[10px] font-black ${it.filed ? "text-emerald-300" : "text-slate-300"} truncate">${esc(it.filed && i?.setName ? `✅ Einsortiert in: ${i.setName}` : lines.status)}${lines.flag ? ` · ${esc(lines.flag)}` : ""}</p>` : ""}
         </div>
         <button type="button" onclick="PS.sweep('plus')" class="ps-sw-plus shrink-0 bg-gradient-to-br from-emerald-400 to-cyan-400 text-slate-950 text-xl font-black px-3 rounded-2xl shadow-lg" aria-label="Dieselbe Karte noch einmal zählen (+1)" title="Identische Karte hochzählen">+1</button>
         <button type="button" onclick="PS.sweep('undo')" class="shrink-0 bg-slate-800 text-white text-base font-black w-10 h-12 rounded-xl" aria-label="Letzten Scan rückgängig machen" title="Rückgängig">↶</button>
@@ -312,7 +297,7 @@ export function createSweep(deps) {
       ${open ? `<div class="ps-sw-scroll flex items-center gap-1.5 overflow-x-auto">
         ${dockToggles(it)}
         <button type="button" onclick="PS.sweep('list', ${jsArg(it.uid)})" class="shrink-0 bg-yellow-400 text-slate-950 text-[11px] font-black px-2.5 py-2 rounded-xl" title="Zum Cardmarket-Preis inserieren">🏷️ Inserieren</button>
-        <button type="button" onclick="PS.sweep('quick', ${jsArg(it.uid)})" class="shrink-0 bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-[11px] font-black px-2.5 py-2 rounded-xl" title="Deal-Preis unter Cardmarket – geht sofort live">⚡ Schnell-Inserieren</button>
+        <button type="button" onclick="PS.sweep('quick', ${jsArg(it.uid)})" class="shrink-0 bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 text-[11px] font-black px-2.5 py-2 rounded-xl" title="Deal-Preis unter Cardmarket – geht sofort live">⚡ Schnell-Inserieren (unter CM)</button>
       </div>` : ""}
     </div>`;
   }
@@ -405,7 +390,6 @@ export function createSweep(deps) {
     sw.starting = true;
     const gen = ++sw.camGen;
     deps.ensureIndex();
-    ensureSets();
     sendConfig();
     let stream;
     try { stream = await openCamera(); } catch (e) {
@@ -428,7 +412,7 @@ export function createSweep(deps) {
     $("ps-sw-stop")?.classList.remove("hidden");
     sw.running = true; sw.torch = false; sw.dark = 0; sw.frameTimes = []; sw.inFlight = 0; sw.tags = [];
     sw.gate.reset(); resetBinder();
-    sw.eff = sw.prefs.mode === "binder" ? "binder" : "turbo"; sw.autoHit = 0; sw.autoMiss = 0; sw.glareFrames = 0; sw.glareWarned = false;
+    sw.eff = sw.prefs.mode === "binder" ? "binder" : "turbo"; sw.top = 0; sw.glareFrames = 0; sw.glareWarned = false;
     deps.worker().postMessage({ type: "sweep-reset" });
     renderToggles(); renderAll();
     loop();
@@ -519,8 +503,8 @@ export function createSweep(deps) {
       w.postMessage({ type: "sweep-frame", seq, data: img.data.buffer, w: W, h: H, ...extra }, [img.data.buffer]);
       return;
     }
-    // Stapel / Einzelkarte. Automatik: der Worker prüft nebenbei, ob ein Ordner-Raster im Bild liegt (probeGrid).
-    const extra = { mode: "turbo", probeGrid: sw.prefs.mode === "auto", grid: sw.prefs.grid };
+    // Stapel / Einzelkarte (Standard): offenes Kamerabild, Multi-Crop-Erkennung im Worker
+    const extra = { mode: "turbo" };
     // Bevorzugt: ImageBitmap an den Worker übergeben – Verkleinern und Pixel-Auslesen passieren dort, nicht im UI-Thread
     if (useBitmap) {
       createImageBitmap(video, g.sx, g.sy, g.sw, g.sh, { resizeWidth: g.W, resizeHeight: g.H, resizeQuality: "low" })
@@ -567,31 +551,22 @@ export function createSweep(deps) {
       if (sw.frameTimes.length > 20) sw.frameTimes.shift();
       sw.procMs = sw.procMs ? sw.procMs * 0.85 + (m.ms || 0) * 0.15 : m.ms || 0;
       const interval = sw.frameTimes.length > 1 ? (sw.frameTimes[sw.frameTimes.length - 1] - sw.frameTimes[0]) / (sw.frameTimes.length - 1) : 0;
-      if (typeof m.setRows === "number" && m.setRows >= 0) sw.setRows = m.setRows;
       checkDark(m.light);
       checkGlare(m.glare);
       if (m.mode === "binder") onBinderResult(m);
       else onStackResult(m, interval);
       drawOverlay();
-      if (sw.frameTimes.length % 5 === 0) setStatus(statusLine());
+      setStatus(statusLine());
     } catch (e) {
       // Ein Fehler in der Anzeige darf die Kamera-Schleife nie anhalten
       try { console.warn("sweep onResult", e); } catch {}
     }
   }
 
-  /** Automatik: tatsächlichen Modus wechseln (Stapel ↔ Ordner-Seite) */
-  function switchEff(eff) {
-    if (sw.eff === eff) return;
-    sw.eff = eff; sw.autoHit = 0; sw.autoMiss = 0;
-    sw.gate.reset(); resetBinder(); sw.tags = [];
-    deps.worker().postMessage({ type: "sweep-reset" });
-    renderModes(); setStatus(statusLine());
-  }
-
   /** Stapel / Einzelkarte: Sperre folgt dem Exemplar im Bild (Bewegungsdifferenz im Zentrum), kein Zeit-Cooldown */
   function onStackResult(m, interval) {
     const dets = Array.isArray(m.dets) ? m.dets : [];
+    sw.top = Number(m.top) || dets.reduce((x, d) => Math.max(x, Number(d.match) || 0), 0);
     const { hits } = sw.gate.push({ dets, found: m.found, motion: m.motion, center: m.center }, Date.now(), interval);
     const t = Date.now();
     // Preisschilder der schon erkannten Karten an die aktuelle Lage anheften
@@ -604,10 +579,6 @@ export function createSweep(deps) {
       const d = dets.find((x) => x.keys === keys);
       if (d) onHit(d);
     }
-    if (sw.prefs.mode === "auto") {
-      sw.autoHit = m.gridSeen ? sw.autoHit + 1 : 0;
-      if (sw.autoHit >= AUTO_BINDER_FRAMES) switchEff("binder");
-    }
   }
 
   /** Ordner-Seite: jedes Fach hat seine eigene Positions-Sperre – einmal erkannt, bis zum Umblättern nie wieder gezählt */
@@ -615,6 +586,7 @@ export function createSweep(deps) {
     sw.grid = m.grid || null;
     sw.cells = Array.isArray(m.cells) ? m.cells : [];
     const slots = Array.isArray(m.slots) ? m.slots : [];
+    sw.top = slots.reduce((x, d) => Math.max(x, Number(d.match) || 0), 0);
     for (const d of slots) sw.slotSeen.set(d.slot, d);
     const r = sw.slotGate.push({ slots, changed: m.changed }, Date.now());
     if (r.flipped) {
@@ -634,10 +606,6 @@ export function createSweep(deps) {
       sw.slotTags.set(slot, { keys, key: it?.key || key, uid: it?.uid || null, at: Date.now() });
     }
     if (r.hits.length || r.flipped) renderView();
-    if (sw.prefs.mode === "auto") {
-      sw.autoMiss = m.grid?.fitted || slots.some((d) => d.match >= SWEEP.TRACK_MATCH) ? 0 : sw.autoMiss + 1;
-      if (sw.autoMiss >= AUTO_STACK_FRAMES) switchEff("turbo");
-    }
   }
 
   /** Preisschild desselben Exemplars (an ähnlicher Position – zwei Exemplare im Bild bekommen zwei Etiketten) */
@@ -703,6 +671,10 @@ export function createSweep(deps) {
         const ok = await deps.fileItem(info, { condition: "NM", variant: it.finish || "normal" }, 1);
         if (!ok) return;
         sw.items = sw.items.map((x) => (x.uid === uid ? { ...x, filed: Math.min(x.qty, (x.filed || 0) + 1), info: x.info?.kind ? x.info : info } : x));
+        // Automatisch erkannter Set-Ordner (setId/setName aus den Kartendaten) – kurz in der Status-Pille bestätigen
+        const setLabel = info.setName || info.setCode || setIdOfKey(key).toUpperCase();
+        sw.filedMsg = { text: `✅ Einsortiert in: ${setLabel}${it.qty > 1 ? ` (×${it.qty})` : ""}`, at: Date.now() };
+        setStatus(statusLine());
         const probe = sw.probes.get(key);
         if (probe) deps.learn(key, probe);
         saveSession();
@@ -846,7 +818,7 @@ export function createSweep(deps) {
     // Set-Kürzel + Nummer
     ty += lineGap + fCode;
     ctx.font = `700 ${fCode}px ui-monospace, SFMono-Regular, Menlo, monospace`; ctx.fillStyle = "#44403c";
-    ctx.fillText(fitText(ctx, code || "Cardmarket-Trend", tw - 2 * padX), x + padX, ty);
+    ctx.fillText(fitText(ctx, [info?.setName, code].filter(Boolean).join(" · ") || "Cardmarket-Trend", tw - 2 * padX), x + padX, ty);
     // Status-Badge
     ty += 6 * s;
     const badge = (text, bg, fg) => {
@@ -982,68 +954,17 @@ export function createSweep(deps) {
     if (f) { f.classList.add("on"); setTimeout(() => f.classList.remove("on"), 80); }
   }
 
-  // ------------------------------------------------------------------ Set-Lock & Modus
-  async function ensureSets() {
-    if (sw.setsLoaded || sw.setsLoading) return;
-    sw.setsLoading = true;
-    renderSets();
-    try {
-      const r = await api("/api/catalog/sets");
-      sw.sets = (r?.sets || []).filter((s) => s?.id && s?.name).map((s) => ({ id: String(s.id), name: String(s.name) }));
-    } catch { sw.sets = []; }
-    sw.setsLoaded = true; sw.setsLoading = false;
-    const cur = sw.sets.find((s) => s.id === sw.prefs.setId);
-    if (cur) sw.setName = cur.name;
-    renderSets(); setStatus(statusLine());
-  }
-
+  // ------------------------------------------------------------------ Modus (kein Set-Lock: immer der komplette Katalog)
   function sendConfig() {
-    deps.worker().postMessage({ type: "sweep-config", setId: sw.prefs.setId || "", mode: sw.prefs.mode });
+    deps.worker().postMessage({ type: "sweep-config", mode: sw.prefs.mode });
     sw.configSent = true;
-    if (sw.prefs.setId) primeSet(sw.prefs.setId);
-  }
-
-  /** Set-Lock aktiv: Katalog des Sets laden → Name/Preis sofort zur Hand, Farb-Layouts im Worker vorberechnen. */
-  async function primeSet(setId) {
-    try {
-      const r = await api(`/api/binder/set/${encodeURIComponent(setId)}`);
-      if (sw.prefs.setId !== setId) return;
-      sw.setName = r?.set?.name || sw.setName || setId;
-      const total = Number(r?.set?.official) || Number(r?.set?.total) || 0;
-      const items = [];
-      for (const c of r?.catalog || []) {
-        if (!c?.id) continue;
-        const key = `card:${c.id}`;
-        if (!sw.info.get(key)?.kind) {
-          sw.info.set(key, {
-            key, kind: "card", id: String(c.id), lang: "de", name: String(c.name || ""), setName: sw.setName, setCode: "",
-            number: /^\d+$/.test(String(c.localId || "")) && total ? `${c.localId}/${total}` : String(c.localId || ""),
-            image: String(c.image || ""), price: c.price ?? null, baseCardId: String(c.id), partial: true,
-          });
-        }
-        if (c.image) items.push({ key, url: cdn(c.image, 160) });
-      }
-      setStatus(statusLine());
-      if (items.length) deps.worker().postMessage({ type: "sweep-layouts", setId, items });
-    } catch { /* Set-Lock funktioniert auch ohne Katalog (nur Bild-Fingerabdruck) */ }
-  }
-
-  function selectSet(id) {
-    const setId = typeof id === "string" && /^[\w.\-]{0,40}$/.test(id) ? id : "";
-    sw.prefs.setId = setId; savePrefs();
-    sw.setName = sw.sets.find((s) => s.id === setId)?.name || "";
-    sw.setRows = -1; sw.fp = null;
-    sw.gate.reset(); resetBinder();
-    haptic("select");
-    renderSets(); setStatus(statusLine());
-    sendConfig();
   }
 
   function setMode(m) {
     m = MODE_ALIAS[m] || m;
     if (!MODES[m] || sw.prefs.mode === m) return;
     sw.prefs.mode = m; savePrefs();
-    sw.eff = m === "binder" ? "binder" : "turbo"; sw.autoHit = 0; sw.autoMiss = 0;
+    sw.eff = m === "binder" ? "binder" : "turbo"; sw.top = 0;
     sw.gate.reset(); resetBinder(); sw.tags = [];
     haptic("select");
     renderToggles(); renderAll(); drawOverlay();
@@ -1294,7 +1215,7 @@ export function createSweep(deps) {
   // ------------------------------------------------------------------ Worker-Nachrichten
   function onWorker(m) {
     if (m.type === "sweep-result") { onResult(m); return; }
-    if (m.type === "sweep-config-done") { if (m.setId === (sw.prefs.setId || "")) { sw.setRows = m.setId ? m.rows : -1; setStatus(statusLine()); } return; }
+    if (m.type === "sweep-config-done") { setStatus(statusLine()); return; }
     if (m.type === "sweep-layouts-done") { sw.layoutsReady = m.total || 0; return; }
     if (m.type === "sweep-fp-progress") { sw.fp = m.final ? null : { done: m.done || 0, total: m.total || 0 }; setStatus(statusLine()); return; }
     if (m.type === "sweep-need-layout") {
@@ -1310,7 +1231,7 @@ export function createSweep(deps) {
 
   const actions = {
     start, stop: () => stop(), torch: () => toggleTorch(), mute: () => { sw.prefs.muted = !sw.prefs.muted; savePrefs(); renderToggles(); if (!sw.prefs.muted) pling(); },
-    full: () => toggleFull(), set: selectSet, lang: setLang, finish: setFinish, mode: setMode, plus: () => plusOne(), undo,
+    full: () => toggleFull(), lang: setLang, finish: setFinish, mode: setMode, plus: () => plusOne(), undo,
     dockFinish, dockLang, itemFinish, qty: changeQty, drawer: () => toggleDrawer(),
     dock: () => { sw.prefs.dock = !sw.prefs.dock; savePrefs(); renderDock(); },
     grid: toggleGrid, nextPage, sellAll,
@@ -1322,9 +1243,9 @@ export function createSweep(deps) {
   return {
     html,
     /** Nach dem Einsetzen des HTML: Leisten zeichnen */
-    mount() { renderSets(); renderToggles(); renderAll(); },
+    mount() { renderToggles(); renderAll(); },
     /** Beim Öffnen des Scanner-Reiters */
-    shown() { renderSets(); renderToggles(); renderAll(); ensureSets(); if (!sw.configSent) sendConfig(); },
+    shown() { renderToggles(); renderAll(); if (!sw.configSent) sendConfig(); },
     start, stop, onWorker,
     onIndex() { setStatus(statusLine()); },
     get running() { return sw.running || sw.starting; },

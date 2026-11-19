@@ -119,4 +119,8 @@ export default [
   ["erkennt Ordner", "detects binders"],
   ["📖 Nächste Seite", "📖 Next page"],
   ["🔦 LED blendet auf der Folie", "🔦 LED glare on the sleeve"],
+  // Serien-Scanner ohne Set-Einstellungen
+  ["⚡ Schnell-Inserieren (unter CM)", "⚡ Quick list (below CM)"],
+  ["✅ Im Set-Binder", "✅ In set binder"],
+  ["📒 Sortiere in den Set-Binder …", "📒 Filing into set binder …"],
 ];
