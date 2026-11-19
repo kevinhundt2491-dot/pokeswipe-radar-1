@@ -490,7 +490,7 @@ function renderPicker() {
       <button type="button" onclick="PS.pinIntent('seek')" class="flex-1 py-1.5 rounded-lg ${p.intent === "seek" ? "bg-cyan-400 text-slate-950" : "text-slate-300"}">🔎 Ich suche für mein Set</button>
     </div>
     <input id="ps-pin-q" value="${esc(p.q)}" oninput="PS.pinSearch(this.value)" placeholder="${p.intent === "offer" ? "In meinem Album suchen …" : "Gesuchte Karte, z. B. Glurak ex 199"}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
-    <div class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[55vh] overflow-y-auto" data-keep-scroll>${list}</div>
+    <div class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[55dvh] overflow-y-auto" data-keep-scroll>${list}</div>
     <p class="text-[10px] text-slate-500">⚡ Sammler, die deine gesuchte Karte doppelt haben – oder deine angebotene Karte für ihr Set suchen – sehen sofort ein „PokeSwipe-Match“.</p>`, { wide: true });
 }
 

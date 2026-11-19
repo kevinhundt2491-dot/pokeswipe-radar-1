@@ -122,7 +122,7 @@
   <!-- CSP: on…-Attribute ohne 'unsafe-inline' ausführen (muss vor allen Vorlagen geladen werden) -->
   <script src="/js/csp-handlers.js"></script>
 </head>
-<body class="min-h-screen flex flex-col justify-between relative">
+<body class="min-h-screen min-h-dvh flex flex-col justify-between relative">
 
   <!-- HINTERGRUND-LAYER MIT BELIEBTEN POKÉMON (GLURAK, PIKACHU, GENGAR, MEWTU) -->
   <div class="poke-bg-layer" aria-hidden="true">
@@ -195,9 +195,6 @@
   <!-- 3. HAUPTINHALT -->
   <main class="relative z-10 max-w-7xl w-full mx-auto px-3 sm:px-6 mt-4 flex-grow">
 
-    <!-- =================================================================== -->
-    <!-- REITER 1: STARTSEITE / ARENA (SWIPE + TOP-DEALS)                    -->
-    <!-- =================================================================== -->
     <!-- =================================================================== -->
     <!-- REITER 1: START – kompaktes Dashboard (befüllt von client/home.js)  -->
     <!-- =================================================================== -->
@@ -868,7 +865,7 @@
       <p><strong>Pokémon-Fanprojekt-Hinweis:</strong> PokeSwipe & Radar ist ein unabhängiges, inoffizielles Fanprojekt und steht in keiner Verbindung zu Nintendo, Creatures Inc., GAME FREAK inc. oder The Pokémon Company und wird von diesen weder unterstützt noch gesponsert. Pokémon, Kartennamen und Kartenbilder sind Marken bzw. urheberrechtlich geschützte Werke ihrer jeweiligen Inhaber und werden ausschließlich zur Identifikation der Sammelkarten verwendet.</p>
       <p><strong>Preisangaben:</strong> Marktpreise stammen von Cardmarket (über TCGdex) und werden automatisch aktualisiert. Alle Angaben ohne Gewähr; maßgeblich ist der Preis beim jeweiligen Anbieter.</p>
       <p><strong>Affiliate-Hinweis (*):</strong> Als Partner des eBay Partner Networks (CampID: 5339244109) verdienen wir an qualifizierten Käufen über gekennzeichnete eBay-Links eine kleine Provision, ohne Mehrkosten für dich.</p>
-      <div class="max-h-[55vh] overflow-y-auto space-y-3 pr-1">
+      <div class="max-h-[55dvh] overflow-y-auto space-y-3 pr-1">
       <p><strong>Datenschutz – Überblick:</strong> Ohne Konto bleiben Portfolio-, Merklisten- und Push-Einstellungen lokal im Browser (LocalStorage). Mit Konto werden Login (Netlify Identity), Portfolio, Wunschliste, Preisalarme, Inserate, Tausche, private Tausch-Nachrichten, Bewertungen, Abzeichen und Kalendereinträge verschlüsselt übertragen und bei unserem Hosting-Anbieter Netlify gespeichert (Rechtsgrundlage: Vertragserfüllung, Art. 6 Abs. 1 lit. b DSGVO).</p>
       <p><strong>Dienstleister:</strong> Netlify (Hosting, Datenbank, Login, Bild-Optimierung), Stripe (Zahlungen – wir sehen keine Kartendaten), Google Firebase Realtime Database <code>europe-west1</code> (anonymer Besucherzähler und Online-Anzeige; dafür vergibt Firebase eine zufällige, anonyme Kennung – Chat, Pull-Wall und Radar-Pins speichern wir in unserer eigenen Datenbank bei Netlify), Anthropic über das Netlify AI Gateway (Auswertung der Fotos beim KI-Kartenscan und Zustandscheck; Fotos werden von uns nicht gespeichert), TCGdex/Cardmarket (Kartendaten und Preise), Push-Dienste von Google, Apple, Mozilla bzw. Microsoft (Zustellung von Push-Nachrichten). Schriftarten und die Kartenansicht (Leaflet) liefern wir selbst aus – es gibt keine Verbindung zu Google Fonts. Für den Live-Bereich wird das Firebase-Skript von Google (gstatic.com) nach dem Seitenaufbau nachgeladen; die Kartenkacheln kommen von OpenStreetMap, beim Setzen eines Radar-Pins ohne GPS wird der eingegebene Ort an OpenStreetMap Nominatim gesendet. Dabei wird technisch bedingt deine IP-Adresse übermittelt. Radar-Pins speichern nur einen ungefähren Standort (ca. 1 km Raster), nie deine genaue GPS-Position.</p>
       <p><strong>Öffentlich sichtbar:</strong> dein Sammlername, Stadt, Inserate, Bewertungen, Shop-Seite, eingetragene Events sowie – für Tausch-Vorschläge – welche Karten du auf der Wunschliste hast. In der Bestenliste erscheinst du nur, wenn du es selbst einschaltest.</p>

@@ -214,7 +214,7 @@ test("Scanner-Quelltext: kein Zielrahmen, Modus-Umschalter, Session-Dock mit +1,
   assert.match(worker, /getGlyphs: \(\) => glyphs/);
 });
 
-test("Set-Binder: leere Taschen mit Marktplatz-Etikett (🛒 Ab / ⚡ Deal / 🔔 Radar aktiv), Lücken-Radar sortiert nach Verfügbarkeit", () => {
+test("Set-Binder: leere Taschen mit Marktplatz-Etikett (🛒 Ab / ⚡ Deal), sonst eBay-Alternative, Lücken-Radar sortiert nach Verfügbarkeit", () => {
   const catalog = [
     { id: "sv08-1", name: "A", localId: "1", price: 10 }, { id: "sv08-2", name: "B", localId: "2", price: 7 },
     { id: "sv08-3", name: "C", localId: "3", price: 1 }, { id: "sv08-4", name: "D", localId: "4", price: 30 },
@@ -232,7 +232,7 @@ test("Set-Binder: leere Taschen mit Marktplatz-Etikett (🛒 Ab / ⚡ Deal / �
   assert.deepEqual(pocketLabel(by["sv08-2"]), { kind: "market", text: `🛒 Ab ${euro(6.5)}`, listingId: 11 }, "6,50 € bei 7 € Cardmarket: normales Angebot");
   assert.deepEqual(pocketLabel(by["sv08-4"]), { kind: "deal", text: `⚡ Deal ${euro(5.5)}`, listingId: 13 }, `≥ ${DEAL_BELOW * 100} % unter Cardmarket`);
   assert.deepEqual(pocketLabel(by["sv08-3"]), { kind: "trade", text: "🔁 Tausch möglich", listingId: 14 });
-  assert.deepEqual(pocketLabel({ owned: false, market: null, price: 3 }), { kind: "radar", text: "🔔 Radar aktiv", listingId: 0 });
+  assert.deepEqual(pocketLabel({ owned: false, market: null, price: 3 }), { kind: "ebay", text: `🏷️ eBay ~ ${euro(3)}`, listingId: 0, live: false });
   const r = gapRadar(cards);
   assert.equal(r.count, 3);
   assert.deepEqual(r.available.map((c) => c.cardId), ["sv08-4", "sv08-2", "sv08-3"], "günstigstes Kaufangebot zuerst, Tausch zuletzt");
@@ -274,5 +274,5 @@ test("100 % freies Kamerabild: im Kamerafenster nur Video (+ Start-Hinweis vor d
   assert.match(ui, /`Match: \$\{Math\.round/);
   assert.match(ui, /`\$\{fps\} FPS`/);
   assert.match(ui, /1-Klick Inserieren \(CM-Preis\)/); assert.match(ui, /Schnell-Inserieren \(Deal unter CM\)/);
-  assert.match(src("public/sw.js"), /const VERSION = "v17"/);
+  assert.match(src("public/sw.js"), /const VERSION = "v18"/);
 });

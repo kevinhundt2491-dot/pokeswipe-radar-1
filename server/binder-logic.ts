@@ -104,6 +104,8 @@ export function groupBinderBySet(items: BinderItem[], sets: Map<string, SetMeta>
 export type CatalogCard = { id: string; name: string; image?: string; localId?: string; price?: number | null };
 export type OwnedEntry = { cardId: string; quantity?: number; condition?: string; portfolioItemId?: number; image?: string; name?: string; value?: number };
 export type ListingRef = { id: number; cardId: string | null; price: number; userId: string; condition?: string; seller?: string; sellerSlug?: string; image?: string; want?: string; buyNow?: boolean };
+/** Günstigstes gespeichertes eBay-Sofort-Kaufen-Angebot (Flip-Radar, Tabelle market_offers) je Karte. */
+export type EbayRef = { cardId: string; price: number };
 
 export type MarketBadge = { listingId: number; price: number; trade: boolean; label: string; seller: string; sellerSlug: string; condition: string; offers: number };
 export type BinderCard = {
@@ -117,6 +119,8 @@ export type BinderCard = {
   myListing: { id: number; price: number; label: string } | null;
   /** Fehlende Karte, die ein anderer Nutzer gerade anbietet. */
   market: MarketBadge | null;
+  /** Günstigster gespeicherter eBay-Sofort-Kaufen-Preis (nur fehlende Karten, 0 = keine eBay-Daten). */
+  ebayPrice: number;
 };
 
 /** Badge-Text für ein Marktplatz-Angebot einer fehlenden Karte. */
@@ -151,7 +155,13 @@ export function bestOffersByCard(listings: ListingRef[], viewerId: string): Map<
 /** Alle Karten eines Sets in Ordner-Reihenfolge, angereichert mit Besitz-, Inserats- und Marktplatz-Infos. */
 export function buildBinderCards(input: {
   catalog: CatalogCard[]; owned: OwnedEntry[]; myListings: ListingRef[]; marketListings: ListingRef[]; viewerId: string; official?: number;
+  ebayOffers?: EbayRef[];
 }): BinderCard[] {
+  const ebayBy = new Map<string, number>();
+  for (const e of input.ebayOffers || []) {
+    const p = num(e?.price);
+    if (e?.cardId && p && (!ebayBy.has(e.cardId) || p < ebayBy.get(e.cardId)!)) ebayBy.set(e.cardId, p);
+  }
   const ownedBy = new Map<string, { qty: number; condition: string; image: string; name: string; value: number; pid: number | null }>();
   for (const o of input.owned || []) {
     if (!o?.cardId) continue;
@@ -192,6 +202,7 @@ export function buildBinderCards(input: {
         ownedValue: o ? Math.round((o.value || price * o.qty) * 100) / 100 : 0,
         myListing: o && ml ? { id: ml.id, price: ml.price, label: ml.price ? `Im Verkauf: ${euroLabel(ml.price)}` : "Zum Tausch angeboten" } : null,
         market: o ? null : offers.get(c.id) ?? null,
+        ebayPrice: o ? 0 : ebayBy.get(c.id) || 0,
       };
     });
 }
@@ -203,29 +214,59 @@ export function buildBinderCards(input: {
 export const DEAL_BELOW = 0.15;
 
 export type PocketLabel = {
-  /** market = Kaufangebot · deal = deutlich unter Cardmarket · trade = Tauschangebot · radar = noch kein Angebot (Preis-Radar) */
-  kind: "market" | "deal" | "trade" | "radar";
+  /**
+   * market = Kaufangebot · deal = deutlich unter Cardmarket · trade = Tauschangebot (Stufe 1: PokeSwipe-Marktplatz)
+   * ebay = Stufe 2: nicht auf dem Marktplatz → eBay-Sofort-Kaufen (live gespeicherter Preis, sonst Referenzpreis bzw. „eBay prüfen“)
+   */
+  kind: "market" | "deal" | "trade" | "ebay";
   text: string;
-  /** Inserat, das ein Tipp auf das Etikett öffnet (0 = Schnellsuche / Preisalarm) */
+  /** Inserat, das ein Tipp auf das Etikett öffnet (0 = kein internes Angebot → eBay-Suche) */
   listingId: number;
+  /** Nur bei kind = "ebay": Preis stammt aus echten eBay-Angeboten (true) oder ist der Referenz-/Marktpreis (false). */
+  live?: boolean;
 };
 
 /**
- * Etikett unter einer noch nicht gesammelten Tasche im Set-Binder:
- *   🛒 Ab 6,50 €   – Karte liegt auf dem Marktplatz (günstigstes Angebot)
- *   ⚡ Deal 5,50 € – Angebot mindestens DEAL_BELOW unter dem Cardmarket-Trend
- *   🔁 Tausch      – reines Tauschangebot
- *   🔔 Radar aktiv – noch kein Angebot → 1 Tipp öffnet Schnellsuche / Preisalarm
- * Für eigene Karten gibt es kein Etikett (null).
+ * Kauf-Etikett einer noch nicht gesammelten Tasche im Set-Binder – strikte Reihenfolge:
+ *   Stufe 1 – PokeSwipe-Marktplatz:  🛒 Ab 6,50 € · ⚡ Deal 5,50 € (≥ DEAL_BELOW unter Cardmarket) · 🔁 Tausch möglich
+ *   Stufe 2 – eBay-Alternative:      🏷️ eBay ab 8,90 € (gespeicherte eBay-Angebote) · 🏷️ eBay ~ 8,90 € (Referenzpreis) · 🔎 eBay prüfen
+ * Für eigene Karten gibt es kein Kauf-Etikett (null) – dort hängt das Wert-Etikett (ownedPriceTag).
  */
-export function pocketLabel(card: Pick<BinderCard, "owned" | "market" | "price">): PocketLabel | null {
+export function pocketLabel(card: Pick<BinderCard, "owned" | "market" | "price"> & { ebayPrice?: number }): PocketLabel | null {
   if (card.owned) return null;
   const m = card.market;
-  if (!m) return { kind: "radar", text: "🔔 Radar aktiv", listingId: 0 };
+  if (!m) {
+    const live = num(card.ebayPrice), ref = num(card.price);
+    if (live) return { kind: "ebay", text: `🏷️ eBay ab ${euroLabel(live)}`, listingId: 0, live: true };
+    return { kind: "ebay", text: ref ? `🏷️ eBay ~ ${euroLabel(ref)}` : "🔎 eBay prüfen", listingId: 0, live: false };
+  }
   if (m.trade || !(num(m.price) > 0)) return { kind: "trade", text: "🔁 Tausch möglich", listingId: Number(m.listingId) || 0 };
   const cm = num(card.price);
   const deal = cm > 0 && m.price <= cm * (1 - DEAL_BELOW);
   return { kind: deal ? "deal" : "market", text: deal ? `⚡ Deal ${euroLabel(m.price)}` : `🛒 Ab ${euroLabel(m.price)}`, listingId: Number(m.listingId) || 0 };
+}
+
+/** Wert-Etikett einer eigenen Karte: aktueller Cardmarket-Wert je Exemplar + Mengen-Badge bei Mehrfachbesitz. */
+export function ownedPriceTag(card: Pick<BinderCard, "owned" | "price" | "quantity">): { text: string; qty: string } | null {
+  if (!card.owned) return null;
+  const p = num(card.price), q = Math.max(1, Math.floor(Number(card.quantity) || 1));
+  return { text: p ? euroLabel(p) : "– €", qty: q > 1 ? `×${q}` : "" };
+}
+
+/**
+ * Vorbefüllte deutsche eBay-Suche (Sofort-Kaufen, günstigster Preis zuerst):
+ * https://www.ebay.de/sch/i.html?_nkw=<Name>+<Nummer>+<Set>+Pokemon&LH_BIN=1&_sop=15 – optional mit ePN-Partner-ID.
+ */
+export function ebaySearchQuery(card: { name?: string; number?: string; localId?: string }, setName = ""): string {
+  return [card.name, card.number || card.localId, setName, "Pokemon"].map((x) => String(x ?? "").trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 120);
+}
+export function ebaySearchUrl(query: string, campaignId = "", customId = "pokeswipe-binder"): string {
+  const q = encodeURIComponent(String(query || "Pokemon").slice(0, 120)).replace(/%20/g, "+");
+  const base = `https://www.ebay.de/sch/i.html?_nkw=${q}&LH_BIN=1&_sop=15`;
+  const camp = String(campaignId || "").replace(/\D/g, "");
+  if (!camp) return base;
+  const custom = encodeURIComponent(String(customId || "").replace(/[^a-z0-9-]/gi, "").slice(0, 40));
+  return `${base}&mkcid=1&mkrid=707-53477-19255-0&siteid=77&campid=${camp}&customid=${custom}&toolid=10001&mkevt=1`;
 }
 
 /**

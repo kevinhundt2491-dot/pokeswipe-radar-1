@@ -199,34 +199,6 @@ header.dex-header button:hover { background-color: rgba(26, 20, 32, 0.8) !import
 .dex-cta.ghost { background: rgba(12, 16, 34, 0.6); color: var(--ink); border: 1.5px solid rgba(243, 239, 228, 0.18); }
 .dex-cta.ghost:hover { border-color: var(--t-electric); transform: translateY(-2px); }
 
-/* Aufgefächerte Holo-Karten */
-.card-fan { position: relative; height: 230px; width: 290px; margin: 0 auto; perspective: 900px; }
-.card-fan .tcg {
-  position: absolute; bottom: 0; left: 50%;
-  width: 150px; aspect-ratio: 63 / 88;
-  border-radius: 10px; overflow: hidden;
-  box-shadow: 0 18px 40px -14px rgba(0, 0, 0, 0.8), 0 0 0 2px rgba(243, 239, 228, 0.15);
-  transform-origin: 50% 120%;
-  transition: transform 0.45s cubic-bezier(.2, .8, .2, 1);
-  animation: fanIn 0.9s cubic-bezier(.2, .8, .2, 1) both;
-}
-.card-fan .tcg img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.card-fan .tcg::after {
-  content: ""; position: absolute; inset: 0;
-  background: linear-gradient(125deg, transparent 30%, rgba(255, 255, 255, 0.35) 45%, rgba(255, 140, 200, 0.18) 52%, rgba(120, 220, 255, 0.2) 58%, transparent 70%);
-  background-size: 250% 250%;
-  mix-blend-mode: color-dodge;
-  animation: foil 5s ease-in-out infinite;
-}
-.card-fan .tcg:nth-child(1) { --r: -16deg; --x: -118%; animation-delay: 0.05s; }
-.card-fan .tcg:nth-child(2) { --r: 0deg; --x: -50%; z-index: 2; animation-delay: 0.18s; }
-.card-fan .tcg:nth-child(3) { --r: 16deg; --x: 18%; animation-delay: 0.3s; }
-.card-fan .tcg { transform: translateX(var(--x)) rotate(var(--r)); }
-.card-fan:hover .tcg:nth-child(1) { transform: translateX(-132%) rotate(-22deg) translateY(-6px); }
-.card-fan:hover .tcg:nth-child(2) { transform: translateX(-50%) translateY(-16px) scale(1.04); }
-.card-fan:hover .tcg:nth-child(3) { transform: translateX(32%) rotate(22deg) translateY(-6px); }
-@keyframes foil { 0%, 100% { background-position: 0% 0%; } 50% { background-position: 100% 100%; } }
-@keyframes fanIn { from { opacity: 0; transform: translateX(-50%) translateY(40px) rotate(0deg); } }
 
 /* ---------- Hauptnavigation als Energie-Chips ---------- */
 .dex-nav { background: rgba(12, 16, 34, 0.75) !important; border: 1.5px solid rgba(243, 239, 228, 0.1) !important; }
@@ -283,10 +255,6 @@ button:active { transform: translateY(1px) scale(0.985); }
 
 footer { font-family: var(--font-body); }
 
-@media (max-width: 640px) {
-  .card-fan { height: 190px; width: 240px; }
-  .card-fan .tcg { width: 122px; }
-}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -302,11 +270,6 @@ footer { font-family: var(--font-body); }
   header.dex-header .dex-lens { width: 38px; height: 38px; border-width: 3px; }
   header.dex-header .dex-title { font-size: 1.05rem !important; }
   header.dex-header button { padding: 0.35rem 0.5rem !important; }
-  #authBtnText { max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
-  .card-fan { height: 170px; width: 230px; }
-  .card-fan .tcg { width: 104px; }
-  .card-fan .tcg:nth-child(1) { --x: -112%; }
-  .card-fan .tcg:nth-child(3) { --x: 12%; }
 }
 
 /* Barrierefreiheit: Zoomen ist wieder erlaubt. Ab 16px Schrift zoomt iOS beim Antippen von Feldern nicht automatisch. */
@@ -497,7 +460,7 @@ button.ps-card:active { transform: scale(0.99); }
 #view-community[data-seg="wall"] #ps-chat-panel { display: none !important; }
 #view-community[data-seg] #ps-chat-panel, #view-community[data-seg] #ps-wall-panel { grid-column: 1 / -1; }
 #view-community[data-seg="chat"] > [data-subchips] { display: none !important; }
-#view-community[data-seg="chat"] #chat-messages { height: min(60vh, 34rem); }
+
 
 /* Hauptnavigation: oben (Desktop) und Tab-Bar (Handy) – Zustand über .is-active/aria-current */
 #ps-top-nav { background: rgba(26, 20, 32, 0.45) !important; border: 1.5px solid rgba(243, 239, 228, 0.16) !important; }
@@ -602,19 +565,42 @@ body.ps-binder-open { overflow: hidden; }
 .ps-binder { width: min(760px, 100%); max-height: calc(100dvh - 1rem); display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; border-radius: 1.4rem;
   background: linear-gradient(180deg, #1b2444, #10162d); border: 2px solid rgba(250, 204, 21, 0.45); box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.95); }
 .ps-binder-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-.ps-binder-close { min-width: 40px; min-height: 40px; border-radius: 0.8rem; background: rgba(243, 239, 228, 0.08); color: #fff; font-weight: 900; flex-shrink: 0; }
+.ps-binder-close { min-width: 44px; min-height: 44px; border-radius: 0.8rem; background: rgba(243, 239, 228, 0.08); color: #fff; font-weight: 900; flex-shrink: 0; }
 .ps-binder-stage { position: relative; display: flex; align-items: center; justify-content: center; gap: 0.35rem; min-height: 0; flex: 1 1 auto; }
 .ps-binder-viewport { flex: 0 1 auto; width: min(100%, max(250px, calc((100dvh - 230px) / 1.42))); min-width: 0; max-height: calc(100dvh - 150px); overflow-x: hidden; overflow-y: auto; touch-action: pan-y; user-select: none; -webkit-user-select: none; border-radius: 1rem;
   background: repeating-linear-gradient(90deg, rgba(243, 239, 228, 0.025) 0 2px, transparent 2px 6px), #0b1024; border: 1px solid rgba(243, 239, 228, 0.08); }
-.ps-binder-track { display: flex; will-change: transform; }
+/* Set-Binder: Seiten liegen wie echte Ordnerblätter übereinander und drehen sich in 3D um den Rücken (client/binder.js) */
+.ps-binder-track { display: grid; perspective: 1700px; perspective-origin: 0% 50%; transform-style: preserve-3d; }
+.ps-binder-track > .ps-bpage { grid-area: 1 / 1; position: relative; visibility: hidden; transform-origin: 0% 50%; backface-visibility: visible;
+  background: repeating-linear-gradient(90deg, rgba(243, 239, 228, 0.025) 0 2px, transparent 2px 6px), #0b1024; border-radius: 0.2rem 1rem 1rem 0.2rem; }
+.ps-binder-track > .ps-bpage.is-current, .ps-binder-track > .ps-bpage.is-under, .ps-binder-track > .ps-bpage.is-turning { visibility: visible; }
+.ps-binder-track > .ps-bpage.is-current { z-index: 1; }
+.ps-binder-track > .ps-bpage.is-under { z-index: 2; }
+.ps-binder-track > .ps-bpage.is-turning { z-index: 3; will-change: transform; box-shadow: calc(var(--flip, 0) * -18px) 10px 30px -8px rgba(0, 0, 0, calc(0.25 + var(--flip, 0) * 0.5)); }
+/* Rückseite der Folienseite, sobald sie über den Rücken kippt (Inhalt ausblenden statt gespiegelt zeigen) */
+.ps-binder-track > .ps-bpage.ps-flip-back > :not(.ps-bpage-shade):not(.ps-bpage-gloss) { visibility: hidden; }
+.ps-binder-track > .ps-bpage.ps-flip-back { background: linear-gradient(270deg, rgba(255, 255, 255, 0.05), transparent 30%), repeating-linear-gradient(0deg, rgba(243, 239, 228, 0.035) 0 1px, transparent 1px 34%), #0d1430; }
+/* dynamischer Falz-Schatten (zum Rücken hin dunkler, wächst mit dem Anheben) */
+.ps-bpage-shade, .ps-bpage-gloss { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; }
+.ps-binder-track > .ps-bpage .ps-bpage-shade { opacity: var(--flip, 0); background: linear-gradient(90deg, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.12) 18%, transparent 45%, rgba(255, 255, 255, 0.05) 75%, rgba(0, 0, 0, 0.35) 100%); }
+/* Folien-Lichtreflex: wandert beim Drehen über die Karten */
+.ps-binder-track > .ps-bpage .ps-bpage-gloss { opacity: calc(var(--flip, 0) * 0.9); mix-blend-mode: screen;
+  background: linear-gradient(105deg, transparent 20%, rgba(255, 255, 255, 0.22) 38%, rgba(186, 230, 253, 0.12) 44%, transparent 60%);
+  background-size: 220% 100%; background-position: calc(100% - var(--flip, 0) * 100%) 0; }
+/* Schlagschatten der drehenden Seite auf der Seite darunter */
+.ps-binder-track > .ps-bpage.is-under::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: var(--cast, 0);
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.18) 45%, transparent 85%); }
+@media (prefers-reduced-motion: reduce) { .ps-binder-track > .ps-bpage .ps-bpage-gloss { display: none; } }
 .ps-bpage { flex: 0 0 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; padding: 0.55rem; align-content: start; }
 .ps-bpage-empty { min-height: 260px; }
 .ps-binder-arrow { display: none; flex-shrink: 0; width: 42px; height: 64px; border-radius: 0.9rem; font-size: 1.8rem; font-weight: 900; color: #1a1420; background: #facc15; box-shadow: 0 4px 0 #b45309; }
 .ps-binder-arrow:disabled { opacity: 0.25; box-shadow: none; }
 @media (min-width: 640px) { .ps-binder-arrow { display: block; } }
 .ps-binder-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0 0.25rem; }
-.ps-bdot { width: 7px; height: 7px; border-radius: 999px; background: rgba(243, 239, 228, 0.25); }
-.ps-bdot.on { background: #facc15; width: 16px; }
+/* Seiten-Punkte: kleiner Punkt, aber ≥ 44 px hohe Tippfläche */
+.ps-bdot { position: relative; width: 22px; height: 44px; background: transparent; border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.ps-bdot::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: rgba(243, 239, 228, 0.25); transition: width 0.2s ease, background-color 0.2s ease; }
+.ps-bdot.on::before { background: #facc15; width: 16px; }
 
 .ps-bslot { position: relative; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; text-align: left; padding: 0.3rem; border-radius: 0.7rem;
   background: rgba(19, 26, 51, 0.9); border: 1px solid rgba(243, 239, 228, 0.08); min-height: 0; }
@@ -646,20 +632,30 @@ body.ps-binder-open { overflow: hidden; }
 .ps-bslot-emboss { position: absolute; top: 0.3rem; right: 0.35rem; font-size: 0.6rem; font-weight: 900; letter-spacing: 0.08em; font-variant-numeric: tabular-nums;
   color: rgba(226, 232, 240, 0.78); text-shadow: 0 1px 0 rgba(255, 255, 255, 0.18), 0 -1px 0 rgba(0, 0, 0, 0.9); pointer-events: none; }
 /* Marktplatz-Preisschild-Etikett unten in der leeren Tasche */
-.ps-pocket-tag { position: absolute; left: 0.25rem; right: 0.25rem; bottom: 0.3rem; display: flex; align-items: center; justify-content: center; gap: 0.2rem;
+.ps-pocket-tag { position: absolute; left: 0.25rem; right: 0.25rem; bottom: 0.3rem; display: flex; align-items: center; justify-content: center; gap: 0.2rem; z-index: 2;
   font-size: 0.58rem; font-weight: 900; line-height: 1.1; padding: 0.28rem 0.3rem 0.28rem 0.55rem; border-radius: 0.45rem; cursor: pointer;
   background: linear-gradient(180deg, #fffbeb, #fde68a); color: #1c1917; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(120, 53, 15, 0.35); }
 .ps-pocket-tag::before { content: ""; position: absolute; left: 0.22rem; top: 50%; width: 0.28rem; height: 0.28rem; margin-top: -0.14rem; border-radius: 999px; background: #1c1917; box-shadow: inset 0 0 0 1px #fffbeb; }
 .ps-pocket-tag-market { background: linear-gradient(180deg, #d1fae5, #34d399); color: #052e16; animation: psPulseBadge 2.4s ease-in-out infinite; }
 .ps-pocket-tag-deal { background: linear-gradient(180deg, #fff7ed, #fb923c); color: #431407; animation: psPulseBadge 2.4s ease-in-out infinite; }
 .ps-pocket-tag-trade { background: linear-gradient(180deg, #e0f2fe, #7dd3fc); color: #0c4a6e; }
-.ps-pocket-tag-radar { background: linear-gradient(180deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); color: #cbd5e1; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(148, 163, 184, 0.35); }
-.ps-pocket-tag-radar::before { background: #cbd5e1; box-shadow: inset 0 0 0 1px #0f172a; }
 .ps-pocket-tag:hover, .ps-pocket-tag:focus-visible { filter: brightness(1.06); outline: 2px solid rgba(253, 224, 71, 0.8); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .ps-pocket-tag-market, .ps-pocket-tag-deal { animation: none; } }
 @media (min-width: 640px) { .ps-pocket-tag { font-size: 0.64rem; } .ps-bslot-emboss { font-size: 0.66rem; } }
+/* Stufe 2: nicht auf dem PokeSwipe-Marktplatz → eBay-Alternative (live gespeicherter Preis leuchtet etwas stärker) */
+.ps-pocket-tag-ebay { background: linear-gradient(180deg, #dbeafe, #93c5fd); color: #172554; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(30, 64, 175, 0.4); }
+.ps-pocket-tag-ebay.live { background: linear-gradient(180deg, #eff6ff, #60a5fa); }
+.ps-pocket-tag-ebay::before { background: #172554; box-shadow: inset 0 0 0 1px #dbeafe; }
+/* Wert-Etikett eigener Karten: kompaktes Sammler-Preisschild unten rechts (verdeckt das Motiv nicht), Mengen-Badge daneben */
+.ps-price-tag-owned { position: absolute; right: 0.22rem; bottom: 0.26rem; z-index: 2; display: inline-flex; align-items: center; gap: 0.2rem; pointer-events: none;
+  font-size: 0.58rem; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; padding: 0.24rem 0.34rem 0.24rem 0.5rem; border-radius: 0.3rem 0.45rem 0.45rem 0.3rem;
+  background: linear-gradient(180deg, #fffbeb, #fde68a); color: #1c1917; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(120, 53, 15, 0.35);
+  -webkit-font-smoothing: antialiased; }
+.ps-price-tag-owned::before { content: ""; position: absolute; left: 0.17rem; top: 50%; width: 0.22rem; height: 0.22rem; margin-top: -0.11rem; border-radius: 999px; background: #1c1917; box-shadow: inset 0 0 0 1px #fffbeb; }
+.ps-price-tag-owned .ps-bslot-qty { position: static; font-size: 0.55rem; padding: 0.08rem 0.22rem; background: #1a1420; color: #facc15; border-radius: 0.25rem; }
+@media (min-width: 640px) { .ps-price-tag-owned { font-size: 0.64rem; } }
 /* 1-Klick „Inserieren“ auf vorhandenen Album-Karten */
-.ps-bslot-sell { position: absolute; left: 0.25rem; right: 0.25rem; bottom: 0.25rem; text-align: center; font-size: 0.55rem; font-weight: 900; color: #052e16; background: rgba(52, 211, 153, 0.92); border-radius: 0.4rem; padding: 0.2rem 0.25rem; cursor: pointer; opacity: 0.95; }
+.ps-bslot-sell { position: absolute; right: 0.22rem; top: 0.22rem; z-index: 2; text-align: center; font-size: 0.55rem; font-weight: 900; color: #052e16; background: rgba(52, 211, 153, 0.92); border-radius: 0.4rem; padding: 0.2rem 0.25rem; cursor: pointer; opacity: 0.95; }
 .ps-bslot-sell:hover, .ps-bslot-sell:focus-visible { opacity: 1; outline: 2px solid #fde047; }
 .ps-bslot-cond { position: absolute; top: 0.25rem; left: 0.25rem; }
 .ps-bslot-qty { position: absolute; top: 0.25rem; right: 0.25rem; font-size: 0.6rem; font-weight: 900; background: #facc15; color: #1a1420; border-radius: 0.35rem; padding: 0.1rem 0.3rem; }
@@ -670,18 +666,16 @@ body.ps-binder-open { overflow: hidden; }
 .ps-switch.on .ps-switch-track { background: #10b981; }
 .ps-switch.on .ps-switch-knob { transform: translateX(0.9rem); }
 .ps-switch:focus-visible { outline: 2px solid #facc15; outline-offset: 2px; border-radius: 0.5rem; }
-.ps-bslot-badge { position: absolute; left: 0.2rem; right: 0.2rem; bottom: 0.25rem; text-align: center; font-size: 0.56rem; font-weight: 900; line-height: 1.1; padding: 0.25rem 0.2rem; border-radius: 0.4rem; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55); }
+.ps-bslot-badge { position: absolute; left: 0.2rem; right: 0.2rem; bottom: 1.55rem; z-index: 2; text-align: center; font-size: 0.56rem; font-weight: 900; line-height: 1.1; padding: 0.25rem 0.2rem; border-radius: 0.4rem; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55); }
 .ps-bslot-sale { background: #facc15; color: #1a1420; }
 .ps-bslot-market { background: #10b981; color: #052e16; animation: psPulseBadge 2.4s ease-in-out infinite; }
 @keyframes psPulseBadge { 50% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.35), 0 3px 8px rgba(0, 0, 0, 0.55); } }
 @media (prefers-reduced-motion: reduce) { .ps-bslot-market { animation: none; } }
 .ps-bslot-info { display: flex; justify-content: space-between; gap: 0.2rem; font-size: 0.58rem; font-weight: 800; }
 .ps-bslot-num { color: #94a3b8; white-space: nowrap; }
-.ps-bslot-price { color: #34d399; white-space: nowrap; }
 .ps-bslot-name { font-size: 0.64rem; font-weight: 900; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ps-bslot.missing .ps-bslot-name { color: #cbd5e1; }
 .ps-bslot.missing .ps-bslot-num { color: #7dd3fc; }
-.ps-bslot.missing .ps-bslot-price { color: #a7f3d0; opacity: 0.85; }
 @media (min-width: 640px) { .ps-bslot-badge { font-size: 0.62rem; } .ps-bslot-name { font-size: 0.7rem; } .ps-bslot-info { font-size: 0.62rem; } }
 
 /* 🎯 Lücken-Radar (Album → eigener Bereich für alle noch gesuchten Karten eines Sets) */
@@ -720,7 +714,7 @@ body.ps-binder-open { overflow: hidden; }
 .ps-hb-track { display: flex; will-change: transform; }
 .ps-hb-track > .ps-bpage { padding: 0.45rem; gap: 0.35rem; }
 .ps-hb-select { max-width: 11rem; background: #0b1024; border: 1px solid rgba(243, 239, 228, 0.15); border-radius: 0.6rem; color: #fff; font-size: 0.7rem; font-weight: 800; padding: 0.3rem 0.4rem; }
-.ps-hb-nav { min-width: 36px; min-height: 36px; border-radius: 0.7rem; font-weight: 900; color: #1a1420; background: #facc15; }
+.ps-hb-nav { min-width: 44px; min-height: 44px; border-radius: 0.7rem; font-weight: 900; color: #1a1420; background: #facc15; }
 .ps-hb-nav:disabled { opacity: 0.3; }
 
 /* ---------------------------------------------------------------------------
@@ -777,18 +771,36 @@ body.ps-binder-open { overflow: hidden; }
 #ps-market-main[data-browse="swipe"] #ps-mb-bar, #ps-market-main[data-browse="swipe"] #ps-market-binder { display: none !important; }
 #ps-market-main[data-browse="swipe"]:not([data-empty]) #market-list { display: none !important; }
 .ps-msw:empty { display: none; }
-.ps-msw-card { position: relative; max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; gap: 0.55rem; padding: 0.7rem; border-radius: 1.4rem;
-  background: linear-gradient(180deg, #1b2444, #10162d); border: 2px solid rgba(250, 204, 21, 0.4); box-shadow: 0 18px 50px -24px rgba(0, 0, 0, 0.9); will-change: transform; }
+/* Karten-Stapel: oberste Karte (.ps-msw-card) liegt auf der nächsten (.ps-msw-under), die sich beim Wegziehen live hebt */
+.ps-msw-stack { position: relative; max-width: 420px; margin: 0 auto; touch-action: pan-y; overscroll-behavior: contain; }
+.ps-msw-card, .ps-msw-under { position: relative; max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; gap: 0.55rem; padding: 0.7rem; border-radius: 1.4rem;
+  background: linear-gradient(180deg, #1b2444, #10162d); border: 2px solid rgba(250, 204, 21, 0.4); box-shadow: 0 18px 50px -24px rgba(0, 0, 0, 0.9); }
+.ps-msw-card { z-index: 2; transform-origin: 50% 60%; backface-visibility: hidden; }
+.ps-msw-card.ps-msw-dragging { will-change: transform, opacity; box-shadow: 0 28px 60px -18px rgba(0, 0, 0, 0.95); }
+.ps-msw-under { position: absolute; inset: 0 0 auto 0; z-index: 1; pointer-events: none; transform: translate3d(0, 16px, 0) scale(0.93); opacity: 0.55; transform-origin: 50% 0%;
+  box-shadow: 0 10px 26px -16px rgba(0, 0, 0, 0.9); will-change: transform, opacity; }
 .ps-msw-head { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; min-width: 0; }
-.ps-msw-art { position: relative; display: block; width: min(56vw, 260px, 30vh); aspect-ratio: 63 / 88; margin: 0 auto; border-radius: 0.9rem; overflow: hidden; background: #070a14;
-  touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; box-shadow: 0 18px 40px -14px rgba(0, 0, 0, 0.9); }
+.ps-msw-art { position: relative; display: block; width: min(56vw, 260px, 30dvh); aspect-ratio: 63 / 88; margin: 0 auto; border-radius: 0.9rem; overflow: hidden; background: #070a14;
+  touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: grab; box-shadow: 0 18px 40px -14px rgba(0, 0, 0, 0.9);
+  transform: perspective(700px) rotateY(var(--tilt, 0deg)); }
+.ps-msw-card.ps-msw-dragging .ps-msw-art { cursor: grabbing; }
+/* 3D-Holo-Lichtschimmer beim Kippen (folgt dem Finger) */
+.ps-msw-holo { position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: var(--holo-o, 0); mix-blend-mode: color-dodge; transition: opacity 0.2s ease;
+  background: linear-gradient(115deg, transparent 20%, rgba(255, 0, 128, 0.28) 34%, rgba(255, 221, 0, 0.3) 42%, rgba(0, 255, 170, 0.28) 50%, rgba(0, 160, 255, 0.3) 58%, transparent 72%);
+  background-size: 250% 250%; background-position: var(--holo-x, 50%) 50%; }
+.ps-msw-card.ps-msw-dragging .ps-msw-holo { transition: none; }
+@media (prefers-reduced-motion: reduce) { .ps-msw-holo { display: none; } }
 .ps-msw-art img { width: 100%; height: 100%; pointer-events: none; }
 .ps-msw-art::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.08) 45%, transparent 55%); }
 .ps-msw-cond { position: absolute; top: 0.4rem; left: 0.4rem; z-index: 1; }
-.ps-msw-hint { position: absolute; top: 50%; z-index: 2; transform: translateY(-50%); font-size: 0.7rem; font-weight: 900; padding: 0.25rem 0.55rem; border-radius: 0.5rem; background: rgba(30, 41, 59, 0.92); color: #fff; opacity: 0; transition: opacity 0.12s ease; pointer-events: none; }
-.ps-msw-hint.left { right: 0.4rem; } .ps-msw-hint.right { left: 0.4rem; }
-.ps-msw-card[data-drag="left"] .ps-msw-hint.left, .ps-msw-card[data-drag="right"] .ps-msw-hint.right { opacity: 0.55; }
-.ps-msw-card.ps-msw-armed .ps-msw-hint { opacity: 1 !important; }
+/* Edle Richtungs-Hinweise: blenden mit dem Zug-Fortschritt (--p) stufenlos ein */
+.ps-msw-hint { position: absolute; top: 0.6rem; z-index: 2; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.02em; padding: 0.3rem 0.6rem; border-radius: 999px; color: #fff; opacity: 0; pointer-events: none;
+  backdrop-filter: blur(6px); transform: scale(calc(0.85 + var(--p, 0) * 0.15)); }
+.ps-msw-hint.left { right: 0.5rem; background: rgba(30, 41, 59, 0.85); box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.4); }
+.ps-msw-hint.right { left: 0.5rem; background: rgba(16, 185, 129, 0.85); color: #022c22; box-shadow: inset 0 0 0 1px rgba(209, 250, 229, 0.6); }
+.ps-msw-card[data-drag="left"] .ps-msw-hint.left, .ps-msw-card[data-drag="right"] .ps-msw-hint.right { opacity: calc(0.2 + var(--p, 0) * 0.8); }
+.ps-msw-under .ps-msw-hint, .ps-msw-under .ps-msw-holo { display: none; }
+.ps-msw-card.ps-msw-armed .ps-msw-hint.left, .ps-msw-card.ps-msw-armed .ps-msw-hint.right { box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.85); }
 .ps-msw-info { text-align: center; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 .ps-msw-title { font-size: 1.05rem; font-weight: 900; color: #fff; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ps-msw-price strong { font-size: 1.35rem; font-weight: 900; color: #34d399; }
@@ -807,3 +819,27 @@ body.ps-binder-open { overflow: hidden; }
 .ps-msw-buy { display: flex; flex-direction: column; align-items: center; justify-content: center; background: #22d3ee; color: #0f172a; font-size: 0.86rem !important; box-shadow: 0 4px 0 #0e7490, 0 10px 24px -10px rgba(34, 211, 238, 0.8); }
 .ps-msw-buy:hover { background: #67e8f9; }
 .ps-msw-buy-sub { display: block; font-size: 0.58rem; font-weight: 800; opacity: 0.75; }
+
+/* ===========================================================================
+   Android-Feinschliff (Chrome, Samsung Internet & PWA)
+   • dynamische Viewport-Höhe (100dvh) statt starrer 100vh – nichts verschwindet hinter Adressleiste/System-Navigation
+   • horizontales App-Swipen löst weder den Android-Zurück-Overscroll noch Pull-to-Refresh in Overlays aus
+   • Tippziele ≥ 44 × 44 px, kein horizontales Überlaufen
+   =========================================================================== */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+html, body { overscroll-behavior-x: none; }
+body { min-height: 100vh; min-height: 100dvh; }
+#view-community[data-seg="chat"] #chat-messages { height: min(60dvh, 34rem); }
+/* Vollbild-Fenster (Modals, Binder): eigenes Scrollen ohne Pull-to-Refresh/Seiten-Neuladen, Platz für die Gesten-Leiste */
+.fixed.inset-0.overflow-y-auto { overscroll-behavior: contain; padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px)); }
+.ps-binder-overlay { overscroll-behavior: contain; padding-top: max(0.5rem, env(safe-area-inset-top, 0px)); padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px)); }
+.ps-binder-viewport { overscroll-behavior: contain; -webkit-touch-callout: none; }
+body.ps-binder-open { overscroll-behavior-y: none; }
+/* Schließen-Kreuz in allen Fenstern: volle 44-px-Tippfläche */
+.fixed.inset-0 [data-close] { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; top: 0.4rem; right: 0.4rem; border-radius: 0.8rem; }
+/* Kleine Etiketten in den Binder-Taschen: unsichtbar vergrößerte Tippfläche (das Etikett selbst bleibt kompakt) */
+.ps-pocket-tag::after, .ps-bslot-sell::after { content: ""; position: absolute; inset: -0.55rem -0.2rem; }
+.ps-mfocus-nav { width: 44px; }
+@media (max-width: 1023px) { .ps-head-icon { min-height: 44px; min-width: 44px; } }
+/* Feste Leisten über der Android-Gesten-Leiste */
+#ps-bottom-nav { padding-bottom: env(safe-area-inset-bottom, 0px); }

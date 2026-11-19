@@ -138,7 +138,7 @@ async function openDac7Admin(year) {
         <button type="button" onclick="PS.dac7Reseal()" class="bg-slate-800 text-emerald-300 font-black py-2.5 px-3 rounded-xl text-xs">🔐 Alt-Einträge verschlüsseln</button>
       </div>
       ${r.vault && !r.vault.configured ? `<p class="text-[11px] font-bold text-amber-300">⚠️ DATA_ENCRYPTION_KEY ist nicht gesetzt – Steuerdaten werden mit dem Notfall-Schlüssel aus Netlify Blobs verschlüsselt. Bitte den Schlüssel in den Netlify-Umgebungsvariablen hinterlegen und danach „Alt-Einträge verschlüsseln“ ausführen.</p>` : ""}
-      <div class="max-h-[55vh] overflow-y-auto space-y-1.5">
+      <div class="max-h-[55dvh] overflow-y-auto space-y-1.5">
         ${r.sellers.length ? r.sellers.map((x) => `<div class="bg-slate-950 border ${x.reportable ? (x.taxInfo?.complete ? "border-emerald-500/40" : "border-rose-500/50") : "border-slate-800"} rounded-xl p-2.5 text-xs space-y-1">
           <div class="flex flex-wrap justify-between gap-2"><p class="font-black text-white">${esc(x.displayName)} <span class="text-slate-500 font-normal">${esc(x.email)}</span></p>
             <p class="text-slate-300">${Number(x.transactions)} Verkäufe • ${cents(x.netCents)} netto • Gebühren ${cents(x.feeCents)}</p></div>
@@ -173,7 +173,7 @@ async function openSetCompleteness(lang = "de", incomplete = true) {
       </div>
       <p class="text-xs text-slate-300">${Number(s.sets)} Sets • <span class="text-emerald-300">${Number(s.complete)} vollständig</span> • <span class="text-rose-300">${Number(s.incomplete)} unvollständig</span>
         • ${Number(s.unknown)} ohne offizielle Zahl • <strong class="text-white">${Number(s.missingCards)}</strong> fehlende Karten</p>
-      <div class="max-h-[60vh] overflow-y-auto space-y-1.5">${r.sets.length ? r.sets.map((x) => `
+      <div class="max-h-[60dvh] overflow-y-auto space-y-1.5">${r.sets.length ? r.sets.map((x) => `
         <div class="bg-slate-950 border ${x.status === "complete" ? "border-emerald-500/40" : x.status === "incomplete" ? "border-rose-500/40" : "border-slate-800"} rounded-xl p-2.5 text-xs space-y-1">
           <div class="flex flex-wrap justify-between gap-2"><p class="font-black text-white">${esc(x.name)} <span class="text-slate-500 font-normal">${esc(x.id)} • ${esc(x.serie)}</span></p>
             <p class="text-slate-300">${Number(x.imported)}/${Number(x.total)} (${Number(x.pct)} %) • regulär ${Number(x.mainImported)}/${Number(x.official)} • Secret ${Number(x.secretImported)} • Sonder ${Number(x.specialImported)}</p></div>
@@ -211,7 +211,7 @@ async function openOps() {
       <h4 class="text-sm font-black text-white">Externe Quellen</h4>
       <div class="flex flex-wrap gap-1.5 text-[11px]">${r.circuits.length ? r.circuits.map((c) => `<span class="px-2 py-1 rounded-full ${c.phase === "closed" ? "bg-emerald-500/20 text-emerald-200" : c.phase === "half-open" ? "bg-amber-500/20 text-amber-200" : "bg-rose-500/30 text-rose-100"}" title="${esc(c.lastError || "")}">${esc(c.name)} • ${esc(c.phase)}${c.failures ? ` (${Number(c.failures)})` : ""}</span>`).join("") : `<span class="text-slate-400">Keine Störungen erfasst.</span>`}</div>
       <h4 class="text-sm font-black text-white">Letzte Fehler</h4>
-      <div class="max-h-[40vh] overflow-y-auto space-y-1 text-[11px]">${r.errors.length ? r.errors.map((e) => `<div class="bg-slate-950 border border-slate-800 rounded-lg p-2">
+      <div class="max-h-[40dvh] overflow-y-auto space-y-1 text-[11px]">${r.errors.length ? r.errors.map((e) => `<div class="bg-slate-950 border border-slate-800 rounded-lg p-2">
         <p class="text-slate-400">${new Date(e.createdAt).toLocaleString("de-DE")} • <span class="text-cyan-300">${esc(e.scope)}</span></p><p class="text-rose-200 break-words">${esc(e.message)}</p></div>`).join("") : `<p class="text-emerald-300">Keine Fehler protokolliert.</p>`}</div>`, { wide: true });
   } catch (e) { closeModalEl("ps-ops"); handleError(e); }
 }

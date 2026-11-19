@@ -3,7 +3,7 @@
 //   • neue Besucher ohne Karten sehen ein Beispiel-Set (so sieht ein halb gefüllter Ordner aus, nichts wird gespeichert)
 //   • „📒 Kompletten Set-Binder öffnen“ springt in die große Binder-Ansicht (client/binder.js)
 import { $, esc, cdn, state, api, FALLBACK_IMG } from "./core.js";
-import { buildBinderCards, binderSummary, paginate, clampPage, swipeDirection, setIdOfCard, showcaseBinderFill, BINDER_PAGE_SIZE, pocketLabel } from "../server/binder-logic.ts";
+import { buildBinderCards, binderSummary, paginate, clampPage, swipeDirection, setIdOfCard, showcaseBinderFill, BINDER_PAGE_SIZE, pocketLabel, ownedPriceTag } from "../server/binder-logic.ts";
 import { homeFolders } from "./binder.js";
 
 /** Beispiel-Set für neue Besucher (Karmesin & Purpur 151). */
@@ -22,14 +22,18 @@ function guestOwned(setId) {
 }
 
 function slotHtml(c) {
-  // Leere Tasche: Set-Nummer eingeprägt + Marktplatz-Preisschild-Etikett (🛒 Ab … / ⚡ Deal … / 🔔 Radar aktiv) – keine grauen Platzhalter, kein Lücken-Text
+  // Genau ein Preisetikett je Tasche: eigene Karte = Cardmarket-Wert (+ ×2), leere Tasche (Set-Nummer eingeprägt) =
+  // Marktplatz-Preisschild (🛒 Ab … / ⚡ Deal …), sonst eBay-Alternative (🏷️ eBay ab/~ … / 🔎 eBay prüfen) – keine grauen Platzhalter, kein Lücken-Text
   const tag = pocketLabel(c);
-  const label = tag ? `<span class="ps-pocket-tag ps-pocket-tag-${tag.kind}">${esc(tag.text)}</span>` : "";
+  const own = ownedPriceTag(c);
+  const label = tag
+    ? `<span class="ps-pocket-tag ps-price-tag ps-pocket-tag-${tag.kind}">${esc(tag.text)}</span>`
+    : own ? `<span class="ps-price-tag ps-price-tag-owned"><span class="ps-price-tag-v">${esc(own.text)}</span>${own.qty ? `<span class="ps-bslot-qty">${esc(own.qty)}</span>` : ""}</span>` : "";
   return `<button type="button" class="ps-bslot ${c.owned ? "owned" : c.market ? "missing market" : "missing"}" onclick="PS.homeBinderTap(${esc(JSON.stringify(c.cardId))})"
-      aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? " – im Binder" : ` – noch gesucht${tag ? `, ${tag.text}` : ""}`}`)}">
+      aria-label="${esc(`${c.number || c.localId} ${c.name}${c.owned ? ` – im Binder, ${own?.text || ""}` : ` – noch gesucht${tag ? `, ${tag.text}` : ""}`}`)}">
     <span class="ps-bslot-art"><img src="${esc(cdn(c.image || FALLBACK_IMG, 200))}" onerror="this.src='${FALLBACK_IMG}'" alt="" loading="lazy" draggable="false" />
       ${!c.owned ? `<span class="ps-bslot-emboss" aria-hidden="true">${esc(c.number || c.localId)}</span>` : ""}${label}</span>
-    <span class="ps-bslot-info"><span class="ps-bslot-num">${esc(c.number || c.localId)}</span><span class="ps-bslot-price">${esc(c.priceLabel)}</span></span>
+    <span class="ps-bslot-info"><span class="ps-bslot-num">${esc(c.number || c.localId)}</span></span>
   </button>`;
 }
 
@@ -130,7 +134,7 @@ async function loadSet(setId, example) {
   if (hb.loading !== setId) return;
   const owned = example ? showcaseBinderFill(data.catalog || [], { pages: 2 }) : state.user ? data.owned || [] : guestOwned(setId);
   hb.setId = setId; hb.example = example; hb.data = data;
-  hb.cards = buildBinderCards({ catalog: data.catalog || [], owned, myListings: data.myListings || [], marketListings: data.marketListings || [], viewerId: state.user?.id || "", official: Number(data.set?.official) || 0 });
+  hb.cards = buildBinderCards({ catalog: data.catalog || [], owned, myListings: data.myListings || [], marketListings: data.marketListings || [], viewerId: state.user?.id || "", official: Number(data.set?.official) || 0, ebayOffers: data.ebayOffers || [] });
   hb.pages = paginate(hb.cards, BINDER_PAGE_SIZE);
   hb.page = clampPage(hb.page, hb.pages.length);
   paint();

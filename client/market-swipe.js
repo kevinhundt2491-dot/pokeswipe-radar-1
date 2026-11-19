@@ -83,7 +83,7 @@ function rebuildDeck() {
   sw.pos = 0;
 }
 
-function cardHtml(l) {
+function cardHtml(l, under = false) {
   const id = Number(l.id);
   const own = l.user_id === state.user?.id;
   const cond = conditionShort(l.condition);
@@ -97,15 +97,16 @@ function cardHtml(l) {
     : l.buy_now
       ? `<button type="button" onclick="PS.mswBuy(${id})" class="ps-msw-buy" title="Kauf mit Käuferschutz – direkt zum Checkout">💳 Jetzt kaufen</button>`
       : `<button type="button" onclick="PS.mswBuy(${id})" class="ps-msw-buy" title="Kein Sofort-Kauf – Kaufanfrage an den Verkäufer">💳 Jetzt kaufen<span class="ps-msw-buy-sub">Anfrage an Verkäufer</span></button>`;
-  return `<article class="ps-msw-card" data-msw-card="${id}">
+  return `<article class="${under ? "ps-msw-under" : "ps-msw-card"}" ${under ? `aria-hidden="true" inert` : `data-msw-card="${id}"`}>
     <div class="ps-msw-head">
-      <span class="flex items-center gap-1 min-w-0">${rankBadge(rank)}<span class="ps-msw-kind">${KIND_LABEL[kind]}</span>${l.boosted ? `<span class="ps-badge bg-yellow-400 text-slate-950">🚀 TOP</span>` : ""}</span>
+      <span class="flex items-center gap-1 min-w-0"><span class="ps-msw-kind">${KIND_LABEL[kind]}</span>${l.boosted ? `<span class="ps-badge bg-yellow-400 text-slate-950">🚀 TOP</span>` : ""}</span>
       <span class="text-[10px] font-bold text-slate-400 shrink-0">${sw.list.length} live</span>
     </div>
-    <div class="ps-msw-art" data-msw-drag>
+    <div class="ps-msw-art"${under ? "" : " data-msw-drag"}>
       <img src="${esc(cdn(l.image || FALLBACK_IMG, 520))}" onerror="this.src='${FALLBACK_IMG}'" alt="${esc(l.card_name)}" draggable="false" class="${photo ? "object-cover" : "object-contain"}" />
       ${cond ? `<span class="ps-badge ps-badge-cond ps-msw-cond">${esc(cond)}</span>` : ""}
-      <span class="ps-msw-hint left" aria-hidden="true">➡️ Weiter</span><span class="ps-msw-hint right" aria-hidden="true">➡️ Weiter</span>
+      <span class="ps-msw-holo" aria-hidden="true"></span>
+      <span class="ps-msw-hint left" aria-hidden="true">✕ Weiter</span><span class="ps-msw-hint right" aria-hidden="true">🔎 Deal öffnen</span>
     </div>
     <div class="ps-msw-info">
       <h3 class="ps-msw-title" title="${esc(l.card_name)}">${esc(l.card_name)}</h3>
@@ -120,7 +121,7 @@ function cardHtml(l) {
     </div>
     <div class="flex items-center justify-between text-[11px] font-bold text-slate-400 px-1">
       <button type="button" onclick="PS.mswPrev()" ${sw.pos <= 0 ? "disabled" : ""} class="hover:text-white disabled:opacity-30">‹ Zurück</button>
-      <span class="hidden sm:inline text-[10px] text-slate-500">Wischen oder ← → · Enter = kaufen</span>
+      <span class="hidden sm:inline text-[10px] text-slate-500">← weiter · → Deal öffnen · Enter = kaufen</span>
       <button type="button" onclick="PS.openListing(${id})" class="hover:text-white">Alle Details ›</button>
     </div>
   </article>`;
@@ -129,53 +130,113 @@ function cardHtml(l) {
 function renderSwipe(stage) {
   const l = sw.deck[sw.pos];
   if (!l) { stage.innerHTML = ""; return; }
-  stage.innerHTML = cardHtml(l);
   const nxt = sw.deck[sw.pos + 1];
-  if (nxt?.image) { try { const im = new Image(); im.src = cdn(nxt.image, 520); } catch {} }
-  bindDrag(stage.querySelector("[data-msw-drag]"), stage.querySelector(".ps-msw-card"), Number(l.id));
+  // Echter Stapel: die nächste Karte liegt schon darunter und hebt sich beim Wegziehen stufenlos nach oben
+  stage.innerHTML = `<div class="ps-msw-stack">${nxt ? cardHtml(nxt, true) : ""}${cardHtml(l)}</div>`;
+  const after = sw.deck[sw.pos + 2];
+  if (after?.image) { try { const im = new Image(); im.src = cdn(after.image, 520); } catch {} }
+  bindDrag(stage.querySelector(".ps-msw-card [data-msw-drag]"), stage.querySelector(".ps-msw-card"), Number(l.id), stage.querySelector(".ps-msw-under"));
 }
 
-/** Karte ziehen: links oder rechts wischen = weiter, kurz antippen = Details. */
-function bindDrag(el, card, id) {
+const haptic = (ms) => { try { navigator.vibrate?.(ms); } catch {} };
+const REDUCED = (() => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } })();
+
+/** Darunterliegende Karte passend zum Zug-Fortschritt p (0 … 1) anheben. */
+function liftUnder(under, p, transition = "") {
+  if (!under) return;
+  under.style.transition = transition;
+  const k = Math.max(0, Math.min(1, p));
+  under.style.transform = `translate3d(0, ${(1 - k) * 16}px, 0) scale(${0.93 + 0.07 * k})`;
+  under.style.opacity = String(0.55 + 0.45 * k);
+}
+
+/**
+ * Karten-Physik wie echte Karten in der Hand:
+ *   • die oberste Karte folgt dem Finger 1:1; Neigung je nach Griffpunkt (oben angefasst kippt sie mit, unten dagegen)
+ *   • 3D-Holo-Schimmer + leichtes Kippen beim Ziehen; Richtungs-Hinweis blendet stufenlos ein (← Weiter · → Deal öffnen)
+ *   • die nächste Karte darunter skaliert/hebt sich live mit
+ *   • Loslassen: schneller Wisch (Velocity) oder weiter Zug → Karte gleitet mit Schwung hinaus (+ Haptik), sonst Feder-Zurückschnappen
+ *   • kurzer Tipp = Details. touch-action: pan-y → senkrechtes Scrollen bleibt beim Browser, keine Android-Gesten-Konflikte.
+ */
+function bindDrag(el, card, id, under) {
   if (!el || !card) return;
-  let sx = 0, sy = 0, dx = 0, active = false, dragging = false, pid = null;
+  let sx = 0, sy = 0, dx = 0, dy = 0, active = false, dragging = false, pid = null, grabSign = 1, width = 320, samples = [];
+  liftUnder(under, 0);
   el.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    sx = e.clientX; sy = e.clientY; dx = 0; active = true; dragging = false; pid = e.pointerId;
+    const r = card.getBoundingClientRect();
+    width = Math.max(200, r.width);
+    // Oben angefasst → Karte dreht mit der Bewegung, unten angefasst → dagegen (wie ein echtes Kartenblatt)
+    grabSign = e.clientY < r.top + r.height * 0.5 ? 1 : -1;
+    sx = e.clientX; sy = e.clientY; dx = 0; dy = 0; active = true; dragging = false; pid = e.pointerId; samples = [[e.timeStamp, e.clientX]];
   });
   el.addEventListener("pointermove", (e) => {
     if (!active || e.pointerId !== pid) return;
-    dx = e.clientX - sx;
-    const dy = e.clientY - sy;
-    if (!dragging && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) { dragging = true; try { el.setPointerCapture(pid); } catch {} }
-    if (dragging) {
-      card.style.transition = "none";
-      card.style.transform = `translateX(${dx}px) rotate(${dx / 22}deg)`;
-      card.dataset.drag = dx < 0 ? "left" : "right";
-      card.classList.toggle("ps-msw-armed", Math.abs(dx) > 70);
+    dx = e.clientX - sx; dy = e.clientY - sy;
+    if (!dragging) {
+      if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy) * 1.1) { if (Math.abs(dy) > 12) active = false; return; }
+      dragging = true;
+      try { el.setPointerCapture(pid); } catch {}
+      card.classList.add("ps-msw-dragging");
     }
+    samples.push([e.timeStamp, e.clientX]);
+    if (samples.length > 6) samples.shift();
+    const p = Math.min(1, Math.abs(dx) / (width * 0.42));
+    const rot = Math.max(-24, Math.min(24, (dx / 16) * grabSign));
+    const ty = dy * 0.18; // leichtes Mitgehen nach oben/unten, ohne die Seite zu scrollen
+    card.style.transition = "none";
+    card.style.transform = `translate3d(${dx}px, ${ty}px, 0) rotate(${rot}deg)`;
+    card.style.setProperty("--p", p.toFixed(3));
+    card.style.setProperty("--tilt", `${Math.max(-14, Math.min(14, dx / 14)).toFixed(2)}deg`);
+    card.style.setProperty("--holo-x", `${Math.max(0, Math.min(100, 50 + (dx / width) * 90)).toFixed(1)}%`);
+    card.style.setProperty("--holo-o", Math.min(0.85, 0.2 + p).toFixed(3));
+    card.dataset.drag = dx < 0 ? "left" : "right";
+    card.classList.toggle("ps-msw-armed", p >= 1);
+    liftUnder(under, p, "none");
   });
   const end = (e) => {
     if (!active || e.pointerId !== pid) return;
     active = false;
     if (!dragging) { if (e.type === "pointerup") window.PS?.openListing?.(id); return; }
     dragging = false;
-    if (Math.abs(dx) > 70) { fly(card, dx < 0 ? -1 : 1); return; }
-    card.style.transition = "transform .2s ease";
+    const now = e.timeStamp || performance.now();
+    const recent = samples.filter(([t]) => now - t < 110);
+    const a = recent[0] || samples[0], z = samples[samples.length - 1];
+    const vx = a && z && z[0] > a[0] ? (z[1] - a[1]) / (z[0] - a[0]) : 0; // px/ms
+    const dir = Math.abs(vx) > 0.5 ? Math.sign(vx) : Math.sign(dx);
+    const far = Math.abs(dx) > width * 0.42;
+    const flick = Math.abs(vx) > 0.5 && Math.abs(dx) > 24 && Math.sign(vx) === Math.sign(dx);
+    if (e.type !== "pointercancel" && dir && (far || flick)) { throwCard(card, dir, vx, { open: dir > 0, id, under, grabSign, dx, width }); return; }
+    // Feder-Zurückschnappen (leichtes Überschwingen)
+    const t = REDUCED ? "none" : "transform .42s cubic-bezier(.3,1.6,.5,1)";
+    card.style.transition = t;
     card.style.transform = "";
+    card.style.setProperty("--p", "0"); card.style.setProperty("--holo-o", "0"); card.style.setProperty("--tilt", "0deg");
     delete card.dataset.drag;
-    card.classList.remove("ps-msw-armed");
+    card.classList.remove("ps-msw-armed", "ps-msw-dragging");
+    liftUnder(under, 0, REDUCED ? "none" : "transform .42s cubic-bezier(.3,1.6,.5,1), opacity .3s ease");
   };
   el.addEventListener("pointerup", end);
   el.addEventListener("pointercancel", end);
 }
 
-function fly(card, dir) {
+/** Karte mit Schwung hinausgleiten lassen (Dauer aus der Wisch-Geschwindigkeit); rechts = Deal öffnen, links = weiter. */
+function throwCard(card, dir, vx = 0, { open = false, id = 0, under = null, grabSign = 1, dx = 0, width = 320 } = {}) {
   if (!card) { step(1); return; }
-  card.style.transition = "transform .22s ease, opacity .22s ease";
-  card.style.transform = `translateX(${dir * 120}%) rotate(${dir * 14}deg)`;
+  haptic(12);
+  const dist = Math.max(0, width * 1.5 - Math.abs(dx));
+  const speed = Math.max(1.4, Math.abs(vx)); // px/ms
+  const ms = REDUCED ? 0 : Math.round(Math.max(150, Math.min(340, dist / speed)));
+  card.classList.add("ps-msw-dragging");
+  card.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.7,.3,1), opacity ${ms}ms ease-in` : "none";
+  card.style.transform = `translate3d(${dir * width * 1.5}px, -24px, 0) rotate(${dir * 26 * grabSign}deg)`;
   card.style.opacity = "0";
-  setTimeout(() => step(1), 190);
+  liftUnder(under, 1, ms ? `transform ${ms}ms ease-out, opacity ${ms}ms ease-out` : "none");
+  setTimeout(() => { step(1); if (open && id) window.PS?.openListing?.(id); }, ms);
+}
+
+function fly(card, dir) {
+  throwCard(card, dir, 0, { under: $("ps-msw")?.querySelector(".ps-msw-under"), width: card?.getBoundingClientRect().width || 320 });
 }
 
 function step(delta) {
@@ -278,7 +339,7 @@ export function initMarketSwipe() {
 
 const api = {
   marketBrowse: (m) => setMode(m, { focus: true }),
-  mswNext: () => fly($("ps-msw")?.querySelector(".ps-msw-card"), 1),
+  mswNext: () => fly($("ps-msw")?.querySelector(".ps-msw-card"), -1),
   mswPrev: () => step(-1),
   mswBuy: (id) => {
     const l = sw.list.find((x) => Number(x.id) === Number(id)) || state.listings?.find((x) => Number(x.id) === Number(id));

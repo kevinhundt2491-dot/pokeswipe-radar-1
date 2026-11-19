@@ -92,7 +92,6 @@ export function founderInviteHtml({ variant = "home" } = {}) {
        ${perksHtml(false)}
        <div class="flex flex-wrap gap-2">
          <button type="button" onclick="PS.renderLogin('', 'signup')" class="ps-share-btn ps-share-main flex-1">✨ Kostenlos anmelden &amp; Einladungslink holen</button>
-         <button type="button" onclick="PS.openScanner()" class="ps-share-btn bg-slate-800 text-white">📷 Karte scannen</button>
        </div>
        <p class="text-[10px] text-slate-400">Deine als Gast gescannten Karten zählen mit und ziehen beim Login ins Konto um.</p>`;
   return `<section class="ps-card ps-invite ${unlocked ? "ps-invite-unlocked" : ""} p-4 space-y-3" data-invite-variant="${esc(variant)}" aria-label="Freunde einladen">

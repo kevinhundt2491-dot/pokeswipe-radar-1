@@ -236,7 +236,7 @@ function focusHtml(l) {
       <button type="button" onclick="PS.mbMessage(${jsArg(l.user_id)})" class="bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs">💬 Verkäufer schreiben</button>
       <a href="${esc(cm(l.card_name))}" target="_blank" rel="noopener" class="bg-indigo-600 text-white font-bold py-2.5 rounded-xl text-xs text-center">📊 Cardmarket-Preis prüfen</a>
     </div>`}
-    <button type="button" onclick="PS.mbDetails(${id})" class="w-full text-[11px] font-bold text-slate-400 hover:text-white">Alle Details &amp; Aktionen ›</button>
+    ${own ? "" : `<button type="button" onclick="PS.mbDetails(${id})" class="w-full text-[11px] font-bold text-slate-400 hover:text-white min-h-[44px]">Alle Details &amp; Aktionen ›</button>`}
     <p class="text-[10px] text-slate-500 text-center sm:hidden">← Wischen für die nächste Karte →</p>
   </div>`;
 }
