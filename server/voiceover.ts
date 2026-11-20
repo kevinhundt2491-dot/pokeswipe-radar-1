@@ -42,8 +42,14 @@ export const NARRATION_MAX_WORDS = 72;
 export const SHOWCASE_MAX_WORDS = 84;
 /** Eigenes Limit für die 29-s-Master-Vorlage „Automatischer Binder & Bulk-Marktplatz“ (exaktes Briefing-Skript ≈ 105 Wörter). */
 export const AUTOBINDER_MAX_WORDS = 110;
-/** Wortlimit je Vorlagen-Format (Standard/Hook 72, Showcase 84, Master „autobinder“ 110). */
-export const narrationMaxWords = (format: unknown) => (format === "showcase" ? SHOWCASE_MAX_WORDS : format === "autobinder" ? AUTOBINDER_MAX_WORDS : NARRATION_MAX_WORDS);
+/** Eigenes Limit für die aktuellen Pro-Videos (Format „pro4“): das 35–40-s-All-in-One-Erklärvideo hat ≈ 145 Wörter. */
+export const PRO4_MAX_WORDS = 160;
+/** Zeichenlimits für „pro4“ (lange Sätze im Erklärvideo): je Satz und für den ganzen Take. */
+export const PRO4_MAX_LINE_CHARS = 600, PRO4_MAX_CHARS = 1200;
+/** Wortlimit je Vorlagen-Format (Standard/Hook 72, Showcase 84, Master „autobinder“ 110, aktuelle Pro-Videos 160). */
+export const narrationMaxWords = (format: unknown) => (format === "showcase" ? SHOWCASE_MAX_WORDS : format === "autobinder" ? AUTOBINDER_MAX_WORDS : format === "pro4" ? PRO4_MAX_WORDS : NARRATION_MAX_WORDS);
+/** Zeichenlimits je Format: { line, total }. */
+export const narrationMaxChars = (format: unknown) => (format === "pro4" ? { line: PRO4_MAX_LINE_CHARS, total: PRO4_MAX_CHARS } : { line: MAX_CHARS, total: NARRATION_MAX_CHARS });
 /** Wörter wie gesprochen: alles mit Buchstabe oder Ziffer zählt (gleiche Regel wie client/reel-scripts.js). */
 export function countWords(text: string | string[]) {
   const s = Array.isArray(text) ? text.join(" ") : String(text ?? "");
@@ -245,9 +251,10 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     const key = process.env.ELEVENLABS_API_KEY;
     if (!key) return c.json({ error: "Kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt)." }, 503);
     const b = await body(c);
-    const lines = (Array.isArray(b.lines) ? b.lines.slice(0, MAX_LINES) : []).map((l: any) => speakable(String(l ?? "")).slice(0, MAX_CHARS));
+    const lim = narrationMaxChars(b.format);
+    const lines = (Array.isArray(b.lines) ? b.lines.slice(0, MAX_LINES) : []).map((l: any) => speakable(String(l ?? "")).slice(0, lim.line));
     if (!lines.length || lines.some((l: string) => !l)) return c.json({ error: "Sprechertext fehlt oder enthält leere Sätze." }, 400);
-    if (lines.join(" ").length > NARRATION_MAX_CHARS) return c.json({ error: "Sprechertext zu lang." }, 400);
+    if (lines.join(" ").length > lim.total) return c.json({ error: "Sprechertext zu lang." }, 400);
     const words = countWords(lines);
     const maxWords = narrationMaxWords(b.format);
     if (words > maxWords) return c.json({ error: `Sprechertext zu lang (${words} Wörter, höchstens ${maxWords}).` }, 400);

@@ -342,6 +342,19 @@ Dafür erlauben `X-Frame-Options: SAMEORIGIN` und `frame-ancestors 'self'` das E
 
 Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorgabe nur in diesem Browser.
 
+### 🔥 Pro-Videos: Set-Binder & Marktplatz (Aktuell)
+
+Der Generator zeigt oben das Feld für die ElevenLabs-Voice-ID und darunter den Haupt-Ordner mit den 4 aktuellen
+Pro-Videos (`PRO4_TEMPLATES` in `client/reel-pro.js`, Choreografien `p4binder`, `p4gaps`, `p4dupes`, `p4all`):
+Set-Binder & Switch-Funktion (≈ 20 s), Lücken & 1-Klick-Kauf (≈ 20 s), Doppelte & Blitz-Rabatt −5 %/−10 % (≈ 20 s) und
+das All-in-One-Erklärvideo (≈ 35–40 s). Der Button „🚀 Alle 4 Pro-Videos …“ nimmt alle nacheinander auf (9:16, MP4
+1080×1920), lädt jedes Video samt Cover und .txt herunter und sendet es – wenn ein Webhook eingetragen ist – an
+Make.com mit den Zusatzfeldern `drive_folder` (Standard „werbe videos pokeswipe“, im Generator änderbar),
+`video_group` = `pro-aktuell`, `batch_id`, `batch_index`, `batch_total` und `video_number`. Der Upload in Google Drive
+passiert im Make-Szenario (Modul „Google Drive → Upload a File“ mit `file` und `drive_folder`). Alle bisherigen
+Vorlagen und die 10 Live-Reels liegen im einklappbaren Ordner „📁 Archiv / Bisherige Vorlagen“. Die Sprecherin nutzt
+für diese Videos das Server-Format `pro4` (bis 160 Wörter).
+
 ### Master-Vorlage „Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power“
 
 Direkt auswählbar im Reel Studio (Kasten „📒 Master-Vorlage“ → öffnet den Pro-Generator) und im Generator per Button

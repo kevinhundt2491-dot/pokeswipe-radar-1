@@ -217,6 +217,120 @@ function FEATURE15() {
 export const FEATURE15_TEMPLATES = FEATURE15();
 export const isFeature15 = (tpl) => !!tpl?.feature15;
 
+// ---------------------------------------------------------------------------------------------------------------
+// 🔥 Pro-Videos: Set-Binder & Marktplatz (Aktuell) – die 4 aktuellen Pro-Videos des Generators (Haupt-Ordner).
+// Hook-Format (4 Szenen hook → proof → usp → ask), 9:16 · 1080×1920, eigene geklonte ElevenLabs-Stimme, Untertitel
+// Wort für Wort aus den Zeitstempeln der Stimme. Gesprochen und eingeblendet wird exakt das Briefing-Skript (die Domain
+// wird als „PokeSwipe Radar Punkt de“ gesprochen und als pokeswipe-radar.de eingeblendet). Live-Ablauf in der echten
+// App: Scanner → digitaler Set-Binder mit Switch-Funktion (Blättern) → Lücken-Kauf → 1-Klick-Verkauf mit −5 % / −10 %.
+// Eigene Liste – nicht Teil der Rotation der Admin-Zentrale; alle bisherigen Vorlagen liegen im Archiv-Ordner.
+// ---------------------------------------------------------------------------------------------------------------
+/** Ordner-Namen im Generator. */
+export const PRO4_FOLDER = "🔥 Pro-Videos: Set-Binder & Marktplatz (Aktuell)";
+export const ARCHIVE_FOLDER = "📁 Archiv / Bisherige Vorlagen";
+/** Standard-Zielordner in Google Drive (geht als Feld drive_folder an Make.com). */
+export const DRIVE_FOLDER = "werbe videos pokeswipe";
+/** Wortlimit der aktuellen Pro-Videos (Video 4 ≈ 145 gesprochene Wörter). Server: Format „pro4“. */
+export const PRO4_WORDS = Object.freeze([40, 160]);
+/** Preis-Beispiel für den 1-Klick-Verkauf (Cardmarket-Preis und −5 % / −10 %). */
+export const PRO4_SELL_PRICE = 12.9;
+const eur = (n) => `${(Math.round(n * 100) / 100).toFixed(2).replace(".", ",")} €`;
+/** Verkaufs-Optionen: Cardmarket-Preis, −5 %, −10 % (Blitzverkauf). */
+export function sellOptions(price = PRO4_SELL_PRICE) {
+  return [["💶 Cardmarket-Preis", eur(price)], ["−5 %", eur(price * 0.95)], ["⚡ −10 % Blitzverkauf", eur(price * 0.9)]];
+}
+const SELL = { title: "🏷️ Doppelte inserieren – 1 Klick", options: sellOptions(), pick: 2, done: "✓ Inserat ist live – Blitzverkauf" };
+const BUY = { title: "🛒 Fehlende Karte kaufen – 1 Klick", options: [["🏪 PokeSwipe Marktplatz", "6,50 €"], ["🔗 eBay", "ab 7,20 €"], ["🔗 Cardmarket", "ab 6,90 €"]], pick: 0, done: "✓ Karte gesichert – mit 1 Klick" };
+
+function PRO4() {
+  const base = {
+    format: "hook4", pro4: true, voiceFormat: "pro4", words: PRO4_WORDS, mbit: 10, cbr: true, maxSpeed: SPEED_CAP,
+    hashtags: HOOK4_HASHTAGS, visual: "binder", tab: "portfolio", hookBadge: null, fitVoice: { maxStretch: 1.08 },
+  };
+  return [
+    {
+      ...base, n: 1,
+      key: "p4binder", label: "Video 1 · Digitaler Set-Binder & Switch-Funktion (ca. 20 s)", choreo: "p4binder", tab: "scan",
+      seconds: [18, 24], segments: Object.freeze([3, 8, 18, 22]),
+      title: "Digitaler Set-Binder: Karte scannen, automatisch einsortiert, blättern wie im echten Album",
+      accent: "#a78bfa",
+      hooks: [{ badge: "📒 DIGITALER SET-BINDER", cover: "SCHLUSS MIT ZETTELWIRTSCHAFT! 📒" }],
+      lines: [
+        { say: "Schluss mit unsortierten Kartenstapeln und Zettelwirtschaft!" },
+        { say: "Auf PokeSwipe Radar scannst du deine Pokémon-Karte einfach ein,", show: "Auf PokeSwipe Radar scannst du deine Pokémon-Karte einfach ein –" },
+        { say: "und sie sortiert sich vollautomatisch inklusive aktuellem Cardmarket-Preis an ihren exakten Platz in deinem digitalen Set-Binder ein. Du blätterst mit der realistischen Switch-Funktion wie in einem echten Sammelalbum durch deine Seiten und siehst sofort deinen Fortschritt." },
+        { say: `Jetzt kostenlos testen auf ${SAY_DOMAIN}!`, show: "Jetzt kostenlos testen auf pokeswipe-radar.de!" },
+      ],
+      proof: { title: "📸 Karte scannen", points: [["✓", "Karte erkannt", "inkl. aktuellem Cardmarket-Preis"], ["📒", "Exakter Platz im Set-Binder", "vollautomatisch einsortiert"]] },
+      usp: { title: "📖 Switch-Funktion", badge: "📖 Blättern wie im echten Sammelalbum", points: [["📖", "Switch-Funktion", "Seite für Seite durchblättern"], ["📈", "Set-Fortschritt", "sofort auf einen Blick"]] },
+      question: "Wie viele Karten fehlen dir noch im Set? 👇",
+      body: ["Karte scannen – sie sortiert sich vollautomatisch inklusive aktuellem Cardmarket-Preis an ihren exakten Platz in deinem digitalen Set-Binder ein.",
+        "Mit der realistischen Switch-Funktion blätterst du wie in einem echten Sammelalbum und siehst sofort deinen Fortschritt."],
+    },
+    {
+      ...base, n: 2,
+      key: "p4gaps", label: "Video 2 · Lücken auf einen Blick & 1-Klick-Kauf (ca. 20 s)", choreo: "p4gaps",
+      seconds: [18, 24], segments: Object.freeze([5, 12, 18, 22]),
+      title: "Fehlende Karten im Set-Binder sehen und mit einem Klick kaufen – Marktplatz, eBay, Cardmarket",
+      accent: "#38bdf8",
+      hooks: [{ badge: "⬜ LÜCKEN-RADAR", cover: "WELCHE KARTEN FEHLEN DIR NOCH? 👀" }],
+      lines: [
+        { say: "Du willst dein Pokémon-Set endlich voll bekommen, weißt aber nie genau, welche Karten noch fehlen?" },
+        { say: "Im digitalen Set-Binder auf PokeSwipe Radar siehst du jede fehlende Karte sofort als grauen Platzhalter." },
+        { say: "Ein Tipp auf die Lücke genügt – und du kaufst die Karte mit einem einzigen Klick direkt auf unserem Marktplatz, bei eBay oder Cardmarket." },
+        { say: `Alles von einer Seite aus auf ${SAY_DOMAIN}!`, show: "Alles von einer Seite aus auf pokeswipe-radar.de!" },
+      ],
+      proof: { title: "⬜ Fehlende Karten", points: [["⬜", "Grauer Platzhalter", "jede fehlende Karte sofort sichtbar"], ["📒", "Digitaler Set-Binder", "dein Set auf einen Blick"]] },
+      usp: { title: "🛒 1-Klick-Kauf", badge: "🛒 Marktplatz · eBay · Cardmarket – von einer Seite aus", choice: BUY },
+      question: "Welche Karte fehlt dir am dringendsten? 👇",
+      body: ["Im digitalen Set-Binder siehst du jede fehlende Karte sofort als grauen Platzhalter.",
+        "Ein Tipp auf die Lücke genügt – und du kaufst die Karte mit einem Klick auf unserem Marktplatz, bei eBay oder Cardmarket."],
+    },
+    {
+      ...base, n: 3,
+      key: "p4dupes", label: "Video 3 · Doppelte mit 1 Klick inserieren & Blitz-Rabatt (ca. 20 s)", choreo: "p4dupes",
+      seconds: [18, 24], segments: Object.freeze([5, 11, 17, 22]),
+      title: "Doppelte Pokémon-Karten mit 1 Klick inserieren – Cardmarket-Preis oder −5 % / −10 % Blitzverkauf",
+      accent: "#34d399",
+      hooks: [{ badge: "💶 DOPPELTE ZU GELD", cover: "DOPPELTE LIEGEN NUR RUM? 📦" }],
+      lines: [
+        { say: "Doppelte Pokémon-Karten liegen bei dir nur in der Box rum? Mach sie in Sekunden zu Geld!" },
+        { say: "Auf PokeSwipe Radar stellst du Doppelte direkt aus deinem digitalen Binder mit einem Klick auf den Marktplatz,", show: "Auf PokeSwipe Radar stellst du Doppelte direkt aus deinem digitalen Binder mit einem Klick auf den Marktplatz –" },
+        { say: "entweder zum normalen Cardmarket-Preis oder direkt 5 bis 10 Prozent günstiger für den Blitzverkauf." },
+        { say: `Lokal per Safe-Trade in deiner Nähe oder deutschlandweit mit Käuferschutz auf ${SAY_DOMAIN}!`,
+          show: "Lokal per Safe-Trade in deiner Nähe oder deutschlandweit mit Käuferschutz auf pokeswipe-radar.de!" },
+      ],
+      proof: { title: "2× Doppelte im Binder", points: [["2×", "Doppelte erkannt", "direkt im digitalen Binder"], ["⚡", "1 Klick", "auf den Marktplatz"]] },
+      usp: { title: "⚡ Blitzverkauf", badge: "🏷️ Cardmarket-Preis oder −5 % / −10 % Blitzverkauf", choice: SELL },
+      question: "Wie viele Doppelte liegen bei dir rum? 👇",
+      body: ["Doppelte stellst du direkt aus deinem digitalen Binder mit einem Klick auf den Marktplatz – zum normalen Cardmarket-Preis oder 5 bis 10 Prozent günstiger für den Blitzverkauf.",
+        "Lokal per Safe-Trade in deiner Nähe oder deutschlandweit mit Käuferschutz."],
+    },
+    {
+      ...base, n: 4,
+      key: "p4all", label: "Video 4 · All-in-One-Erklärvideo für Sammler, Käufer & Verkäufer (ca. 35–40 s)", choreo: "p4all", tab: "scan",
+      seconds: [35, 42], segments: Object.freeze([8, 25, 37, 41]), mbit: 9, startSpeed: SPEED_CAP, fitVoice: { maxStretch: 1.12 },
+      title: "Warum PokeSwipe Radar: Scanner, Set-Binder, 1-Klick-Kauf & -Verkauf, Sammler-Radar – alles an einem Ort",
+      accent: "#fbbf24",
+      hooks: [{ badge: "⚡ ALL-IN-ONE", cover: "WARUM GAB ES DAS NOCH NICHT? 🤯" }],
+      lines: [
+        { say: "Warum gibt es eigentlich keine App, die für Pokémon-Sammler, Käufer und Verkäufer alles an einem Ort vereint? Genau dafür haben wir PokeSwipe Radar gebaut!" },
+        { say: "Egal ob du deine Sammlung im Blick behalten willst oder gezielt nach guten Deals suchst: Du scannst deine Karten ein, sie sortieren sich automatisch mit Live-Preisen in deinen digitalen Set-Binder ein und du blätterst durch deine Sets wie in einem echten Album. Jede fehlende Karte siehst du auf einen Blick und holst sie dir mit einem Klick über unseren Marktplatz, eBay oder Cardmarket." },
+        { say: "Und wenn du Doppelte hast? Ein Klick im Binder reicht – und dein Inserat ist blitzschnell live, auf Wunsch direkt 5 oder 10 Prozent unter Marktpreis für einen sofortigen Verkauf! Dazu kommen das Live-Sammler-Radar auf Google Maps für sichere Tausch-Deals vor Ort und der Echtzeit-Preiswächter." },
+        { say: `Komplett kostenlos im Browser – probier es jetzt aus auf ${SAY_DOMAIN}!`, show: "Komplett kostenlos im Browser – probier es jetzt aus auf pokeswipe-radar.de!" },
+      ],
+      proof: { title: "📸 Scannen · 📒 Binder · 🛒 Kaufen", points: [["📸", "Scannen & einsortieren", "mit Live-Preisen im Set-Binder"], ["🛒", "Lücken mit 1 Klick kaufen", "Marktplatz · eBay · Cardmarket"]] },
+      usp: { title: "💶 Verkaufen · 📍 Radar", badge: "💶 1 Klick: Inserat live – auf Wunsch −5 % / −10 %", choice: { ...SELL, until: 0.55 },
+        points: [["📍", "Live-Sammler-Radar", "sichere Tausch-Deals vor Ort"], ["🔔", "Echtzeit-Preiswächter", "kein Deal mehr verpasst"]] },
+      question: "Sammler, Käufer oder Verkäufer – was bist du? 👇",
+      body: ["Scannen, automatisch im digitalen Set-Binder einsortieren, blättern wie im echten Album – und fehlende Karten mit einem Klick über Marktplatz, eBay oder Cardmarket holen.",
+        "Doppelte mit einem Klick inserieren, auf Wunsch 5 oder 10 Prozent unter Marktpreis. Dazu Live-Sammler-Radar auf Google Maps und Echtzeit-Preiswächter – komplett kostenlos im Browser."],
+    },
+  ];
+}
+export const PRO4_TEMPLATES = PRO4();
+export const isPro4 = (tpl) => !!tpl?.pro4;
+
 /**
  * Vorlagen. choreo = Live-Choreografie aus reel-scenarios.js, tab = Startbereich der echten App.
  * hooks: Cover-Schlagzeile + gesprochener Einstieg (rotieren je Durchlauf).
@@ -419,7 +533,7 @@ export function pickCoverCard(cards, recent = []) {
   return cards.find((c) => !used.has(c.id)) || cards[0] || null;
 }
 
-export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || MASTER_TEMPLATES.find((t) => t.key === k) || SHORT_TEMPLATES.find((t) => t.key === k) || FEATURE15_TEMPLATES.find((t) => t.key === k) || null;
+export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || MASTER_TEMPLATES.find((t) => t.key === k) || SHORT_TEMPLATES.find((t) => t.key === k) || FEATURE15_TEMPLATES.find((t) => t.key === k) || PRO4_TEMPLATES.find((t) => t.key === k) || null;
 
 export const isHook4 = (tpl) => tpl?.format === "hook4";
 /** Szenen-Schlüssel einer Vorlage (5 Standard-Szenen bzw. 4 Hook-Szenen). */
@@ -557,7 +671,12 @@ export function captionChunks(show, marks, wordMarks = null) {
   const out = [];
   show.forEach((line, i) => {
     const m = marks[i]; if (!m) return;
-    const words = String(line).split(/\s+/).filter(Boolean);
+    // Reine Satzzeichen-Tokens (z. B. Gedankenstrich „–“) hängen am vorherigen Wort – gesprochen werden sie nicht,
+    // so passt die Wortanzahl zu den echten Wort-Zeitstempeln der Sprecherin.
+    const words = String(line).split(/\s+/).filter(Boolean).reduce((acc, w) => {
+      if (acc.length && !/[\p{L}\p{N}]/u.test(w)) acc[acc.length - 1] += ` ${w}`; else acc.push(w);
+      return acc;
+    }, []);
     // Echte Wort-Zeitstempel der Sprecherin, wenn Untertitel und gesprochener Text gleich viele Wörter haben
     const real = wordMarks?.[i];
     let timed;

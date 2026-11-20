@@ -810,8 +810,13 @@ export class ProCompositor {
       const w = 470, h = 836, x = HX - w / 2, y = 450;
       this.#livePhone(ctx, t, p, live, x, y, w, h, { zoomIn: 1.35 });
       this.#badgeBig(ctx, u.badge, 330, back((lt - 0.2) * 3), this.accent);
-      (u.points || []).slice(0, 2).forEach(([badge, title, sub], i) => {
-        const a = back((lt - 0.8 - i * 0.6) * 3);
+      // Aktuelle Pro-Videos: 1-Klick-Auswahl (Kauf: Marktplatz/eBay/Cardmarket · Verkauf: Cardmarket-Preis/−5 %/−10 %)
+      const sc = this.scenes[2], dur = Math.max(1, (sc?.end || 0) - (sc?.start || 0));
+      const ch = u.choice, chEnd = ch ? dur * (ch.until || 1) : 0;
+      if (ch && lt < chEnd) this.#choice(ctx, ch, lt, chEnd);
+      const pt = ch ? lt - chEnd : lt;
+      if (!ch || (ch.until && lt >= chEnd)) (u.points || []).slice(0, 2).forEach(([badge, title, sub], i) => {
+        const a = back((pt - 0.8 - i * 0.6) * 3);
         this.#toast(ctx, HZ.left + (1 - clamp(a)) * -80, 900 + i * 140, HZ.right - HZ.left, a, { badge, title, sub, badgeBg: this.accent });
       });
     } else {
@@ -863,6 +868,49 @@ export class ProCompositor {
     ctx.font = `900 ${ft.size}px ${BODY}`; ctx.fillStyle = "#04130a"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ft.lines.forEach((l, i) => ctx.fillText(l, 0, (i - (ft.lines.length - 1) / 2) * ft.size * 1.2 + 2));
     ctx.restore();
+  }
+
+  /**
+   * 1-Klick-Auswahl als App-Sheet über dem unteren Bildschirmrand: Titel, 3 Optionen (Name + Preis), die Markierung
+   * wandert bis zur gewählten Option, Fingertipp mit Ripple, danach Bestätigung. lt = Sekunden seit Szenenbeginn,
+   * span = verfügbare Zeit (die Animation wird darauf gestaucht).
+   */
+  #choice(ctx, ch, lt, span) {
+    const opts = ch.options || [], pick = clamp(Number(ch.pick) || 0, 0, Math.max(0, opts.length - 1));
+    const a = back((lt - 0.15) * 3);
+    if (a <= 0 || !opts.length) return;
+    const step = clamp((span * 0.6 - 1.2) / Math.max(1, pick), 0.35, 0.9);
+    const t0 = 0.8, sel = lt < t0 ? -1 : Math.min(pick, Math.floor((lt - t0) / step)), tapAt = t0 + pick * step + 0.25;
+    const x = HZ.left, w = HZ.right - HZ.left, rowH = 92, y = 820, h = 96 + opts.length * (rowH + 12) + 8;
+    ctx.save(); ctx.globalAlpha = clamp(a) * this.m;
+    ctx.translate(0, (1 - clamp(a)) * 120);
+    ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 40; ctx.shadowOffsetY = 12;
+    rr(ctx, x, y, w, h, 30); ctx.fillStyle = "rgba(9,13,28,0.97)"; ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.lineWidth = 4; ctx.strokeStyle = hexA(this.accent, 0.9); ctx.stroke();
+    ctx.textBaseline = "middle"; ctx.textAlign = "left";
+    const tt = fitText(ctx, ch.title || "", (n) => `900 ${n}px ${BODY}`, w - 60, 1, 36, 22);
+    ctx.font = `900 ${tt.size}px ${BODY}`; ctx.fillStyle = "#ffffff"; ctx.fillText(tt.lines[0] || "", x + 30, y + 52);
+    opts.forEach(([label, price], i) => {
+      const ry = y + 96 + i * (rowH + 12), on = i === sel, chosen = i === pick && lt >= tapAt;
+      rr(ctx, x + 22, ry, w - 44, rowH, 22);
+      ctx.fillStyle = chosen ? this.accent : on ? hexA(this.accent, 0.28) : "rgba(30,41,59,0.9)"; ctx.fill();
+      ctx.lineWidth = on || chosen ? 4 : 2; ctx.strokeStyle = on || chosen ? "#ffffff" : "rgba(148,163,184,0.35)"; ctx.stroke();
+      const fg = chosen ? "#04130a" : "#ffffff";
+      const lf = fitText(ctx, label, (n) => `900 ${n}px ${BODY}`, w * 0.55, 1, 34, 20);
+      ctx.font = `900 ${lf.size}px ${BODY}`; ctx.textAlign = "left"; ctx.fillStyle = fg; ctx.fillText(lf.lines[0] || label, x + 50, ry + rowH / 2 + 2);
+      ctx.font = `400 50px ${DISPLAY}`; ctx.textAlign = "right"; ctx.fillStyle = chosen ? "#04130a" : i === pick ? GREEN : "#e2e8f0";
+      ctx.fillText(price, x + w - 50, ry + rowH / 2 + 4);
+    });
+    ctx.restore();
+    // Fingertipp mit Ripple auf die gewählte Option
+    const cx = x + w * 0.72, cy = y + 96 + pick * (rowH + 12) + rowH / 2;
+    for (const d of [0, 0.22]) {
+      const r = clamp((lt - tapAt - d) / 0.6);
+      if (r > 0 && r < 1) { ctx.beginPath(); ctx.arc(cx, cy, 26 + r * 110, 0, Math.PI * 2); ctx.lineWidth = 8 * (1 - r); ctx.strokeStyle = hexA("#ffffff", 0.9 * (1 - r)); ctx.stroke(); }
+    }
+    if (lt > tapAt - 0.25 && lt < tapAt + 0.35) { ctx.beginPath(); ctx.arc(cx, cy, 32, 0, Math.PI * 2); ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.fill(); }
+    const d = back((lt - tapAt - 0.45) * 3);
+    if (d > 0 && ch.done) this.#pill(ctx, ch.done, HX, y - 60, { size: 36, bg: GREEN, fg: "#04130a", border: "#ffffff", maxW: w });
   }
 
   /** H4 · Frage-Endscreen (13–17 s): Domain groß + echte Sammler-Frage als Kommentar-Trigger. Kein „Like & Abo“. */
