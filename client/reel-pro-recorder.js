@@ -60,15 +60,23 @@ export async function loadProNarration(lines, ac, tone = "energetic", range = [P
     return { take, speed, seconds: Math.max(range[1], PRO_LEAD + speechSeconds(take) + END_FADE), fitted: fitted ? fitted.fit : null };
   }
   // Kurze Vorlagen (z. B. 15–20 s) starten gleich mit dem schnellsten erlaubten Tempo (Hook-Presets: 1,2)
-  let speed = range[1] <= 20 ? cap : 1.04;
-  let take = await loadNarration(lines, ac, { tone, speed });
+  let speed = Number(startSpeed) > 0 ? Math.min(cap, Number(startSpeed)) : range[1] <= 20 ? cap : 1.04;
+  let take = await loadNarration(lines, ac, { tone, speed, format });
   const next = speedFor(speechSeconds(take), speed, range, cap);
   if (next !== speed) {
     // Zweiter Take nur zur Feinanpassung der Länge – scheitert er, bleibt der erste (fertige) Take
-    try { take = await loadNarration(lines, ac, { tone, speed: next }); speed = next; }
+    try { take = await loadNarration(lines, ac, { tone, speed: next, format }); speed = next; }
     catch (e) { console.warn("Pro-Voiceover: Tempo-Anpassung fehlgeschlagen, nutze ersten Take", e); }
   }
-  return { take, speed, seconds: PRO_LEAD + speechSeconds(take) + END_FADE };
+  // Aktuelle Pro-Videos (fitOpts): ist die Stimme trotz Höchsttempo länger als die Ziellänge, werden Sprechpausen
+  // gekürzt und die Stimme tonhöhenneutral um höchstens fitOpts.maxStretch gerafft.
+  let fitted = null;
+  const fitTo = range[1] - PRO_LEAD - END_FADE;
+  if (fitOpts && speechSeconds(take) > fitTo) {
+    try { fitted = fitTake(take, ac, fitTo - 0.05, fitOpts); if (fitted) take = fitted; }
+    catch (e) { console.warn("Pro-Voiceover: Längen-Anpassung fehlgeschlagen, nutze Original-Take", e); }
+  }
+  return { take, speed, seconds: PRO_LEAD + speechSeconds(take) + END_FADE, fitted: fitted ? fitted.fit : null };
 }
 
 /**

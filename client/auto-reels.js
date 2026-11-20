@@ -13,7 +13,7 @@ import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
 import { recordLive, previewLive, loadNarration, getVoiceId, setVoiceId, DEFAULT_VOICE_ID, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
 import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
-import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S, SHORT_TEMPLATES, isShort, FEATURE15_TEMPLATES, isFeature15 } from "./reel-pro.js";
+import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S, SHORT_TEMPLATES, isShort, FEATURE15_TEMPLATES, isFeature15, PRO4_TEMPLATES, isPro4, PRO4_FOLDER, ARCHIVE_FOLDER, DRIVE_FOLDER } from "./reel-pro.js";
 import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
 import { lookFor, cardImageUrl, pickCoverCard } from "./reel-pro.js";
 import { sameOriginImageUrl } from "./dom-capture.js";
@@ -152,6 +152,7 @@ const fmt = (t, D) => `${t.toFixed(1).replace(".", ",")} / ${D.toFixed(1).replac
 
 /** Dateiname (ohne in Windows/macOS/Drive verbotene Zeichen). */
 function fileBase(ep) {
+  if (ep.file) return String(ep.file).replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
   if (ep.pro) return `Pro ${ep.pro.n} - ${ep.title} (${ep.pro.fps} FPS)`.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
   return `Episode ${ep.n} - ${ep.title} (Live ${reelLen}s)`.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
 }
@@ -168,22 +169,43 @@ function build() {
   if (built) return;
   built = true;
   const style = document.createElement("style");
-  style.textContent = CSS + PRO_CSS;
+  style.textContent = CSS + PRO_CSS + FOLDER_CSS;
   document.head.append(style);
   const el = document.createElement("div");
   el.id = "auto-reels"; el.hidden = true;
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Auto-Reels (10x)");
   el.innerHTML = `
     <div class="ar-panel">
-      <div class="ar-head"><div class="ar-lens"></div><div><b>🎬 Auto-Reels (10x) · Live</b><small>10 echte Live-Aufnahmen der Website · 9:16 · ${OUT_W}×${OUT_H} · Live-DOM bis 30 FPS · Stimme: eigene ElevenLabs-Stimme</small></div>
+      <div class="ar-head"><div class="ar-lens"></div><div><b>🎬 Auto-Reel-Generator · Pro-Videos</b><small>Echte Live-Aufnahmen der Website · 9:16 · ${OUT_W}×${OUT_H} MP4 · Stimme: eigene geklonte ElevenLabs-Stimme</small></div>
         <button type="button" class="ar-x" data-ar="close" aria-label="Schließen">✕</button></div>
       <div class="ar-body">
         <div class="ar-col">
+          ${voiceTopHtml()}
+          ${pro4Html()}
+          <button type="button" class="ar-btn ar-stop" data-ar="stop" hidden>■ Generierung abbrechen</button>
+          <div class="ar-progress"><i id="ar-bar"></i></div>
+          <div class="ar-status" id="ar-status"></div>
+          <details class="ar-folder ar-archive" id="ar-archive">
+            <summary>${esc(ARCHIVE_FOLDER)} <small>· ${ALL_TEMPLATES.length + FEATURE15_TEMPLATES.length} Pro-Vorlagen + ${EPISODES.length} Live-Reels</small></summary>
+            <div class="ar-folder-body">
           ${PRO_HTML}
+          <b class="ar-sub">🎞️ Bisherige Live-Reels (10 Episoden)</b>
           <div class="ar-bar">
             <label for="ar-len" style="font-size:13px;font-weight:800">Länge pro Reel:</label>
             <select id="ar-len">${LENGTHS.map((s) => `<option value="${s}"${s === reelLen ? " selected" : ""}>${s} Sekunden (${WORD_LIMITS[s][0]}–${WORD_LIMITS[s][1]} Wörter)</option>`).join("")}</select>
           </div>
+          <button type="button" class="ar-btn ar-go" data-ar="all">🚀 Alle 10 Live-Reels jetzt vollautomatisch aufnehmen</button>
+          <div class="ar-bar">
+            <button type="button" class="ar-btn" data-ar="sel-all">☑ Alle</button>
+            <button type="button" class="ar-btn" data-ar="sel-none">☐ Keine</button>
+            <button type="button" class="ar-btn ar-batch" data-ar="batch">🎞️ Serien-Modus: ausgewählte nacheinander</button>
+          </div>
+          <ol id="ar-list"></ol>
+            </div>
+          </details>
+          <details class="ar-folder" id="ar-settings">
+            <summary>⚙️ Make.com-Versand, Qualität &amp; Ausgabe <small id="ar-settings-state"></small></summary>
+            <div class="ar-folder-body">
           <div class="ar-hook">
             <label for="ar-hook">🔗 Make.com Webhook-URL</label>
             <input id="ar-hook" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hook.eu1.make.com/…">
@@ -202,29 +224,9 @@ function build() {
               <select id="ar-limit">${LIMITS.map(([mb, plan]) => `<option value="${mb}"${mb === limitMb ? " selected" : ""}>${mb} MB (${plan})</option>`).join("")}</select>
             </div>
             <small id="ar-size-info"></small>
-            <label class="ar-row" for="ar-voice" style="cursor:pointer;gap:8px"><input id="ar-voice" type="checkbox" style="width:18px;height:18px;accent-color:#ffcb05"> 🎙️ Deutsche Sprecherstimme (Voiceover) einbetten</label>
-            <div class="ar-row" style="gap:8px;flex-wrap:wrap">
-              <label for="ar-voice-id">🎙️ ElevenLabs Voice-ID:</label>
-              <input id="ar-voice-id" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="40" placeholder="${DEFAULT_VOICE_ID}" value="${getVoiceId()}" style="flex:1;min-width:200px;font-family:ui-monospace,monospace" title="Voice-ID der ElevenLabs-Stimme für alle Reels (Standard: ${DEFAULT_VOICE_ID}). Leer lassen = Standard-Stimme.">
-              <button type="button" class="ar-btn" id="ar-voice-id-reset" title="Zurück zur Standard-Stimme ${DEFAULT_VOICE_ID}">↺ Standard</button>
-            </div>
-            <small id="ar-voice-id-info">Modell eleven_multilingual_v2 · Stabilität 0,45 · Ähnlichkeit 0,80 · Stil 0,25 · Speaker-Boost an</small>
-            <div class="ar-row" id="ar-voice-pick" hidden>
-              <span>Stimme: <b>Eigene ElevenLabs-Stimme</b> (Hochdeutsch, eleven_multilingual_v2)</span>
-              <button type="button" class="ar-btn" id="ar-voice-test">▶ Probe hören</button>
-            </div>
-            <small id="ar-voice-info"></small>
           </div>
-          <button type="button" class="ar-btn ar-go" data-ar="all">🚀 Alle 10 Live-Reels jetzt vollautomatisch aufnehmen</button>
-          <button type="button" class="ar-btn ar-stop" data-ar="stop" hidden>■ Generierung abbrechen</button>
-          <div class="ar-progress"><i id="ar-bar"></i></div>
-          <div class="ar-bar">
-            <button type="button" class="ar-btn" data-ar="sel-all">☑ Alle</button>
-            <button type="button" class="ar-btn" data-ar="sel-none">☐ Keine</button>
-            <button type="button" class="ar-btn ar-batch" data-ar="batch">🎞️ Serien-Modus: ausgewählte nacheinander</button>
-          </div>
-          <div class="ar-status" id="ar-status"></div>
-          <ol id="ar-list"></ol>
+            </div>
+          </details>
           <p class="ar-hint" id="ar-format"></p>
           <p class="ar-hint">Jedes Reel ist eine echte Live-Aufnahme der laufenden Website in der 9:16-Stage rechts: echte Karten, echte Preise, echte Buttons, echte Swipes. Vor jeder Aufnahme wird zuerst die Sprecherin komplett erzeugt (Audio-First), dann lädt die Live-Website mit allen Daten und Bildern; der erste Frame liegt schon vor dem Aufnahmestart auf dem Canvas. Die Aufnahme endet erst, wenn die Sprecherin ihr letztes Wort gesprochen hat (+ 0,5 s Ausklang). Diesen Tab sichtbar lassen – wird er verdeckt, nimmt der Generator die Episode danach neu auf. Ist eine Webhook-URL eingetragen, geht jedes MP4 an Make.com (Felder: <code>file</code> (MP4), <code>caption_file</code> (.txt), <code>title</code>, <code>caption</code> (Post-Beschreibung inkl. Hashtags), <code>hashtags</code> (durch Leerzeichen getrennt), <code>hashtags_json</code>, <code>meta</code> (JSON mit title/caption/hashtags/hook/body), zusätzlich <code>filename</code>, <code>episode</code>, <code>scenario</code>, <code>duration</code>, <code>capture_mode</code>, <code>token</code>, <code>voiceover</code>, <code>voiceover_mode</code>, <code>mime_type</code>, <code>size_bytes</code>, <code>upload_id</code>). Ohne URL landen MP4 und .txt im Download-Ordner – beim ersten Mal fragt der Browser evtl. „Mehrere Dateien herunterladen?“, bitte erlauben.</p>
         </div>
@@ -298,6 +300,14 @@ function build() {
   ui.len.addEventListener("change", () => { reelLen = Number(ui.len.value) === 15 ? 15 : 30; save(LEN_KEY, String(reelLen)); updateSizeInfo(); renderList(); });
   ui.mbit.addEventListener("change", () => { mbit = Math.max(8, Number(ui.mbit.value) || 8); save(BITRATE_KEY, String(mbit)); updateSizeInfo(); });
   ui.limit.addEventListener("change", () => { limitMb = Number(ui.limit.value) || 100; save(LIMIT_KEY, String(limitMb)); updateSizeInfo(); });
+  // Google-Drive-Zielordner (geht als drive_folder an Make.com) und Archiv-Ordner-Zustand merken
+  ui.drive = el.querySelector("#ar-drive");
+  ui.drive?.addEventListener("change", () => { const v = ui.drive.value.trim().slice(0, 120); save(DRIVE_KEY, v || DRIVE_FOLDER); ui.drive.value = v || DRIVE_FOLDER; });
+  const archive = el.querySelector("#ar-archive");
+  if (archive) {
+    archive.open = load(ARCHIVE_OPEN_KEY, "0") === "1"; // Standard: eingeklappt → aufgeräumte Oberfläche
+    archive.addEventListener("toggle", () => save(ARCHIVE_OPEN_KEY, archive.open ? "1" : "0"));
+  }
   stage = new LiveStage(ui.host);
   renderList();
   renderPro();
@@ -309,6 +319,7 @@ function build() {
     if (act === "close") close();
     if (btn.dataset.pro) return onProClick(btn);
     if (act === "publish-video") return publishCreatorVideo(btn.dataset.k);
+    if (act === "pro4-dl") return downloadPro4();
     if (act === "all") generateAll();
     if (act === "stop") { stopAll = true; if (mode === "preview") endPreview(); setStatus(mode === "rec" ? "Abbruch nach der laufenden Episode …" : "■ Gestoppt."); }
     if (act === "preview") startPreview(EPISODES[n - 1]);
@@ -354,6 +365,8 @@ function fit() { fitStage(ui.host, Math.min(window.innerHeight * 0.72, 760)); }
 
 function updateHookInfo() {
   const raw = ui.hook.value.trim();
+  const st = ui.root?.querySelector("#ar-settings-state");
+  if (st) st.textContent = validHook(raw) ? "· ✓ Webhook aktiv – fertige Videos gehen an Make.com" : raw ? "· ⚠️ Webhook-URL ungültig" : "· kein Webhook – Videos werden nur heruntergeladen";
   ui.hookInfo.classList.toggle("warn", !!raw && !validHook(raw));
   const differs = makeServer && (validHook(raw) || "") !== (makeServer.url || "");
   if (differs) {
@@ -448,7 +461,7 @@ function setStatus(msg, kind = "") { ui.status.textContent = msg; ui.status.clas
 function setBusy(b) {
   ui.len.disabled = b; ui.go.disabled = b; ui.stop.hidden = !b;
   ui.batch.disabled = b; ui.hook.disabled = b;
-  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceTest.disabled = b; if (ui.voiceId) ui.voiceId.disabled = b;
+  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceTest.disabled = b; if (ui.voiceId) ui.voiceId.disabled = b; if (ui.drive) ui.drive.disabled = b;
   ui.root.querySelectorAll('[data-ar^="sel-"],[data-ar^="token-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll('button:not([data-ar="copy"]),input').forEach((x) => { x.disabled = b; });
   ui.root.querySelectorAll('[data-pro]').forEach((x) => { x.disabled = b; });
@@ -736,7 +749,7 @@ const PRO_CSS = `
 `;
 const PRO_HTML = `
   <div class="ar-pro" id="ar-pro">
-    <b class="t">🎬 Pro-Videos · 15–30 s</b>
+    <b class="t">🎬 Bisherige Pro-Video-Vorlagen · 8–30 s</b>
     <small id="ar-pro-spec">Lade Video-Einstellungen …</small>
     <div class="ar-bar">
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="next">🔁 Nächstes Pro-Video (Rotation)</button>
@@ -751,6 +764,71 @@ const PRO_HTML = `
     <ul id="ar-pro-list"></ul>
     <small>Cover mit Hook-Schlagzeile (0–2 s, zugleich Vorschaubild) → Fokus-Zoom auf die echte App → „Warum das genial ist“ mit Feature-Badges → Vertrauen &amp; Praxis-Mehrwert → Endscreen „${esc("Jetzt kostenlos testen auf pokeswipe-radar.de")}“. Untertitel im sicheren Mittelbereich. Einstellungen: Admin-Zentrale → 🎬 Make.com &amp; Auto-Reels.</small>
   </div>`;
+// ---------------------------------------------------------------------------
+// Aufgeräumte Oberfläche: Voice-ID oben · aktiver Haupt-Ordner mit den 4 aktuellen Pro-Videos · Archiv (einklappbar)
+// ---------------------------------------------------------------------------
+const FOLDER_CSS = `
+#auto-reels .ar-voicetop{display:flex;flex-direction:column;gap:6px;background:linear-gradient(135deg,rgba(255,203,5,.16),rgba(27,36,68,.92));border:2px solid rgba(255,203,5,.55);border-radius:14px;padding:12px}
+#auto-reels .ar-voicetop .ar-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;font-weight:800}
+#auto-reels .ar-voicetop input[type=text]{flex:1;min-width:220px;font:800 16px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em;border-radius:10px;padding:10px 12px;border:1px solid rgba(255,203,5,.5);background:var(--night-2,#131a33);color:#ffe9a3}
+#auto-reels .ar-voicetop small{font-size:12px;color:var(--ink-soft,#b9b7c9)}
+#auto-reels .ar-voicetop .ar-btn{padding:8px 11px}
+#auto-reels .ar-cur{background:linear-gradient(135deg,rgba(249,115,22,.28),rgba(27,36,68,.92));border:2px solid rgba(251,146,60,.75)}
+#auto-reels .ar-cur b.t{font-size:21px}
+#auto-reels button.ar-cur-go{background:#f97316;border-color:#f97316;color:#1a1420;font-weight:900;font-size:15px;padding:13px 14px;width:100%}
+#auto-reels .ar-cur .ar-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;font-weight:800}
+#auto-reels .ar-cur .ar-row input{flex:1;min-width:180px;font:700 13px var(--font-body,Figtree,sans-serif);border-radius:10px;padding:8px 10px;border:1px solid rgba(251,146,60,.5);background:var(--night-2,#131a33);color:var(--ink,#f3efe4)}
+#auto-reels details.ar-folder{background:var(--night-3,#1b2444);border:1px solid rgba(245,200,75,.22);border-radius:14px}
+#auto-reels details.ar-folder>summary{cursor:pointer;list-style:none;padding:12px 14px;font:900 15px var(--font-body,Figtree,sans-serif);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#auto-reels details.ar-folder>summary::-webkit-details-marker{display:none}
+#auto-reels details.ar-folder>summary::before{content:"▸";transition:transform .15s}
+#auto-reels details.ar-folder[open]>summary::before{transform:rotate(90deg)}
+#auto-reels details.ar-folder>summary small{font-weight:700;color:var(--ink-soft,#b9b7c9)}
+#auto-reels .ar-folder-body{display:flex;flex-direction:column;gap:10px;padding:0 12px 12px}
+#auto-reels .ar-sub{font-size:14px;margin-top:4px}
+`;
+const DRIVE_KEY = "pokeswipe.autoReels.driveFolder";
+const getDriveFolder = () => String(load(DRIVE_KEY, DRIVE_FOLDER) || "").trim().slice(0, 120) || DRIVE_FOLDER;
+const ARCHIVE_OPEN_KEY = "pokeswipe.autoReels.archiveOpen";
+
+/** Voice-ID-Feld ganz oben: eigene geklonte ElevenLabs-Stimme für alle Video-Generierungen. */
+function voiceTopHtml() {
+  return `
+  <div class="ar-voicetop" id="ar-voicetop">
+    <div class="ar-row">
+      <label for="ar-voice-id">🎙️ ElevenLabs Voice-ID (eigene geklonte Stimme · Standard für alle Videos):</label>
+    </div>
+    <div class="ar-row">
+      <input id="ar-voice-id" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="40" placeholder="${DEFAULT_VOICE_ID}" value="${esc(getVoiceId())}" title="Voice-ID der ElevenLabs-Stimme für alle Videos (Standard: ${DEFAULT_VOICE_ID}). Leer lassen = Standard-Stimme.">
+      <button type="button" class="ar-btn" id="ar-voice-id-reset" title="Zurück zur Standard-Stimme ${DEFAULT_VOICE_ID}">↺ Standard</button>
+    </div>
+    <small id="ar-voice-id-info">Modell eleven_multilingual_v2 · Stabilität 0,45 · Ähnlichkeit 0,80 · Stil 0,25 · Speaker-Boost an</small>
+    <label class="ar-row" for="ar-voice" style="cursor:pointer;gap:8px"><input id="ar-voice" type="checkbox" style="width:18px;height:18px;accent-color:#ffcb05"> 🎙️ Sprecherstimme (Voiceover) einbetten</label>
+    <div class="ar-row" id="ar-voice-pick" hidden>
+      <span>Stimme: <b>Eigene ElevenLabs-Stimme</b> (Hochdeutsch, eleven_multilingual_v2)</span>
+      <button type="button" class="ar-btn" id="ar-voice-test">▶ Probe hören</button>
+    </div>
+    <small id="ar-voice-info"></small>
+  </div>`;
+}
+
+/** Aktiver Haupt-Ordner: ausschließlich die 4 aktuellen Pro-Videos. */
+function pro4Html() {
+  return `
+  <div class="ar-pro ar-cur" id="ar-cur">
+    <b class="t">${esc(PRO4_FOLDER)}</b>
+    <small id="ar-cur-spec">Hochformat 9:16 · MP4 1080×1920 · eigene ElevenLabs-Stimme · animierte Wort-für-Wort-Untertitel · echte App-Oberfläche: Scanner → Set-Binder mit Switch-Funktion → Lücken-Kauf → 1-Klick-Verkauf (−5 % / −10 %)</small>
+    <button type="button" class="ar-btn ar-cur-go" data-ar="pro" data-pro="pro4all">🚀 Alle 4 Pro-Videos nacheinander generieren &amp; für Make.com / Drive bereitstellen</button>
+    <div class="ar-row">
+      <label for="ar-drive">📂 Google-Drive-Ordner (Feld <code>drive_folder</code> an Make.com):</label>
+      <input id="ar-drive" type="text" autocomplete="off" spellcheck="false" maxlength="120" value="${esc(getDriveFolder())}" placeholder="${esc(DRIVE_FOLDER)}">
+    </div>
+    <ul id="ar-cur-list"></ul>
+    <span id="ar-cur-all"></span>
+    <small>Jedes fertige Video wird sofort als MP4 (1080×1920) samt Cover und .txt-Beschreibung heruntergeladen. Ist unten unter „⚙️ Make.com-Versand“ ein Webhook eingetragen, geht es zusätzlich an Make.com – mit den Feldern <code>drive_folder</code> („${esc(DRIVE_FOLDER)}“), <code>filename</code>, <code>video_group</code> = <code>pro-aktuell</code> und <code>batch_index</code>, damit das Szenario die Datei in Google Drive ablegt und veröffentlicht.</small>
+  </div>`;
+}
+
 const proResults = new Map(); // Vorlage -> { url, name, size, sent, cap, txt, txtUrl, txtName, thumbUrl }
 // Vorlage -> [{ kind: "err" | "warn" | "info", text }] – lesbarer Hinweis/Fehlertext direkt unter der Karte
 const proNotes = new Map();
@@ -779,16 +857,27 @@ function renderPro(states = {}) {
   if (!spec) return;
   const est = estimateMb(PRO_MAX_S, bitrateFor(PRO_MAX_S, proCfg.mbit, proMaxMb()));
   spec.textContent = `1080×1920 · H.264 High · ${proCfg.fps} FPS · bis ${proCfg.mbit} Mbit/s · AAC 192 kbit/s Stereo · Stimme ${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"} · Größen-Garantie ≤ ${proMaxMb()} MB (≈ ${est.toFixed(0)} MB bei 30 s)`;
-  ui.root.querySelector("#ar-pro-list").innerHTML = [...ALL_TEMPLATES, ...FEATURE15_TEMPLATES].map((tpl, i) => {
+  // Haupt-Ordner: nur die 4 aktuellen Pro-Videos · Archiv: alle bisherigen Vorlagen
+  const cur = ui.root.querySelector("#ar-cur-list");
+  if (cur) cur.innerHTML = PRO4_TEMPLATES.map((tpl, i) => proItem(tpl, i, states)).join("");
+  const done = PRO4_TEMPLATES.filter((t) => proResults.get(t.key)?.blob);
+  const all = ui.root.querySelector("#ar-cur-all");
+  if (all) all.innerHTML = done.length ? `<button type="button" class="ar-btn" data-ar="pro4-dl" title="Alle fertigen MP4s (1080×1920) samt Cover und .txt erneut herunterladen – z. B. zum Hochladen in den Drive-Ordner „${esc(getDriveFolder())}“">⬇ ${done.length === 1 ? "Fertiges Video" : `Alle ${done.length} fertigen Videos`} herunterladen (MP4 + Cover + .txt)</button>` : "";
+  ui.root.querySelector("#ar-pro-list").innerHTML = [...ALL_TEMPLATES, ...FEATURE15_TEMPLATES].map((tpl, i) => proItem(tpl, i, states)).join("");
+}
+
+/** Eine Vorlagen-Karte (Status, Wörter, Länge, Ergebnis mit Downloads, Hinweise). */
+function proItem(tpl, i, states = {}) {
+  {
     const on = proCfg.templates.includes(tpl.key), r = proResults.get(tpl.key), st = states[tpl.key];
-    const icon = { on: "⏺", ok: "✅", err: "⚠️", wait: "⏳" }[st] || (r ? "✅" : on ? "🎞️" : "⏸");
+    const icon = { on: "⏺", ok: "✅", err: "⚠️", wait: "⏳" }[st] || (r ? "✅" : on || isPro4(tpl) ? "🎞️" : "⏸");
     const words = checkTemplateScript(tpl, proScript(tpl, 0).say).words;
     const isNext = proNext?.template === tpl.key;
     const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ ${r.name.endsWith(".mp4") ? "MP4" : "Video (WebM)"} herunterladen</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> <a href="${r.txtUrl}" download="${esc(r.txtName)}">⬇ .txt</a> ${r.sent ? "📤 an Make gesendet" : ""}</span>${r.blob ? `<span><button type="button" class="ar-btn" data-ar="publish-video" data-k="${esc(tpl.key)}" ${r.publishing ? "disabled" : ""} title="Dieses Video öffentlich auf pokeswipe-radar.de/creator#video zeigen (Creator-Outreach)">${r.publishing ? `⏳ Veröffentliche … ${Math.round(r.publishing * 100)} %` : r.published ? "✅ Läuft auf /creator#video · erneut veröffentlichen" : "📌 Auf /creator#video veröffentlichen"}</button></span>` : ""}</div></div>` : "";
     const notes = (proNotes.get(tpl.key) || []).map((n) => `<small class="ar-note ${n.kind}" role="${n.kind === "err" ? "alert" : "status"}">${n.kind === "err" ? "⚠️ Fehler: " : n.kind === "warn" ? "⚠️ " : "ℹ️ "}${esc(n.text)}</small>`).join("");
-    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${tpl.seconds ? ` · ${[...new Set(secondsFor(tpl))].join("–")} s` : ""}${tpl.fps ? ` · ${tpl.fps} FPS` : ""}${tpl.mbit ? ` · ${tpl.mbit} Mbit/s` : ""}${proSent()[tpl.key] ? ` · 📤 zuletzt an Make gesendet am ${esc(new Date(proSent()[tpl.key].at).toLocaleString("de-DE"))}` : ""}${on || isFeature15(tpl) ? "" : " · nicht in der Rotation (Admin-Zentrale)"}${isFeature15(tpl) ? " · 15-s-Feature-Vorlage (per Klick)" : ""}</small></span>
+    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${isPro4(tpl) ? "" : `${i + 1}. `}${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${tpl.seconds ? ` · ${[...new Set(secondsFor(tpl))].join("–")} s` : ""}${tpl.fps ? ` · ${tpl.fps} FPS` : ""}${tpl.mbit ? ` · ${tpl.mbit} Mbit/s` : ""}${proSent()[tpl.key] ? ` · 📤 zuletzt an Make gesendet am ${esc(new Date(proSent()[tpl.key].at).toLocaleString("de-DE"))}` : ""}${on || isFeature15(tpl) || isPro4(tpl) ? "" : " · nicht in der Rotation (Admin-Zentrale)"}${isFeature15(tpl) ? " · 15-s-Feature-Vorlage (per Klick)" : ""}${isPro4(tpl) ? " · 9:16 · 1080×1920 MP4" : ""}</small></span>
       <span class="ar-acts"><button type="button" data-ar="pro" data-pro="one" data-k="${tpl.key}" title="Nur diese Vorlage aufnehmen">⏺</button></span>${notes}${out}</li>`;
-  }).join("");
+  }
 }
 
 function applyProDefaults(make) {
@@ -808,6 +897,8 @@ async function onProClick(btn) {
   if (what === "autobinder") return generatePro([{ tpl: templateByKey("autobinder"), variant: proNext?.template === "autobinder" ? proNext.variant : 0 }]);
   // Die 3 Hook-Presets immer gemeinsam – unabhängig davon, ob sie in der Rotation der Admin-Zentrale aktiv sind
   if (what === "hook4") return generatePro(PRO_TEMPLATES.filter(isHook4).map((tpl) => ({ tpl, variant: 0 })));
+  // 🔥 Haupt-Ordner: die 4 aktuellen Pro-Videos nacheinander (Set-Binder · Lücken-Kauf · Doppelte · All-in-One)
+  if (what === "pro4all") return generatePro(PRO4_TEMPLATES.map((tpl) => ({ tpl, variant: 0 })));
   // Die 4 Feature-Vorlagen (ca. 15 s: Set-Binder, Lücken-Kauf, Doppelte, All-in-One) immer gemeinsam per Klick
   if (what === "feature15") return generatePro(FEATURE15_TEMPLATES.map((tpl) => ({ tpl, variant: 0 })));
   // Die 4 Kurz-Reels (7–10 s) immer gemeinsam – unabhängig von der Rotation der Admin-Zentrale
@@ -901,6 +992,8 @@ async function generatePro(list) {
   // echte Kartenmotive mit Live-Preisen – jedes Video bekommt ein anderes, zuletzt genutzte werden übersprungen
   setStatus("🃏 Lade echte Kartenmotive und Live-Preise für die Startbilder …");
   let pool = await coverCards(list.length + 4);
+  const driveFolder = getDriveFolder();
+  const batchId = `pro-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`;
   let ok = 0, sent = 0;
   for (let i = 0; i < list.length && !stopAll; i++) {
     const { tpl, variant } = list[i];
@@ -950,7 +1043,9 @@ async function generatePro(list) {
       // Vorschaubild = exakt Frame 0 der Aufnahme (Rückfall: gleiches Motiv ohne Live-Ansicht neu zeichnen)
       const thumb = res.thumb?.size ? res.thumb : await renderCoverThumb(tpl, script, look, coverCard);
       const cap = proCaption(tpl, variant, res.facts);
-      const ep = { n: 100 + n, key: `pro-${tpl.key}`, title: tpl.label, pro: { n, fps: tpl.fps || proCfg.fps } };
+      const ep = isPro4(tpl)
+        ? { n: 200 + tpl.n, key: `pro4-${tpl.key}`, title: tpl.label, pro: { n: tpl.n, fps: tpl.fps || proCfg.fps }, file: `PokeSwipe Pro-Video ${tpl.n} - ${tpl.label.replace(/^Video \d+ · /, "").replace(/\s*\(.*\)\s*$/, "")} - 9x16 1080x1920` }
+        : { n: 100 + n, key: `pro-${tpl.key}`, title: tpl.label, pro: { n, fps: tpl.fps || proCfg.fps } };
       const txt = captionFile(ep, cap, { voiceover: res.lines.join(" "), recorded: new Date().toLocaleString("de-DE"), mode: `Pro-Video, ${res.fps} FPS, ${res.mbit} Mbit/s${res.exact ? ", frame-genau (WebCodecs)" : ""}` });
       const mb = (res.blob.size / MB).toFixed(1);
       const name = `${fileBase(ep)}.${res.ext}`;
@@ -960,6 +1055,11 @@ async function generatePro(list) {
         cover_layout: look.layout, cover_card_id: pick?.id || "", cover_card_name: pick?.name || "", cover_card_price_eur: pick?.price ?? "", video_mode: "pro", video_template: tpl.key, video_template_label: tpl.label, promo_link: tpl.link || "",
         hook_variant: variant, fps: res.fps, video_bitrate_mbit: res.mbit, audio_bitrate_kbps: 192, resolution: "1080x1920", aspect_ratio: "9:16",
         max_mb: maxMb, scenes_json: JSON.stringify(res.scenes.map((s) => ({ key: s.key, start: +s.start.toFixed(2), end: +s.end.toFixed(2) }))),
+        // Aktuelle Pro-Videos: Ziel-Ordner in Google Drive + Batch-Infos für das Make-Szenario (Drive-Upload → Veröffentlichen)
+        ...(isPro4(tpl) ? {
+          video_group: "pro-aktuell", video_folder: PRO4_FOLDER, drive_folder: driveFolder, filename_drive: name,
+          batch_id: batchId, batch_index: i + 1, batch_total: list.length, video_number: tpl.n,
+        } : {}),
         ...(isHook4(tpl) ? {
           video_format: "hook4", video_bitrate_mode: res.bitrateMode || "", comment_question: cap.question || "", target_seconds: secondsFor(tpl).join("-"),
           speech_seconds: res.speech ? +res.speech.toFixed(2) : "", segments_json: JSON.stringify(res.timing), timing_ok: res.timing?.ok ? "1" : "0",
@@ -1034,11 +1134,28 @@ async function generatePro(list) {
   ui.bar.style.width = "100%";
   renderPro(Object.fromEntries(Object.entries(states).filter(([, s]) => s === "err")));
   const failed = Object.values(states).filter((s) => s === "err").length;
-  const where = sent ? `heruntergeladen (${sent} davon zusätzlich an Make.com gesendet)` : "heruntergeladen";
+  let where = sent ? `heruntergeladen (${sent} davon zusätzlich an Make.com gesendet)` : "heruntergeladen";
+  if (list.every(({ tpl }) => isPro4(tpl))) where += sent ? ` – Make.com bekommt jeweils drive_folder „${driveFolder}“` : ` – bereit für den Drive-Ordner „${driveFolder}“ (kein Make-Webhook eingetragen bzw. nicht gesendet)`;
   const warned = list.filter(({ tpl }) => states[tpl.key] === "ok" && (proNotes.get(tpl.key) || []).some((x) => x.kind === "warn")).length;
   setStatus(failed ? `⚠️ ${ok} von ${list.length} Pro-Videos ${where}, ${failed} fehlgeschlagen – der genaue Fehler steht unter der jeweiligen Karte.`
     : warned ? `✓ ${ok} Pro-Video${ok === 1 ? "" : "s"} ${where} – bei ${warned} gibt es Hinweise (siehe Text unter der Karte).`
       : `🎉 ${ok} Pro-Video${ok === 1 ? "" : "s"} ${where} – mit Cover, Untertiteln, Beschreibung und Hashtags.`, failed || warned ? "err" : "ok");
+}
+
+/** Alle fertigen aktuellen Pro-Videos (MP4 + Cover + .txt) nacheinander erneut herunterladen. */
+async function downloadPro4() {
+  const done = PRO4_TEMPLATES.map((t) => proResults.get(t.key)).filter((r) => r?.blob);
+  for (const r of done) {
+    try {
+      download(r.blob, r.name);
+      await new Promise((ok) => setTimeout(ok, 500));
+      if (r.thumb) download(r.thumb, r.thumb.name || `${r.name.replace(/\.\w+$/, "")} - Cover.jpg`);
+      await new Promise((ok) => setTimeout(ok, 500));
+      download(new Blob([r.txt], { type: "text/plain;charset=utf-8" }), r.txtName);
+      await new Promise((ok) => setTimeout(ok, 700));
+    } catch (e) { setStatus(`⚠️ Download blockiert (${e?.message || e}) – bitte die einzelnen ⬇-Links nutzen.`, "err"); return; }
+  }
+  setStatus(`⬇ ${done.length} Pro-Video${done.length === 1 ? "" : "s"} heruntergeladen – bereit für den Drive-Ordner „${getDriveFolder()}“.`, "ok");
 }
 
 /** Rückfall-Vorschaubild (nur falls Frame 0 nicht exportiert werden konnte): gleiches Cover-Motiv. */
@@ -1064,7 +1181,7 @@ function open() {
     : String(mime).startsWith("video/mp4") || mime === ""
       ? `✓ Ausgabeformat: MP4${mime ? ` (${mime})` : ""} – passt für Instagram Reels, TikTok, YouTube Shorts, Facebook und Make.com.${tone}`
       : `⚠️ Dieser Browser kann kein MP4 aufnehmen – es wird WebM gespeichert, das Instagram nicht annimmt. Für MP4 bitte aktuelles Chrome/Edge (ab Version 126) nutzen.${tone}`;
-  setStatus("✓ Bereit. ▶ startet eine Live-Vorschau auf der echten Website, 🚀 nimmt alle 10 Live-Reels nacheinander auf.", "ok");
+  setStatus(`✓ Bereit. „🚀 Alle 4 Pro-Videos“ nimmt die aktuellen Pro-Videos nacheinander auf – bisherige Vorlagen liegen im ${ARCHIVE_FOLDER}.`, "ok");
 }
 
 function close() {
@@ -1101,6 +1218,8 @@ export function openAutoReels({ focus = "" } = {}) {
 function focusPro(key) {
   const btn = ui.root?.querySelector(`[data-master="${CSS.escape(String(key))}"]`) || ui.root?.querySelector(`[data-pro="one"][data-k="${CSS.escape(String(key))}"]`);
   if (!btn) return;
+  const folder = btn.closest("details");
+  if (folder) folder.open = true; // Vorlage liegt im (eingeklappten) Archiv-Ordner
   btn.scrollIntoView({ block: "center", behavior: "smooth" });
   btn.style.outline = "3px solid #38bdf8"; btn.style.outlineOffset = "3px";
   setTimeout(() => { btn.style.outline = ""; btn.style.outlineOffset = ""; }, 4000);

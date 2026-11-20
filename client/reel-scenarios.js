@@ -707,6 +707,158 @@ export const CHOREO = {
     ],
   },
 
+  // P1–P4) 🔥 Aktuelle Pro-Videos (Set-Binder & Marktplatz) – Hook-Format mit 4 Beats:
+  // Beat 1 = Hook · Beat 2+3 = UI-Beweis (erste/zweite Hälfte) · Beat 4 = Nutzen (Kauf-/Verkaufs-Sheet im Compositor).
+  // Alles läuft über die echte Oberfläche als Stage-Demo: nichts wird gespeichert, gekauft oder wirklich inseriert.
+  p4binder: {
+    async setup(s) { await CHOREO.f15binder.setup(s); },
+    beats: [
+      async (s, d) => { // Hook: Kamera über der Karte
+        const card = s.$("#ps-ls-demo-card");
+        if (card) { const { x, y } = s.center(card); await s.moveFinger(x + 60, y + 90, Math.min(700, d * 250)); }
+      },
+      async (s, d) => { // „scannst du deine Karte einfach ein“
+        s.hideFinger();
+        await s.win.PS?.liveScanDemoScan?.(Math.max(700, Math.min(1400, d * 1000 * 0.6)));
+        await s.idle({ quietMs: 150, timeoutMs: 800 });
+        const price = s.$("[data-hud-price]");
+        if (price) s.fact("price", price.textContent);
+      },
+      async (s, d) => { // „sortiert sich … an ihren exakten Platz“
+        const filed = await s.win.PS?.liveScanDemoFile?.();
+        if (filed) await s.spotlight(filed, Math.min(1200, d * 300));
+        unspot(s);
+        try { s.win.switchTab?.("portfolio"); } catch {}
+        s.win.PS?.binderDemoOpen?.();
+        await s.decodeImages(500);
+        const slot = s.win.PS?.binderDemoGoto?.("scanned");
+        if (slot) await s.spotlight(slot, Math.min(1500, d * 400));
+      },
+      async (s, d) => { // Switch-Funktion: durch die Seiten blättern, zurück, Fortschritt
+        unspot(s);
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        const flips = d > 6 ? 3 : 2;
+        if (vp) for (let i = 0; i < flips; i++) { await s.swipe(vp, -1, 520); await s.sleep(Math.min(900, d * 80)); }
+        if (vp) { await s.swipe(vp, 1, 560); await s.sleep(250); await s.swipe(vp, 1, 560); }
+        s.hideFinger();
+      },
+    ],
+  },
+
+  p4gaps: {
+    async setup(s) { await CHOREO.f15gaps.setup(s); },
+    beats: [
+      async (s, d) => { // Hook: durch das Set blättern
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        await s.sleep(Math.min(500, d * 100));
+        if (vp) { await s.swipe(vp, -1, 520); if (d > 3) { await s.sleep(500); await s.swipe(vp, -1, 520); } }
+        s.hideFinger();
+      },
+      async (s, d) => { // graue Platzhalter zeigen
+        const gaps = s.$$("#ps-binder-view .ps-bslot:not(.owned)").filter((el) => s.visible(el)).slice(0, 3);
+        for (const g of gaps) { await s.spotlight(g, Math.min(900, (d * 1000) / 4)); unspot(s); }
+        if (!gaps.length) await s.sleep(Math.min(1500, d * 400));
+      },
+      async (s, d) => { // „Ein Tipp auf die Lücke genügt“
+        unspot(s);
+        s.win.PS?.binderDemoReveal?.();
+        const gap = s.win.PS?.binderDemoGoto?.("hero") || s.win.PS?.binderDemoSlot?.("hero");
+        if (gap) { await s.spotlight(gap); const { x, y } = s.center(gap); await s.moveFinger(x + 30, y + 60, Math.min(500, d * 250)); await s.tap(gap, { reveal: false }); }
+        unspot(s);
+      },
+      async (s, d) => { // 1-Klick-Kauf auf dem Marktplatz (nur sichtbarer Tipp)
+        await marketReady(s, "all");
+        s.win.PS?.m16DemoMode?.("binder", "all");
+        m16Top(s);
+        try { s.win.PS?.m16Open?.(-900); } catch {}
+        await s.idle({ quietMs: 100, timeoutMs: 600 });
+        await s.sleep(Math.min(900, d * 200));
+        const cta = s.$("#ps-m16-sheet .ps-m16-cta");
+        if (cta) await s.tapVisual(cta);
+        s.hideFinger();
+      },
+    ],
+  },
+
+  p4dupes: {
+    async setup(s) { await CHOREO.f15dupes.setup(s); },
+    beats: [
+      async (s, d) => { // Hook: Binder öffnen und blättern
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        await s.sleep(Math.min(400, d * 100));
+        if (vp) await s.swipe(vp, -1, 520);
+        s.hideFinger();
+      },
+      async (s, d) => { // Doppelte im Binder (2×) antippen
+        const dup = s.win.PS?.binderDemoGoto?.("scanned") || s.win.PS?.binderDemoSlot?.("scanned");
+        if (dup) { await s.spotlight(dup); const { x, y } = s.center(dup); await s.moveFinger(x + 30, y + 60, Math.min(500, d * 250)); await s.tapVisual(dup); }
+        else await s.sleep(d * 1000);
+      },
+      async (s, d) => { // „mit einem Klick auf den Marktplatz“ → Inserat im Binder sichtbar
+        unspot(s);
+        s.win.PS?.binderDemoReveal?.();
+        const listed = s.win.PS?.binderDemoSlot?.("listed");
+        if (listed) { await s.spotlight(listed, Math.min(1500, d * 400)); const { x, y } = s.center(listed); await s.moveFinger(x + 30, y + 60, 450); }
+        else await s.sleep(Math.min(1500, d * 400));
+      },
+      async (s, d) => { unspot(s); s.hideFinger(); await s.sleep(Math.min(1500, d * 300)); }, // Verkaufs-Sheet (−5 % / −10 %) im Compositor
+    ],
+  },
+
+  p4all: {
+    async setup(s) {
+      await CHOREO.f15binder.setup(s);
+      try { await s.win.PS?.m16DemoPrepare?.({ setId: "sv03.5", mode: "std" }); } catch (e) { console.warn("P4 Marktplatz:", e); }
+    },
+    beats: [
+      async (s, d) => { // Hook: Scanner mit Karte
+        const card = s.$("#ps-ls-demo-card");
+        if (card) { const { x, y } = s.center(card); await s.moveFinger(x + 60, y + 90, Math.min(800, d * 200)); }
+        s.hideFinger();
+      },
+      async (s, d) => { // scannen → einsortieren → blättern
+        await s.win.PS?.liveScanDemoScan?.(Math.max(800, Math.min(1400, d * 1000 * 0.25)));
+        await s.idle({ quietMs: 150, timeoutMs: 600 });
+        const filed = await s.win.PS?.liveScanDemoFile?.();
+        if (filed) await s.spotlight(filed, Math.min(1000, d * 150));
+        unspot(s);
+        try { s.win.switchTab?.("portfolio"); } catch {}
+        s.win.PS?.binderDemoOpen?.();
+        await s.decodeImages(400);
+        const slot = s.win.PS?.binderDemoGoto?.("scanned");
+        if (slot) await s.spotlight(slot, Math.min(1000, d * 150));
+        unspot(s);
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        if (vp) { await s.swipe(vp, -1, 520); await s.sleep(400); await s.swipe(vp, -1, 520); }
+        s.hideFinger();
+      },
+      async (s, d) => { // fehlende Karte → 1-Klick-Kauf
+        s.win.PS?.binderDemoReveal?.();
+        const gap = s.win.PS?.binderDemoGoto?.("hero") || s.win.PS?.binderDemoSlot?.("hero");
+        if (gap) { await s.spotlight(gap, Math.min(1200, d * 200)); await s.tap(gap, { reveal: false }); }
+        unspot(s);
+        await marketReady(s, "all");
+        m16Top(s);
+        try { s.win.PS?.m16Open?.(-900); } catch {}
+        await s.idle({ quietMs: 100, timeoutMs: 600 });
+        await s.sleep(Math.min(900, d * 150));
+        const cta = s.$("#ps-m16-sheet .ps-m16-cta");
+        if (cta) await s.tapVisual(cta);
+        s.hideFinger();
+      },
+      async (s, d) => { // Doppelte verkaufen (Sheet im Compositor) → Sammler-Radar auf der Karte
+        await s.sleep(Math.min(5000, d * 1000 * 0.5));
+        s.$("#ps-binder-view")?.classList.add("hidden");
+        s.win.document?.body?.classList.remove("ps-binder-open");
+        try { s.win.switchTab?.("map"); s.win.PS?.showSub?.("map", "radar"); } catch {}
+        await s.idle({ quietMs: 200, timeoutMs: 1500 });
+        const map = s.$("#radarMap");
+        if (map) { const r = map.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 120)); }
+        s.hideFinger();
+      },
+    ],
+  },
+
   // 12) Pro-Showcase (29 s, 4 Szenen mit festem Regie-Zeitplan TL aus reel-pro.js – die Tonspur legt ihre
   // Mikro-SFX exakt auf dieselben Zeitpunkte). Beat 1 Blitz-Scanner · 2 Set-Binder & Lücken-Radar ·
   // 3 Marktplatz, Swipe-Tausch & Live-Chat (+ Pro-Einblendung im Compositor) · 4 Startseite ohne Login-Zwang.
