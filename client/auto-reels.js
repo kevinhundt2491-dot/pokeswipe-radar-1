@@ -11,9 +11,9 @@ import { toast, hooks, state, api } from "./core.js";
 import { uploadCreatorVideo } from "./creator-video-upload.js";
 import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
-import { recordLive, previewLive, loadNarration, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
+import { recordLive, previewLive, loadNarration, getVoiceId, setVoiceId, DEFAULT_VOICE_ID, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
 import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
-import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S, SHORT_TEMPLATES, isShort } from "./reel-pro.js";
+import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S, SHORT_TEMPLATES, isShort, FEATURE15_TEMPLATES, isFeature15 } from "./reel-pro.js";
 import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
 import { lookFor, cardImageUrl, pickCoverCard } from "./reel-pro.js";
 import { sameOriginImageUrl } from "./dom-capture.js";
@@ -123,7 +123,7 @@ const MB = 1024 * 1024;
 const estSeconds = () => reelLen + VO_LEAD + TAIL;
 const estMb = () => (mbit * estSeconds()) / 8 * 1.05; // +5 % Container-Overhead
 
-// Deutsche Sprecherstimme (Voiceover) – ElevenLabs "Matilda"
+// Deutsche Sprecherstimme (Voiceover) – eigene geklonte ElevenLabs-Stimme (Voice-ID im Generator änderbar)
 const VOICE_KEY = "pokeswipe.autoReels.voice";
 let voiceOn = load(VOICE_KEY, "1") !== "0";
 // Kurz-Reels (7–10 s): standardmäßig OHNE KI-Stimme (nur UI-Soundeffekte) – Voiceover nur per eigenem Schalter
@@ -175,7 +175,7 @@ function build() {
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Auto-Reels (10x)");
   el.innerHTML = `
     <div class="ar-panel">
-      <div class="ar-head"><div class="ar-lens"></div><div><b>🎬 Auto-Reels (10x) · Live</b><small>10 echte Live-Aufnahmen der Website · 9:16 · ${OUT_W}×${OUT_H} · Live-DOM bis 30 FPS · Stimme: Matilda</small></div>
+      <div class="ar-head"><div class="ar-lens"></div><div><b>🎬 Auto-Reels (10x) · Live</b><small>10 echte Live-Aufnahmen der Website · 9:16 · ${OUT_W}×${OUT_H} · Live-DOM bis 30 FPS · Stimme: eigene ElevenLabs-Stimme</small></div>
         <button type="button" class="ar-x" data-ar="close" aria-label="Schließen">✕</button></div>
       <div class="ar-body">
         <div class="ar-col">
@@ -203,8 +203,14 @@ function build() {
             </div>
             <small id="ar-size-info"></small>
             <label class="ar-row" for="ar-voice" style="cursor:pointer;gap:8px"><input id="ar-voice" type="checkbox" style="width:18px;height:18px;accent-color:#ffcb05"> 🎙️ Deutsche Sprecherstimme (Voiceover) einbetten</label>
+            <div class="ar-row" style="gap:8px;flex-wrap:wrap">
+              <label for="ar-voice-id">🎙️ ElevenLabs Voice-ID:</label>
+              <input id="ar-voice-id" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="40" placeholder="${DEFAULT_VOICE_ID}" value="${getVoiceId()}" style="flex:1;min-width:200px;font-family:ui-monospace,monospace" title="Voice-ID der ElevenLabs-Stimme für alle Reels (Standard: ${DEFAULT_VOICE_ID}). Leer lassen = Standard-Stimme.">
+              <button type="button" class="ar-btn" id="ar-voice-id-reset" title="Zurück zur Standard-Stimme ${DEFAULT_VOICE_ID}">↺ Standard</button>
+            </div>
+            <small id="ar-voice-id-info">Modell eleven_multilingual_v2 · Stabilität 0,45 · Ähnlichkeit 0,80 · Stil 0,25 · Speaker-Boost an</small>
             <div class="ar-row" id="ar-voice-pick" hidden>
-              <span>Stimme: <b>Matilda</b> – weiblich, freundlich &amp; warm (ElevenLabs, Hochdeutsch)</span>
+              <span>Stimme: <b>Eigene ElevenLabs-Stimme</b> (Hochdeutsch, eleven_multilingual_v2)</span>
               <button type="button" class="ar-btn" id="ar-voice-test">▶ Probe hören</button>
             </div>
             <small id="ar-voice-info"></small>
@@ -269,6 +275,17 @@ function build() {
   ui.voicePick = el.querySelector("#ar-voice-pick");
   ui.voiceTest = el.querySelector("#ar-voice-test");
   ui.voiceTest.addEventListener("click", testVoice);
+  ui.voiceId = el.querySelector("#ar-voice-id");
+  ui.voiceIdInfo = el.querySelector("#ar-voice-id-info");
+  const applyVoiceId = () => {
+    const id = setVoiceId(ui.voiceId.value);
+    const base = "Modell eleven_multilingual_v2 · Stabilität 0,45 · Ähnlichkeit 0,80 · Stil 0,25 · Speaker-Boost an";
+    if (!id) { ui.voiceIdInfo.textContent = "⚠️ Ungültige Voice-ID (nur Buchstaben und Ziffern, 10–40 Zeichen) – es wird weiter die gespeicherte Stimme genutzt."; return; }
+    ui.voiceId.value = id;
+    ui.voiceIdInfo.textContent = `${id === DEFAULT_VOICE_ID ? "✓ Standard-Stimme aktiv" : "✓ Eigene Voice-ID gespeichert (nur in diesem Browser)"} · ${base}`;
+  };
+  ui.voiceId.addEventListener("change", applyVoiceId);
+  el.querySelector("#ar-voice-id-reset").addEventListener("click", () => { ui.voiceId.value = DEFAULT_VOICE_ID; applyVoiceId(); });
   ui.token.value = getToken();
   ui.token.addEventListener("input", () => { save(TOKEN_KEY, ui.token.value.trim()); save(TOKEN_MANUAL_KEY, "1"); save(TOKEN_TS_KEY, new Date().toISOString()); });
   ui.plats = el.querySelector("#ar-plats");
@@ -372,7 +389,7 @@ function updateVoiceInfo() {
       : voiceReady.error
         ? `⚠️ Sprachdienst-Status konnte nicht geprüft werden (${voiceReady.error}). Bitte als Admin anmelden und die Seite neu laden.`
         : voiceReady.ready
-          ? creditText() + "✓ Matilda (ElevenLabs) wird vor jeder Aufnahme komplett erzeugt; jedes Reel läuft exakt so lange wie ihre Stimme (+ 0,5 s), alle Live-Klicks und Swipes folgen ihren Sätzen."
+          ? creditText() + "✓ Die eigene ElevenLabs-Stimme wird vor jeder Aufnahme komplett erzeugt; jedes Reel läuft exakt so lange wie die Stimme (+ 0,5 s), alle Live-Klicks und Swipes folgen den Sätzen."
           : "⚠️ ElevenLabs ist nicht eingerichtet (ELEVENLABS_API_KEY fehlt). Mit eingeschaltetem Voiceover startet der Generator erst, wenn der Schlüssel gesetzt ist – es werden keine Reels ohne Sprecherin gesendet.";
 }
 const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString("de-DE"); } catch { return ""; } };
@@ -414,7 +431,7 @@ async function testVoice() {
   const btn = ui.voiceTest;
   btn.disabled = true; const label = btn.textContent; btn.textContent = "⏳ lädt …";
   try {
-    const res = await api("/api/admin/voiceover", { method: "POST", body: { lines: [{ id: "t", text: "Hallo und willkommen bei PokeSwipe Radar. Hier siehst du echte Karten, echte Preise und echte Deals, live aus der App." }] } });
+    const res = await api("/api/admin/voiceover", { method: "POST", body: { voiceId: getVoiceId(), lines: [{ id: "t", text: "Hallo und willkommen bei PokeSwipe Radar. Hier siehst du echte Karten, echte Preise und echte Deals, live aus der App." }] } });
     const clip = res.clips?.[0];
     if (!clip) throw new Error("Keine Probe erhalten");
     testAudio?.pause();
@@ -431,7 +448,7 @@ function setStatus(msg, kind = "") { ui.status.textContent = msg; ui.status.clas
 function setBusy(b) {
   ui.len.disabled = b; ui.go.disabled = b; ui.stop.hidden = !b;
   ui.batch.disabled = b; ui.hook.disabled = b;
-  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceTest.disabled = b;
+  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceTest.disabled = b; if (ui.voiceId) ui.voiceId.disabled = b;
   ui.root.querySelectorAll('[data-ar^="sel-"],[data-ar^="token-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll('button:not([data-ar="copy"]),input').forEach((x) => { x.disabled = b; });
   ui.root.querySelectorAll('[data-pro]').forEach((x) => { x.disabled = b; });
@@ -540,7 +557,7 @@ function postToWebhook(url, ep, res, cap, txt, uploadId, onProgress, extra = {})
   form.append("duration", res.duration.toFixed(2));
   form.append("capture_mode", res.capture === "tab" ? "native-tab" : "live-dom");
   form.append("voiceover", res.lines.join(" ")); // gesprochener Text (z. B. für Untertitel)
-  form.append("voiceover_mode", voiceModes.get(ep.n) || "off"); // "voice" = Matilda eingebettet, "off" = nur Musik
+  form.append("voiceover_mode", voiceModes.get(ep.n) || "off"); // "voice" = Sprecherstimme eingebettet, "off" = nur Musik
   form.append("mime_type", res.blob.type || `video/${res.ext}`);
   form.append("size_bytes", String(res.blob.size));
   form.append("upload_id", uploadId); // bleibt bei Wiederholungen gleich → Make kann Duplikate erkennen
@@ -727,6 +744,7 @@ const PRO_HTML = `
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="showcase" title="High-End-Showcase: Scanner, Set-Binder, Marktplatz, Live-Chat und Pro-Abo – exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s">🎬 Pro-Showcase (29 s · 60 FPS)</button>
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="autobinder" data-master="autobinder" title="Master-Vorlage: Live-Scan → automatisch im Set-Binder → Doppelte zählen → alle Doppelten mit 1 Klick inserieren → Lücken kaufen – exakt 29 s, 1080×1920, 60 FPS, 11 Mbit/s, ElevenLabs-Voiceover">📒 Reel: Neuer automatischer Binder &amp; Bulk-Marktplatz-Power (29 s · 60 FPS)</button>
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="hook4" title="Schnäppchen-FOMO, Flohmarkt-Schutz und Tinder für Sammler nacheinander aufnehmen">🎯 Alle 3 Hook-Presets (15–17 s)</button>
+      <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="feature15" title="4 Skript-Vorlagen für die neuen Hauptfunktionen nacheinander aufnehmen: Digitaler Set-Binder & Scan · Lücken sehen & 1-Klick-Kauf · Doppelte mit 1 Klick verkaufen · All-in-One – je ca. 15 s, mit eigener ElevenLabs-Stimme">📒 4 Feature-Vorlagen (ca. 15 s · Set-Binder)</button>
       <button type="button" class="ar-btn ar-pro-go" data-ar="pro" data-pro="short" title="4 High-Retention-Kurz-Reels nacheinander: Live-Scanner & Preisschild · 3D-Binder & Preisetiketten · 16er Marktplatz-Binder & Hochschieben · Pokémon-Artikel – je 8–9 s, 1080×1920, 60 FPS, Action ab Frame 0, Hook-Text oben, nur UI-Soundeffekte">⚡ 4 Kurz-Reels (8–9 s · ohne KI-Stimme)</button>
     </div>
     <label class="ar-short-voice" style="display:flex;gap:6px;align-items:center;font-size:12px;font-weight:700"><input type="checkbox" id="ar-short-voice"> 🎙️ Voiceover auch für Kurz-Reels (optional · Standard AUS = nur Scanner-Ping, Blättern &amp; Klick – Trending-Sound passt darüber)</label>
@@ -761,14 +779,14 @@ function renderPro(states = {}) {
   if (!spec) return;
   const est = estimateMb(PRO_MAX_S, bitrateFor(PRO_MAX_S, proCfg.mbit, proMaxMb()));
   spec.textContent = `1080×1920 · H.264 High · ${proCfg.fps} FPS · bis ${proCfg.mbit} Mbit/s · AAC 192 kbit/s Stereo · Stimme ${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"} · Größen-Garantie ≤ ${proMaxMb()} MB (≈ ${est.toFixed(0)} MB bei 30 s)`;
-  ui.root.querySelector("#ar-pro-list").innerHTML = ALL_TEMPLATES.map((tpl, i) => {
+  ui.root.querySelector("#ar-pro-list").innerHTML = [...ALL_TEMPLATES, ...FEATURE15_TEMPLATES].map((tpl, i) => {
     const on = proCfg.templates.includes(tpl.key), r = proResults.get(tpl.key), st = states[tpl.key];
     const icon = { on: "⏺", ok: "✅", err: "⚠️", wait: "⏳" }[st] || (r ? "✅" : on ? "🎞️" : "⏸");
     const words = checkTemplateScript(tpl, proScript(tpl, 0).say).words;
     const isNext = proNext?.template === tpl.key;
     const out = r ? `<div class="ar-out"><img src="${r.thumbUrl}" alt="Vorschaubild" style="width:72px;aspect-ratio:9/16;border-radius:8px;object-fit:cover"><video src="${r.url}" controls playsinline preload="metadata"></video><div class="ar-cap"><pre>${esc(r.cap.caption)}</pre><span><a href="${r.url}" download="${esc(r.name)}">⬇ ${r.name.endsWith(".mp4") ? "MP4" : "Video (WebM)"} herunterladen</a> <a href="${r.thumbUrl}" download="${esc(r.name.replace(/\.\w+$/, ""))} - Cover.jpg">⬇ Cover</a> <a href="${r.txtUrl}" download="${esc(r.txtName)}">⬇ .txt</a> ${r.sent ? "📤 an Make gesendet" : ""}</span>${r.blob ? `<span><button type="button" class="ar-btn" data-ar="publish-video" data-k="${esc(tpl.key)}" ${r.publishing ? "disabled" : ""} title="Dieses Video öffentlich auf pokeswipe-radar.de/creator#video zeigen (Creator-Outreach)">${r.publishing ? `⏳ Veröffentliche … ${Math.round(r.publishing * 100)} %` : r.published ? "✅ Läuft auf /creator#video · erneut veröffentlichen" : "📌 Auf /creator#video veröffentlichen"}</button></span>` : ""}</div></div>` : "";
     const notes = (proNotes.get(tpl.key) || []).map((n) => `<small class="ar-note ${n.kind}" role="${n.kind === "err" ? "alert" : "status"}">${n.kind === "err" ? "⚠️ Fehler: " : n.kind === "warn" ? "⚠️ " : "ℹ️ "}${esc(n.text)}</small>`).join("");
-    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${tpl.seconds ? ` · ${[...new Set(secondsFor(tpl))].join("–")} s` : ""}${tpl.fps ? ` · ${tpl.fps} FPS` : ""}${tpl.mbit ? ` · ${tpl.mbit} Mbit/s` : ""}${proSent()[tpl.key] ? ` · 📤 zuletzt an Make gesendet am ${esc(new Date(proSent()[tpl.key].at).toLocaleString("de-DE"))}` : ""}${on ? "" : " · nicht in der Rotation (Admin-Zentrale)"}</small></span>
+    return `<li class="${st || ""}${isNext ? " next" : ""}"><span class="ar-st">${icon}</span><span class="ar-main"><b>${i + 1}. ${esc(tpl.label)}${isNext ? " · als Nächstes" : ""}</b><small>${esc(tpl.title)} · ${words} Wörter${tpl.seconds ? ` · ${[...new Set(secondsFor(tpl))].join("–")} s` : ""}${tpl.fps ? ` · ${tpl.fps} FPS` : ""}${tpl.mbit ? ` · ${tpl.mbit} Mbit/s` : ""}${proSent()[tpl.key] ? ` · 📤 zuletzt an Make gesendet am ${esc(new Date(proSent()[tpl.key].at).toLocaleString("de-DE"))}` : ""}${on || isFeature15(tpl) ? "" : " · nicht in der Rotation (Admin-Zentrale)"}${isFeature15(tpl) ? " · 15-s-Feature-Vorlage (per Klick)" : ""}</small></span>
       <span class="ar-acts"><button type="button" data-ar="pro" data-pro="one" data-k="${tpl.key}" title="Nur diese Vorlage aufnehmen">⏺</button></span>${notes}${out}</li>`;
   }).join("");
 }
@@ -790,6 +808,8 @@ async function onProClick(btn) {
   if (what === "autobinder") return generatePro([{ tpl: templateByKey("autobinder"), variant: proNext?.template === "autobinder" ? proNext.variant : 0 }]);
   // Die 3 Hook-Presets immer gemeinsam – unabhängig davon, ob sie in der Rotation der Admin-Zentrale aktiv sind
   if (what === "hook4") return generatePro(PRO_TEMPLATES.filter(isHook4).map((tpl) => ({ tpl, variant: 0 })));
+  // Die 4 Feature-Vorlagen (ca. 15 s: Set-Binder, Lücken-Kauf, Doppelte, All-in-One) immer gemeinsam per Klick
+  if (what === "feature15") return generatePro(FEATURE15_TEMPLATES.map((tpl) => ({ tpl, variant: 0 })));
   // Die 4 Kurz-Reels (7–10 s) immer gemeinsam – unabhängig von der Rotation der Admin-Zentrale
   if (what === "short") return generatePro(SHORT_TEMPLATES.map((tpl) => ({ tpl, variant: 0 })));
   if (what === "next") {

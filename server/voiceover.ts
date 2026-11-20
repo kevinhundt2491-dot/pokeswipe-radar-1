@@ -1,5 +1,5 @@
 // Deutsche Sprecherstimme (Voiceover) für die Auto-Reels.
-// Admin-only, ausschließlich mit der ElevenLabs-Stimme "Matilda" (weiblich, freundlich & warm).
+// Admin-only, standardmäßig mit der eigenen geklonten ElevenLabs-Stimme (Voice-ID im Generator änderbar).
 // /api/admin/voiceover/narration: das komplette Reel-Skript wird in EINEM durchgehenden Take gesprochen
 // (natürliche Satzmelodie ohne zusammengestückelte Clips) – inkl. Zeitstempel pro Satz, damit der Client
 // die Szenen exakt auf den gesprochenen Text legen kann. Fertige Takes landen in Netlify Blobs,
@@ -11,18 +11,23 @@ import { makeConfig, videoConfig } from "./make.ts";
 import { rotationAt } from "./reel-video-logic.ts";
 
 const MAX_LINES = 12, MAX_CHARS = 320;
-// Feste Sprecherin für alle Reels: Matilda (ElevenLabs-Premade, über eleven_multilingual_v2 auf Hochdeutsch)
-export const MATILDA = { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", desc: "weiblich, freundlich & warm" };
-export const EL_VOICES = [MATILDA];
+// Standard-Sprecherstimme für alle Reels: eigene geklonte ElevenLabs-Stimme (über eleven_multilingual_v2 auf Hochdeutsch).
+// Im Generator kann pro Browser eine andere Voice-ID eingetragen werden (Feld „voiceId“ der Anfrage).
+export const DEFAULT_VOICE_ID = "VFyVvYhn7M2ZEZy63rUf";
+export const DEFAULT_VOICE = { id: DEFAULT_VOICE_ID, name: "Eigene Stimme", desc: "geklonte ElevenLabs-Stimme" };
+export const EL_VOICES = [DEFAULT_VOICE];
+/** Voice-ID aus der Anfrage prüfen (ElevenLabs-IDs sind alphanumerisch) – sonst die Standard-Stimme. */
+export function voiceIdFrom(v: unknown) {
+  const id = String(v ?? "").trim();
+  return /^[A-Za-z0-9]{10,40}$/.test(id) ? id : DEFAULT_VOICE_ID;
+}
 const EL_MODEL = "eleven_multilingual_v2";
-// Ruhige, natürliche Sprechweise: hohe Stabilität gegen schwankende Betonung, style = 0 (keine
-// künstliche Übertreibung), normales Tempo (speed 1.0) – Tempo wird im Client NICHT verändert.
-const VOICE_SETTINGS = { stability: 0.6, similarity_boost: 0.78, style: 0, use_speaker_boost: true, speed: 1.0 };
-// Pro-Videos: begeistertes Storytelling – mehr Ausdruck (style) und lebendigere Betonung (niedrigere Stabilität),
-// Tonhöhe und Klang der Stimme bleiben gleich.
-const ENERGETIC_SETTINGS = { stability: 0.36, similarity_boost: 0.8, style: 0.45, use_speaker_boost: true, speed: 1.0 };
+// Maximale Natürlichkeit für die geklonte Stimme: etwas Spielraum in der Betonung (stability 0.45), hohe Nähe zum
+// Original (similarity_boost 0.80), dezenter Ausdruck (style 0.25) und Speaker-Boost. Gilt für alle Reels.
+const VOICE_SETTINGS = { stability: 0.45, similarity_boost: 0.8, style: 0.25, use_speaker_boost: true, speed: 1.0 };
 export type Tone = "calm" | "energetic";
-export const toneSettings = (tone: unknown) => (tone === "energetic" ? ENERGETIC_SETTINGS : VOICE_SETTINGS);
+/** Beide Tonlagen nutzen dieselben Stimm-Einstellungen (Tonlage bleibt als Parameter für ältere Aufrufe erhalten). */
+export const toneSettings = (_tone?: unknown) => VOICE_SETTINGS;
 // Erlaubter Tempo-Spielraum (ElevenLabs "speed" ändert das Tempo OHNE die Tonhöhe zu verfälschen).
 // Bewusst eng gehalten, damit die Sprecherin immer wie ein normaler Muttersprachler klingt. Standard-Vorlagen
 // nutzen höchstens 1,12; nur die kurzen 15–17-s-Hook-Presets dürfen bis zum ElevenLabs-Maximum 1,2 gehen.
@@ -71,12 +76,12 @@ export function speakable(text: string) {
     .trim();
 }
 
-function provider(): Provider | null {
+function provider(voiceId: unknown = DEFAULT_VOICE_ID): Provider | null {
   const el = process.env.ELEVENLABS_API_KEY;
   if (!el) return null;
-  const voice = MATILDA.id;
+  const voice = voiceIdFrom(voiceId);
   return {
-    id: `elevenlabs:${EL_MODEL}:v3-natural`, voice,
+    id: `elevenlabs:${EL_MODEL}:v4-clone`, voice,
     async tts(text, ctx = {}) {
       const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
         method: "POST",
@@ -170,11 +175,11 @@ async function elevenError(res: Response) {
 }
 
 /** Komplettes Skript in einem Take sprechen (mit Zeitstempeln pro Zeichen). */
-async function narrate(key: string, lines: string[], speed: number, settings = VOICE_SETTINGS): Promise<Narration> {
+async function narrate(key: string, lines: string[], speed: number, settings = VOICE_SETTINGS, voice = DEFAULT_VOICE_ID): Promise<Narration> {
   const text = lines.join(" ");
   for (let attempt = 1; ; attempt++) {
     try {
-      const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(MATILDA.id)}/with-timestamps?output_format=mp3_44100_128`, {
+      const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}/with-timestamps?output_format=mp3_44100_128`, {
         method: "POST",
         headers: { "xi-api-key": key, "Content-Type": "application/json", Accept: "application/json" },
         // Die Antwort an den Browser wird gestreamt (siehe Route) – daher darf ein langer 30-s-Take länger dauern
@@ -233,7 +238,7 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     return c.json({ ready: !!p, provider: p?.id.split(":")[0] || null, voices, defaultVoice: p?.voice || null, credits, make });
   });
 
-  // Ganzes Reel-Skript als ein durchgehender Take (Matilda) + Zeitstempel je Satz
+  // Ganzes Reel-Skript als ein durchgehender Take (eigene Stimme bzw. eingetragene Voice-ID) + Zeitstempel je Satz
   app.post("/api/admin/voiceover/narration", auth, adminOnly, async (c: any) => {
     const user = c.get("user");
     if (!(await rateLimit(`vo:${user.id}`, 40, 60_000))) return c.json({ error: "Zu viele Voiceover-Anfragen – bitte kurz warten." }, 429);
@@ -249,7 +254,8 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     const sp = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(b.speed) || 1)) * 100) / 100;
     const store = getStore("voiceover");
     const settings = toneSettings(b.tone);
-    const id = await sha(`narration:v1|${EL_MODEL}|${MATILDA.id}|${JSON.stringify(settings)}|${sp}|${JSON.stringify(lines)}`);
+    const voice = voiceIdFrom(b.voiceId);
+    const id = await sha(`narration:v1|${EL_MODEL}|${voice}|${JSON.stringify(settings)}|${sp}|${JSON.stringify(lines)}`);
     try {
       const hit = (await store.get(id, { type: "json" })) as Narration | null;
       if (hit?.audio) return c.json({ ...hit, cached: true });
@@ -263,8 +269,8 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
         ctrl.enqueue(enc.encode(" "));
         let out: any;
         try {
-          const n = await narrate(key, lines, sp, settings);
-          try { await store.setJSON(id, n, { metadata: { voice: MATILDA.id, speed: sp } }); } catch { /* Cache optional */ }
+          const n = await narrate(key, lines, sp, settings, voice);
+          try { await store.setJSON(id, n, { metadata: { voice, speed: sp } }); } catch { /* Cache optional */ }
           out = { ...n, cached: false };
         } catch (e: any) {
           log.error("voiceover", "Voiceover-Fehler", { err: e });
@@ -282,7 +288,7 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     const user = c.get("user");
     if (!(await rateLimit(`vo:${user.id}`, 40, 60_000))) return c.json({ error: "Zu viele Voiceover-Anfragen – bitte kurz warten." }, 429);
     const b = await body(c);
-    const p = provider();
+    const p = provider(b.voiceId);
     if (!p) return c.json({ error: "Kein Sprachdienst eingerichtet (ELEVENLABS_API_KEY fehlt)." }, 503);
     const lines = Array.isArray(b.lines) ? b.lines.slice(0, MAX_LINES) : [];
     const clean = lines

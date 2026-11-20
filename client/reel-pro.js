@@ -123,6 +123,100 @@ function HOOK4_TEMPLATES() {
   ];
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// 15-s-Feature-Vorlagen (Hook-Format, 4 Szenen hook → proof → usp → ask) für die neuen Hauptfunktionen:
+// Digitaler Set-Binder & Scan · Lücken sehen & 1-Klick-Kauf · Doppelte mit 1 Klick verkaufen · All-in-One.
+// Gesprochen wird exakt das Briefing-Skript (aufgeteilt auf 4 Szenen); die Domain wird als „PokeSwipe Radar Punkt de“
+// gesprochen und als pokeswipe-radar.de eingeblendet. Eigene Liste – nicht Teil der Rotation der Admin-Zentrale.
+// ---------------------------------------------------------------------------------------------------------------
+export const FEATURE15_WORDS = Object.freeze([20, 72]);
+function FEATURE15() {
+  const base = { format: "hook4", feature15: true, seconds: [15, 17], words: FEATURE15_WORDS, mbit: 8, cbr: true, maxSpeed: SPEED_CAP, segments: HOOK4_SEGMENTS, hashtags: HOOK4_HASHTAGS, visual: "binder", tab: "portfolio" };
+  return [
+    {
+      ...base,
+      key: "f15binder", label: "15 s · Digitaler Set-Binder & Scan", choreo: "f15binder", tab: "scan",
+      title: "Digitaler Set-Binder: Karte scannen, automatisch einsortiert – mit Live-Preis",
+      accent: "#a78bfa",
+      hooks: [{ badge: "DIGITALER SET-BINDER", cover: "WELCHE KARTEN FEHLEN DIR NOCH? 📒" }],
+      hookBadge: null,
+      lines: [
+        { say: "Keinen Überblick mehr, welche Pokémon-Karten dir im Set noch fehlen?" },
+        { say: "Auf PokeSwipe Radar scannst du deine Karte ein und sie sortiert sich automatisch inklusive Live-Preis in deinen digitalen Set-Binder ein,",
+          show: "Auf PokeSwipe Radar scannst du deine Karte ein und sie sortiert sich automatisch inklusive Live-Preis in deinen digitalen Set-Binder ein –" },
+        { say: "mit realistischer Blättern-Funktion wie im echten Sammelalbum!" },
+        { say: `Jetzt kostenlos testen auf ${SAY_DOMAIN}!`, show: "Jetzt kostenlos testen auf pokeswipe-radar.de!" },
+      ],
+      proof: { title: "📸 Scannen → automatisch einsortiert", points: [["✓", "Karte erkannt", "inklusive Live-Preis"], ["📒", "Im Set-Binder einsortiert", "automatisch an der richtigen Stelle"]] },
+      usp: { title: "📖 Blättern wie im echten Album", badge: "📒 Digitaler Set-Binder – kostenlos im Browser", points: [["📖", "Realistisches Blättern", "wie im echten Sammelalbum"], ["💶", "Live-Preis je Karte", "immer aktuell"]] },
+      question: "Wie viele Karten fehlen dir im Set? 👇",
+      body: ["Karte scannen – sie sortiert sich automatisch inklusive Live-Preis in deinen digitalen Set-Binder ein, mit realistischer Blättern-Funktion wie im echten Sammelalbum.",
+        "Kostenlos im Browser, kein App-Store-Download nötig."],
+    },
+    {
+      ...base,
+      key: "f15gaps", label: "15 s · Lücken sehen & 1-Klick-Kauf", choreo: "f15gaps",
+      title: "Fehlende Karten im Set-Binder sehen und mit einem Klick kaufen",
+      accent: "#38bdf8",
+      hooks: [{ badge: "LÜCKEN-RADAR", cover: "JEDE FEHLENDE KARTE AUF EINEN BLICK 👀" }],
+      hookBadge: null,
+      lines: [
+        { say: "Im neuen digitalen Set-Binder auf PokeSwipe Radar siehst du auf einen Blick jede fehlende Karte als grauen Platzhalter." },
+        { say: "Ein Tipp auf die Lücke genügt,", show: "Ein Tipp auf die Lücke genügt –" },
+        { say: "und du kannst die Karte direkt mit einem Klick auf unserem Marktplatz, bei eBay oder auf Cardmarket kaufen!" },
+        { say: `Alles von einer Seite aus auf ${SAY_DOMAIN}!`, show: "Alles von einer Seite aus auf pokeswipe-radar.de!" },
+      ],
+      proof: { title: "⬜ Lücke antippen", points: [["⬜", "Fehlende Karte", "als grauer Platzhalter"]] },
+      usp: { title: "🛒 1 Klick – Karte kaufen", badge: "🛒 Marktplatz · eBay · Cardmarket – alles auf einer Seite", points: [["🏪", "PokeSwipe Marktplatz", "direkt von Sammlern"], ["🔗", "eBay & Cardmarket", "mit einem Klick verlinkt"]] },
+      question: "Welche Lücke willst du als Erstes schließen? 👇",
+      body: ["Im digitalen Set-Binder siehst du jede fehlende Karte als grauen Platzhalter – ein Tipp auf die Lücke genügt und du kaufst sie mit einem Klick auf unserem Marktplatz, bei eBay oder auf Cardmarket.",
+        "Alles von einer Seite aus – kostenlos im Browser."],
+    },
+    {
+      ...base,
+      key: "f15dupes", label: "15 s · Doppelte mit 1 Klick verkaufen", choreo: "f15dupes",
+      title: "Doppelte Pokémon-Karten mit einem Klick aus dem Set-Binder verkaufen",
+      accent: "#34d399",
+      hooks: [{ badge: "DOPPELTE ZU GELD", cover: "DOPPELTE VERSTAUBEN IN DER BOX? 📦" }],
+      hookBadge: { label: "Cardmarket", from: "12,90 €", to: "11,60 €", tag: "Blitzverkauf" },
+      lines: [
+        { say: "Doppelte Pokémon-Karten verstauben nur in der Box?" },
+        { say: "Auf PokeSwipe Radar stellst du Doppelte direkt aus dem digitalen Set-Binder mit einem Klick online,",
+          show: "Auf PokeSwipe Radar stellst du Doppelte direkt aus dem digitalen Set-Binder mit einem Klick online –" },
+        { say: "zum aktuellen Cardmarket-Preis oder direkt 5 bis 10 Prozent günstiger für den Blitzverkauf!" },
+        { say: `Jetzt ausprobieren auf ${SAY_DOMAIN}!`, show: "Jetzt ausprobieren auf pokeswipe-radar.de!" },
+      ],
+      proof: { title: "2× Doppelte erkannt", points: [["2×", "Doppelte im Set-Binder", "automatisch gezählt"], ["⚡", "1 Klick", "direkt online gestellt"]] },
+      usp: { title: "🏷️ Dein Preis, dein Tempo", badge: "🏷️ Cardmarket-Preis oder −5 bis −10 % Blitzverkauf", points: [["💶", "Cardmarket-Preis", "aktueller Marktwert"], ["−10 %", "Blitzverkauf", "5–10 % günstiger, schneller weg"]] },
+      question: "Wie viele Doppelte liegen bei dir rum? 👇",
+      body: ["Doppelte Karten stellst du direkt aus dem digitalen Set-Binder mit einem Klick online – zum aktuellen Cardmarket-Preis oder 5 bis 10 Prozent günstiger für den Blitzverkauf.",
+        "Kostenlos im Browser, kein Download nötig."],
+    },
+    {
+      ...base,
+      key: "f15all", label: "15 s · All-in-One: Set-Binder & Sammler-Radar", choreo: "f15all", tab: "scan", seconds: [12, 17],
+      title: "Scannen, Set-Fortschritt, 1-Klick-Kauf & Verkauf – alles in einer App im Browser",
+      accent: "#fbbf24",
+      hooks: [{ badge: "ALL-IN-ONE", cover: "ALLES FÜR SAMMLER IN 1 APP ⚡" }],
+      hookBadge: null,
+      lines: [
+        { say: "Karten scannen, Set-Fortschritt checken," },
+        { say: "fehlende Hits mit einem Klick kaufen" },
+        { say: "und doppelte Karten sofort zu Geld machen.", show: "und doppelte Karten sofort zu Geld machen:" },
+        { say: `Hol dir jetzt den digitalen Set-Binder und das Live-Sammler-Radar kostenlos im Browser auf ${SAY_DOMAIN}!`,
+          show: "Hol dir jetzt den digitalen Set-Binder und das Live-Sammler-Radar kostenlos im Browser auf pokeswipe-radar.de!" },
+      ],
+      proof: { title: "🛒 Fehlende Hits kaufen", points: [["📸", "Scannen", "Set-Fortschritt live"], ["🛒", "1-Klick-Kauf", "fehlende Hits"]] },
+      usp: { title: "💶 Doppelte zu Geld machen", badge: "✅ Set-Binder + Live-Sammler-Radar – kostenlos im Browser", points: [["💶", "Doppelte verkaufen", "sofort online"], ["📍", "Live-Sammler-Radar", "Sammler in deiner Nähe"]] },
+      question: "Welches Feature testest du zuerst? 👇",
+      body: ["Karten scannen, Set-Fortschritt checken, fehlende Hits mit einem Klick kaufen und doppelte Karten sofort zu Geld machen.",
+        "Digitaler Set-Binder und Live-Sammler-Radar – kostenlos im Browser, ohne Download."],
+    },
+  ];
+}
+export const FEATURE15_TEMPLATES = FEATURE15();
+export const isFeature15 = (tpl) => !!tpl?.feature15;
+
 /**
  * Vorlagen. choreo = Live-Choreografie aus reel-scenarios.js, tab = Startbereich der echten App.
  * hooks: Cover-Schlagzeile + gesprochener Einstieg (rotieren je Durchlauf).
@@ -325,7 +419,7 @@ export function pickCoverCard(cards, recent = []) {
   return cards.find((c) => !used.has(c.id)) || cards[0] || null;
 }
 
-export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || MASTER_TEMPLATES.find((t) => t.key === k) || SHORT_TEMPLATES.find((t) => t.key === k) || null;
+export const templateByKey = (k) => PRO_TEMPLATES.find((t) => t.key === k) || SHOWCASE_TEMPLATES.find((t) => t.key === k) || MASTER_TEMPLATES.find((t) => t.key === k) || SHORT_TEMPLATES.find((t) => t.key === k) || FEATURE15_TEMPLATES.find((t) => t.key === k) || null;
 
 export const isHook4 = (tpl) => tpl?.format === "hook4";
 /** Szenen-Schlüssel einer Vorlage (5 Standard-Szenen bzw. 4 Hook-Szenen). */
@@ -611,7 +705,7 @@ export function showcaseScript(tpl, variant = 0) {
 
 /** Wortprüfung mit dem Limit der Vorlage (Showcase 60–84, sonst Standard 52–72). */
 export function checkTemplateScript(tpl, lines) {
-  if (!isShowcase(tpl)) return checkProScript(lines);
+  if (!isShowcase(tpl) && !tpl?.words) return checkProScript(lines);
   const words = countWords(lines), [min, max] = tpl.words || SHOWCASE_WORDS;
   return { ok: words >= min && words <= max, words, min, max };
 }

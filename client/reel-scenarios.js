@@ -538,6 +538,175 @@ export const CHOREO = {
     ],
   },
 
+  // F1–F4) 15-s-Feature-Vorlagen (Set-Binder, Lücken-Kauf, Doppelte verkaufen, All-in-One) – Hook-Format mit 4 Szenen.
+  // Alles läuft über die echte Oberfläche als Stage-Demo: nichts wird gespeichert, „Kaufen“ wird nur sichtbar angetippt.
+  f15binder: {
+    async setup(s) {
+      try { s.win.PS?.showSub?.("scan", "live"); } catch {}
+      await s.waitFor(() => s.$("#ps-ls-stage"), 15_000, "Live-Scanner lädt nicht").catch(() => {});
+      let info = null;
+      try { info = await s.win.PS?.liveScanDemoPrepare?.({ keys: ["card:sv03.5-006", "card:sv03.5-025", "card:sv03.5-003"], sleeve: true, zoom: 1.4, autoFile: true }); } catch (e) { console.warn("F15 Scan:", e); }
+      if (info) { s.fact("card", info.name); if (Number(info.price) > 0) s.fact("price", `${Number(info.price).toFixed(2).replace(".", ",")} €`); }
+      try { const b = await s.win.PS?.binderDemoPrepare?.("sv03.5"); if (b) s.fact("set", b.name); } catch (e) { console.warn("F15 Binder:", e); }
+      const st = s.$("#ps-ls-stage");
+      if (st) { const r = st.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 70)); }
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 300, timeoutMs: 5000 });
+    },
+    beats: [
+      async (s, d) => {
+        const card = s.$("#ps-ls-demo-card");
+        if (card) { const { x, y } = s.center(card); await s.moveFinger(x + 60, y + 90, Math.min(600, d * 250)); }
+      },
+      async (s, d) => {
+        s.hideFinger();
+        await s.win.PS?.liveScanDemoScan?.(Math.max(700, Math.min(1400, d * 1000 * 0.4)));
+        await s.idle({ quietMs: 150, timeoutMs: 800 });
+        const price = s.$("[data-hud-price]");
+        if (price) s.fact("price", price.textContent);
+        const filed = await s.win.PS?.liveScanDemoFile?.();
+        if (filed) await s.spotlight(filed, Math.min(1200, d * 300));
+      },
+      async (s, d) => {
+        unspot(s); s.hideFinger();
+        try { s.win.switchTab?.("portfolio"); } catch {}
+        s.win.PS?.binderDemoOpen?.();
+        await s.decodeImages(500);
+        const slot = s.win.PS?.binderDemoGoto?.("scanned");
+        if (slot) await s.spotlight(slot, Math.min(1200, d * 300));
+        unspot(s);
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        if (vp) { await s.swipe(vp, -1, 520); if (d > 3) { await s.sleep(250); await s.swipe(vp, -1, 520); } }
+        s.hideFinger();
+      },
+      async (s, d) => {
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        if (vp) await s.swipe(vp, 1, 560);
+        s.hideFinger();
+        await s.sleep(Math.min(1200, d * 300));
+      },
+    ],
+  },
+
+  f15gaps: {
+    async setup(s) {
+      let b = null;
+      try { b = await s.win.PS?.binderDemoPrepare?.("sv03.5", { price: 6.5 }); } catch (e) { console.warn("F15 Binder:", e); }
+      if (b) { s.fact("set", b.name); s.fact("gap", b.hero); }
+      try { await s.win.PS?.m16DemoPrepare?.({ setId: "sv03.5", mode: "std", offer: b?.heroCard ? { ...b.heroCard, price: 6.5 } : null }); } catch (e) { console.warn("F15 Marktplatz:", e); }
+      if (s.$("#view-portfolio")?.classList.contains("hidden")) { try { s.win.switchTab?.("portfolio"); } catch {} }
+      s.win.PS?.binderDemoOpen?.();
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 250, timeoutMs: 4000 });
+    },
+    beats: [
+      async (s, d) => {
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        await s.sleep(Math.min(500, d * 120));
+        if (vp) { await s.swipe(vp, -1, 520); if (d > 3) { await s.sleep(300); await s.swipe(vp, -1, 520); } }
+        const gap = s.$$("#ps-binder-view .ps-bslot:not(.owned)").find((el) => s.visible(el));
+        if (gap) await s.spotlight(gap, Math.min(1200, d * 250));
+        s.hideFinger();
+      },
+      async (s, d) => {
+        unspot(s);
+        s.win.PS?.binderDemoReveal?.();
+        const gap = s.win.PS?.binderDemoGoto?.("hero") || s.win.PS?.binderDemoSlot?.("hero");
+        if (gap) { await s.spotlight(gap); const { x, y } = s.center(gap); await s.moveFinger(x + 30, y + 60, Math.min(500, d * 300)); }
+      },
+      async (s, d) => {
+        unspot(s);
+        const gap = s.win.PS?.binderDemoSlot?.("hero");
+        if (gap) await s.tap(gap, { reveal: false });
+        await marketReady(s, "all");
+        s.win.PS?.m16DemoMode?.("binder", "all");
+        m16Top(s);
+        try { s.win.PS?.m16Open?.(-900); } catch {}
+        await s.idle({ quietMs: 100, timeoutMs: 600 });
+        await s.sleep(Math.min(900, d * 250));
+        const cta = s.$("#ps-m16-sheet .ps-m16-cta");
+        if (cta) await s.tapVisual(cta); // sichtbarer Tipp – kein echter Kauf in der Aufnahme
+      },
+      async (s, d) => { s.hideFinger(); await s.sleep(Math.min(1500, d * 400)); },
+    ],
+  },
+
+  f15dupes: {
+    async setup(s) {
+      let b = null;
+      try { b = await s.win.PS?.binderDemoPrepare?.("sv03.5", { mode: "autobinder", listedPrice: 12.9 }); } catch (e) { console.warn("F15 Binder:", e); }
+      if (b) { s.fact("set", b.name); s.fact("listed", b.listed); }
+      if (s.$("#view-portfolio")?.classList.contains("hidden")) { try { s.win.switchTab?.("portfolio"); } catch {} }
+      s.win.PS?.binderDemoOpen?.();
+      await s.decodeImages(3000);
+      await s.idle({ quietMs: 250, timeoutMs: 4000 });
+    },
+    beats: [
+      async (s, d) => {
+        const vp = s.$("#ps-binder-view [data-binder-viewport]");
+        await s.sleep(Math.min(400, d * 120));
+        if (vp) await s.swipe(vp, -1, 520);
+        s.hideFinger();
+      },
+      async (s, d) => {
+        const dup = s.win.PS?.binderDemoGoto?.("scanned") || s.win.PS?.binderDemoSlot?.("scanned");
+        if (dup) { await s.spotlight(dup); const { x, y } = s.center(dup); await s.moveFinger(x + 30, y + 60, Math.min(500, d * 250)); await s.tapVisual(dup); }
+        else await s.sleep(d * 1000);
+      },
+      async (s, d) => {
+        unspot(s);
+        s.win.PS?.binderDemoReveal?.();
+        const listed = s.win.PS?.binderDemoSlot?.("listed");
+        if (listed) { await s.spotlight(listed, Math.min(1500, d * 400)); const { x, y } = s.center(listed); await s.moveFinger(x + 30, y + 60, 450); }
+        else await s.sleep(Math.min(1500, d * 400));
+      },
+      async (s, d) => { unspot(s); s.hideFinger(); await s.sleep(Math.min(1500, d * 400)); },
+    ],
+  },
+
+  f15all: {
+    async setup(s) {
+      await CHOREO.f15binder.setup(s);
+      try { await s.win.PS?.m16DemoPrepare?.({ setId: "sv03.5", mode: "std" }); } catch (e) { console.warn("F15 Marktplatz:", e); }
+    },
+    beats: [
+      async (s, d) => {
+        s.hideFinger();
+        await s.win.PS?.liveScanDemoScan?.(Math.max(700, Math.min(1200, d * 1000 * 0.5)));
+        await s.idle({ quietMs: 150, timeoutMs: 600 });
+        const filed = await s.win.PS?.liveScanDemoFile?.();
+        if (filed) await s.spotlight(filed, Math.min(900, d * 250));
+        unspot(s);
+        try { s.win.switchTab?.("portfolio"); } catch {}
+        s.win.PS?.binderDemoOpen?.();
+        await s.decodeImages(400);
+      },
+      async (s, d) => {
+        s.win.PS?.binderDemoReveal?.();
+        const gap = s.win.PS?.binderDemoGoto?.("hero") || s.win.PS?.binderDemoSlot?.("hero");
+        if (gap) { await s.spotlight(gap); await s.tap(gap, { reveal: false }); }
+        unspot(s);
+        await marketReady(s, "all");
+        m16Top(s);
+        await s.sleep(Math.min(800, d * 300));
+      },
+      async (s, d) => {
+        s.hideFinger();
+        await s.scrollBy(VIEW_H * 0.3, Math.max(700, d * 1000 * 0.6));
+      },
+      async (s, d) => {
+        s.$("#ps-binder-view")?.classList.add("hidden");
+        s.win.document?.body?.classList.remove("ps-binder-open");
+        try { s.win.switchTab?.("map"); s.win.PS?.showSub?.("map", "radar"); } catch {}
+        await s.idle({ quietMs: 200, timeoutMs: 1500 });
+        const map = s.$("#radarMap");
+        if (map) { const r = map.getBoundingClientRect(); s.win.scrollTo(0, Math.max(0, s.win.scrollY + r.top - 120)); }
+        s.hideFinger();
+        await s.sleep(Math.min(1200, d * 300));
+      },
+    ],
+  },
+
   // 12) Pro-Showcase (29 s, 4 Szenen mit festem Regie-Zeitplan TL aus reel-pro.js – die Tonspur legt ihre
   // Mikro-SFX exakt auf dieselben Zeitpunkte). Beat 1 Blitz-Scanner · 2 Set-Binder & Lücken-Radar ·
   // 3 Marktplatz, Swipe-Tausch & Live-Chat (+ Pro-Einblendung im Compositor) · 4 Startseite ohne Login-Zwang.

@@ -71,7 +71,7 @@ function build() {
   el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Admin-Reel-Studio");
   el.innerHTML = `
     <div class="rs-panel">
-      <div class="rs-head"><div class="rs-lens"></div><div><b>🎬 Admin-Reel-Studio · Live</b><small>Echte Live-Aufnahme von pokeswipe-radar.de · 9:16 · ${OUT_W}×${OUT_H} · Stimme: Matilda</small></div>
+      <div class="rs-head"><div class="rs-lens"></div><div><b>🎬 Admin-Reel-Studio · Live</b><small>Echte Live-Aufnahme von pokeswipe-radar.de · 9:16 · ${OUT_W}×${OUT_H} · Stimme: eigene ElevenLabs-Stimme</small></div>
         <button type="button" class="rs-x" data-rs="close" aria-label="Schließen">✕</button></div>
       <div class="rs-body">
         <div class="rs-col">
@@ -190,7 +190,7 @@ function updateVoiceInfo() {
   ui.voiceInfo.textContent = !ui.voice.checked
     ? "Aus – das Reel bekommt nur dezente Musik und läuft genau die gewählte Länge."
     : !voiceReady ? "Sprachdienst wird geprüft …"
-      : voiceReady.ready ? "✓ Matilda (ElevenLabs) wird vor der Aufnahme komplett erzeugt; Klicks und Swipes laufen synchron zu ihren Sätzen."
+      : voiceReady.ready ? "✓ Die eigene ElevenLabs-Stimme wird vor der Aufnahme komplett erzeugt; Klicks und Swipes laufen synchron zu ihren Sätzen."
         : `⚠️ ElevenLabs nicht verfügbar${voiceReady.error ? ` (${voiceReady.error})` : " (ELEVENLABS_API_KEY fehlt)"} – Voiceover ausschalten oder Schlüssel setzen.`;
 }
 async function checkVoice() {

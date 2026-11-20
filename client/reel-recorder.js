@@ -47,19 +47,37 @@ export const pickMime = () => pickAvMime(pickVideoMime);
 export const extOf = (mime) => (String(mime || "").startsWith("video/mp4") ? "mp4" : "webm");
 
 // ---------------------------------------------------------------------------
-// Sprecherin (ElevenLabs "Matilda") – Audio-First
+// Sprecherstimme (eigene geklonte ElevenLabs-Stimme, Voice-ID im Generator änderbar) – Audio-First
 // ---------------------------------------------------------------------------
 const voiceCache = new Map();
+/** Standard-Stimme: eigene geklonte ElevenLabs-Stimme. Eine abweichende Voice-ID wird pro Browser gespeichert. */
+export const DEFAULT_VOICE_ID = "VFyVvYhn7M2ZEZy63rUf";
+const VOICE_ID_KEY = "pokeswipe.autoReels.voiceId";
+export const isVoiceId = (v) => /^[A-Za-z0-9]{10,40}$/.test(String(v || "").trim());
+export function getVoiceId() {
+  try { const v = localStorage.getItem(VOICE_ID_KEY); if (isVoiceId(v)) return v.trim(); } catch { /* kein Speicher */ }
+  return DEFAULT_VOICE_ID;
+}
+/** Voice-ID speichern; leer = zurück zur Standard-Stimme. Liefert die aktive ID (oder null bei ungültiger Eingabe). */
+export function setVoiceId(v) {
+  const id = String(v || "").trim();
+  try {
+    if (!id || id === DEFAULT_VOICE_ID) { localStorage.removeItem(VOICE_ID_KEY); return DEFAULT_VOICE_ID; }
+    if (!isVoiceId(id)) return null;
+    localStorage.setItem(VOICE_ID_KEY, id);
+  } catch { /* kein Speicher */ }
+  return id;
+}
 const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
 
 /**
  * Komplettes Skript in EINEM Take sprechen lassen, MP3 vollständig laden und als AudioBuffer dekodieren.
  * @returns {Promise<{ buffer: AudioBuffer, marks: {start:number,end:number}[], duration: number, words: number, mp3: Blob }>}
  */
-export async function loadNarration(lines, ac, { tone = "calm", speed = 1, format = "" } = {}) {
-  const key = `${tone}|${speed}|${lines.join("\n")}`;
+export async function loadNarration(lines, ac, { tone = "calm", speed = 1, format = "", voiceId = getVoiceId() } = {}) {
+  const key = `${voiceId}|${tone}|${speed}|${lines.join("\n")}`;
   if (voiceCache.has(key)) return voiceCache.get(key);
-  const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines, speed, tone, ...(format ? { format } : {}) } });
+  const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines, speed, tone, voiceId, ...(format ? { format } : {}) } });
   // Lange Takes werden gestreamt (Status 200 sofort) – ein Fehler steht dann im Feld "error"
   if (res?.error) throw new Error(res.error);
   if (!res?.audio || !Array.isArray(res.marks) || res.marks.length !== lines.length) throw new Error("Sprachausgabe unvollständig");
