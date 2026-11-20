@@ -47,34 +47,31 @@ export const pickMime = () => pickAvMime(pickVideoMime);
 export const extOf = (mime) => (String(mime || "").startsWith("video/mp4") ? "mp4" : "webm");
 
 // ---------------------------------------------------------------------------
-// Sprecherstimme (eigene geklonte ElevenLabs-Stimme, Voice-ID im Generator änderbar) – Audio-First
+// Sprecherstimme (feste ElevenLabs-Stimme UYUpESc8AS2NKE3IBY1W für alle Videos) – Audio-First
 // ---------------------------------------------------------------------------
 const voiceCache = new Map();
-/** Standard-Stimme: eigene geklonte ElevenLabs-Stimme. Eine abweichende Voice-ID wird pro Browser gespeichert. */
-export const DEFAULT_VOICE_ID = "VFyVvYhn7M2ZEZy63rUf";
-const VOICE_ID_KEY = "pokeswipe.autoReels.voiceId";
+/** Feste Sprecherstimme für ALLE Videos (keine manuelle Auswahl). Muss zu server/voiceover.ts passen. */
+export const DEFAULT_VOICE_ID = "UYUpESc8AS2NKE3IBY1W";
+/** Grundtempo der Stimme (ElevenLabs "speed"); die Längenanpassung darf davon abweichen. */
+export const DEFAULT_VOICE_SPEED = 1.08;
+/** Anzeige-Text der festen Stimm-Einstellungen. */
+export const VOICE_SETTINGS_INFO = "Modell eleven_multilingual_v2 (Deutsch) · Stabilität 0,35 · Ähnlichkeit 0,78 · Stil 0,45 · Tempo 1,08 · Speaker-Boost an";
+const VOICE_ID_KEY = "pokeswipe.autoReels.voiceId"; // Alt-Schlüssel früherer Versionen (eigene Voice-ID) – wird entfernt
 export const isVoiceId = (v) => /^[A-Za-z0-9]{10,40}$/.test(String(v || "").trim());
+/** Aktive Voice-ID: immer die feste Standard-Stimme. Früher gespeicherte eigene IDs werden gelöscht. */
 export function getVoiceId() {
-  try { const v = localStorage.getItem(VOICE_ID_KEY); if (isVoiceId(v)) return v.trim(); } catch { /* kein Speicher */ }
+  try { localStorage.removeItem(VOICE_ID_KEY); } catch { /* kein Speicher */ }
   return DEFAULT_VOICE_ID;
 }
-/** Voice-ID speichern; leer = zurück zur Standard-Stimme. Liefert die aktive ID (oder null bei ungültiger Eingabe). */
-export function setVoiceId(v) {
-  const id = String(v || "").trim();
-  try {
-    if (!id || id === DEFAULT_VOICE_ID) { localStorage.removeItem(VOICE_ID_KEY); return DEFAULT_VOICE_ID; }
-    if (!isVoiceId(id)) return null;
-    localStorage.setItem(VOICE_ID_KEY, id);
-  } catch { /* kein Speicher */ }
-  return id;
-}
+/** Ältere Aufrufe: es gibt keine abweichende Stimme mehr – liefert immer die feste Voice-ID. */
+export function setVoiceId(_v) { return getVoiceId(); }
 const b64ToBuf = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
 
 /**
  * Komplettes Skript in EINEM Take sprechen lassen, MP3 vollständig laden und als AudioBuffer dekodieren.
  * @returns {Promise<{ buffer: AudioBuffer, marks: {start:number,end:number}[], duration: number, words: number, mp3: Blob }>}
  */
-export async function loadNarration(lines, ac, { tone = "calm", speed = 1, format = "", voiceId = getVoiceId() } = {}) {
+export async function loadNarration(lines, ac, { tone = "calm", speed = DEFAULT_VOICE_SPEED, format = "", voiceId = getVoiceId() } = {}) {
   const key = `${voiceId}|${tone}|${speed}|${lines.join("\n")}`;
   if (voiceCache.has(key)) return voiceCache.get(key);
   const res = await api("/api/admin/voiceover/narration", { method: "POST", body: { lines, speed, tone, voiceId, ...(format ? { format } : {}) } });

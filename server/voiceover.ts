@@ -1,5 +1,5 @@
 // Deutsche Sprecherstimme (Voiceover) für die Auto-Reels.
-// Admin-only, standardmäßig mit der eigenen geklonten ElevenLabs-Stimme (Voice-ID im Generator änderbar).
+// Admin-only, immer mit der fest hinterlegten ElevenLabs-Stimme (DEFAULT_VOICE_ID, keine manuelle Auswahl).
 // /api/admin/voiceover/narration: das komplette Reel-Skript wird in EINEM durchgehenden Take gesprochen
 // (natürliche Satzmelodie ohne zusammengestückelte Clips) – inkl. Zeitstempel pro Satz, damit der Client
 // die Szenen exakt auf den gesprochenen Text legen kann. Fertige Takes landen in Netlify Blobs,
@@ -11,20 +11,20 @@ import { makeConfig, videoConfig } from "./make.ts";
 import { rotationAt } from "./reel-video-logic.ts";
 
 const MAX_LINES = 12, MAX_CHARS = 320;
-// Standard-Sprecherstimme für alle Reels: eigene geklonte ElevenLabs-Stimme (über eleven_multilingual_v2 auf Hochdeutsch).
-// Im Generator kann pro Browser eine andere Voice-ID eingetragen werden (Feld „voiceId“ der Anfrage).
-export const DEFAULT_VOICE_ID = "VFyVvYhn7M2ZEZy63rUf";
-export const DEFAULT_VOICE = { id: DEFAULT_VOICE_ID, name: "Eigene Stimme", desc: "geklonte ElevenLabs-Stimme" };
+// Feste Sprecherstimme für ALLE Reels (eleven_multilingual_v2, Hochdeutsch). Es gibt keine manuelle Auswahl mehr:
+// jede Anfrage – egal welche Voice-ID ein (älterer) Browser mitschickt – wird mit dieser Stimme gesprochen.
+export const DEFAULT_VOICE_ID = "UYUpESc8AS2NKE3IBY1W";
+export const DEFAULT_VOICE = { id: DEFAULT_VOICE_ID, name: "PokeSwipe-Stimme", desc: "feste ElevenLabs-Stimme (Deutsch)" };
 export const EL_VOICES = [DEFAULT_VOICE];
-/** Voice-ID aus der Anfrage prüfen (ElevenLabs-IDs sind alphanumerisch) – sonst die Standard-Stimme. */
-export function voiceIdFrom(v: unknown) {
-  const id = String(v ?? "").trim();
-  return /^[A-Za-z0-9]{10,40}$/.test(id) ? id : DEFAULT_VOICE_ID;
+/** Voice-ID für eine Anfrage: immer die feste Standard-Stimme (übergebene Werte werden bewusst ignoriert). */
+export function voiceIdFrom(_v?: unknown) {
+  return DEFAULT_VOICE_ID;
 }
 const EL_MODEL = "eleven_multilingual_v2";
-// Maximale Natürlichkeit für die geklonte Stimme: etwas Spielraum in der Betonung (stability 0.45), hohe Nähe zum
-// Original (similarity_boost 0.80), dezenter Ausdruck (style 0.25) und Speaker-Boost. Gilt für alle Reels.
-const VOICE_SETTINGS = { stability: 0.45, similarity_boost: 0.8, style: 0.25, use_speaker_boost: true, speed: 1.0 };
+// Natürlich & energiegeladen: lebendige Betonung (stability 0.35), hohe Nähe zur Stimme (similarity_boost 0.78),
+// deutlicher Ausdruck (style 0.45), Speaker-Boost und Grundtempo 1,08. Gilt für alle Reels.
+export const DEFAULT_SPEED = 1.08;
+const VOICE_SETTINGS = { stability: 0.35, similarity_boost: 0.78, style: 0.45, use_speaker_boost: true, speed: DEFAULT_SPEED };
 export type Tone = "calm" | "energetic";
 /** Beide Tonlagen nutzen dieselben Stimm-Einstellungen (Tonlage bleibt als Parameter für ältere Aufrufe erhalten). */
 export const toneSettings = (_tone?: unknown) => VOICE_SETTINGS;
@@ -87,7 +87,7 @@ function provider(voiceId: unknown = DEFAULT_VOICE_ID): Provider | null {
   if (!el) return null;
   const voice = voiceIdFrom(voiceId);
   return {
-    id: `elevenlabs:${EL_MODEL}:v4-clone`, voice,
+    id: `elevenlabs:${EL_MODEL}:v5-${DEFAULT_VOICE_ID}`, voice,
     async tts(text, ctx = {}) {
       const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
         method: "POST",
@@ -258,7 +258,7 @@ export function registerVoiceover(app: any, { auth, adminOnly, body }: any) {
     const words = countWords(lines);
     const maxWords = narrationMaxWords(b.format);
     if (words > maxWords) return c.json({ error: `Sprechertext zu lang (${words} Wörter, höchstens ${maxWords}).` }, 400);
-    const sp = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(b.speed) || 1)) * 100) / 100;
+    const sp = Math.round(Math.min(SPEED_MAX, Math.max(SPEED_MIN, Number(b.speed) || DEFAULT_SPEED)) * 100) / 100;
     const store = getStore("voiceover");
     const settings = toneSettings(b.tone);
     const voice = voiceIdFrom(b.voiceId);

@@ -326,7 +326,7 @@ Netlify-Umgebungsvariablen und werden nur an Admins ausgeliefert:
 | `MAKE_WEBHOOK_URL` | Make.com-Webhook (https). Ohne Variable greift das bisherige Szenario als Rückfall. |
 | `MAKE_WEBHOOK_TOKEN` | Optional: gemeinsamer Token für den Filter `token = …` im Make-Szenario (gilt für alle Admin-Browser). |
 | `FIREBASE_WEB_API_KEY` | Optional: Firebase-Web-API-Schlüssel für die anonyme Anmeldung (strenge Firebase-Regeln). |
-| `ELEVENLABS_API_KEY` | Sprecherstimme für die Auto-Reels (Standard: eigene geklonte ElevenLabs-Stimme `VFyVvYhn7M2ZEZy63rUf`, im Generator änderbar; Modell eleven_multilingual_v2). Ohne Schlüssel startet der Generator mit Voiceover nicht. |
+| `ELEVENLABS_API_KEY` | Sprecherstimme für die Auto-Reels (feste ElevenLabs-Stimme `UYUpESc8AS2NKE3IBY1W` für alle Videos, keine manuelle Auswahl; Modell eleven_multilingual_v2, Stabilität 0,35 · Ähnlichkeit 0,78 · Stil 0,45 · Tempo 1,08 · Speaker-Boost). Ohne Schlüssel startet der Generator mit Voiceover nicht. |
 
 Reel Studio und Auto-Reels (10x) erzeugen **ausschließlich echte Live-Aufnahmen der Website**: Die App läuft
 in einer 9:16-Live-Stage (iframe `/?reel=1`, 414×736 CSS-px → 1080×1920), darauf laufen echte Swipes, Taps und
@@ -354,8 +354,9 @@ Make.com mit den Zusatzfeldern `drive_folder` (Standard „werbe videos pokeswip
 `video_group` = `pro-aktuell`, `batch_id`, `batch_index`, `batch_total` und `video_number`. Der Upload in Google Drive
 passiert im Make-Szenario (Modul „Google Drive → Upload a File“ mit `file` und `drive_folder`). Alle bisherigen
 Vorlagen und die 10 Live-Reels liegen im einklappbaren Ordner „📁 Archiv / Bisherige Vorlagen“. Die Sprecherin nutzt
-für diese Videos das Server-Format `pro4` (bis 160 Wörter) und ist fest auf die geklonte Voice-ID
-`VFyVvYhn7M2ZEZy63rUf` eingestellt (`PRO4_VOICE_ID`) – das Voice-ID-Feld im Browser gilt nur für die übrigen Vorlagen.
+für diese Videos das Server-Format `pro4` (bis 160 Wörter). Alle Vorlagen (Haupt-Ordner und Archiv) sprechen mit der
+festen Voice-ID `UYUpESc8AS2NKE3IBY1W` – der Server ignoriert abweichende IDs. Der Button „🔄 Alle vorhandenen Videos
+jetzt mit neuer Stimme … neu generieren“ rendert alle 4 Pro-Videos nacheinander neu und sendet sie erneut an Make.com.
 
 ### Startseite: 2-Spalten-Bereich & 📦 Sealed & OVP
 

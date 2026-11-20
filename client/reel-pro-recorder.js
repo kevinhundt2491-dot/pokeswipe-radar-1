@@ -14,7 +14,7 @@
 import { pickAvMime, unlockAudio, startSoundtrack, renderSoundtrack } from "./reel-audio.js";
 import { VIEW_W, VIEW_H, OUT_W, OUT_H } from "./live-stage.js";
 import { CHOREO, runChoreo } from "./reel-scenarios.js";
-import { domSource, loadNarration, estimateMarks, pickVideoMime, extOf } from "./reel-recorder.js";
+import { domSource, loadNarration, estimateMarks, pickVideoMime, extOf, DEFAULT_VOICE_SPEED } from "./reel-recorder.js";
 import { ProCompositor, loadProFonts } from "./reel-compositor.js";
 import { exactMp4Support, ExactMp4Writer } from "./reel-mp4.js";
 import {
@@ -43,7 +43,7 @@ export async function loadProNarration(lines, ac, tone = "energetic", range = [P
   // Stimme tonhöhenneutral um höchstens fitOpts.maxStretch gerafft (fitTake) – so bleibt das Video exakt 29 s.
   if (format === "showcase" || format === "autobinder" || range[0] === range[1]) {
     const fit = range[1] - PRO_LEAD - END_FADE;
-    let speed = Number(startSpeed) > 0 ? Math.min(cap, Number(startSpeed)) : 1.0;
+    let speed = Math.min(cap, Number(startSpeed) > 0 ? Number(startSpeed) : DEFAULT_VOICE_SPEED);
     let take = await loadNarration(lines, ac, { tone, speed, format, ...vo });
     for (let i = 0; i < 2; i++) {
       const sec = speechSeconds(take);
@@ -61,7 +61,7 @@ export async function loadProNarration(lines, ac, tone = "energetic", range = [P
     return { take, speed, seconds: Math.max(range[1], PRO_LEAD + speechSeconds(take) + END_FADE), fitted: fitted ? fitted.fit : null };
   }
   // Kurze Vorlagen (z. B. 15–20 s) starten gleich mit dem schnellsten erlaubten Tempo (Hook-Presets: 1,2)
-  let speed = Number(startSpeed) > 0 ? Math.min(cap, Number(startSpeed)) : range[1] <= 20 ? cap : 1.04;
+  let speed = Number(startSpeed) > 0 ? Math.min(cap, Number(startSpeed)) : range[1] <= 20 ? cap : Math.min(cap, DEFAULT_VOICE_SPEED);
   let take = await loadNarration(lines, ac, { tone, speed, format, ...vo });
   const next = speedFor(speechSeconds(take), speed, range, cap);
   if (next !== speed) {

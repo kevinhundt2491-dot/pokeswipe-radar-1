@@ -62,7 +62,7 @@ test("Video 4: Ziel 38 s, harte Grenze unter 40 s – und die geklonte Stimme is
   assert.ok(v4.fitVoice.hardMax < 40 && v4.fitVoice.hardStretch > v4.fitVoice.maxStretch);
   assert.ok(v4.fitVoice.maxStretch <= 1.15, "nicht gehetzt: höchstens 15 % raffen");
   assert.ok(v4.segments[v4.segments.length - 1] < 40);
-  for (const t of PRO4_TEMPLATES as any[]) assert.equal(t.voiceId, "VFyVvYhn7M2ZEZy63rUf", `${t.key}: Voice-ID`);
+  for (const t of PRO4_TEMPLATES as any[]) assert.equal(t.voiceId, "UYUpESc8AS2NKE3IBY1W", `${t.key}: Voice-ID`);
 });
 
 test("1-Klick-Verkauf: Cardmarket-Preis, −5 % und −10 %", () => {
