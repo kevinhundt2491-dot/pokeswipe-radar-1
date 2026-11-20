@@ -11,7 +11,7 @@ import { toast, hooks, state, api } from "./core.js";
 import { uploadCreatorVideo } from "./creator-video-upload.js";
 import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
-import { recordLive, previewLive, loadNarration, getVoiceId, setVoiceId, DEFAULT_VOICE_ID, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
+import { recordLive, previewLive, loadNarration, getVoiceId, DEFAULT_VOICE_ID, VOICE_SETTINGS_INFO, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
 import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
 import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S, SHORT_TEMPLATES, isShort, FEATURE15_TEMPLATES, isFeature15, PRO4_TEMPLATES, isPro4, PRO4_FOLDER, ARCHIVE_FOLDER, DRIVE_FOLDER, PRO4_VOICE_ID } from "./reel-pro.js";
 import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
@@ -279,15 +279,9 @@ function build() {
   ui.voiceTest.addEventListener("click", testVoice);
   ui.voiceId = el.querySelector("#ar-voice-id");
   ui.voiceIdInfo = el.querySelector("#ar-voice-id-info");
-  const applyVoiceId = () => {
-    const id = setVoiceId(ui.voiceId.value);
-    const base = "Modell eleven_multilingual_v2 · Stabilität 0,45 · Ähnlichkeit 0,80 · Stil 0,25 · Speaker-Boost an";
-    if (!id) { ui.voiceIdInfo.textContent = "⚠️ Ungültige Voice-ID (nur Buchstaben und Ziffern, 10–40 Zeichen) – es wird weiter die gespeicherte Stimme genutzt."; return; }
-    ui.voiceId.value = id;
-    ui.voiceIdInfo.textContent = `${id === DEFAULT_VOICE_ID ? "✓ Standard-Stimme aktiv" : "✓ Eigene Voice-ID gespeichert (nur in diesem Browser)"} · ${base}`;
-  };
-  ui.voiceId.addEventListener("change", applyVoiceId);
-  el.querySelector("#ar-voice-id-reset").addEventListener("click", () => { ui.voiceId.value = DEFAULT_VOICE_ID; applyVoiceId(); });
+  // Feste Stimme: Feld nur zur Anzeige, früher gespeicherte eigene Voice-IDs werden verworfen
+  ui.voiceId.value = getVoiceId();
+  ui.voiceIdInfo.textContent = `✓ Feste Stimme für alle Videos aktiv · ${VOICE_SETTINGS_INFO}`;
   ui.token.value = getToken();
   ui.token.addEventListener("input", () => { save(TOKEN_KEY, ui.token.value.trim()); save(TOKEN_MANUAL_KEY, "1"); save(TOKEN_TS_KEY, new Date().toISOString()); });
   ui.plats = el.querySelector("#ar-plats");
@@ -461,7 +455,7 @@ function setStatus(msg, kind = "") { ui.status.textContent = msg; ui.status.clas
 function setBusy(b) {
   ui.len.disabled = b; ui.go.disabled = b; ui.stop.hidden = !b;
   ui.batch.disabled = b; ui.hook.disabled = b;
-  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceTest.disabled = b; if (ui.voiceId) ui.voiceId.disabled = b; if (ui.drive) ui.drive.disabled = b;
+  ui.token.disabled = b; ui.mbit.disabled = b; ui.limit.disabled = b; ui.voice.disabled = b; ui.voiceTest.disabled = b; if (ui.drive) ui.drive.disabled = b;
   ui.root.querySelectorAll('[data-ar^="sel-"],[data-ar^="token-"]').forEach((x) => { x.disabled = b; });
   ui.list.querySelectorAll('button:not([data-ar="copy"]),input').forEach((x) => { x.disabled = b; });
   ui.root.querySelectorAll('[data-pro]').forEach((x) => { x.disabled = b; });
@@ -775,6 +769,7 @@ const FOLDER_CSS = `
 #auto-reels .ar-voicetop .ar-btn{padding:8px 11px}
 #auto-reels .ar-cur{background:linear-gradient(135deg,rgba(249,115,22,.28),rgba(27,36,68,.92));border:2px solid rgba(251,146,60,.75)}
 #auto-reels .ar-cur b.t{font-size:21px}
+#auto-reels button.ar-revoice-go{background:linear-gradient(135deg,#22c55e,#16a34a);border:2px solid #4ade80;color:#06140b;font-weight:900;font-size:16px;padding:15px 14px;width:100%;box-shadow:0 0 0 3px rgba(74,222,128,.25),0 6px 18px rgba(34,197,94,.35)}
 #auto-reels button.ar-cur-go{background:#f97316;border-color:#f97316;color:#1a1420;font-weight:900;font-size:15px;padding:13px 14px;width:100%}
 #auto-reels .ar-cur .ar-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;font-weight:800}
 #auto-reels .ar-cur .ar-row input{flex:1;min-width:180px;font:700 13px var(--font-body,Figtree,sans-serif);border-radius:10px;padding:8px 10px;border:1px solid rgba(251,146,60,.5);background:var(--night-2,#131a33);color:var(--ink,#f3efe4)}
@@ -796,16 +791,15 @@ function voiceTopHtml() {
   return `
   <div class="ar-voicetop" id="ar-voicetop">
     <div class="ar-row">
-      <label for="ar-voice-id">🎙️ ElevenLabs Voice-ID (eigene geklonte Stimme · Standard für alle Videos):</label>
+      <label for="ar-voice-id">🎙️ ElevenLabs Voice-ID (fest für alle Videos – keine manuelle Auswahl nötig):</label>
     </div>
     <div class="ar-row">
-      <input id="ar-voice-id" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="40" placeholder="${DEFAULT_VOICE_ID}" value="${esc(getVoiceId())}" title="Voice-ID der ElevenLabs-Stimme für alle Videos (Standard: ${DEFAULT_VOICE_ID}). Leer lassen = Standard-Stimme.">
-      <button type="button" class="ar-btn" id="ar-voice-id-reset" title="Zurück zur Standard-Stimme ${DEFAULT_VOICE_ID}">↺ Standard</button>
+      <input id="ar-voice-id" type="text" readonly autocomplete="off" spellcheck="false" value="${esc(DEFAULT_VOICE_ID)}" title="Feste Voice-ID der ElevenLabs-Stimme für alle Videos">
     </div>
-    <small id="ar-voice-id-info">Modell eleven_multilingual_v2 · Stabilität 0,45 · Ähnlichkeit 0,80 · Stil 0,25 · Speaker-Boost an</small>
+    <small id="ar-voice-id-info">${esc(VOICE_SETTINGS_INFO)}</small>
     <label class="ar-row" for="ar-voice" style="cursor:pointer;gap:8px"><input id="ar-voice" type="checkbox" style="width:18px;height:18px;accent-color:#ffcb05"> 🎙️ Sprecherstimme (Voiceover) einbetten</label>
     <div class="ar-row" id="ar-voice-pick" hidden>
-      <span>Stimme: <b>Eigene ElevenLabs-Stimme</b> (Hochdeutsch, eleven_multilingual_v2)</span>
+      <span>Stimme: <b>ElevenLabs ${esc(DEFAULT_VOICE_ID)}</b> (Deutsch, eleven_multilingual_v2)</span>
       <button type="button" class="ar-btn" id="ar-voice-test">▶ Probe hören</button>
     </div>
     <small id="ar-voice-info"></small>
@@ -817,7 +811,8 @@ function pro4Html() {
   return `
   <div class="ar-pro ar-cur" id="ar-cur">
     <b class="t">${esc(PRO4_FOLDER)}</b>
-    <small id="ar-cur-spec">Hochformat 9:16 · MP4 1080×1920 · 🎙️ geklonte ElevenLabs-Stimme fest aktiv (Voice-ID <code>${esc(PRO4_VOICE_ID)}</code>) · Video 4 ca. 36–39 s · animierte Wort-für-Wort-Untertitel · echte App-Oberfläche: Scanner → Set-Binder mit Switch-Funktion → Lücken-Kauf → 1-Klick-Verkauf (−5 % / −10 %)</small>
+    <small id="ar-cur-spec">Hochformat 9:16 · MP4 1080×1920 · 🎙️ ElevenLabs-Stimme fest aktiv (Voice-ID <code>${esc(PRO4_VOICE_ID)}</code>) · Video 4 ca. 36–39 s · animierte Wort-für-Wort-Untertitel · echte App-Oberfläche: Scanner → Set-Binder mit Switch-Funktion → Lücken-Kauf → 1-Klick-Verkauf (−5 % / −10 %)</small>
+    <button type="button" class="ar-btn ar-revoice-go" data-ar="pro" data-pro="revoice4" title="Alle 4 Pro-Videos nacheinander live mit der festen Stimme ${esc(PRO4_VOICE_ID)} neu rendern, als MP4 speichern und direkt an den Make.com-Webhook / Google-Drive-Ordner übergeben – auch wenn sie schon einmal gesendet wurden">🔄 Alle vorhandenen Videos jetzt mit neuer Stimme (${esc(PRO4_VOICE_ID)}) neu generieren &amp; an Make.com / Drive senden</button>
     <button type="button" class="ar-btn ar-cur-go" data-ar="pro" data-pro="pro4all">🚀 Alle 4 Pro-Videos nacheinander generieren &amp; für Make.com / Drive bereitstellen</button>
     <div class="ar-row">
       <label for="ar-drive">📂 Google-Drive-Ordner (Feld <code>drive_folder</code> an Make.com):</label>
@@ -899,6 +894,12 @@ async function onProClick(btn) {
   if (what === "hook4") return generatePro(PRO_TEMPLATES.filter(isHook4).map((tpl) => ({ tpl, variant: 0 })));
   // 🔥 Haupt-Ordner: die 4 aktuellen Pro-Videos nacheinander (Set-Binder · Lücken-Kauf · Doppelte · All-in-One)
   if (what === "pro4all") return generatePro(PRO4_TEMPLATES.map((tpl) => ({ tpl, variant: 0 })));
+  // 🔄 Alle 4 Pro-Videos mit der festen neuen Stimme neu rendern und (erneut) an Make.com / Drive senden
+  if (what === "revoice4") {
+    if (!hookState().url && !confirm("Es ist kein Make.com-Webhook eingetragen (unten unter „⚙️ Make.com-Versand“).\n\nTrotzdem alle 4 Videos neu generieren und nur herunterladen?")) return;
+    if (!voiceOn) { voiceOn = true; save(VOICE_KEY, "1"); if (ui.voice) ui.voice.checked = true; updateVoiceInfo(); }
+    return generatePro(PRO4_TEMPLATES.map((tpl) => ({ tpl, variant: 0 })), { resend: true });
+  }
   // Die 4 Feature-Vorlagen (ca. 15 s: Set-Binder, Lücken-Kauf, Doppelte, All-in-One) immer gemeinsam per Klick
   if (what === "feature15") return generatePro(FEATURE15_TEMPLATES.map((tpl) => ({ tpl, variant: 0 })));
   // Die 4 Kurz-Reels (7–10 s) immer gemeinsam – unabhängig von der Rotation der Admin-Zentrale
@@ -946,7 +947,7 @@ async function loadCardImage(card) {
 
 const jpeg = (canvas) => new Promise((r) => canvas.toBlob((b) => r(b), "image/jpeg", 0.92));
 
-async function generatePro(list) {
+async function generatePro(list, { resend = false } = {}) {
   if (mode === "rec" || !list.length) return;
   if (recLock.owner) return setStatus("⚠️ Das Reel Studio nimmt gerade auf – bitte warten.", "err");
   const { mime } = pickMime();
@@ -976,7 +977,7 @@ async function generatePro(list) {
   const hook = hs.url;
   if (hook && !platforms.size) return setStatus("⚠️ Bitte mindestens eine Plattform für Make.com auswählen (oder die Webhook-URL leeren).", "err");
   // Kein versehentlicher Doppel-Upload: dasselbe Video (gleiche Vorlage + gleiches Skript) wurde schon an Make.com übergeben
-  if (hook) {
+  if (hook && !resend) {
     const sent = proSent();
     const dup = list.filter(({ tpl, variant }) => sent[tpl.key]?.sig === scriptSig(tpl, variant));
     if (dup.length && !confirm(`${dup.map(({ tpl }) => `„${tpl.label}“ (${new Date(sent[tpl.key].at).toLocaleString("de-DE")})`).join(", ")} wurde bereits an Make.com gesendet.\n\nNochmal aufnehmen UND erneut senden? (Abbrechen = nichts tun)`)) return;

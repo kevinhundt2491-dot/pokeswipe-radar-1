@@ -245,8 +245,8 @@ const BUY = { title: "🛒 Fehlende Karte kaufen – 1 Klick", options: [["🏪 
 /** Video 4: Ziellänge und harte Obergrenze (Sekunden, inkl. Vorlauf und Ausblenden). */
 export const PRO4_TARGET_S = 38;
 export const PRO4_HARD_MAX_S = 39.5;
-/** Fest hinterlegte geklonte ElevenLabs-Stimme für alle 4 Pro-Videos (unabhängig vom Voice-ID-Feld im Browser). */
-export const PRO4_VOICE_ID = "VFyVvYhn7M2ZEZy63rUf";
+/** Fest hinterlegte ElevenLabs-Stimme für alle 4 Pro-Videos – und für alle übrigen Vorlagen (siehe ALL_TEMPLATES). */
+export const PRO4_VOICE_ID = "UYUpESc8AS2NKE3IBY1W";
 
 function PRO4() {
   const base = {
@@ -1149,6 +1149,8 @@ export const SHORT_TEMPLATES = [
   },
 ].map((t) => ({ ...t, camera: shortCamera(t.timeline.lockup, t.exact), lockupAt: t.timeline.lockup }));
 ALL_TEMPLATES.push(...SHORT_TEMPLATES);
+// Jede Vorlage – aktueller Haupt-Ordner und Archiv – spricht mit derselben fest hinterlegten ElevenLabs-Stimme.
+for (const t of new Set([...PRO4_TEMPLATES, ...PRO_TEMPLATES, ...SHOWCASE_TEMPLATES, ...MASTER_TEMPLATES, ...FEATURE15_TEMPLATES, ...SHORT_TEMPLATES])) t.voiceId = PRO4_VOICE_ID;
 export const isShort = (tpl) => !!tpl?.short;
 
 /** Mikro-Sounddesign der Kurz-Reels: Scanner-Ping, Blättern, Klicks, Erfolgs-Plings – exakt auf den Regie-Zeitplan. */

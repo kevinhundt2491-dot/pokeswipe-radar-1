@@ -1,23 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 // @ts-ignore – Client-Modul ohne Typen
-import { FEATURE15_TEMPLATES, PRO_TEMPLATES, templateByKey, proScript, checkTemplateScript, scenesFor, HOOK4_SCENES, DOMAIN, isHook4, proCaption } from "../client/reel-pro.js";
+import { FEATURE15_TEMPLATES, PRO4_TEMPLATES, ALL_TEMPLATES, MASTER_TEMPLATES, PRO_TEMPLATES, templateByKey, proScript, checkTemplateScript, scenesFor, HOOK4_SCENES, DOMAIN, isHook4, proCaption } from "../client/reel-pro.js";
 // @ts-ignore – Client-Modul ohne Typen
 import { CHOREO } from "../client/reel-scenarios.js";
 import { DEFAULT_VOICE_ID, voiceIdFrom, toneSettings, speakable, NARRATION_MAX_WORDS } from "../server/voiceover.ts";
 
-test("Stimme: eigene geklonte Voice-ID als Standard, eingetragene IDs werden geprüft", () => {
-  assert.equal(DEFAULT_VOICE_ID, "VFyVvYhn7M2ZEZy63rUf");
+test("Stimme: feste Voice-ID für alle Anfragen – abweichende IDs werden ignoriert", () => {
+  assert.equal(DEFAULT_VOICE_ID, "UYUpESc8AS2NKE3IBY1W");
   assert.equal(voiceIdFrom(undefined), DEFAULT_VOICE_ID);
   assert.equal(voiceIdFrom(""), DEFAULT_VOICE_ID);
   assert.equal(voiceIdFrom("abc/../x"), DEFAULT_VOICE_ID);
-  assert.equal(voiceIdFrom(" XrExE9yKIg1WjnnlVkGX "), "XrExE9yKIg1WjnnlVkGX");
+  assert.equal(voiceIdFrom(" VFyVvYhn7M2ZEZy63rUf "), DEFAULT_VOICE_ID);
 });
 
-test("Stimme: Einstellungen für maximale Natürlichkeit", () => {
+test("Stimme: alle Vorlagen (Haupt-Ordner und Archiv) nutzen die feste Voice-ID", () => {
+  for (const t of [...PRO4_TEMPLATES, ...ALL_TEMPLATES, ...MASTER_TEMPLATES, ...FEATURE15_TEMPLATES] as any[]) assert.equal(t.voiceId, DEFAULT_VOICE_ID, t.key);
+});
+
+test("Stimme: natürliche, energiegeladene Einstellungen", () => {
   for (const tone of ["calm", "energetic", undefined]) {
     const s = toneSettings(tone);
-    assert.equal(s.stability, 0.45); assert.equal(s.similarity_boost, 0.8); assert.equal(s.style, 0.25); assert.equal(s.use_speaker_boost, true);
+    assert.equal(s.stability, 0.35); assert.equal(s.similarity_boost, 0.78); assert.equal(s.style, 0.45); assert.equal(s.speed, 1.08); assert.equal(s.use_speaker_boost, true);
   }
 });
 
