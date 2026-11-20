@@ -532,7 +532,7 @@ export class ProCompositor {
   /** Kontrast-Banner oben (Hook): volle Safe-Zone-Breite, fette Schrift mit dunkler Kontur, leichtes Pulsieren. */
   #banner(ctx, text, t, y = 268) {
     const v = this.tpl.visual;
-    const bg = v === "scan" ? "#facc15" : v === "swipe" ? "#db2777" : RED, fg = v === "scan" ? "#111111" : "#ffffff";
+    const bg = v === "scan" ? "#facc15" : v === "swipe" ? "#db2777" : v === "binder" ? "#6d28d9" : RED, fg = v === "scan" ? "#111111" : "#ffffff";
     const w = HZ.right - HZ.left, h = 190;
     const s = 1 + 0.018 * Math.sin(t * 7);
     ctx.save();
@@ -653,6 +653,11 @@ export class ProCompositor {
       this.#livePhone(ctx, t, p, live, HZ.left + 10, 500, 380, 676, { rot: -0.05 });
       this.#swipeCard(ctx, 690, 820, t);
       this.#pill(ctx, "👉 Rechts = will ich haben", 690, 1150, { size: 30, border: GREEN });
+    } else if (v === "binder" && !this.tpl.hookBadge) {
+      // Feature-Vorlagen: echte App + schwebende Karte mit Set-Binder-Hinweis
+      this.#livePhone(ctx, t, p, live, HZ.left + 10, 500, 400, 711, { rot: -0.045 });
+      ctx.save(); ctx.translate(700, 800 + Math.sin(t * 2.2) * 10); ctx.rotate(0.08); this.#cardFace(ctx, 300, 418, 1); ctx.restore();
+      this.#pill(ctx, this.tpl.hooks?.[0]?.badge || "📒 Set-Binder", 700, 1080, { size: 30, border: this.accent, maxW: 420 });
     } else {
       this.#livePhone(ctx, t, p, live, HZ.left + 10, 500, 400, 711, { rot: -0.045 });
       this.#priceDrop(ctx, 520, 640, 400, t);
@@ -714,6 +719,13 @@ export class ProCompositor {
         ctx.font = `400 92px ${DISPLAY}`; ctx.textAlign = "right"; ctx.fillStyle = GREEN; ctx.fillText(price, px + pw - 30, py + 140);
         ctx.restore();
       }
+    } else if (v === "binder") {
+      // Feature-Vorlagen: kurze Info-Toasts links/rechts über der echten App (nacheinander eingeblendet)
+      (pr.points || []).slice(0, 2).forEach(([badge, title, sub], i) => {
+        const a = back((lt - 0.4 - i * 0.9) * 2.6), left = i % 2 === 1, tw = 480;
+        const tx = left ? HZ.left + (1 - clamp(a)) * -120 : HZ.right - tw + (1 - clamp(a)) * 120;
+        this.#toast(ctx, tx, 480 + i * 260, tw, a, { badge, title, sub, badgeBg: this.accent });
+      });
     } else if (v === "swipe") {
       // Swipe-Richtungen, LIKE-/NOPE-Stempel und Match-Animation über dem echten Swipe-Modus
       const ph = (lt % 1.8) / 1.8, right = Math.floor(lt / 1.8) % 2 === 0;
@@ -793,6 +805,15 @@ export class ProCompositor {
       this.#pill(ctx, u.badge || "Kein Download nötig", 690, 900, { size: 34, bg: RED, fg: "#ffffff", border: "#ffffff", maxW: 440 });
       this.#pill(ctx, "⚡ Sofort startklar", 690, 1000, { size: 30, border: GREEN, maxW: 440 });
       this.#pill(ctx, "📱 Auf jedem Handy", 690, 1090, { size: 30, border: GREEN, maxW: 440 });
+    } else if (v === "binder") {
+      // Feature-Vorlagen: echte App, großes Nutzen-Badge oben, 2 Nutzen-Toasts über dem unteren Bildschirmrand
+      const w = 470, h = 836, x = HX - w / 2, y = 450;
+      this.#livePhone(ctx, t, p, live, x, y, w, h, { zoomIn: 1.35 });
+      this.#badgeBig(ctx, u.badge, 330, back((lt - 0.2) * 3), this.accent);
+      (u.points || []).slice(0, 2).forEach(([badge, title, sub], i) => {
+        const a = back((lt - 0.8 - i * 0.6) * 3);
+        this.#toast(ctx, HZ.left + (1 - clamp(a)) * -80, 900 + i * 140, HZ.right - HZ.left, a, { badge, title, sub, badgeBg: this.accent });
+      });
     } else {
       // Tausch-Hub (echte App) + Sammler-Radar mit Pins in der Nähe
       this.#pill(ctx, u.title || "Tausch-Hub & Sammler-Radar", HX, 282, { size: 36, border: this.accent });

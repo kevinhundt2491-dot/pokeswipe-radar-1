@@ -147,7 +147,7 @@ export async function recordPro({ stage, tpl, variant = 0, look = null, coverCar
   const show = isShowcase(tpl);
   if (show) fps = tpl.fps || 60; // Showcase: immer 60 FPS
   const script = show ? showcaseScript(tpl, variant) : proScript(tpl, variant);
-  const chk = show ? checkTemplateScript(tpl, script.say) : checkProScript(script.say);
+  const chk = checkTemplateScript(tpl, script.say); // Showcase/Feature-Vorlagen mit eigenem Wortlimit, sonst Standard
   if (!chk.ok) throw new Error(`Skript „${tpl.label}“ hat ${chk.words} Wörter (erlaubt ${chk.min}–${chk.max})`);
   const choreo = CHOREO[tpl.choreo];
   if (!choreo) throw new Error(`Keine Live-Choreografie für „${tpl.choreo}“`);

@@ -326,7 +326,7 @@ Netlify-Umgebungsvariablen und werden nur an Admins ausgeliefert:
 | `MAKE_WEBHOOK_URL` | Make.com-Webhook (https). Ohne Variable greift das bisherige Szenario als Rückfall. |
 | `MAKE_WEBHOOK_TOKEN` | Optional: gemeinsamer Token für den Filter `token = …` im Make-Szenario (gilt für alle Admin-Browser). |
 | `FIREBASE_WEB_API_KEY` | Optional: Firebase-Web-API-Schlüssel für die anonyme Anmeldung (strenge Firebase-Regeln). |
-| `ELEVENLABS_API_KEY` | Sprecherstimme für die Auto-Reels (fest: ElevenLabs „Matilda“). Ohne Schlüssel startet der Generator mit Voiceover nicht. |
+| `ELEVENLABS_API_KEY` | Sprecherstimme für die Auto-Reels (Standard: eigene geklonte ElevenLabs-Stimme `VFyVvYhn7M2ZEZy63rUf`, im Generator änderbar; Modell eleven_multilingual_v2). Ohne Schlüssel startet der Generator mit Voiceover nicht. |
 
 Reel Studio und Auto-Reels (10x) erzeugen **ausschließlich echte Live-Aufnahmen der Website**: Die App läuft
 in einer 9:16-Live-Stage (iframe `/?reel=1`, 414×736 CSS-px → 1080×1920), darauf laufen echte Swipes, Taps und
