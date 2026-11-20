@@ -60,6 +60,8 @@ import { initMarketBinder, marketBinderApi, renderMarketBinder } from "./market-
 import { initMarketSwipe, marketSwipeApi, renderMarketSwipe, browseMode, scopeForBinder } from "./market-swipe.js";
 import { initMarket16, market16Api, renderMarket16, m16TypeFilter } from "./market16.js";
 import { itemListingApi } from "./item-listing.js";
+import { initSealedMarket, sealedMarketApi } from "./sealed-market.js";
+import { initHomeSplit, homeSplitApi } from "./home-split.js";
 import { initPresence, presenceApi } from "./presence.js";
 
 // ---------------------------------------------------------------------------
@@ -1658,6 +1660,8 @@ window.PS = {
   ...marketSwipeApi,
   ...market16Api,
   ...itemListingApi,
+  ...sealedMarketApi,
+  ...homeSplitApi,
   ...listPickerApi,
   ...presenceApi,
   openCreatorAdmin: () => import("./creator-admin.js").then((m) => m.openCreatorAdmin()).catch(handleError),
@@ -1691,6 +1695,8 @@ async function boot() {
   initMarketSwipe(); // Marktplatz öffnet im Live-Swipe (alle Händler- & Sammler-Ordner gemischt, gewichtet nach Verkäufer-Rang)
   initMarket16(); // Marktplatz: 📖 16er Binder (4×4, 3D-Umblättern) & 👆 Swipe (Hochschieben) + 🃏/📦-Umschaltung
   initMarketBinder(); // Marktplatz: Angebote seitenweise im virtuellen Binder durchblättern + Einzelkarten-Swipe
+  initSealedMarket(); // Marktplatz → 📦 Sealed & OVP: eigener Reiter mit Kategorien, Filtern & Verkaufsformular
+  initHomeSplit(); // Startseite unter den Set-Ordnern: Binder (eigener / Marktplatz swipen) links · Schwarzes Brett & Pull-Wall rechts
   initHomeBinder(); // Startseite: interaktive Set-Binder-Vorschau (eigene Sets oder Beispiel-Set) direkt unter der Gründer-Box
   initBinder(); // Sammlung → Mein Binder: Set-Ordner & durchswipebare Binder-Ansicht mit Marktplatz-Abgleich
   initGapRadar(); // Album → 🎯 Lücken-Radar: alle noch gesuchten Karten eines Sets mit Direkt-Kauf & Bulk-Suchauftrag

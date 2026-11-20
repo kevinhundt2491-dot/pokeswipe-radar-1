@@ -53,7 +53,16 @@ test("Aktuelle Pro-Videos: Server-Limits (Format pro4) reichen auch für das lan
   assert.deepEqual(narrationMaxChars(""), { line: 320, total: 900 });
   const [a, b, c, d] = PRO4_TEMPLATES.map((t: any) => t.seconds);
   for (const s of [a, b, c]) assert.ok(s[0] <= 20 && s[1] >= 20);
-  assert.ok(d[0] <= 35 && d[1] >= 40);
+  assert.ok(d[0] >= 36 && d[1] <= 39, "Video 4: 36–39 s");
+});
+
+test("Video 4: Ziel 38 s, harte Grenze unter 40 s – und die geklonte Stimme ist in allen 4 Pro-Videos fest", () => {
+  const v4: any = PRO4_TEMPLATES[3];
+  assert.equal(v4.fitVoice.target, 38);
+  assert.ok(v4.fitVoice.hardMax < 40 && v4.fitVoice.hardStretch > v4.fitVoice.maxStretch);
+  assert.ok(v4.fitVoice.maxStretch <= 1.15, "nicht gehetzt: höchstens 15 % raffen");
+  assert.ok(v4.segments[v4.segments.length - 1] < 40);
+  for (const t of PRO4_TEMPLATES as any[]) assert.equal(t.voiceId, "VFyVvYhn7M2ZEZy63rUf", `${t.key}: Voice-ID`);
 });
 
 test("1-Klick-Verkauf: Cardmarket-Preis, −5 % und −10 %", () => {

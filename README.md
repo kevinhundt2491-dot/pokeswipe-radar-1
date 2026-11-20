@@ -347,13 +347,24 @@ Eine im Generator eingetragene URL bzw. ein eigener Token überschreibt die Vorg
 Der Generator zeigt oben das Feld für die ElevenLabs-Voice-ID und darunter den Haupt-Ordner mit den 4 aktuellen
 Pro-Videos (`PRO4_TEMPLATES` in `client/reel-pro.js`, Choreografien `p4binder`, `p4gaps`, `p4dupes`, `p4all`):
 Set-Binder & Switch-Funktion (≈ 20 s), Lücken & 1-Klick-Kauf (≈ 20 s), Doppelte & Blitz-Rabatt −5 %/−10 % (≈ 20 s) und
-das All-in-One-Erklärvideo (≈ 35–40 s). Der Button „🚀 Alle 4 Pro-Videos …“ nimmt alle nacheinander auf (9:16, MP4
+das All-in-One-Erklärvideo (Ziel 38 s, 36–39 s, sicher unter 40 s: Höchsttempo 1,2 → Sprechpausen auf 0,1 s kürzen →
+höchstens 15 % tonhöhenneutral raffen; Notbremse bis 22 % nur, falls die Stimme sonst über 39,5 s käme). Der Button „🚀 Alle 4 Pro-Videos …“ nimmt alle nacheinander auf (9:16, MP4
 1080×1920), lädt jedes Video samt Cover und .txt herunter und sendet es – wenn ein Webhook eingetragen ist – an
 Make.com mit den Zusatzfeldern `drive_folder` (Standard „werbe videos pokeswipe“, im Generator änderbar),
 `video_group` = `pro-aktuell`, `batch_id`, `batch_index`, `batch_total` und `video_number`. Der Upload in Google Drive
 passiert im Make-Szenario (Modul „Google Drive → Upload a File“ mit `file` und `drive_folder`). Alle bisherigen
 Vorlagen und die 10 Live-Reels liegen im einklappbaren Ordner „📁 Archiv / Bisherige Vorlagen“. Die Sprecherin nutzt
-für diese Videos das Server-Format `pro4` (bis 160 Wörter).
+für diese Videos das Server-Format `pro4` (bis 160 Wörter) und ist fest auf die geklonte Voice-ID
+`VFyVvYhn7M2ZEZy63rUf` eingestellt (`PRO4_VOICE_ID`) – das Voice-ID-Feld im Browser gilt nur für die übrigen Vorlagen.
+
+### Startseite: 2-Spalten-Bereich & 📦 Sealed & OVP
+
+Unter der Set-Binder-Ordnerleiste zeigt `client/home-split.js` links den Binder (📖 Mein Set-Binder | 🔄 Marktplatz-Binder
+swipen mit Ordnern je Anbieter, Filter Privat/Händler, Suche) und rechts Schnell-Upload + Live-Feed (Pull-Wall, Artikel &
+Konvolute, Sealed). Der Marktplatz-Reiter „📦 Sealed & OVP“ (`client/sealed-market.js`, Regeln in
+`server/sealed-market-logic.ts`) listet versiegelte Produkte mit Kategorien, Set-/Preis-/Anbieter-/Übergabe-Filtern und
+dem Formular „📦 Sealed-Produkt verkaufen“; Zusatzangaben (Set, Factory Sealed, Mint Box, Übergabe) liegen in
+`listings.item_meta`. Händler = Verkäuferkonto als Gewerbe oder eigener Shop.
 
 ### Master-Vorlage „Reel: Neuer automatischer Binder & Bulk-Marktplatz-Power“
 

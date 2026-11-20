@@ -242,9 +242,15 @@ export function sellOptions(price = PRO4_SELL_PRICE) {
 const SELL = { title: "🏷️ Doppelte inserieren – 1 Klick", options: sellOptions(), pick: 2, done: "✓ Inserat ist live – Blitzverkauf" };
 const BUY = { title: "🛒 Fehlende Karte kaufen – 1 Klick", options: [["🏪 PokeSwipe Marktplatz", "6,50 €"], ["🔗 eBay", "ab 7,20 €"], ["🔗 Cardmarket", "ab 6,90 €"]], pick: 0, done: "✓ Karte gesichert – mit 1 Klick" };
 
+/** Video 4: Ziellänge und harte Obergrenze (Sekunden, inkl. Vorlauf und Ausblenden). */
+export const PRO4_TARGET_S = 38;
+export const PRO4_HARD_MAX_S = 39.5;
+/** Fest hinterlegte geklonte ElevenLabs-Stimme für alle 4 Pro-Videos (unabhängig vom Voice-ID-Feld im Browser). */
+export const PRO4_VOICE_ID = "VFyVvYhn7M2ZEZy63rUf";
+
 function PRO4() {
   const base = {
-    format: "hook4", pro4: true, voiceFormat: "pro4", words: PRO4_WORDS, mbit: 10, cbr: true, maxSpeed: SPEED_CAP,
+    format: "hook4", pro4: true, voiceId: PRO4_VOICE_ID, voiceFormat: "pro4", words: PRO4_WORDS, mbit: 10, cbr: true, maxSpeed: SPEED_CAP,
     hashtags: HOOK4_HASHTAGS, visual: "binder", tab: "portfolio", hookBadge: null, fitVoice: { maxStretch: 1.08 },
   };
   return [
@@ -308,8 +314,11 @@ function PRO4() {
     },
     {
       ...base, n: 4,
-      key: "p4all", label: "Video 4 · All-in-One-Erklärvideo für Sammler, Käufer & Verkäufer (ca. 35–40 s)", choreo: "p4all", tab: "scan",
-      seconds: [35, 42], segments: Object.freeze([8, 25, 37, 41]), mbit: 9, startSpeed: SPEED_CAP, fitVoice: { maxStretch: 1.12 },
+      key: "p4all", label: "Video 4 · All-in-One-Erklärvideo für Sammler, Käufer & Verkäufer (ca. 36–39 s)", choreo: "p4all", tab: "scan",
+      // Ziel 38 s (36–39 s, sicher unter 40 s): Höchsttempo 1,2 → Sprechpausen auf 0,1 s kürzen → tonhöhenneutral
+      // höchstens 15 % raffen. Nur falls die Stimme dann noch länger als 39,5 s wäre, greift eine Notbremse (max. 22 %).
+      seconds: [36, 39], segments: Object.freeze([7, 22, 33, 38.5]), mbit: 9, startSpeed: SPEED_CAP,
+      fitVoice: Object.freeze({ maxStretch: 1.15, target: PRO4_TARGET_S, hardMax: PRO4_HARD_MAX_S, hardStretch: 1.22, minPause: 0.2, keep: 0.1 }),
       title: "Warum PokeSwipe Radar: Scanner, Set-Binder, 1-Klick-Kauf & -Verkauf, Sammler-Radar – alles an einem Ort",
       accent: "#fbbf24",
       hooks: [{ badge: "⚡ ALL-IN-ONE", cover: "WARUM GAB ES DAS NOCH NICHT? 🤯" }],

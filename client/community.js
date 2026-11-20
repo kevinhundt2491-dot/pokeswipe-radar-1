@@ -98,7 +98,7 @@ function renderBar() {
   const cat = (k, label, on = `PS.boardCategory('${k}')`) => `<button type="button" onclick="${on}" data-board-cat="${k}" aria-pressed="${cm.cat === k}" class="shrink-0 px-3 py-2 rounded-xl border font-black ${cm.cat === k ? (k === "trade" ? "bg-emerald-500 text-slate-950 border-emerald-400" : "bg-yellow-400 text-slate-950 border-yellow-400") : k === "trade" ? "bg-emerald-500/10 text-emerald-200 border-emerald-400/50" : "bg-slate-900 text-slate-300 border-slate-700"}">${label}</button>`;
   bar.innerHTML = `${notice}
     <div class="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1 text-xs" role="toolbar" aria-label="Schwarzes Brett filtern">
-      ${cat("all", "📌 Alle Beiträge")}${cat("trade", "🔄 Tausch-Gesuche & Angebote")}${cat("pull", "🔥 Pulls & Sammler-Flex")}${cat("talk", "💬 Fragen & Talk")}${cat("chat", "💬 Live-Chat (Echtzeit)", "PS.communityTab('chat')")}
+      ${cat("all", "📌 Alle Beiträge")}${cat("trade", "🔄 Tausch-Gesuche & Angebote")}${cat("pull", "🔥 Pulls & Sammler-Flex")}${cat("talk", "💬 Fragen & Talk")}${cat("sealed", "📦 Sealed & OVP", "PS.openSealedMarket()")}${cat("chat", "💬 Live-Chat (Echtzeit)", "PS.communityTab('chat')")}
     </div>
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex bg-slate-900 border border-slate-700 rounded-xl p-1 gap-1 text-xs font-black w-full sm:w-auto">${tab("all", "🌍 Alle Sammler")}${tab("following", "⭐ Gefolgt")}</div>
