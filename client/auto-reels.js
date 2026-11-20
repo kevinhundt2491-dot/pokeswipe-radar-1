@@ -13,7 +13,7 @@ import { unlockAudio } from "./reel-audio.js";
 import { LiveStage, STAGE_CSS, IN_STAGE, recLock, fitStage, VIEW_W, VIEW_H } from "./live-stage.js";
 import { recordLive, previewLive, loadNarration, getVoiceId, setVoiceId, DEFAULT_VOICE_ID, pickMime, download, copyText, OUT_W, OUT_H, VO_LEAD, TAIL } from "./reel-recorder.js";
 import { PLATFORMS, explainMakeStatus } from "./make-shared.js";
-import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S, SHORT_TEMPLATES, isShort, FEATURE15_TEMPLATES, isFeature15, PRO4_TEMPLATES, isPro4, PRO4_FOLDER, ARCHIVE_FOLDER, DRIVE_FOLDER } from "./reel-pro.js";
+import { PRO_TEMPLATES, ALL_TEMPLATES, templateByKey, proCaption, proScript, checkTemplateScript, estimateMb, bitrateFor, sceneTimes, secondsFor, scenesFor, isHook4, isShowcase, showcaseScenes, SAFE_MB, PRO_MAX_S, SHORT_TEMPLATES, isShort, FEATURE15_TEMPLATES, isFeature15, PRO4_TEMPLATES, isPro4, PRO4_FOLDER, ARCHIVE_FOLDER, DRIVE_FOLDER, PRO4_VOICE_ID } from "./reel-pro.js";
 import { recordProSafe, loadProNarration } from "./reel-pro-recorder.js";
 import { lookFor, cardImageUrl, pickCoverCard } from "./reel-pro.js";
 import { sameOriginImageUrl } from "./dom-capture.js";
@@ -817,7 +817,7 @@ function pro4Html() {
   return `
   <div class="ar-pro ar-cur" id="ar-cur">
     <b class="t">${esc(PRO4_FOLDER)}</b>
-    <small id="ar-cur-spec">Hochformat 9:16 · MP4 1080×1920 · eigene ElevenLabs-Stimme · animierte Wort-für-Wort-Untertitel · echte App-Oberfläche: Scanner → Set-Binder mit Switch-Funktion → Lücken-Kauf → 1-Klick-Verkauf (−5 % / −10 %)</small>
+    <small id="ar-cur-spec">Hochformat 9:16 · MP4 1080×1920 · 🎙️ geklonte ElevenLabs-Stimme fest aktiv (Voice-ID <code>${esc(PRO4_VOICE_ID)}</code>) · Video 4 ca. 36–39 s · animierte Wort-für-Wort-Untertitel · echte App-Oberfläche: Scanner → Set-Binder mit Switch-Funktion → Lücken-Kauf → 1-Klick-Verkauf (−5 % / −10 %)</small>
     <button type="button" class="ar-btn ar-cur-go" data-ar="pro" data-pro="pro4all">🚀 Alle 4 Pro-Videos nacheinander generieren &amp; für Make.com / Drive bereitstellen</button>
     <div class="ar-row">
       <label for="ar-drive">📂 Google-Drive-Ordner (Feld <code>drive_folder</code> an Make.com):</label>
@@ -1008,7 +1008,7 @@ async function generatePro(list) {
       let voice = null, speed = 1, voiceFailed = null, voiceSec = 0, voiceFit = null;
       if (wantsVoice(tpl)) {
         setStatus(`🎙️ ${tpl.label}: Sprecherin (${proCfg.tone === "calm" ? "ruhig" : "energiegeladen"}) wird erzeugt …`);
-        try { ({ take: voice, speed, seconds: voiceSec, fitted: voiceFit = null } = await loadProNarration(script.say, ac, tpl.tone || proCfg.tone, secondsFor(tpl), tpl.maxSpeed || 1.12, { format: tpl.voiceFormat || tpl.format || "", startSpeed: tpl.startSpeed || 0, fit: tpl.fitVoice || null })); }
+        try { ({ take: voice, speed, seconds: voiceSec, fitted: voiceFit = null } = await loadProNarration(script.say, ac, tpl.tone || proCfg.tone, secondsFor(tpl), tpl.maxSpeed || 1.12, { format: tpl.voiceFormat || tpl.format || "", startSpeed: tpl.startSpeed || 0, fit: tpl.fitVoice || null, voiceId: tpl.voiceId || "" })); }
         catch (e) {
           // Kein Abbruch: das Video wird mit Musik (ohne Sprecherin) aufgenommen und heruntergeladen,
           // aber NICHT automatisch an Make.com gesendet. Der genaue Fehler steht unter der Karte.
@@ -1057,7 +1057,7 @@ async function generatePro(list) {
         max_mb: maxMb, scenes_json: JSON.stringify(res.scenes.map((s) => ({ key: s.key, start: +s.start.toFixed(2), end: +s.end.toFixed(2) }))),
         // Aktuelle Pro-Videos: Ziel-Ordner in Google Drive + Batch-Infos für das Make-Szenario (Drive-Upload → Veröffentlichen)
         ...(isPro4(tpl) ? {
-          video_group: "pro-aktuell", video_folder: PRO4_FOLDER, drive_folder: driveFolder, filename_drive: name,
+          video_group: "pro-aktuell", voice_id: tpl.voiceId || PRO4_VOICE_ID, voice_fit_json: voiceFit ? JSON.stringify(voiceFit) : "", video_folder: PRO4_FOLDER, drive_folder: driveFolder, filename_drive: name,
           batch_id: batchId, batch_index: i + 1, batch_total: list.length, video_number: tpl.n,
         } : {}),
         ...(isHook4(tpl) ? {

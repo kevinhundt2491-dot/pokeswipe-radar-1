@@ -35,7 +35,8 @@ const NO_VOICE_S = 26;
  * Sprecherin für eine Pro-Vorlage laden und das Tempo so wählen, dass das Video 20–30 s lang wird.
  * @returns {Promise<{ take: object, speed: number, seconds: number }>}
  */
-export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S], cap = 1.12, { format = "", startSpeed = 0, fit: fitOpts = null } = {}) {
+export async function loadProNarration(lines, ac, tone = "energetic", range = [PRO_MIN_S, PRO_MAX_S], cap = 1.12, { format = "", startSpeed = 0, fit: fitOpts = null, voiceId = "" } = {}) {
+  const vo = voiceId ? { voiceId } : {};
   // Exakte Länge (Showcase 29 s): natürliches Tempo, bis zu 2 Feinanpassungen, damit das letzte Wort
   // spätestens 0,8 s vor dem Ende fällt – das Video bleibt dann frame-genau exakt `range[1]` Sekunden lang.
   // Master-Vorlagen (fitOpts): Start direkt mit dem Höchsttempo; reicht es nicht, werden Sprechpausen gekürzt und die
@@ -43,13 +44,13 @@ export async function loadProNarration(lines, ac, tone = "energetic", range = [P
   if (format === "showcase" || format === "autobinder" || range[0] === range[1]) {
     const fit = range[1] - PRO_LEAD - END_FADE;
     let speed = Number(startSpeed) > 0 ? Math.min(cap, Number(startSpeed)) : 1.0;
-    let take = await loadNarration(lines, ac, { tone, speed, format });
+    let take = await loadNarration(lines, ac, { tone, speed, format, ...vo });
     for (let i = 0; i < 2; i++) {
       const sec = speechSeconds(take);
       const want = sec > fit ? Math.min(cap, Math.ceil(speed * (sec / (fit - 0.25)) * 100) / 100)
         : sec < fit - 4 ? Math.max(0.9, Math.round(speed * (sec / (fit - 1.5)) * 100) / 100) : speed;
       if (want === speed) break;
-      try { take = await loadNarration(lines, ac, { tone, speed: want, format }); speed = want; }
+      try { take = await loadNarration(lines, ac, { tone, speed: want, format, ...vo }); speed = want; }
       catch (e) { console.warn("Showcase-Voiceover: Tempo-Anpassung fehlgeschlagen, nutze vorherigen Take", e); break; }
     }
     let fitted = null;
@@ -61,20 +62,28 @@ export async function loadProNarration(lines, ac, tone = "energetic", range = [P
   }
   // Kurze Vorlagen (z. B. 15–20 s) starten gleich mit dem schnellsten erlaubten Tempo (Hook-Presets: 1,2)
   let speed = Number(startSpeed) > 0 ? Math.min(cap, Number(startSpeed)) : range[1] <= 20 ? cap : 1.04;
-  let take = await loadNarration(lines, ac, { tone, speed, format });
+  let take = await loadNarration(lines, ac, { tone, speed, format, ...vo });
   const next = speedFor(speechSeconds(take), speed, range, cap);
   if (next !== speed) {
     // Zweiter Take nur zur Feinanpassung der Länge – scheitert er, bleibt der erste (fertige) Take
-    try { take = await loadNarration(lines, ac, { tone, speed: next, format }); speed = next; }
+    try { take = await loadNarration(lines, ac, { tone, speed: next, format, ...vo }); speed = next; }
     catch (e) { console.warn("Pro-Voiceover: Tempo-Anpassung fehlgeschlagen, nutze ersten Take", e); }
   }
   // Aktuelle Pro-Videos (fitOpts): ist die Stimme trotz Höchsttempo länger als die Ziellänge, werden Sprechpausen
   // gekürzt und die Stimme tonhöhenneutral um höchstens fitOpts.maxStretch gerafft.
+  // fitOpts.target: Wunschlänge des Videos (z. B. Video 4: 38 s) statt der Obergrenze; fitOpts.hardMax: harte Grenze –
+  // liegt die Stimme danach noch darüber, wird der Original-Take einmalig mit fitOpts.hardStretch auf hardMax gebracht.
   let fitted = null;
-  const fitTo = range[1] - PRO_LEAD - END_FADE;
+  const fitTo = (Number(fitOpts?.target) > 0 ? Number(fitOpts.target) : range[1]) - PRO_LEAD - END_FADE;
+  const original = take;
   if (fitOpts && speechSeconds(take) > fitTo) {
     try { fitted = fitTake(take, ac, fitTo - 0.05, fitOpts); if (fitted) take = fitted; }
     catch (e) { console.warn("Pro-Voiceover: Längen-Anpassung fehlgeschlagen, nutze Original-Take", e); }
+    const hard = Number(fitOpts.hardMax) > 0 ? Number(fitOpts.hardMax) - PRO_LEAD - END_FADE : 0;
+    if (hard && speechSeconds(take) > hard && Number(fitOpts.hardStretch) > Number(fitOpts.maxStretch || 1.1)) {
+      try { const f2 = fitTake(original, ac, hard - 0.05, { ...fitOpts, maxStretch: Number(fitOpts.hardStretch) }); if (f2) { fitted = f2; take = f2; } }
+      catch (e) { console.warn("Pro-Voiceover: Notbremse fehlgeschlagen", e); }
+    }
   }
   return { take, speed, seconds: PRO_LEAD + speechSeconds(take) + END_FADE, fitted: fitted ? fitted.fit : null };
 }
@@ -84,11 +93,11 @@ export async function loadProNarration(lines, ac, tone = "energetic", range = [P
  * Erzeugt einen NEUEN Take (der zwischengespeicherte Original-Take bleibt unverändert) inkl. umgerechneter Satz-
  * und Wort-Zeitstempel. null, wenn nichts zu tun ist.
  */
-export function fitTake(take, ac, target, { maxStretch = 1.1 } = {}) {
+export function fitTake(take, ac, target, { maxStretch = 1.1, minPause = 0.24, keep = 0.14 } = {}) {
   const b = take.buffer;
   const chans = Array.from({ length: b.numberOfChannels }, (_, c) => b.getChannelData(c));
   const before = speechSeconds(take);
-  const r = fitVoice(chans, b.sampleRate, before, target, { maxStretch });
+  const r = fitVoice(chans, b.sampleRate, before, target, { maxStretch, minPause, keep });
   if (!r.changed) return null;
   const buffer = ac.createBuffer(r.channels.length, r.channels[0].length, b.sampleRate);
   r.channels.forEach((ch, c) => buffer.copyToChannel(ch, c));

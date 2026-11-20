@@ -627,12 +627,13 @@ app.get("/api/listings", async (c) => {
   const list = rows(await db.execute(sql`
     SELECT l.id, l.card_id, l.card_name, l.image, l.price::float AS price, l.want, l.city, l.created_at, l.user_id,
       l.status, l.sealed_product_id, l.print_id, l.portfolio_item_id, (l.boosted_until > now()) AS boosted, l.boosted_until,
-      l.listing_type, l.item_category, l.item_condition, l.description, l.extra_images,
+      l.listing_type, l.item_category, l.item_condition, l.description, l.extra_images, l.item_meta,
       (l.buy_now AND p.stripe_account_ready) AS buy_now, l.shipping_cents, l.condition, l.variant, l.lang,
       p.display_name AS seller, p.public_profile AS seller_public,
       (SELECT b.badge FROM user_badges b WHERE b.user_id = l.user_id AND b.badge IN ('ref-vip', 'ref-community') ORDER BY (b.badge = 'ref-vip') DESC LIMIT 1) AS seller_badge,
       (p.founder_at IS NOT NULL) AS seller_founder,
       (COALESCE(p.shop_slug, '') <> '') AS seller_shop,
+      (p.seller_type = 'business' OR COALESCE(p.shop_slug, '') <> '') AS seller_dealer,
       ((p.plan = 'pro' AND p.plan_until > now()) OR (p.bonus_plan = 'pro' AND p.bonus_until > now())) AS verified,
       (CASE WHEN l.variant = 'reverse_holo' THEN COALESCE(c.reverse_trend, c.reverse_avg, c.trend, c.avg) ELSE COALESCE(c.trend, c.avg) END)::float AS market_price,
       (SELECT round(avg(r.stars)::numeric, 1)::float FROM reviews r WHERE r.reviewee_id = l.user_id) AS rating,
@@ -725,7 +726,7 @@ app.post("/api/listings", auth, async (c) => {
     }
     const [row] = await db.insert(listings).values({
       userId: user.id, cardId, sealedProductId, printId, cardName, image, price, buyNow, shippingCents, condition, lang, variant, portfolioItemId,
-      ...(item ? { listingType: "item", itemCategory: item.itemCategory, itemCondition: item.itemCondition, description: item.description, extraImages } : {}),
+      ...(item ? { listingType: "item", itemCategory: item.itemCategory, itemCondition: item.itemCondition, description: item.description, extraImages, itemMeta: item.itemMeta } : {}),
       // Herkunft „scan“: aus dem Live-Scanner inseriert (Swipe-Radar zeigt sie als „Frisch gescannt“)
       ...(it.source === "scan" ? { source: "scan" } : {}),
       want: str(it.want, 120) || "Tausch / Gebot",

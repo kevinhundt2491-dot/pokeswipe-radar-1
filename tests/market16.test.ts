@@ -28,7 +28,7 @@ test("Pokémon-Artikel: Normalisierung, Karten-Inserate bleiben unberührt", () 
   assert.equal(normalizeItemFields({ card: "Glurak ex", price: 5 }), null, "ohne listingType = Karte wie bisher");
   assert.equal(normalizeItemFields({ listingType: "card" }), null);
   const n = normalizeItemFields({ listingType: "item", itemCategory: "booster", itemCondition: "sealed", description: "  Display OVP\r\nmit Folie " });
-  assert.deepEqual(n, { listingType: "item", itemCategory: "booster", itemCondition: "sealed", description: "Display OVP\nmit Folie", condition: "sealed" });
+  assert.deepEqual(n, { listingType: "item", itemCategory: "booster", itemCondition: "sealed", description: "Display OVP\nmit Folie", condition: "sealed", itemMeta: {} });
   const bad = normalizeItemFields({ listingType: "item", itemCategory: "<script>", itemCondition: "kaputt", description: "x".repeat(5000) });
   assert.equal(bad?.itemCategory, "sonstiges");
   assert.equal(bad?.itemCondition, "used");

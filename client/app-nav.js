@@ -54,7 +54,7 @@ function segmentHtml(id, items, active) {
 }
 
 const SEGMENTS = {
-  market: [["swipe", "💚 PokeSwipe-Radar", "PS.marketTab('swipe')"], ["trade", "🔄 Tauschen", "PS.marketTab('trade')"], ["all", "🃏 Alle Karten & Suche", "PS.marketTab('all')"], ["sell", "🏷️ Inserieren", "PS.marketTab('sell')"], ["mine", "📦 Käufe & Verkäufe", "PS.marketTab('mine')"]],
+  market: [["swipe", "💚 PokeSwipe-Radar", "PS.marketTab('swipe')"], ["trade", "🔄 Tauschen", "PS.marketTab('trade')"], ["all", "🃏 Alle Karten & Suche", "PS.marketTab('all')"], ["sealed", "📦 Sealed & OVP", "PS.marketTab('sealed')"], ["sell", "🏷️ Inserieren", "PS.marketTab('sell')"], ["mine", "📦 Käufe & Verkäufe", "PS.marketTab('mine')"]],
   collection: [["binder", "📒 Set-Album", "PS.collectionTab('binder')"], ["gaps", "🎯 Lücken-Radar", "PS.collectionTab('gaps')"], ["wishlist", "⭐ Wunschliste", "PS.collectionTab('wishlist')"], ["radar", "📡 Preis-Radar", "PS.collectionTab('radar')"]],
   community: [["chat", "💬 Live-Chat", "PS.communityTab('chat')"], ["wall", "📌 Schwarzes Brett", "PS.communityTab('wall')"]],
 };
@@ -64,7 +64,7 @@ export const communityPanel = () => (lsGet(COMMUNITY_KEY) === "wall" ? "wall" : 
 
 function activeSegment(tab) {
   if (tab === "swipe") return "swipe";
-  if (tab === "map") { const m = marketMode(); return m === "mine" || m === "sell" || m === "trade" ? m : "all"; }
+  if (tab === "map") { const m = marketMode(); return m === "mine" || m === "sell" || m === "trade" || m === "sealed" ? m : "all"; }
   if (tab === "flip") return "radar";
   if (tab === "portfolio") { const sub = lsGet("ps_sub_portfolio"); return sub === "wishlist" ? "wishlist" : sub === "gaps" ? "gaps" : "binder"; }
   if (tab === "community") return communityPanel();
@@ -118,7 +118,7 @@ export function renderCommunityQuick() {
 // ---------------------------------------------------------------------------
 export function marketMode() {
   const m = state.marketMode || localStorage.getItem(MARKET_MODE_KEY);
-  return m === "buy" || m === "trade" || m === "mine" || m === "sell" ? m : "buy";
+  return m === "buy" || m === "trade" || m === "mine" || m === "sell" || m === "sealed" ? m : "buy";
 }
 
 /** Unterreiter „Inserieren“: Karte scannen & inserieren, Doppelte aus dem Album (einzeln oder alle), Stapel-Inserat. */
@@ -206,14 +206,21 @@ function applyMarketMode() {
   const mode = marketMode();
   section.dataset.marketMode = mode;
   let panel = $("ps-my-sales");
-  if (mode === "mine" || mode === "sell") {
+  if (mode === "mine" || mode === "sell" || mode === "sealed") {
     if (!panel) {
       panel = document.createElement("div");
       panel.id = "ps-my-sales";
       section.querySelector("[data-page-top]")?.after(panel);
     }
-    panel.dataset.panel = mode;
-    panel.innerHTML = mode === "sell" ? sellHtml() : mySalesHtml();
+    // 📦 Sealed & OVP: eigener Bereich (client/sealed-market.js) – Gerüst bleibt beim erneuten Rendern erhalten (Eingaben)
+    if (mode === "sealed") {
+      if (panel.dataset.panel !== "sealed" || !panel.querySelector("#ps-sealed-market")) panel.innerHTML = window.PS?.sealedMarketHtml?.() || "";
+      panel.dataset.panel = mode;
+      window.PS?.renderSealedMarket?.();
+    } else {
+      panel.dataset.panel = mode;
+      panel.innerHTML = mode === "sell" ? sellHtml() : mySalesHtml();
+    }
     if (mode === "sell") renderListPicker();
   } else panel?.remove();
   // „🔄 Tauschen“: Tausch-Zentrale über dem Karten-Raster (Filter „Tausch“ ist automatisch aktiv)
@@ -232,11 +239,11 @@ function applyMarketMode() {
 }
 
 function setMarketMode(mode) {
-  if (!["buy", "trade", "mine", "sell"].includes(mode)) return;
+  if (!["buy", "trade", "mine", "sell", "sealed"].includes(mode)) return;
   if ($("view-map")?.classList.contains("hidden")) window.switchTab?.("map");
   state.marketMode = mode;
   // „Inserieren“ / „Käufe & Verkäufe“ werden nicht dauerhaft gemerkt: Der Marktplatz öffnet immer mit dem Karten-Raster
-  const panelMode = mode === "mine" || mode === "sell";
+  const panelMode = mode === "mine" || mode === "sell" || mode === "sealed";
   if (!panelMode) { try { localStorage.setItem(MARKET_MODE_KEY, mode); } catch {} }
   applyMarketMode();
   if (!panelMode) window.PS?.showSub?.("map", "market", { silent: true });
@@ -245,7 +252,7 @@ function setMarketMode(mode) {
 /** Unterreiter im Marktplatz: PokeSwipe-Radar | Tauschen | Alle Karten & Suche | Inserieren | Käufe & Verkäufe */
 function marketTab(key) {
   if (key === "swipe") { window.switchTab?.("swipe"); renderSegments(); return; }
-  setMarketMode(key === "mine" || key === "sell" || key === "trade" ? key : "buy");
+  setMarketMode(key === "mine" || key === "sell" || key === "trade" || key === "sealed" ? key : "buy");
 }
 
 /** Tausch-Zentrale im Marktplatz: alle Wege zum Kartentausch auf einen Blick. */

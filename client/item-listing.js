@@ -22,7 +22,7 @@ const DELIVERY = [
 const inputCls = "w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white";
 
 /** Bild verkleinern (max. ~600 KB, Server-Grenze) – wie bei Pull-Wall-Fotos. */
-function compress(file, max = 1280, quality = 0.82) {
+export function compress(file, max = 1280, quality = 0.82) {
   return new Promise((resolve, reject) => {
     if (!file || !/^image\//.test(file.type)) return reject(new Error("Bitte ein Bild wählen."));
     const url = URL.createObjectURL(file);

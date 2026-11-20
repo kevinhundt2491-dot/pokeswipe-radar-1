@@ -356,6 +356,8 @@ export const listings = pgTable("listings", {
   itemCondition: text("item_condition").notNull().default(""), // sealed | like_new | used
   description: text().notNull().default(""),
   extraImages: jsonb("extra_images").notNull().default([]), // weitere Fotos (Pfade /api/images/…)
+  // 📦 Sealed & OVP: Set, Sprache-unabhängige Angaben (Factory Sealed, Mint Box, Vintage) und Übergabe (pickup | ship | both)
+  itemMeta: jsonb("item_meta").notNull().default({}),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
